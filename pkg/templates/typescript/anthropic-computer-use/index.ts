@@ -53,7 +53,8 @@ app.action<QueryInput, QueryOutput>(
         }],
         apiKey: ANTHROPIC_API_KEY,
         thinkingBudget: 1024,
-        playwrightPage: page,
+        kernel,
+        sessionId: kernelBrowser.session_id,
       });
 
       // Extract the final result from the messages
