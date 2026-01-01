@@ -130,11 +130,25 @@ func LoadIntoBrowser(ctx context.Context, opts LoadIntoBrowserOptions) error {
 	}
 
 	// Restart Chromium to pick up the new pinned extension preference
-	// Use Spawn (fire and forget) because supervisorctl start can take time
-	_, _ = proc.Spawn(ctx, opts.BrowserID, kernel.BrowserProcessSpawnParams{
-		Command: "supervisorctl",
-		Args:    []string{"start", "chromium"},
-		AsRoot:  kernel.Opt(true),
+	// Use Exec to wait for it to start before navigating
+	_, _ = proc.Exec(ctx, opts.BrowserID, kernel.BrowserProcessExecParams{
+		Command:    "supervisorctl",
+		Args:       []string{"start", "chromium"},
+		AsRoot:     kernel.Opt(true),
+		TimeoutSec: kernel.Opt(int64(30)),
+	})
+
+	// Step 4: Navigate all tabs to chrome://newtab to avoid the Claude login page
+	// The extension opens claude.ai by default which shows a login prompt
+	navigateScript := `
+		const pages = context.pages();
+		for (const p of pages) {
+			await p.goto('chrome://newtab');
+		}
+	`
+	_, _ = opts.Client.Browsers.Playwright.Execute(ctx, opts.BrowserID, kernel.BrowserPlaywrightExecuteParams{
+		Code:       navigateScript,
+		TimeoutSec: kernel.Opt(int64(30)),
 	})
 
 	return nil
