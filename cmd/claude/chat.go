@@ -61,6 +61,11 @@ func runChatWithBrowser(ctx context.Context, client kernel.Client, browserID str
 		return fmt.Errorf("failed to get browser: %w", err)
 	}
 
+	// Open the side panel by clicking the extension icon
+	if err := claude.OpenSidePanel(ctx, client, browser.SessionID); err != nil {
+		return fmt.Errorf("failed to open side panel: %w", err)
+	}
+
 	// Check Claude status first
 	pterm.Info.Println("Checking Claude extension status...")
 	statusResult, err := client.Browsers.Playwright.Execute(ctx, browser.SessionID, kernel.BrowserPlaywrightExecuteParams{

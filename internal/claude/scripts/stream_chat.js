@@ -1,5 +1,6 @@
 // Interactive streaming chat with Claude.
 // This script is executed via Kernel's Playwright API.
+// The side panel should already be open (via OpenSidePanel click).
 //
 // Communication protocol:
 // - Reads JSON commands from stdin: { "type": "message", "content": "..." }
@@ -10,7 +11,6 @@
 //   - { "type": "error", "message": "..." } - Error occurred
 
 const EXTENSION_ID = 'fcoeoabgfenejglbffodgkkbkcdhcgfn';
-const SIDEPANEL_URL = `chrome-extension://${EXTENSION_ID}/sidepanel.html?mode=window`;
 
 function emit(event) {
   console.log(JSON.stringify(event));
@@ -77,14 +77,24 @@ async function sendMessage(page, message) {
   emit({ type: 'error', message: 'Response timeout' });
 }
 
-// Open the sidepanel
-let sidepanel = context.pages().find(p => p.url().includes('sidepanel.html'));
-if (!sidepanel) {
-  sidepanel = await context.newPage();
-  await sidepanel.goto(SIDEPANEL_URL);
-  await sidepanel.waitForLoadState('networkidle');
-  await sidepanel.waitForTimeout(2000);
+// Wait for the side panel to appear (it was opened by clicking the extension icon)
+let sidepanel = null;
+const maxWaitMs = 10000;
+const startWait = Date.now();
+while (Date.now() - startWait < maxWaitMs) {
+  sidepanel = context.pages().find(p => p.url().includes('sidepanel.html'));
+  if (sidepanel) break;
+  await new Promise(r => setTimeout(r, 500));
 }
+
+if (!sidepanel) {
+  emit({ type: 'error', message: 'Side panel not found. Extension may not be loaded or pinned.' });
+  return { error: 'side panel not found' };
+}
+
+// Wait for the UI to initialize
+await sidepanel.waitForLoadState('networkidle');
+await sidepanel.waitForTimeout(1000);
 
 // Check if authenticated
 const inputSelector = '[contenteditable="true"].ProseMirror, textarea';

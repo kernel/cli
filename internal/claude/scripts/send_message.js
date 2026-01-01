@@ -1,5 +1,6 @@
 // Send a message to Claude and wait for the response.
 // This script is executed via Kernel's Playwright API.
+// The side panel should already be open (via OpenSidePanel click).
 //
 // Input (via environment variables set before this script):
 //   - process.env.CLAUDE_MESSAGE: The message to send
@@ -9,7 +10,6 @@
 //   - Returns JSON with { response: string, model?: string }
 
 const EXTENSION_ID = 'fcoeoabgfenejglbffodgkkbkcdhcgfn';
-const SIDEPANEL_URL = `chrome-extension://${EXTENSION_ID}/sidepanel.html?mode=window`;
 
 const message = process.env.CLAUDE_MESSAGE;
 const timeoutMs = parseInt(process.env.CLAUDE_TIMEOUT_MS || '120000', 10);
@@ -18,15 +18,23 @@ if (!message) {
   throw new Error('CLAUDE_MESSAGE environment variable is required');
 }
 
-// Find or open the sidepanel page
-let sidepanel = context.pages().find(p => p.url().includes('sidepanel.html'));
-if (!sidepanel) {
-  sidepanel = await context.newPage();
-  await sidepanel.goto(SIDEPANEL_URL);
-  await sidepanel.waitForLoadState('networkidle');
-  // Wait for the UI to fully initialize
-  await sidepanel.waitForTimeout(2000);
+// Wait for the side panel to appear (it was opened by clicking the extension icon)
+let sidepanel = null;
+const maxWaitMs = 10000;
+const startWait = Date.now();
+while (Date.now() - startWait < maxWaitMs) {
+  sidepanel = context.pages().find(p => p.url().includes('sidepanel.html'));
+  if (sidepanel) break;
+  await new Promise(r => setTimeout(r, 500));
 }
+
+if (!sidepanel) {
+  throw new Error('Side panel not found. Make sure the extension is loaded and pinned.');
+}
+
+// Wait for the UI to fully initialize
+await sidepanel.waitForLoadState('networkidle');
+await sidepanel.waitForTimeout(1000);
 
 // Check if we're authenticated by looking for the chat input
 // Claude uses a contenteditable div with ProseMirror

@@ -107,6 +107,11 @@ func runSend(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get browser: %w", err)
 	}
 
+	// Open the side panel by clicking the extension icon
+	if err := claude.OpenSidePanel(ctx, client, browser.SessionID); err != nil {
+		return fmt.Errorf("failed to open side panel: %w", err)
+	}
+
 	// Build the script with environment variables
 	script := fmt.Sprintf(`
 process.env.CLAUDE_MESSAGE = %s;

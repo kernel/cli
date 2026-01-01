@@ -55,6 +55,11 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get browser: %w", err)
 	}
 
+	// Open the side panel by clicking the extension icon
+	if err := claude.OpenSidePanel(ctx, client, browser.SessionID); err != nil {
+		return fmt.Errorf("failed to open side panel: %w", err)
+	}
+
 	// Execute the status check script
 	if outputFormat != "json" {
 		pterm.Info.Println("Checking Claude extension status...")

@@ -228,6 +228,15 @@ func pinExtension(ctx context.Context, client kernel.Client, browserID, extensio
 	return nil
 }
 
+// OpenSidePanel clicks on the pinned Claude extension icon to open the side panel.
+// This uses the computer API to click at the known coordinates of the extension icon.
+func OpenSidePanel(ctx context.Context, client kernel.Client, browserID string) error {
+	return client.Browsers.Computer.ClickMouse(ctx, browserID, kernel.BrowserComputerClickMouseParams{
+		X: ExtensionIconX,
+		Y: ExtensionIconY,
+	})
+}
+
 // createTempZip creates a temporary zip file from a directory.
 func createTempZip(srcDir string) (string, error) {
 	tmpFile, err := os.CreateTemp("", "claude-*.zip")

@@ -32,4 +32,12 @@ const (
 
 	// BundleAuthStorageDir is the directory name for auth storage within the bundle
 	BundleAuthStorageDir = "auth-storage"
+
+	// ExtensionIconX is the X coordinate for clicking the pinned Claude extension icon
+	// to open the side panel (for 1920x1080 screen resolution)
+	ExtensionIconX = 1775
+
+	// ExtensionIconY is the Y coordinate for clicking the pinned Claude extension icon
+	// to open the side panel (for 1920x1080 screen resolution)
+	ExtensionIconY = 55
 )

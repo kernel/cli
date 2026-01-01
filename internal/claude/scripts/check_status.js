@@ -1,11 +1,11 @@
 // Check the status of the Claude extension.
 // This script is executed via Kernel's Playwright API.
+// The side panel should already be open (via OpenSidePanel click).
 //
 // Output:
 //   - Returns JSON with extension status information
 
 const EXTENSION_ID = 'fcoeoabgfenejglbffodgkkbkcdhcgfn';
-const SIDEPANEL_URL = `chrome-extension://${EXTENSION_ID}/sidepanel.html?mode=window`;
 
 const status = {
   extensionLoaded: false,
@@ -15,20 +15,26 @@ const status = {
 };
 
 try {
-  // Try to open the sidepanel
-  const sidepanel = await context.newPage();
-  
-  try {
-    await sidepanel.goto(SIDEPANEL_URL, { timeout: 10000 });
-    await sidepanel.waitForLoadState('networkidle', { timeout: 10000 });
-    status.extensionLoaded = true;
-  } catch (e) {
-    status.error = 'Extension not loaded or not accessible';
+  // Wait for the side panel to appear (it was opened by clicking the extension icon)
+  let sidepanel = null;
+  const maxWaitMs = 10000;
+  const startWait = Date.now();
+  while (Date.now() - startWait < maxWaitMs) {
+    sidepanel = context.pages().find(p => p.url().includes('sidepanel.html'));
+    if (sidepanel) break;
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  if (!sidepanel) {
+    status.error = 'Side panel not found. Extension may not be loaded or pinned.';
     return status;
   }
 
-  // Wait a bit for the UI to initialize
-  await sidepanel.waitForTimeout(2000);
+  status.extensionLoaded = true;
+
+  // Wait for the UI to initialize
+  await sidepanel.waitForLoadState('networkidle');
+  await sidepanel.waitForTimeout(1000);
 
   // Check for authentication indicators
   // Look for chat input (indicates authenticated) - Claude uses ProseMirror contenteditable
@@ -53,9 +59,6 @@ try {
   // Check if there are existing messages (conversation in progress)
   const responses = await sidepanel.$$('div.claude-response');
   status.hasConversation = responses.length > 0;
-
-  // Close the test page
-  await sidepanel.close();
 
 } catch (e) {
   status.error = e.message;
