@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/fang"
 	"github.com/charmbracelet/lipgloss/v2"
+	"github.com/onkernel/cli/cmd/claude"
 	"github.com/onkernel/cli/cmd/mcp"
 	"github.com/onkernel/cli/cmd/proxies"
 	"github.com/onkernel/cli/pkg/auth"
@@ -141,6 +142,7 @@ func init() {
 	rootCmd.AddCommand(extensionsCmd)
 	rootCmd.AddCommand(createCmd)
 	rootCmd.AddCommand(mcp.MCPCmd)
+	rootCmd.AddCommand(claude.ClaudeCmd)
 
 	rootCmd.PersistentPostRunE = func(cmd *cobra.Command, args []string) error {
 		// running synchronously so we never slow the command

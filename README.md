@@ -339,6 +339,40 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
   - `--timeout <seconds>` - Maximum execution time in seconds (defaults server-side)
   - If `[code]` is omitted, code is read from stdin
 
+### Claude Extension
+
+The `kernel claude` commands provide a complete workflow for using the Claude for Chrome extension in Kernel browsers:
+
+- `kernel claude extract` - Extract Claude extension from local Chrome
+  - `-o, --output <path>` - Output path for the bundle zip file (default: claude-bundle.zip)
+  - `--chrome-profile <name>` - Chrome profile name to extract from (default: Default)
+  - `--no-auth` - Skip authentication storage (extension will require login)
+  - `--list-profiles` - List available Chrome profiles and exit
+
+- `kernel claude launch` - Create a browser with Claude extension loaded
+  - `-b, --bundle <path>` - Path to the Claude bundle zip file (required)
+  - `-t, --timeout <seconds>` - Session timeout in seconds (default: 600)
+  - `-s, --stealth` - Launch browser in stealth mode
+  - `-H, --headless` - Launch browser in headless mode
+  - `--url <url>` - Initial URL to navigate to (default: https://claude.ai)
+  - `--chat` - Start interactive chat after launch
+  - `--viewport <WxH[@R]>` - Browser viewport size (e.g., 1920x1080@25)
+
+- `kernel claude load <browser-id>` - Load Claude extension into existing browser
+  - `-b, --bundle <path>` - Path to the Claude bundle zip file (required)
+
+- `kernel claude status <browser-id>` - Check Claude extension status
+  - `-o, --output json` - Output format: json for raw response
+
+- `kernel claude send <browser-id> [message]` - Send a message to Claude
+  - `-f, --file <path>` - Read message from file
+  - `--timeout <seconds>` - Response timeout in seconds (default: 120)
+  - `--json` - Output response as JSON
+  - `--raw` - Output raw response without formatting
+
+- `kernel claude chat <browser-id>` - Interactive chat with Claude
+  - `--no-tui` - Disable interactive mode (line-by-line I/O)
+
 ### Extension Management
 
 - `kernel extensions list` - List all uploaded extensions
@@ -526,6 +560,55 @@ const durationMs = Date.now() - start;
 const opsPerSec = ops / (durationMs / 1000);
 return { opsPerSec, ops, durationMs };
 TS
+```
+
+### Claude Extension
+
+```bash
+# Step 1: Extract the Claude extension from your local Chrome (run on your machine)
+kernel claude extract -o claude-bundle.zip
+
+# List available Chrome profiles
+kernel claude extract --list-profiles
+
+# Extract from a specific Chrome profile
+kernel claude extract --chrome-profile "Profile 1" -o claude-bundle.zip
+
+# Extract without authentication (will require login)
+kernel claude extract --no-auth -o claude-bundle.zip
+
+# Step 2: Launch a browser with Claude pre-loaded
+kernel claude launch -b claude-bundle.zip
+
+# Launch with longer timeout (1 hour)
+kernel claude launch -b claude-bundle.zip -t 3600
+
+# Launch in stealth mode
+kernel claude launch -b claude-bundle.zip --stealth
+
+# Launch and immediately start interactive chat
+kernel claude launch -b claude-bundle.zip --chat
+
+# Load Claude into an existing browser
+kernel claude load abc123xyz -b claude-bundle.zip
+
+# Check Claude extension status
+kernel claude status abc123xyz
+
+# Send a single message (great for scripting)
+kernel claude send abc123xyz "What is 2+2?"
+
+# Pipe a message from stdin
+echo "Explain this code" | kernel claude send abc123xyz
+
+# Read message from a file
+kernel claude send abc123xyz -f prompt.txt
+
+# Get response as JSON
+kernel claude send abc123xyz "Hello" --json
+
+# Start interactive chat session
+kernel claude chat abc123xyz
 ```
 
 ### Extension management
