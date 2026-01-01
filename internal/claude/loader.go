@@ -102,18 +102,38 @@ func LoadIntoBrowser(ctx context.Context, opts LoadIntoBrowserOptions) error {
 	}
 
 	// Step 3: Pin the extension to the toolbar
+	// We need to:
+	// 1. Stop Chromium so it doesn't overwrite our Preferences changes
+	// 2. Update the Preferences file
+	// 3. Restart Chromium to pick up the changes
+	proc := opts.Client.Browsers.Process
+
+	// Stop Chromium first (use Exec to wait for it to complete)
+	_, _ = proc.Exec(ctx, opts.BrowserID, kernel.BrowserProcessExecParams{
+		Command:    "supervisorctl",
+		Args:       []string{"stop", "chromium"},
+		AsRoot:     kernel.Opt(true),
+		TimeoutSec: kernel.Opt(int64(30)),
+	})
+
+	// Now update the Preferences file while Chrome is stopped
 	if err := pinExtension(ctx, opts.Client, opts.BrowserID, ExtensionID); err != nil {
 		// Don't fail the whole operation if pinning fails - it's a nice-to-have
 		// The extension is still loaded and functional
+		// But still restart Chromium
+		_, _ = proc.Spawn(ctx, opts.BrowserID, kernel.BrowserProcessSpawnParams{
+			Command: "supervisorctl",
+			Args:    []string{"start", "chromium"},
+			AsRoot:  kernel.Opt(true),
+		})
 		return nil
 	}
 
-	// Step 4: Restart Chromium to pick up the new pinned extension preference
-	// Use Spawn (fire and forget) because supervisorctl restart waits a long time
-	proc := opts.Client.Browsers.Process
+	// Restart Chromium to pick up the new pinned extension preference
+	// Use Spawn (fire and forget) because supervisorctl start can take time
 	_, _ = proc.Spawn(ctx, opts.BrowserID, kernel.BrowserProcessSpawnParams{
 		Command: "supervisorctl",
-		Args:    []string{"restart", "chromium"},
+		Args:    []string{"start", "chromium"},
 		AsRoot:  kernel.Opt(true),
 	})
 
