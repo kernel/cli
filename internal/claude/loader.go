@@ -230,7 +230,27 @@ func pinExtension(ctx context.Context, client kernel.Client, browserID, extensio
 
 // OpenSidePanel clicks on the pinned Claude extension icon to open the side panel.
 // This uses the computer API to click at the known coordinates of the extension icon.
+// If the side panel is already open, it does nothing.
 func OpenSidePanel(ctx context.Context, client kernel.Client, browserID string) error {
+	// First check if the side panel is already open
+	checkScript := `
+		const sidepanel = context.pages().find(p => p.url().includes('sidepanel.html'));
+		return { isOpen: !!sidepanel };
+	`
+	result, err := client.Browsers.Playwright.Execute(ctx, browserID, kernel.BrowserPlaywrightExecuteParams{
+		Code:       checkScript,
+		TimeoutSec: kernel.Opt(int64(10)),
+	})
+	if err == nil && result.Success {
+		if resultMap, ok := result.Result.(map[string]any); ok {
+			if isOpen, ok := resultMap["isOpen"].(bool); ok && isOpen {
+				// Side panel is already open, no need to click
+				return nil
+			}
+		}
+	}
+
+	// Side panel is not open, click to open it
 	return client.Browsers.Computer.ClickMouse(ctx, browserID, kernel.BrowserComputerClickMouseParams{
 		X: ExtensionIconX,
 		Y: ExtensionIconY,
