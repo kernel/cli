@@ -23,11 +23,11 @@ var chatCmd = &cobra.Command{
 This provides a simple command-line interface for having a conversation
 with Claude. Type your messages and receive responses directly in the terminal.
 
-Special commands:
+CLI commands:
   /quit, /exit  - Exit the chat session
   /clear        - Clear the terminal
-  /status       - Check extension status
-  /help         - Show available commands`,
+
+All other slash commands (like /hn-summary) are passed to Claude.`,
 	Example: `  # Start chat with existing browser
   kernel claude chat abc123xyz
 
@@ -104,7 +104,7 @@ func runChatWithBrowser(ctx context.Context, client kernel.Client, browserID str
 	pterm.Info.Printf("Browser: %s\n", browserID)
 	pterm.Info.Printf("Live View: %s\n", browser.BrowserLiveViewURL)
 	pterm.Println()
-	pterm.Info.Println("Type your message and press Enter. Use /help for commands, /quit to exit.")
+	pterm.Info.Println("Type your message and press Enter. Use /quit to exit, /clear to clear screen.")
 	pterm.Println()
 
 	// Start the chat loop
@@ -177,48 +177,10 @@ func handleChatCommand(ctx context.Context, client kernel.Client, browserID, inp
 		pterm.Info.Println("Terminal cleared.")
 		return true, false
 
-	case "/status":
-		pterm.Info.Println("Checking status...")
-		result, err := client.Browsers.Playwright.Execute(ctx, browserID, kernel.BrowserPlaywrightExecuteParams{
-			Code:       claude.CheckStatusScript,
-			TimeoutSec: kernel.Opt(int64(30)),
-		})
-		if err != nil {
-			pterm.Error.Printf("Status check failed: %v\n", err)
-			return true, false
-		}
-
-		var status struct {
-			ExtensionLoaded bool   `json:"extensionLoaded"`
-			Authenticated   bool   `json:"authenticated"`
-			HasConversation bool   `json:"hasConversation"`
-			Error           string `json:"error"`
-		}
-		if result.Result != nil {
-			resultBytes, _ := json.Marshal(result.Result)
-			_ = json.Unmarshal(resultBytes, &status)
-		}
-
-		pterm.Info.Printf("Extension: %v, Auth: %v, Conversation: %v\n",
-			status.ExtensionLoaded, status.Authenticated, status.HasConversation)
-		if status.Error != "" {
-			pterm.Warning.Printf("Error: %s\n", status.Error)
-		}
-		return true, false
-
-	case "/help", "/?":
-		pterm.Println()
-		pterm.Info.Println("Available commands:")
-		pterm.Println("  /quit, /exit  - Exit the chat session")
-		pterm.Println("  /clear        - Clear the terminal")
-		pterm.Println("  /status       - Check extension status")
-		pterm.Println("  /help         - Show this help message")
-		pterm.Println()
-		return true, false
-
 	default:
-		pterm.Warning.Printf("Unknown command: %s (use /help for available commands)\n", cmd)
-		return true, false
+		// Pass all other slash commands through to Claude
+		// (Claude for Chrome has its own slash commands like /hn-summary)
+		return false, false
 	}
 }
 
