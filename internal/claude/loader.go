@@ -138,12 +138,17 @@ func LoadIntoBrowser(ctx context.Context, opts LoadIntoBrowserOptions) error {
 		TimeoutSec: kernel.Opt(int64(30)),
 	})
 
-	// Step 4: Navigate all tabs to chrome://newtab to avoid the Claude login page
-	// The extension opens claude.ai by default which shows a login prompt
+	// Step 4: Close extra tabs and navigate to chrome://newtab
+	// The Claude extension opens a tab to claude.ai by default
 	navigateScript := `
 		const pages = context.pages();
-		for (const p of pages) {
-			await p.goto('chrome://newtab');
+		// Close all but the first page
+		for (let i = 1; i < pages.length; i++) {
+			await pages[i].close();
+		}
+		// Navigate the remaining page to newtab
+		if (pages.length > 0) {
+			await pages[0].goto('chrome://newtab');
 		}
 	`
 	_, _ = opts.Client.Browsers.Playwright.Execute(ctx, opts.BrowserID, kernel.BrowserPlaywrightExecuteParams{
