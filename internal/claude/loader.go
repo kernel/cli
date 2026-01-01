@@ -84,7 +84,7 @@ func LoadIntoBrowser(ctx context.Context, opts LoadIntoBrowserOptions) error {
 	if err := opts.Client.Browsers.LoadExtensions(ctx, opts.BrowserID, kernel.BrowserLoadExtensionsParams{
 		Extensions: []kernel.BrowserLoadExtensionsParamsExtension{
 			{
-				Name:    ExtensionName,
+				Name:    "claude-for-chrome",
 				ZipFile: extZipFile,
 			},
 		},
