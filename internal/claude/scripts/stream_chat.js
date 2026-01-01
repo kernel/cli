@@ -16,55 +16,6 @@ function emit(event) {
   console.log(JSON.stringify(event));
 }
 
-async function run({ context }) {
-  // Open the sidepanel
-  let sidepanel = context.pages().find(p => p.url().includes('sidepanel.html'));
-  if (!sidepanel) {
-    sidepanel = await context.newPage();
-    await sidepanel.goto(SIDEPANEL_URL);
-    await sidepanel.waitForLoadState('networkidle');
-    await sidepanel.waitForTimeout(2000);
-  }
-
-  // Check if authenticated
-  const textarea = await sidepanel.waitForSelector('textarea, [contenteditable="true"]', {
-    timeout: 10000,
-  }).catch(() => null);
-
-  if (!textarea) {
-    emit({ type: 'error', message: 'Claude extension not authenticated' });
-    return;
-  }
-
-  emit({ type: 'ready' });
-
-  // Set up stdin listener for messages
-  const readline = require('readline');
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: false,
-  });
-
-  rl.on('line', async (line) => {
-    try {
-      const command = JSON.parse(line);
-      
-      if (command.type === 'message' && command.content) {
-        await sendMessage(sidepanel, command.content);
-      } else if (command.type === 'quit') {
-        rl.close();
-        process.exit(0);
-      }
-    } catch (e) {
-      emit({ type: 'error', message: e.message });
-    }
-  });
-
-  // Keep the script running
-  await new Promise(() => {});
-}
-
 async function sendMessage(page, message) {
   const textarea = await page.$('textarea, [contenteditable="true"]');
   if (!textarea) {
@@ -120,4 +71,49 @@ async function sendMessage(page, message) {
   emit({ type: 'error', message: 'Response timeout' });
 }
 
-module.exports = run;
+// Open the sidepanel
+let sidepanel = context.pages().find(p => p.url().includes('sidepanel.html'));
+if (!sidepanel) {
+  sidepanel = await context.newPage();
+  await sidepanel.goto(SIDEPANEL_URL);
+  await sidepanel.waitForLoadState('networkidle');
+  await sidepanel.waitForTimeout(2000);
+}
+
+// Check if authenticated
+const textarea = await sidepanel.waitForSelector('textarea, [contenteditable="true"]', {
+  timeout: 10000,
+}).catch(() => null);
+
+if (!textarea) {
+  emit({ type: 'error', message: 'Claude extension not authenticated' });
+  return { error: 'not authenticated' };
+}
+
+emit({ type: 'ready' });
+
+// Set up stdin listener for messages
+const readline = require('readline');
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  terminal: false,
+});
+
+rl.on('line', async (line) => {
+  try {
+    const command = JSON.parse(line);
+    
+    if (command.type === 'message' && command.content) {
+      await sendMessage(sidepanel, command.content);
+    } else if (command.type === 'quit') {
+      rl.close();
+      process.exit(0);
+    }
+  } catch (e) {
+    emit({ type: 'error', message: e.message });
+  }
+});
+
+// Keep the script running
+await new Promise(() => {});
