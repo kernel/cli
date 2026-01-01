@@ -148,7 +148,7 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 		{"Property", "Value"},
 		{"Browser ID", browser.SessionID},
 		{"Live View URL", browser.BrowserLiveViewURL},
-		{"CDP WebSocket URL", browser.CdpWsURL},
+		{"CDP WebSocket URL", truncateURL(browser.CdpWsURL, 60)},
 		{"Timeout (seconds)", fmt.Sprintf("%d", timeout)},
 	}
 	if bundle.HasAuthStorage() {
@@ -216,4 +216,12 @@ func waitForBrowserReady(ctx context.Context, client kernel.Client, browserID st
 	}
 
 	return fmt.Errorf("browser %s not accessible after %d attempts", browserID, maxAttempts)
+}
+
+// truncateURL truncates a URL to a maximum length, adding "..." if truncated.
+func truncateURL(url string, maxLen int) string {
+	if len(url) <= maxLen {
+		return url
+	}
+	return url[:maxLen-3] + "..."
 }
