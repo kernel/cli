@@ -130,12 +130,11 @@ func LoadIntoBrowser(ctx context.Context, opts LoadIntoBrowserOptions) error {
 	}
 
 	// Restart Chromium to pick up the new pinned extension preference
-	// Use Exec to wait for it to start before navigating
-	_, _ = proc.Exec(ctx, opts.BrowserID, kernel.BrowserProcessExecParams{
-		Command:    "supervisorctl",
-		Args:       []string{"start", "chromium"},
-		AsRoot:     kernel.Opt(true),
-		TimeoutSec: kernel.Opt(int64(30)),
+	// Use Spawn (fire and forget) - the Playwright call below will retry until Chrome is ready
+	_, _ = proc.Spawn(ctx, opts.BrowserID, kernel.BrowserProcessSpawnParams{
+		Command: "supervisorctl",
+		Args:    []string{"start", "chromium"},
+		AsRoot:  kernel.Opt(true),
 	})
 
 	// Step 4: Close extra tabs and navigate to chrome://newtab
