@@ -55,14 +55,17 @@ func LoadIntoBrowser(ctx context.Context, opts LoadIntoBrowserOptions) error {
 			return fmt.Errorf("failed to upload auth storage: %w", err)
 		}
 
-		// Set proper ownership on the auth storage directory
-		if err := fs.SetFilePermissions(ctx, opts.BrowserID, kernel.BrowserFSetFilePermissionsParams{
-			Path:  authDestPath,
-			Mode:  "0755",
-			Owner: kernel.Opt(KernelUser),
-			Group: kernel.Opt(KernelUser),
-		}); err != nil {
-			return fmt.Errorf("failed to set auth storage permissions: %w", err)
+		// Set proper ownership on the auth storage directory and all files inside
+		// using chown -R via process exec (SetFilePermissions is not recursive)
+		proc := opts.Client.Browsers.Process
+		_, err = proc.Exec(ctx, opts.BrowserID, kernel.BrowserProcessExecParams{
+			Command:    "chown",
+			Args:       []string{"-R", KernelUser + ":" + KernelUser, authDestPath},
+			AsRoot:     kernel.Opt(true),
+			TimeoutSec: kernel.Opt(int64(30)),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to set auth storage ownership: %w", err)
 		}
 	}
 
