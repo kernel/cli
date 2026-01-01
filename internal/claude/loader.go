@@ -1,14 +1,20 @@
 package claude
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/onkernel/cli/pkg/util"
 	"github.com/onkernel/kernel-go-sdk"
 )
+
+// KernelPreferencesPath is the path to Chrome's Preferences file in Kernel browsers
+const KernelPreferencesPath = "/home/kernel/user-data/Default/Preferences"
 
 // LoadIntoBrowserOptions configures how the extension is loaded into a browser.
 type LoadIntoBrowserOptions struct {
@@ -93,6 +99,92 @@ func LoadIntoBrowser(ctx context.Context, opts LoadIntoBrowserOptions) error {
 		},
 	}); err != nil {
 		return fmt.Errorf("failed to load extension: %w", err)
+	}
+
+	// Step 3: Pin the extension to the toolbar
+	if err := pinExtension(ctx, opts.Client, opts.BrowserID, ExtensionID); err != nil {
+		// Don't fail the whole operation if pinning fails - it's a nice-to-have
+		// The extension is still loaded and functional
+		return nil
+	}
+
+	// Step 4: Restart Chromium to pick up the new pinned extension preference
+	// Use Spawn (fire and forget) because supervisorctl restart waits a long time
+	proc := opts.Client.Browsers.Process
+	_, _ = proc.Spawn(ctx, opts.BrowserID, kernel.BrowserProcessSpawnParams{
+		Command: "supervisorctl",
+		Args:    []string{"restart", "chromium"},
+		AsRoot:  kernel.Opt(true),
+	})
+
+	return nil
+}
+
+// pinExtension adds an extension ID to Chrome's pinned_extensions list in the Preferences file.
+// This makes the extension icon visible in the toolbar by default.
+func pinExtension(ctx context.Context, client kernel.Client, browserID, extensionID string) error {
+	fs := client.Browsers.Fs
+
+	// Read the current Preferences file
+	resp, err := fs.ReadFile(ctx, browserID, kernel.BrowserFReadFileParams{
+		Path: KernelPreferencesPath,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to read preferences: %w", err)
+	}
+	defer resp.Body.Close()
+
+	prefsData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read preferences body: %w", err)
+	}
+
+	// Parse the JSON
+	var prefs map[string]any
+	if err := json.Unmarshal(prefsData, &prefs); err != nil {
+		return fmt.Errorf("failed to parse preferences: %w", err)
+	}
+
+	// Get or create the extensions object
+	extensions, ok := prefs["extensions"].(map[string]any)
+	if !ok {
+		extensions = make(map[string]any)
+		prefs["extensions"] = extensions
+	}
+
+	// Get or create the pinned_extensions array
+	var pinnedExtensions []string
+	if pinned, ok := extensions["pinned_extensions"].([]any); ok {
+		for _, id := range pinned {
+			if s, ok := id.(string); ok {
+				pinnedExtensions = append(pinnedExtensions, s)
+			}
+		}
+	}
+
+	// Check if extension is already pinned
+	for _, id := range pinnedExtensions {
+		if id == extensionID {
+			// Already pinned, nothing to do
+			return nil
+		}
+	}
+
+	// Add the extension to pinned list
+	pinnedExtensions = append(pinnedExtensions, extensionID)
+	extensions["pinned_extensions"] = pinnedExtensions
+
+	// Serialize back to JSON
+	newPrefsData, err := json.Marshal(prefs)
+	if err != nil {
+		return fmt.Errorf("failed to serialize preferences: %w", err)
+	}
+
+	// Write the updated Preferences file
+	if err := fs.WriteFile(ctx, browserID, bytes.NewReader(newPrefsData), kernel.BrowserFWriteFileParams{
+		Path: KernelPreferencesPath,
+	}); err != nil {
+		return fmt.Errorf("failed to write preferences: %w", err)
 	}
 
 	return nil
