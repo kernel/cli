@@ -33,6 +33,12 @@ async function sendMessage(page, message) {
   await input.fill(message);
   await page.keyboard.press('Enter');
 
+  // Slash commands need an extra Enter to confirm
+  if (message.startsWith('/')) {
+    await page.waitForTimeout(500);
+    await page.keyboard.press('Enter');
+  }
+
   // Stream the response
   let lastContent = '';
   let stableCount = 0;

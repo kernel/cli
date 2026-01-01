@@ -51,6 +51,12 @@ await input.fill(message);
 // Press Enter to send
 await sidepanel.keyboard.press('Enter');
 
+// Slash commands need an extra Enter to confirm
+if (message.startsWith('/')) {
+  await sidepanel.waitForTimeout(500);
+  await sidepanel.keyboard.press('Enter');
+}
+
 // Wait for the response to appear and complete
 // We detect completion by waiting for the streaming to stop
 const startTime = Date.now();
