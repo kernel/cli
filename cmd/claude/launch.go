@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/onkernel/cli/internal/claude"
 	"github.com/onkernel/cli/pkg/util"
@@ -110,6 +111,12 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 
 	pterm.Info.Printf("Created browser: %s\n", browser.SessionID)
 
+	// Wait for browser to be ready (eventual consistency)
+	if err := waitForBrowserReady(ctx, client, browser.SessionID); err != nil {
+		_ = client.Browsers.DeleteByID(context.Background(), browser.SessionID)
+		return fmt.Errorf("browser not ready: %w", err)
+	}
+
 	// Load the Claude extension
 	pterm.Info.Println("Loading Claude extension...")
 	if err := claude.LoadIntoBrowser(ctx, claude.LoadIntoBrowserOptions{
@@ -189,4 +196,24 @@ func parseViewport(viewport string) (int64, int64, int64, error) {
 	}
 
 	return 0, 0, 0, fmt.Errorf("invalid format, expected WIDTHxHEIGHT[@RATE]")
+}
+
+// waitForBrowserReady polls until the browser is accessible via GET.
+// This handles eventual consistency after browser creation.
+func waitForBrowserReady(ctx context.Context, client kernel.Client, browserID string) error {
+	const maxAttempts = 10
+	const delay = 500 * time.Millisecond
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		_, err := client.Browsers.Get(ctx, browserID)
+		if err == nil {
+			return nil
+		}
+
+		if attempt < maxAttempts {
+			time.Sleep(delay)
+		}
+	}
+
+	return fmt.Errorf("browser %s not accessible after %d attempts", browserID, maxAttempts)
 }
