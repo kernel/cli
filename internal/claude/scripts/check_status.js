@@ -31,8 +31,8 @@ try {
   await sidepanel.waitForTimeout(2000);
 
   // Check for authentication indicators
-  // Look for chat input (indicates authenticated)
-  const chatInput = await sidepanel.$('textarea, [contenteditable="true"]');
+  // Look for chat input (indicates authenticated) - Claude uses ProseMirror contenteditable
+  const chatInput = await sidepanel.$('[contenteditable="true"].ProseMirror, textarea');
   if (chatInput) {
     status.authenticated = true;
   }
@@ -51,8 +51,8 @@ try {
   }
 
   // Check if there are existing messages (conversation in progress)
-  const messages = await sidepanel.$$('[data-testid="message"], .message, [class*="Message"]');
-  status.hasConversation = messages.length > 0;
+  const responses = await sidepanel.$$('div.claude-response');
+  status.hasConversation = responses.length > 0;
 
   // Close the test page
   await sidepanel.close();

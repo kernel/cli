@@ -17,20 +17,20 @@ function emit(event) {
 }
 
 async function sendMessage(page, message) {
-  const textarea = await page.$('textarea, [contenteditable="true"]');
-  if (!textarea) {
+  const input = await page.$('[contenteditable="true"].ProseMirror, textarea');
+  if (!input) {
     emit({ type: 'error', message: 'Chat input not found' });
     return;
   }
 
-  // Get current message count
-  const messagesBefore = await page.$$('[data-testid="message"], .message, [class*="Message"]');
-  const countBefore = messagesBefore.length;
+  // Get current response count
+  const responsesBefore = await page.$$('div.claude-response');
+  const countBefore = responsesBefore.length;
 
   // Send the message
-  await textarea.click();
-  await textarea.fill('');
-  await textarea.fill(message);
+  await input.click();
+  await input.fill('');
+  await input.fill(message);
   await page.keyboard.press('Enter');
 
   // Stream the response
@@ -44,11 +44,11 @@ async function sendMessage(page, message) {
   while (Date.now() - startTime < TIMEOUT) {
     await page.waitForTimeout(CHECK_INTERVAL);
 
-    const messages = await page.$$('[data-testid="message"], .message, [class*="Message"]');
+    const responses = await page.$$('div.claude-response');
     
-    if (messages.length > countBefore) {
-      const lastMessage = messages[messages.length - 1];
-      const content = await lastMessage.textContent();
+    if (responses.length > countBefore) {
+      const lastResponse = responses[responses.length - 1];
+      const content = await lastResponse.textContent();
       
       // Emit chunk if content changed
       if (content !== lastContent) {
@@ -81,11 +81,12 @@ if (!sidepanel) {
 }
 
 // Check if authenticated
-const textarea = await sidepanel.waitForSelector('textarea, [contenteditable="true"]', {
+const inputSelector = '[contenteditable="true"].ProseMirror, textarea';
+const input = await sidepanel.waitForSelector(inputSelector, {
   timeout: 10000,
 }).catch(() => null);
 
-if (!textarea) {
+if (!input) {
   emit({ type: 'error', message: 'Claude extension not authenticated' });
   return { error: 'not authenticated' };
 }

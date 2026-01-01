@@ -29,22 +29,24 @@ if (!sidepanel) {
 }
 
 // Check if we're authenticated by looking for the chat input
-const textarea = await sidepanel.waitForSelector('textarea, [contenteditable="true"]', {
+// Claude uses a contenteditable div with ProseMirror
+const inputSelector = '[contenteditable="true"].ProseMirror, textarea';
+const input = await sidepanel.waitForSelector(inputSelector, {
   timeout: 10000,
 }).catch(() => null);
 
-if (!textarea) {
+if (!input) {
   throw new Error('Could not find chat input. The extension may not be authenticated.');
 }
 
-// Clear any existing text and type the new message
-await textarea.click();
-await textarea.fill('');
-await textarea.fill(message);
+// Get the current number of Claude responses before sending
+const responsesBefore = await sidepanel.$$('div.claude-response');
+const countBefore = responsesBefore.length;
 
-// Get the current number of message elements before sending
-const messagesBefore = await sidepanel.$$('[data-testid="message"], .message, [class*="Message"]');
-const countBefore = messagesBefore.length;
+// Clear any existing text and type the new message
+await input.click();
+await input.fill('');
+await input.fill(message);
 
 // Press Enter to send
 await sidepanel.keyboard.press('Enter');
@@ -60,13 +62,13 @@ const CHECK_INTERVAL = 500; // Check every 500ms
 while (Date.now() - startTime < timeoutMs) {
   await sidepanel.waitForTimeout(CHECK_INTERVAL);
 
-  // Find the latest assistant message
-  const messages = await sidepanel.$$('[data-testid="message"], .message, [class*="Message"]');
+  // Find Claude responses
+  const responses = await sidepanel.$$('div.claude-response');
   
-  if (messages.length > countBefore) {
-    // Get the last message (the response)
-    const lastMessage = messages[messages.length - 1];
-    const content = await lastMessage.textContent();
+  if (responses.length > countBefore) {
+    // Get the last response
+    const lastResponse = responses[responses.length - 1];
+    const content = await lastResponse.textContent();
     
     // Check if content has stabilized (streaming complete)
     if (content === lastContent && content.length > 0) {
