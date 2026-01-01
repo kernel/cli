@@ -45,7 +45,7 @@ func init() {
 	launchCmd.Flags().IntP("timeout", "t", 600, "Session timeout in seconds")
 	launchCmd.Flags().BoolP("stealth", "s", false, "Launch browser in stealth mode")
 	launchCmd.Flags().BoolP("headless", "H", false, "Launch browser in headless mode")
-	launchCmd.Flags().String("url", "https://claude.ai", "Initial URL to navigate to")
+	launchCmd.Flags().String("url", "", "Initial URL to navigate to (optional)")
 	launchCmd.Flags().Bool("chat", false, "Start interactive chat after launch")
 	launchCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25)")
 
