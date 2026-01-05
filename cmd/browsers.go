@@ -243,7 +243,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	}
 
 	// Prepare table data
-	headers := []string{"Browser ID", "Created At", "Persistent ID", "Profile", "CDP WS URL", "Live View URL"}
+	headers := []string{"Browser ID", "Created At", "Persistent ID", "Profile", "Pool", "CDP WS URL", "Live View URL"}
 	if in.IncludeDeleted {
 		headers = append(headers, "Deleted At")
 	}
@@ -262,11 +262,18 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 			profile = browser.Profile.ID
 		}
 
+		// Check for pool_id in ExtraFields (until SDK is updated with PoolID field)
+		poolID := "-"
+		if pf, ok := browser.JSON.ExtraFields["pool_id"]; ok && pf.Valid() {
+			poolID = "Pooled"
+		}
+
 		row := []string{
 			browser.SessionID,
 			util.FormatLocal(browser.CreatedAt),
 			persistentID,
 			profile,
+			poolID,
 			truncateURL(browser.CdpWsURL, 50),
 			truncateURL(browser.BrowserLiveViewURL, 50),
 		}
