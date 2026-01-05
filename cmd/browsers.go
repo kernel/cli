@@ -250,6 +250,9 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	tableData := pterm.TableData{headers}
 
 	for _, browser := range browsers {
+		// log the browser
+		pterm.Info.Println(browser)
+
 		persistentID := "-"
 		if browser.Persistence.ID != "" {
 			persistentID = browser.Persistence.ID
@@ -264,8 +267,8 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 
 		// Check for pool_id in ExtraFields (until SDK is updated with PoolID field)
 		poolID := "-"
-		if pf, ok := browser.JSON.ExtraFields["pool_id"]; ok && pf.Valid() {
-			poolID = "Pooled"
+		if browser.PoolID != "" {
+			poolID = browser.PoolID
 		}
 
 		row := []string{
@@ -370,17 +373,17 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
-	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Persistence, browser.Profile)
+	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.PoolID, browser.Persistence, browser.Profile)
 	return nil
 }
 
-func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, persistence kernel.BrowserPersistence, profile kernel.Profile) {
-	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, persistence, profile)
+func printBrowserSessionResult(sessionID, cdpURL, liveViewURL, poolID string, persistence kernel.BrowserPersistence, profile kernel.Profile) {
+	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, poolID, persistence, profile)
 	PrintTableNoPad(tableData, true)
 }
 
 // buildBrowserTableData creates a base table with common browser session fields.
-func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, persistence kernel.BrowserPersistence, profile kernel.Profile) pterm.TableData {
+func buildBrowserTableData(sessionID, cdpURL, liveViewURL, poolID string, persistence kernel.BrowserPersistence, profile kernel.Profile) pterm.TableData {
 	tableData := pterm.TableData{
 		{"Property", "Value"},
 		{"Session ID", sessionID},
@@ -398,6 +401,9 @@ func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, persistence ke
 			profVal = profile.ID
 		}
 		tableData = append(tableData, []string{"Profile", profVal})
+	}
+	if poolID != "" {
+		tableData = append(tableData, []string{"Pool ID", poolID})
 	}
 	return tableData
 }
@@ -504,6 +510,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		browser.SessionID,
 		browser.CdpWsURL,
 		browser.BrowserLiveViewURL,
+		browser.PoolID,
 		browser.Persistence,
 		browser.Profile,
 	)
@@ -2082,7 +2089,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 			pterm.Error.Println("Acquire request timed out (no browser available). Retry to continue waiting.")
 			return nil
 		}
-		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Persistence, resp.Profile)
+		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.PoolID, resp.Persistence, resp.Profile)
 		return nil
 	}
 
