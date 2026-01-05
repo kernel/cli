@@ -3,434 +3,269 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/onkernel/cli/pkg/util"
-	"github.com/onkernel/kernel-go-sdk"
+	kernel "github.com/onkernel/kernel-go-sdk"
 	"github.com/onkernel/kernel-go-sdk/option"
 	"github.com/pkg/browser"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
 
-// AgentsAuthService defines the subset of the Kernel SDK agent auth client that we use.
-type AgentsAuthService interface {
-	Start(ctx context.Context, body kernel.AgentsAuthStartParams, opts ...option.RequestOption) (res *kernel.AgentsAuthStartResponse, err error)
-	Retrieve(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.AgentsAuthRetrieveResponse, err error)
+// AgentAuthService defines the subset of the Kernel SDK agent auth client that we use.
+type AgentAuthService interface {
+	New(ctx context.Context, body kernel.AgentAuthNewParams, opts ...option.RequestOption) (*kernel.AuthAgent, error)
+	Get(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.AuthAgent, error)
+	Delete(ctx context.Context, id string, opts ...option.RequestOption) error
 }
 
-// AgentsAuthInvocationsService defines the subset we use for agent auth invocations.
-type AgentsAuthInvocationsService interface {
-	Retrieve(ctx context.Context, invocationId string, opts ...option.RequestOption) (res *kernel.AgentsAuthInvocationsRetrieveResponse, err error)
-	Exchange(ctx context.Context, invocationId string, body kernel.AgentsAuthInvocationsExchangeParams, opts ...option.RequestOption) (res *kernel.AgentsAuthInvocationsExchangeResponse, err error)
-	Discover(ctx context.Context, invocationId string, body kernel.AgentsAuthInvocationsDiscoverParams, opts ...option.RequestOption) (res *kernel.AgentsAuthInvocationsDiscoverResponse, err error)
-	Submit(ctx context.Context, invocationId string, body kernel.AgentsAuthInvocationsSubmitParams, opts ...option.RequestOption) (res *kernel.AgentsAuthInvocationsSubmitResponse, err error)
+// AgentAuthInvocationService defines the subset we use for agent auth invocations.
+type AgentAuthInvocationService interface {
+	New(ctx context.Context, body kernel.AgentAuthInvocationNewParams, opts ...option.RequestOption) (*kernel.AuthAgentInvocationCreateResponse, error)
+	Get(ctx context.Context, invocationID string, opts ...option.RequestOption) (*kernel.AgentAuthInvocationResponse, error)
 }
 
-type AgentsAuthStartInput struct {
-	TargetDomain string
-	ProfileName  string
-	LoginURL     string
-	ProxyID      string
-	Hosted       bool
-}
-
-type AgentsAuthStatusInput struct {
-	ID string
-}
-
-// AgentsAuthCmd handles agent auth operations independent of cobra.
-type AgentsAuthCmd struct {
-	auth        AgentsAuthService
-	invocations AgentsAuthInvocationsService
+// AgentAuthCmd handles agent auth operations.
+type AgentAuthCmd struct {
+	auth        AgentAuthService
+	invocations AgentAuthInvocationService
 	browsers    BrowsersService
 }
 
-func (a AgentsAuthCmd) Start(ctx context.Context, in AgentsAuthStartInput) error {
-	pterm.Info.Println("Starting agent authentication flow...")
-	pterm.Println(fmt.Sprintf("  Target domain: %s", in.TargetDomain))
-	pterm.Println(fmt.Sprintf("  Profile name: %s", in.ProfileName))
-	if in.LoginURL != "" {
-		pterm.Println(fmt.Sprintf("  Login URL: %s", in.LoginURL))
-	}
-	if in.ProxyID != "" {
-		pterm.Println(fmt.Sprintf("  Proxy ID: %s", in.ProxyID))
-	}
-	pterm.Println()
+// CreateInput holds input for creating an auth agent.
+type CreateInput struct {
+	Domain         string
+	ProfileName    string
+	CredentialName string
+	LoginURL       string
+	AllowedDomains []string
+}
 
-	params := kernel.AgentsAuthStartParams{
-		TargetDomain: in.TargetDomain,
-		ProfileName:  in.ProfileName,
-	}
-	if in.LoginURL != "" {
-		params.LoginURL = kernel.Opt(in.LoginURL)
-	}
-	if in.ProxyID != "" {
-		params.Proxy = kernel.AgentsAuthStartParamsProxy{
-			ProxyID: kernel.Opt(in.ProxyID),
-		}
+// Create creates a new auth agent.
+func (a AgentAuthCmd) Create(ctx context.Context, in CreateInput) error {
+	params := kernel.AgentAuthNewParams{
+		AuthAgentCreateRequest: kernel.AuthAgentCreateRequestParam{
+			Domain:      in.Domain,
+			ProfileName: in.ProfileName,
+		},
 	}
 
-	startResp, err := a.auth.Start(ctx, params)
+	if in.CredentialName != "" {
+		params.AuthAgentCreateRequest.CredentialName = kernel.Opt(in.CredentialName)
+	}
+	if in.LoginURL != "" {
+		params.AuthAgentCreateRequest.LoginURL = kernel.Opt(in.LoginURL)
+	}
+	if len(in.AllowedDomains) > 0 {
+		params.AuthAgentCreateRequest.AllowedDomains = in.AllowedDomains
+	}
+
+	agent, err := a.auth.New(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
-	pterm.Success.Println("Auth flow started successfully!")
-	pterm.Println(fmt.Sprintf("  Invocation ID: %s", startResp.InvocationID))
-	pterm.Println(fmt.Sprintf("  Auth Agent ID: %s", startResp.AuthAgentID))
-	pterm.Println()
-
-	if in.Hosted {
-		return a.handleHostedMode(ctx, startResp)
+	rows := pterm.TableData{{"Property", "Value"}}
+	rows = append(rows, []string{"ID", agent.ID})
+	rows = append(rows, []string{"Domain", agent.Domain})
+	rows = append(rows, []string{"Profile Name", agent.ProfileName})
+	rows = append(rows, []string{"Status", string(agent.Status)})
+	if agent.CredentialName != "" {
+		rows = append(rows, []string{"Credential", agent.CredentialName})
+	}
+	if len(agent.AllowedDomains) > 0 {
+		rows = append(rows, []string{"Allowed Domains", fmt.Sprintf("%v", agent.AllowedDomains)})
 	}
 
-	return a.handleInteractiveMode(ctx, startResp)
+	PrintTableNoPad(rows, true)
+	return nil
 }
 
-func (a AgentsAuthCmd) handleHostedMode(ctx context.Context, startResp *kernel.AgentsAuthStartResponse) error {
-	pterm.Info.Println("Hosted UI Mode")
-	pterm.Println(strings.Repeat("=", 60))
-	pterm.Println()
-	pterm.Println("Please open this URL in your browser:")
-	pterm.Println()
-	pterm.Println(fmt.Sprintf("  %s", startResp.HostedURL))
-	pterm.Println()
-	pterm.Println(strings.Repeat("=", 60))
-	pterm.Println()
+// InvokeInput holds input for starting an invocation.
+type InvokeInput struct {
+	AuthAgentID      string
+	SaveCredentialAs string
+	NoBrowser        bool
+}
 
-	// Try to open browser automatically
-	if err := browser.OpenURL(startResp.HostedURL); err != nil {
-		pterm.Warning.Printf("Could not open browser automatically: %v\n", err)
-		pterm.Info.Println("Please copy the URL above and open it manually.")
+// Invoke starts an auth invocation and handles the hosted UI flow.
+func (a AgentAuthCmd) Invoke(ctx context.Context, in InvokeInput) error {
+	params := kernel.AgentAuthInvocationNewParams{
+		AuthAgentInvocationCreateRequest: kernel.AuthAgentInvocationCreateRequestParam{
+			AuthAgentID: in.AuthAgentID,
+		},
 	}
 
-	// Wait for user to confirm they've opened it
-	pterm.DefaultInteractiveTextInput.DefaultText = "Press Enter once you've completed authentication in the browser..."
-	_, _ = pterm.DefaultInteractiveTextInput.Show()
+	if in.SaveCredentialAs != "" {
+		params.AuthAgentInvocationCreateRequest.SaveCredentialAs = kernel.Opt(in.SaveCredentialAs)
+	}
+
+	invocation, err := a.invocations.New(ctx, params)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	pterm.Info.Println("Invocation created")
+	pterm.Println(fmt.Sprintf("  Invocation ID: %s", invocation.InvocationID))
+	pterm.Println(fmt.Sprintf("  Type: %s", invocation.Type))
+	pterm.Println(fmt.Sprintf("  Expires: %s", invocation.ExpiresAt.Format(time.RFC3339)))
 	pterm.Println()
 
-	// Poll for completion
-	pterm.Info.Println("Polling for completion...")
-	pterm.Println("  Poll interval: 2s")
-	pterm.Println("  Max wait time: 5 minutes")
+	pterm.Info.Println("Open this URL in your browser to log in:")
 	pterm.Println()
+	pterm.Println(fmt.Sprintf("  %s", invocation.HostedURL))
+	pterm.Println()
+
+	if !in.NoBrowser {
+		if err := browser.OpenURL(invocation.HostedURL); err != nil {
+			pterm.Warning.Printf("Could not open browser automatically: %v\n", err)
+		} else {
+			pterm.Info.Println("(Opened in browser)")
+		}
+	}
+
+	pterm.Println()
+	pterm.Info.Println("Polling for completion...")
 
 	startTime := time.Now()
 	maxWaitTime := 5 * time.Minute
 	pollInterval := 2 * time.Second
 
 	for time.Since(startTime) < maxWaitTime {
-		invocation, err := a.invocations.Retrieve(ctx, startResp.InvocationID)
+		state, err := a.invocations.Get(ctx, invocation.InvocationID)
 		if err != nil {
 			return util.CleanedUpSdkError{Err: err}
 		}
 
 		elapsed := int(time.Since(startTime).Seconds())
-		pterm.Println(fmt.Sprintf("  [%ds] Status: %s", elapsed, invocation.Status))
+		pterm.Println(fmt.Sprintf("  [%ds] status=%s, step=%s", elapsed, state.Status, state.Step))
 
-		switch invocation.Status {
-		case kernel.AgentsAuthInvocationsRetrieveResponseStatusSuccess:
-			pterm.Println()
-			pterm.Success.Println("Success! Profile is ready.")
-			// Get profile name from auth agent
-			authAgent, err := a.auth.Retrieve(ctx, startResp.AuthAgentID)
-			if err != nil {
-				return util.CleanedUpSdkError{Err: err}
+		// Show live view URL on first poll
+		if state.LiveViewURL != "" && elapsed < 5 {
+			pterm.Println(fmt.Sprintf("    Live view: %s", state.LiveViewURL))
+		}
+
+		// Show pending fields if any
+		if len(state.PendingFields) > 0 {
+			var fieldNames []string
+			for _, f := range state.PendingFields {
+				fieldNames = append(fieldNames, f.Name)
 			}
-			return a.showSuccessAndOfferBrowser(ctx, startResp.AuthAgentID, authAgent.ProfileName)
-		case kernel.AgentsAuthInvocationsRetrieveResponseStatusExpired:
+			pterm.Println(fmt.Sprintf("    Fields: %v", fieldNames))
+		}
+
+		// Show SSO buttons if any
+		if len(state.PendingSSOButtons) > 0 {
+			var providers []string
+			for _, b := range state.PendingSSOButtons {
+				providers = append(providers, b.Provider)
+			}
+			pterm.Println(fmt.Sprintf("    SSO buttons: %v", providers))
+		}
+
+		// Show external action message
+		if state.Step == kernel.AgentAuthInvocationResponseStepAwaitingExternalAction && state.ExternalActionMessage != "" {
+			pterm.Warning.Printf("    External action required: %s\n", state.ExternalActionMessage)
+		}
+
+		switch state.Status {
+		case kernel.AgentAuthInvocationResponseStatusSuccess:
 			pterm.Println()
-			pterm.Error.Println("Error: Invocation expired before completion")
+			pterm.Success.Println("Login completed successfully!")
+
+			// Fetch and display the auth agent
+			agent, err := a.auth.Get(ctx, in.AuthAgentID)
+			if err != nil {
+				pterm.Warning.Printf("Could not fetch auth agent: %v\n", err)
+				return nil
+			}
+
+			pterm.Println()
+			pterm.Println(fmt.Sprintf("  Auth Agent: %s", agent.ID))
+			pterm.Println(fmt.Sprintf("  Profile: %s", agent.ProfileName))
+			pterm.Println(fmt.Sprintf("  Domain: %s", agent.Domain))
+			pterm.Println(fmt.Sprintf("  Status: %s", agent.Status))
+			if agent.CredentialName != "" {
+				pterm.Println(fmt.Sprintf("  Credential: %s", agent.CredentialName))
+			}
+
+			pterm.Println()
+			pterm.Info.Printf("You can now create browsers with profile: %s\n", agent.ProfileName)
 			return nil
-		case kernel.AgentsAuthInvocationsRetrieveResponseStatusCanceled:
+
+		case kernel.AgentAuthInvocationResponseStatusExpired:
 			pterm.Println()
-			pterm.Error.Println("Error: Invocation was canceled")
+			pterm.Error.Println("Invocation expired")
+			return nil
+
+		case kernel.AgentAuthInvocationResponseStatusCanceled:
+			pterm.Println()
+			pterm.Error.Println("Invocation was canceled")
+			return nil
+
+		case kernel.AgentAuthInvocationResponseStatusFailed:
+			pterm.Println()
+			pterm.Error.Println("Invocation failed")
+			if state.ErrorMessage != "" {
+				pterm.Error.Printf("  Error: %s\n", state.ErrorMessage)
+			}
 			return nil
 		}
 
 		time.Sleep(pollInterval)
 	}
 
-	pterm.Error.Println("Error: Polling timed out")
+	pterm.Error.Println("Polling timed out after 5 minutes")
 	return nil
 }
 
-func (a AgentsAuthCmd) handleInteractiveMode(ctx context.Context, startResp *kernel.AgentsAuthStartResponse) error {
-	pterm.Info.Println("Interactive Mode")
-	pterm.Println()
-
-	// Step 2: Exchange handoff code for JWT
-	pterm.Info.Println("Exchanging handoff code for JWT...")
-
-	exchangeResp, err := a.invocations.Exchange(ctx, startResp.InvocationID, kernel.AgentsAuthInvocationsExchangeParams{
-		Code: startResp.HandoffCode,
-	})
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-
-	jwt := exchangeResp.JWT
-	pterm.Success.Println("JWT obtained successfully!")
-	pterm.Println()
-
-	// Create JWT-authenticated client
-	client := getKernelClientFromJWT(jwt)
-	jwtInvocations := client.Agents.Auth.Invocations
-
-	// Step 3: Discover login fields
-	pterm.Info.Println("Discovering login fields...")
-	pterm.Println()
-
-	discoverParams := kernel.AgentsAuthInvocationsDiscoverParams{}
-	if startResp.LoginURL != nil && *startResp.LoginURL != "" {
-		discoverParams.LoginURL = kernel.Opt(*startResp.LoginURL)
-	}
-
-	discoverResp, err := jwtInvocations.Discover(ctx, startResp.InvocationID, discoverParams)
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-
-	if discoverResp.LoggedIn != nil && *discoverResp.LoggedIn {
-		pterm.Success.Println("Already logged in! Profile saved.")
-		// Get profile name from auth agent
-		authAgent, err := a.auth.Retrieve(ctx, startResp.AuthAgentID)
-		if err != nil {
-			return util.CleanedUpSdkError{Err: err}
-		}
-		return a.showSuccessAndOfferBrowser(ctx, startResp.AuthAgentID, authAgent.ProfileName)
-	}
-
-	if discoverResp.Success == nil || !*discoverResp.Success {
-		errorMsg := "Discovery failed"
-		if discoverResp.ErrorMessage != nil {
-			errorMsg = fmt.Sprintf("%s: %s", errorMsg, *discoverResp.ErrorMessage)
-		}
-		pterm.Error.Println(errorMsg)
-		return nil
-	}
-
-	pterm.Success.Println("Login fields discovered!")
-	if discoverResp.LoginURL != nil {
-		pterm.Println(fmt.Sprintf("  Login URL: %s", *discoverResp.LoginURL))
-	}
-	if discoverResp.PageTitle != nil {
-		pterm.Println(fmt.Sprintf("  Page title: %s", *discoverResp.PageTitle))
-	}
-	pterm.Println()
-
-	fields := discoverResp.Fields
-	if fields == nil || len(*fields) == 0 {
-		pterm.Error.Println("No fields discovered!")
-		return nil
-	}
-
-	pterm.Info.Println("Discovered fields:")
-	for _, field := range *fields {
-		label := "-"
-		if field.Label != nil {
-			label = *field.Label
-		}
-		pterm.Println(fmt.Sprintf("  - %s (type: %s, label: \"%s\")", field.Name, field.Type, label))
-	}
-	pterm.Println()
-
-	// Step 4: Collect credentials
-	pterm.Info.Println("Collecting credentials...")
-	pterm.Println()
-
-	userCredentials := make(map[string]string)
-	for _, field := range *fields {
-		fieldLabel := field.Name
-		if field.Label != nil && *field.Label != "" {
-			fieldLabel = *field.Label
-		}
-
-		isPassword := field.Type == "password" || strings.Contains(strings.ToLower(field.Name), "password")
-
-		if isPassword {
-			pterm.Warning.Println("  (Note: Password will be visible as you type)")
-		}
-
-		prompt := fmt.Sprintf("  Enter %s: ", fieldLabel)
-		value, err := pterm.DefaultInteractiveTextInput.WithDefaultText(prompt).Show()
-		if err != nil {
-			return fmt.Errorf("failed to read input: %w", err)
-		}
-		userCredentials[field.Name] = value
-	}
-
-	pterm.Println()
-
-	// Step 5: Submit credentials
-	pterm.Info.Println("Submitting credentials...")
-	pterm.Println()
-
-	fieldValues := make(map[string]string)
-	for _, field := range *fields {
-		if val, ok := userCredentials[field.Name]; ok {
-			fieldValues[field.Name] = val
-		}
-	}
-
-	submitResp, err := jwtInvocations.Submit(ctx, startResp.InvocationID, kernel.AgentsAuthInvocationsSubmitParams{
-		FieldValues: fieldValues,
-	})
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-
-	// Handle multi-step auth flows
-	for submitResp.NeedsAdditionalAuth != nil && *submitResp.NeedsAdditionalAuth {
-		if submitResp.AdditionalFields == nil || len(*submitResp.AdditionalFields) == 0 {
-			break
-		}
-
-		pterm.Info.Println("Additional authentication required!")
-		pterm.Info.Println("Additional fields:")
-		for _, field := range *submitResp.AdditionalFields {
-			label := "-"
-			if field.Label != nil {
-				label = *field.Label
-			}
-			pterm.Println(fmt.Sprintf("  - %s (type: %s, label: \"%s\")", field.Name, field.Type, label))
-		}
-		pterm.Println()
-
-		additionalValues := make(map[string]string)
-		for _, field := range *submitResp.AdditionalFields {
-			fieldLabel := field.Name
-			if field.Label != nil && *field.Label != "" {
-				fieldLabel = *field.Label
-			}
-
-			prompt := fmt.Sprintf("  Enter %s: ", fieldLabel)
-			value, err := pterm.DefaultInteractiveTextInput.WithDefaultText(prompt).Show()
-			if err != nil {
-				return fmt.Errorf("failed to read input: %w", err)
-			}
-			additionalValues[field.Name] = value
-		}
-
-		pterm.Println()
-		pterm.Info.Println("Submitting additional authentication...")
-
-		submitResp, err = jwtInvocations.Submit(ctx, startResp.InvocationID, kernel.AgentsAuthInvocationsSubmitParams{
-			FieldValues: additionalValues,
-		})
-		if err != nil {
-			return util.CleanedUpSdkError{Err: err}
-		}
-
-		pterm.Println()
-	}
-
-	// Check final result
-	if submitResp.LoggedIn != nil && *submitResp.LoggedIn {
-		// Get profile name from auth agent
-		authAgent, err := a.auth.Retrieve(ctx, startResp.AuthAgentID)
-		if err != nil {
-			return util.CleanedUpSdkError{Err: err}
-		}
-		return a.showSuccessAndOfferBrowser(ctx, startResp.AuthAgentID, authAgent.ProfileName)
-	}
-
-	if submitResp.ErrorMessage != nil {
-		pterm.Error.Println(strings.Repeat("=", 60))
-		pterm.Error.Println("LOGIN FAILED")
-		pterm.Error.Println(strings.Repeat("=", 60))
-		pterm.Error.Printf("Error: %s\n", *submitResp.ErrorMessage)
-		return nil
-	}
-
-	pterm.Error.Println("Unexpected state - not logged in but no error message")
-	return nil
+// GetInput holds input for getting an auth agent.
+type GetInput struct {
+	ID string
 }
 
-func (a AgentsAuthCmd) showSuccessAndOfferBrowser(ctx context.Context, authAgentID string, profileName string) error {
-	pterm.Success.Println(strings.Repeat("=", 60))
-	pterm.Success.Println("SUCCESS! Profile saved and ready for use.")
-	pterm.Success.Println(strings.Repeat("=", 60))
-	pterm.Println()
-
-	// Verify auth agent status
-	pterm.Info.Println("Verifying auth agent status...")
-	authAgent, err := a.auth.Retrieve(ctx, authAgentID)
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-
-	pterm.Println(fmt.Sprintf("  Auth Agent ID: %s", authAgent.ID))
-	pterm.Println(fmt.Sprintf("  Profile: %s", authAgent.ProfileName))
-	pterm.Println(fmt.Sprintf("  Domain: %s", authAgent.Domain))
-	pterm.Println(fmt.Sprintf("  Status: %s", authAgent.Status))
-
-	if authAgent.Status != kernel.AgentsAuthRetrieveResponseStatusAuthenticated {
-		pterm.Warning.Printf("Warning: Expected status AUTHENTICATED, got %s\n", authAgent.Status)
-	} else {
-		pterm.Success.Println("Auth agent status confirmed: AUTHENTICATED")
-	}
-	pterm.Println()
-
-	pterm.Info.Printf("You can now create browsers with profile: %s\n", profileName)
-	pterm.Println()
-
-	// Offer to create browser
-	pterm.DefaultInteractiveConfirm.DefaultText = "Would you like to create a browser with the saved profile? (y/n)"
-	result, _ := pterm.DefaultInteractiveConfirm.Show()
-
-	if result {
-		pterm.Println()
-		pterm.Info.Println("Creating browser with saved profile...")
-
-		if a.browsers == nil {
-			pterm.Warning.Println("Browser service not available")
-			return nil
-		}
-
-		browserResp, err := a.browsers.New(ctx, kernel.BrowserNewParams{
-			Stealth: kernel.Opt(true),
-			Profile: kernel.BrowserProfileParam{
-				Name: kernel.Opt(profileName),
-			},
-		})
-		if err != nil {
-			return util.CleanedUpSdkError{Err: err}
-		}
-
-		pterm.Success.Println("Browser created successfully!")
-		pterm.Println(fmt.Sprintf("  Session ID: %s", browserResp.SessionID))
-		pterm.Println(fmt.Sprintf("  CDP WebSocket URL: %s", browserResp.CdpWsURL))
-		if browserResp.BrowserLiveViewURL != "" {
-			pterm.Println(fmt.Sprintf("  Live View URL: %s", browserResp.BrowserLiveViewURL))
-		}
-		pterm.Println()
-	}
-
-	return nil
-}
-
-func (a AgentsAuthCmd) Status(ctx context.Context, in AgentsAuthStatusInput) error {
-	authAgent, err := a.auth.Retrieve(ctx, in.ID)
+// Get retrieves an auth agent by ID.
+func (a AgentAuthCmd) Get(ctx context.Context, in GetInput) error {
+	agent, err := a.auth.Get(ctx, in.ID)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
 	rows := pterm.TableData{{"Property", "Value"}}
-	rows = append(rows, []string{"ID", authAgent.ID})
-	rows = append(rows, []string{"Profile Name", authAgent.ProfileName})
-	rows = append(rows, []string{"Domain", authAgent.Domain})
-	rows = append(rows, []string{"Status", string(authAgent.Status)})
+	rows = append(rows, []string{"ID", agent.ID})
+	rows = append(rows, []string{"Domain", agent.Domain})
+	rows = append(rows, []string{"Profile Name", agent.ProfileName})
+	rows = append(rows, []string{"Status", string(agent.Status)})
+	if agent.CredentialName != "" {
+		rows = append(rows, []string{"Credential", agent.CredentialName})
+	}
+	if len(agent.AllowedDomains) > 0 {
+		rows = append(rows, []string{"Allowed Domains", fmt.Sprintf("%v", agent.AllowedDomains)})
+	}
+	rows = append(rows, []string{"Can Reauth", fmt.Sprintf("%t", agent.CanReauth)})
+	rows = append(rows, []string{"Has Selectors", fmt.Sprintf("%t", agent.HasSelectors)})
+	if !agent.LastAuthCheckAt.IsZero() {
+		rows = append(rows, []string{"Last Auth Check", agent.LastAuthCheckAt.Format(time.RFC3339)})
+	}
 
 	PrintTableNoPad(rows, true)
 	return nil
 }
 
-// getKernelClientFromJWT creates a new Kernel client with a JWT token
-func getKernelClientFromJWT(jwt string) kernel.Client {
-	return kernel.NewClient(option.WithAPIKey(jwt))
+// DeleteInput holds input for deleting an auth agent.
+type DeleteInput struct {
+	ID string
+}
+
+// Delete removes an auth agent.
+func (a AgentAuthCmd) Delete(ctx context.Context, in DeleteInput) error {
+	if err := a.auth.Delete(ctx, in.ID); err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	pterm.Success.Printf("Auth agent %s deleted\n", in.ID)
+	return nil
 }
 
 // --- Cobra wiring ---
@@ -443,68 +278,113 @@ var agentsCmd = &cobra.Command{
 
 var agentsAuthCmd = &cobra.Command{
 	Use:   "auth",
-	Short: "Manage agent authentication",
-	Long:  "Commands for managing agent authentication flows",
+	Short: "Manage auth agents",
+	Long:  "Commands for managing agent authentication",
 }
 
-var agentsAuthStartCmd = &cobra.Command{
-	Use:   "start",
-	Short: "Start an agent authentication flow",
-	Long:  "Start an interactive authentication flow for a website. Use --hosted to open the authentication flow in a browser.",
+var agentsAuthCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create an auth agent",
+	Long:  "Create a new auth agent for a domain and profile",
 	Args:  cobra.NoArgs,
-	RunE:  runAgentsAuthStart,
+	RunE:  runAgentsAuthCreate,
 }
 
-var agentsAuthStatusCmd = &cobra.Command{
-	Use:   "status <auth-agent-id>",
-	Short: "Get auth agent status",
+var agentsAuthInvokeCmd = &cobra.Command{
+	Use:   "invoke <auth-agent-id>",
+	Short: "Start an auth invocation",
+	Long:  "Start an authentication invocation using the hosted UI flow",
 	Args:  cobra.ExactArgs(1),
-	RunE:  runAgentsAuthStatus,
+	RunE:  runAgentsAuthInvoke,
+}
+
+var agentsAuthGetCmd = &cobra.Command{
+	Use:   "get <auth-agent-id>",
+	Short: "Get auth agent details",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runAgentsAuthGet,
+}
+
+var agentsAuthDeleteCmd = &cobra.Command{
+	Use:   "delete <auth-agent-id>",
+	Short: "Delete an auth agent",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runAgentsAuthDelete,
 }
 
 func init() {
-	agentsAuthCmd.AddCommand(agentsAuthStartCmd)
-	agentsAuthCmd.AddCommand(agentsAuthStatusCmd)
+	agentsAuthCmd.AddCommand(agentsAuthCreateCmd)
+	agentsAuthCmd.AddCommand(agentsAuthInvokeCmd)
+	agentsAuthCmd.AddCommand(agentsAuthGetCmd)
+	agentsAuthCmd.AddCommand(agentsAuthDeleteCmd)
 	agentsCmd.AddCommand(agentsAuthCmd)
 
-	agentsAuthStartCmd.Flags().String("target-domain", "", "Target domain to authenticate with (required)")
-	agentsAuthStartCmd.Flags().String("profile-name", "", "Profile name to use or create (required)")
-	agentsAuthStartCmd.Flags().String("login-url", "", "Optional login URL to skip discovery")
-	agentsAuthStartCmd.Flags().String("proxy-id", "", "Optional proxy ID to use")
-	agentsAuthStartCmd.Flags().Bool("hosted", false, "Use hosted UI mode (opens browser)")
+	// create flags
+	agentsAuthCreateCmd.Flags().String("domain", "", "Target domain to authenticate with (required)")
+	agentsAuthCreateCmd.Flags().String("profile-name", "", "Profile name to use or create (required)")
+	agentsAuthCreateCmd.Flags().String("credential-name", "", "Optional credential name to link")
+	agentsAuthCreateCmd.Flags().String("login-url", "", "Optional login URL to skip discovery")
+	agentsAuthCreateCmd.Flags().StringSlice("allowed-domains", nil, "Additional allowed domains for OAuth redirects")
+	_ = agentsAuthCreateCmd.MarkFlagRequired("domain")
+	_ = agentsAuthCreateCmd.MarkFlagRequired("profile-name")
 
-	_ = agentsAuthStartCmd.MarkFlagRequired("target-domain")
-	_ = agentsAuthStartCmd.MarkFlagRequired("profile-name")
+	// invoke flags
+	agentsAuthInvokeCmd.Flags().String("save-credential-as", "", "Save credentials under this name after successful login")
+	agentsAuthInvokeCmd.Flags().Bool("no-browser", false, "Don't automatically open browser")
 }
 
-func runAgentsAuthStart(cmd *cobra.Command, args []string) error {
+func runAgentsAuthCreate(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
-	targetDomain, _ := cmd.Flags().GetString("target-domain")
+
+	domain, _ := cmd.Flags().GetString("domain")
 	profileName, _ := cmd.Flags().GetString("profile-name")
+	credentialName, _ := cmd.Flags().GetString("credential-name")
 	loginURL, _ := cmd.Flags().GetString("login-url")
-	proxyID, _ := cmd.Flags().GetString("proxy-id")
-	hosted, _ := cmd.Flags().GetBool("hosted")
+	allowedDomains, _ := cmd.Flags().GetStringSlice("allowed-domains")
+
+	svc := client.Agents.Auth
+	a := AgentAuthCmd{auth: &svc}
+
+	return a.Create(cmd.Context(), CreateInput{
+		Domain:         domain,
+		ProfileName:    profileName,
+		CredentialName: credentialName,
+		LoginURL:       loginURL,
+		AllowedDomains: allowedDomains,
+	})
+}
+
+func runAgentsAuthInvoke(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+
+	saveCredentialAs, _ := cmd.Flags().GetString("save-credential-as")
+	noBrowser, _ := cmd.Flags().GetBool("no-browser")
 
 	svc := client.Agents.Auth
 	invocationsSvc := client.Agents.Auth.Invocations
-	browsersSvc := client.Browsers
-	a := AgentsAuthCmd{auth: &svc, invocations: &invocationsSvc, browsers: &browsersSvc}
+	a := AgentAuthCmd{auth: &svc, invocations: &invocationsSvc}
 
-	return a.Start(cmd.Context(), AgentsAuthStartInput{
-		TargetDomain: targetDomain,
-		ProfileName:  profileName,
-		LoginURL:     loginURL,
-		ProxyID:      proxyID,
-		Hosted:       hosted,
+	return a.Invoke(cmd.Context(), InvokeInput{
+		AuthAgentID:      args[0],
+		SaveCredentialAs: saveCredentialAs,
+		NoBrowser:        noBrowser,
 	})
 }
 
-func runAgentsAuthStatus(cmd *cobra.Command, args []string) error {
+func runAgentsAuthGet(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
-	svc := client.Agents.Auth
-	a := AgentsAuthCmd{auth: &svc}
 
-	return a.Status(cmd.Context(), AgentsAuthStatusInput{
-		ID: args[0],
-	})
+	svc := client.Agents.Auth
+	a := AgentAuthCmd{auth: &svc}
+
+	return a.Get(cmd.Context(), GetInput{ID: args[0]})
+}
+
+func runAgentsAuthDelete(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+
+	svc := client.Agents.Auth
+	a := AgentAuthCmd{auth: &svc}
+
+	return a.Delete(cmd.Context(), DeleteInput{ID: args[0]})
 }
