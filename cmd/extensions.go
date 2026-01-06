@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/kernel/cli/pkg/extensions"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
@@ -422,12 +423,30 @@ var extensionsUploadCmd = &cobra.Command{
 	},
 }
 
+var extensionsPrepareWebBotAuthCmd = &cobra.Command{
+	Use:   "prepare-web-bot-auth",
+	Short: "Prepare the Cloudflare web-bot-auth extension for Kernel",
+	Long: `Download, build, and prepare the Cloudflare web-bot-auth extension with Kernel-specific configurations.
+					This creates a directory ready to upload to Kernel.
+					The extension will be configured to use the kernel-images server to host update.xml and the extension.crx file.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		output, _ := cmd.Flags().GetString("output")
+		url, _ := cmd.Flags().GetString("url")
+		return extensions.PrepareWebBotAuth(cmd.Context(), extensions.ExtensionsPrepareWebBotAuthInput{
+			Output:  output,
+			HostURL: url,
+		})
+	},
+}
+
 func init() {
 	extensionsCmd.AddCommand(extensionsListCmd)
 	extensionsCmd.AddCommand(extensionsDeleteCmd)
 	extensionsCmd.AddCommand(extensionsDownloadCmd)
 	extensionsCmd.AddCommand(extensionsDownloadWebStoreCmd)
 	extensionsCmd.AddCommand(extensionsUploadCmd)
+	extensionsCmd.AddCommand(extensionsPrepareWebBotAuthCmd)
 
 	extensionsListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	extensionsDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
@@ -436,4 +455,7 @@ func init() {
 	extensionsDownloadWebStoreCmd.Flags().String("os", "", "Target OS: mac, win, or linux (default linux)")
 	extensionsUploadCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	extensionsUploadCmd.Flags().String("name", "", "Optional unique extension name")
+	extensionsPrepareWebBotAuthCmd.Flags().String("output", "./web-bot-auth", "Output directory for the prepared extension")
+	extensionsPrepareWebBotAuthCmd.Flags().String("url", "http://127.0.0.1:10001", "Base URL for update.xml and policy templates")
+	extensionsPrepareWebBotAuthCmd.Flags().String("version", "main", "GitHub branch or tag to download")
 }
