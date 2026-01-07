@@ -124,6 +124,7 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
   - `gemini-computer-use` - Implements a Gemini computer use agent (TypeScript only)
   - `openagi-computer-use` - OpenAGI Lux computer-use models (Python only)
   - `magnitude` - Magnitude framework sample (TypeScript only)
+  - `claude-agent-sdk` - Claude Agent SDK browser automation agent
 
 ### App Deployment
 
@@ -395,6 +396,9 @@ kernel create --name my-agent --language ts --template stagehand
 
 # Create a Python Computer Use app
 kernel create --name my-cu-app --language py --template anthropic-computer-use
+
+# Create a Claude Agent SDK app (TypeScript or Python)
+kernel create --name my-claude-agent --language ts --template claude-agent-sdk
 ```
 
 ### Deploy with environment variables
