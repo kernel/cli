@@ -168,8 +168,11 @@ func downloadAndExtractWebBotAuth(ctx context.Context) (browserExtDir string, cl
 	browserExtDir = filepath.Join(extractedDir, "examples", "browser-extension")
 
 	// Verify the browser-extension directory exists
-	if _, err := os.Stat(browserExtDir); os.IsNotExist(err) {
-		return "", cleanup, fmt.Errorf("browser-extension directory not found in archive")
+	if _, err := os.Stat(browserExtDir); err != nil {
+		if os.IsNotExist(err) {
+			return "", cleanup, fmt.Errorf("browser-extension directory not found in archive")
+		}
+		return "", cleanup, fmt.Errorf("failed to access browser-extension directory: %w", err)
 	}
 
 	return browserExtDir, cleanup, nil
