@@ -39,7 +39,7 @@ brews:
       system "#{bin}/kernel", "--version"
 
 npms:
-  - name: "@kernel/cli"
+  - name: "@onkernel/cli"
     repository: "https://github.com/kernel"
     bugs: https://github.com/kernel/cli/issues
     description: Kernel CLI

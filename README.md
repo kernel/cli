@@ -36,10 +36,10 @@ Install the Kernel CLI using your favorite package manager:
 brew install onkernel/tap/kernel
 
 # Using pnpm
-pnpm install -g @kernel/cli
+pnpm install -g @onkernel/cli
 
 # Using npm
-npm install -g @kernel/cli
+npm install -g @onkernel/cli
 ```
 
 Verify the installation:
