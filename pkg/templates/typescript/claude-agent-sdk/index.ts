@@ -297,7 +297,6 @@ async function installClaudeCode(): Promise<void> {
  *   kernel login  # or: export KERNEL_API_KEY=<your_api_key>
  *   kernel deploy index.ts --env-file .env
  *   kernel invoke ts-claude-agent-sdk agent-task -p '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'
- *   kernel logs ts-claude-agent-sdk -f  # Open in separate tab
  */
 app.action<AgentInput, AgentOutput>(
   "agent-task",

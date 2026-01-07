@@ -45,7 +45,7 @@ npms:
     description: Kernel CLI
     homepage: https://www.kernel.sh/docs
     license: MIT
-    author: "Rafael Garcia <raf@onkernel.com>"
+    author: "Rafael Garcia <raf@kernel.sh>"
     access: public
     keywords:
       - kernel

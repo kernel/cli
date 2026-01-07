@@ -74,11 +74,8 @@ kernel login
 # Deploy the app with environment variables
 kernel deploy index.ts --env-file .env
 
-# Invoke the action
+# Invoke the action (logs stream automatically)
 kernel invoke ts-claude-agent-sdk agent-task -p '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'
-
-# Watch logs in a separate terminal
-kernel logs ts-claude-agent-sdk -f
 ```
 
 ## How It Works

@@ -74,11 +74,8 @@ kernel login
 # Deploy the app with environment variables
 kernel deploy main.py --env-file .env
 
-# Invoke the action
+# Invoke the action (logs stream automatically)
 kernel invoke py-claude-agent-sdk agent-task -p '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'
-
-# Watch logs in a separate terminal
-kernel logs py-claude-agent-sdk -f
 ```
 
 ## How It Works

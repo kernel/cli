@@ -288,7 +288,6 @@ async def agent_task(
         kernel login  # or: export KERNEL_API_KEY=<your_api_key>
         kernel deploy main.py --env-file .env
         kernel invoke py-claude-agent-sdk agent-task -p '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'
-        kernel logs py-claude-agent-sdk -f  # Open in separate tab
 
     Args:
         ctx: Kernel context containing invocation information
