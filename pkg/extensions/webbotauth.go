@@ -177,6 +177,9 @@ func downloadAndExtractWebBotAuth(ctx context.Context) (browserExtDir string, cl
 
 // buildWebBotAuthExtension modifies templates, builds the extension, and returns the extension ID
 func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL string) (string, error) {
+	// Normalize hostURL by removing trailing slashes to prevent double slashes in URLs
+	hostURL = strings.TrimRight(hostURL, "/")
+
 	// Modify template files
 	pterm.Info.Println("Modifying templates with host URL...")
 
