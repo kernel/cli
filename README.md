@@ -21,6 +21,7 @@ Kernel provides sandboxed, ready-to-use Chrome browsers for browser automations 
 
 ### What you can do with the CLI
 
+- Create new Kernel applications from templates
 - Deploy and version apps to Kernel
 - Invoke app actions (sync or async) and stream logs
 - Create, list, view, and delete managed browser sessions
@@ -50,19 +51,25 @@ kernel --version
 
 ## Quick Start
 
-1. **Authenticate with Kernel:**
+1. **Create a new Kernel app:**
+
+   ```bash
+   kernel create
+   ```
+
+2. **Authenticate with Kernel:**
 
    ```bash
    kernel login
    ```
 
-2. **Deploy your first app:**
+3. **Deploy your app:**
 
    ```bash
    kernel deploy index.ts
    ```
 
-3. **Invoke your app:**
+4. **Invoke your app:**
    ```bash
    kernel invoke my-app action-name --payload '{"key": "value"}'
    ```
@@ -102,6 +109,21 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
 - `kernel login [--force]` - Login via OAuth 2.0
 - `kernel logout` - Clear stored credentials
 - `kernel auth` - Check authentication status
+
+### App Creation
+
+- `--name <name>`, `-n` - Name of the application
+- `--language <language>`, `-l` - Sepecify app language: `typescript`, or `python`
+- `--template <template>`, `-t` - Template to use:
+  - `sample-app` - Basic template with Playwright integration
+  - `captcha-solver` - Template demonstrating Kernel's auto-CAPTCHA solver
+  - `stagehand` - Template with Stagehand SDK (TypeScript only)
+  - `browser-use` - Template with Browser Use SDK (Python only)
+  - `anthropic-computer-use` - Anthropic Computer Use prompt loop
+  - `openai-computer-use` - OpenAI Computer Use Agent sample
+  - `gemini-computer-use` - Implements a Gemini computer use agent (TypeScript only)
+  - `openagi-computer-use` - OpenAGI Lux computer-use models (Python only)
+  - `magnitude` - Magnitude framework sample (TypeScript only)
 
 ### App Deployment
 
@@ -355,6 +377,25 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
   - `-y, --yes` - Skip confirmation prompt
 
 ## Examples
+
+### Create a new app
+
+```bash
+# Interactive mode (prompts for all options)
+kernel create
+
+# Create a TypeScript app with sample template
+kernel create --name my-app --language typescript --template sample-app
+
+# Create a Python app with Browser Use
+kernel create --name my-scraper --language python --template browser-use
+
+# Create a TypeScript app with Stagehand
+kernel create --name my-agent --language ts --template stagehand
+
+# Create a Python Computer Use app
+kernel create --name my-cu-app --language py --template anthropic-computer-use
+```
 
 ### Deploy with environment variables
 

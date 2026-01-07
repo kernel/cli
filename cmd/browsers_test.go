@@ -54,11 +54,19 @@ func setupStdoutCapture(t *testing.T) {
 
 // FakeBrowsersService is a configurable fake implementing BrowsersService.
 type FakeBrowsersService struct {
+	GetFunc            func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error)
 	ListFunc           func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error)
 	NewFunc            func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error)
 	DeleteFunc         func(ctx context.Context, body kernel.BrowserDeleteParams, opts ...option.RequestOption) error
 	DeleteByIDFunc     func(ctx context.Context, id string, opts ...option.RequestOption) error
 	LoadExtensionsFunc func(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) error
+}
+
+func (f *FakeBrowsersService) Get(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+	if f.GetFunc != nil {
+		return f.GetFunc(ctx, id, opts...)
+	}
+	return nil, errors.New("not found")
 }
 
 func (f *FakeBrowsersService) List(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
@@ -103,6 +111,21 @@ func TestBrowsersList_PrintsEmptyMessage(t *testing.T) {
 		ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
 			empty := []kernel.BrowserListResponse{}
 			return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: empty}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+	_ = b.List(context.Background(), BrowsersListInput{})
+
+	out := outBuf.String()
+	assert.Contains(t, out, "No running browsers found")
+}
+
+func TestBrowsersList_PrintsEmptyMessagePageIsNil(t *testing.T) {
+	setupStdoutCapture(t)
+
+	fake := &FakeBrowsersService{
+		ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
+			return nil, nil
 		},
 	}
 	b := BrowsersCmd{browsers: fake}
@@ -252,67 +275,181 @@ func TestBrowsersDelete_SkipConfirm_Failure(t *testing.T) {
 func TestBrowsersDelete_WithConfirm_NotFound(t *testing.T) {
 	setupStdoutCapture(t)
 
-	list := []kernel.BrowserListResponse{{SessionID: "s-1", Persistence: kernel.BrowserPersistence{ID: "p-1"}}}
-	fake := &FakeBrowsersService{
-		ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-			return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: list}, nil
-		},
-	}
+	fake := &FakeBrowsersService{}
 	b := BrowsersCmd{browsers: fake}
-	_ = b.Delete(context.Background(), BrowsersDeleteInput{Identifier: "missing", SkipConfirm: false})
+	err := b.Delete(context.Background(), BrowsersDeleteInput{Identifier: "missing", SkipConfirm: false})
 
-	out := outBuf.String()
-	assert.Contains(t, out, "Browser 'missing' not found")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
 }
 
 func TestBrowsersView_ByID_PrintsURL(t *testing.T) {
+	// Capture both pterm output and raw stdout
+	setupStdoutCapture(t)
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	t.Cleanup(func() {
+		os.Stdout = oldStdout
+	})
+
+	fake := &FakeBrowsersService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			return &kernel.BrowserGetResponse{
+				SessionID:          "abc",
+				BrowserLiveViewURL: "http://live-url",
+			}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+	_ = b.View(context.Background(), BrowsersViewInput{Identifier: "abc"})
+
+	// Capture stdout
+	w.Close()
+	var stdoutBuf bytes.Buffer
+	io.Copy(&stdoutBuf, r)
+
+	assert.Contains(t, stdoutBuf.String(), "http://live-url")
+}
+
+func TestBrowsersView_NotFound(t *testing.T) {
 	setupStdoutCapture(t)
 
-	list := []kernel.BrowserListResponse{{
-		SessionID:          "abc",
-		BrowserLiveViewURL: "http://live-url",
-	}}
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+	err := b.View(context.Background(), BrowsersViewInput{Identifier: "missing"})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestBrowsersView_HeadlessBrowser_ShowsWarning(t *testing.T) {
+	setupStdoutCapture(t)
+
 	fake := &FakeBrowsersService{
-		ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-			return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: list}, nil
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			return &kernel.BrowserGetResponse{
+				SessionID:          "abc",
+				Headless:           true,
+				BrowserLiveViewURL: "",
+			}, nil
 		},
 	}
 	b := BrowsersCmd{browsers: fake}
 	_ = b.View(context.Background(), BrowsersViewInput{Identifier: "abc"})
 
 	out := outBuf.String()
-	assert.Contains(t, out, "http://live-url")
+	assert.Contains(t, out, "headless mode")
 }
 
-func TestBrowsersView_NotFound_ByEither(t *testing.T) {
-	setupStdoutCapture(t)
-
-	list := []kernel.BrowserListResponse{{SessionID: "abc", Persistence: kernel.BrowserPersistence{ID: "pid-xyz"}}}
-	fake := &FakeBrowsersService{
-		ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-			return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: list}, nil
-		},
-	}
-	b := BrowsersCmd{browsers: fake}
-	_ = b.View(context.Background(), BrowsersViewInput{Identifier: "missing"})
-
-	out := outBuf.String()
-	assert.Contains(t, out, "Browser 'missing' not found")
-}
-
-func TestBrowsersView_PrintsErrorOnListFailure(t *testing.T) {
+func TestBrowsersView_PrintsErrorOnGetFailure(t *testing.T) {
 	setupStdoutCapture(t)
 
 	fake := &FakeBrowsersService{
-		ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-			return nil, errors.New("list error")
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			return nil, errors.New("get error")
 		},
 	}
 	b := BrowsersCmd{browsers: fake}
 	err := b.View(context.Background(), BrowsersViewInput{Identifier: "any"})
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "list error")
+	assert.Contains(t, err.Error(), "get error")
+}
+
+func TestBrowsersGet_PrintsDetails(t *testing.T) {
+	setupStdoutCapture(t)
+
+	created := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+	fake := &FakeBrowsersService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			return &kernel.BrowserGetResponse{
+				SessionID:          "sess-123",
+				CdpWsURL:           "ws://cdp-url",
+				BrowserLiveViewURL: "http://live-view",
+				CreatedAt:          created,
+				TimeoutSeconds:     300,
+				Headless:           false,
+				Stealth:            true,
+				KioskMode:          false,
+				Viewport:           shared.BrowserViewport{Width: 1920, Height: 1080, RefreshRate: 25},
+				Persistence:        kernel.BrowserPersistence{ID: "persist-id"},
+				Profile:            kernel.Profile{ID: "prof-id", Name: "my-profile"},
+				ProxyID:            "proxy-123",
+			}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+	_ = b.Get(context.Background(), BrowsersGetInput{Identifier: "sess-123"})
+
+	out := outBuf.String()
+	assert.Contains(t, out, "sess-123")
+	assert.Contains(t, out, "ws://cdp-url")
+	assert.Contains(t, out, "http://live-view")
+	assert.Contains(t, out, "300")
+	assert.Contains(t, out, "false") // Headless
+	assert.Contains(t, out, "true")  // Stealth
+	assert.Contains(t, out, "1920x1080@25")
+	assert.Contains(t, out, "persist-id")
+	assert.Contains(t, out, "my-profile")
+	assert.Contains(t, out, "proxy-123")
+}
+
+func TestBrowsersGet_JSONOutput(t *testing.T) {
+	// Capture both pterm output and raw stdout
+	setupStdoutCapture(t)
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	t.Cleanup(func() {
+		os.Stdout = oldStdout
+	})
+
+	fake := &FakeBrowsersService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			return &kernel.BrowserGetResponse{
+				SessionID: "sess-json",
+				CdpWsURL:  "ws://cdp",
+			}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+	_ = b.Get(context.Background(), BrowsersGetInput{Identifier: "sess-json", Output: "json"})
+
+	// Capture stdout
+	w.Close()
+	var stdoutBuf bytes.Buffer
+	io.Copy(&stdoutBuf, r)
+
+	out := stdoutBuf.String()
+	assert.Contains(t, out, "\"session_id\"")
+	assert.Contains(t, out, "sess-json")
+}
+
+func TestBrowsersGet_NotFound(t *testing.T) {
+	setupStdoutCapture(t)
+
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+	err := b.Get(context.Background(), BrowsersGetInput{Identifier: "missing"})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestBrowsersGet_Error(t *testing.T) {
+	setupStdoutCapture(t)
+
+	fake := &FakeBrowsersService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			return nil, errors.New("get failed")
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+	err := b.Get(context.Background(), BrowsersGetInput{Identifier: "any"})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "get failed")
 }
 
 // --- Fakes for sub-services ---
@@ -589,12 +726,18 @@ func (f *FakeComputerService) SetCursorVisibility(ctx context.Context, id string
 
 // --- Tests for Logs ---
 
+// newFakeBrowsersServiceWithSimpleGet returns a FakeBrowsersService with a GetFunc that returns a browser with SessionID "id".
+func newFakeBrowsersServiceWithSimpleGet() *FakeBrowsersService {
+	return &FakeBrowsersService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			return &kernel.BrowserGetResponse{SessionID: "id"}, nil
+		},
+	}
+}
+
 func TestBrowsersLogsStream_PrintsEvents(t *testing.T) {
 	setupStdoutCapture(t)
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, logs: &FakeLogService{}}
 	_ = b.LogsStream(context.Background(), BrowsersLogsStreamInput{Identifier: "id", Source: string(kernel.BrowserLogStreamParamsSourcePath), Follow: BoolFlag{Set: true, Value: true}, Path: "/var/log.txt"})
 	out := outBuf.String()
@@ -611,10 +754,7 @@ func TestBrowsersReplaysList_PrintsRows(t *testing.T) {
 	fake := &FakeReplaysService{ListFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*[]kernel.BrowserReplayListResponse, error) {
 		return &replays, nil
 	}}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, replays: fake}
 	_ = b.ReplaysList(context.Background(), BrowsersReplaysListInput{Identifier: "id"})
 	out := outBuf.String()
@@ -627,10 +767,7 @@ func TestBrowsersReplaysStart_PrintsInfo(t *testing.T) {
 	fake := &FakeReplaysService{StartFunc: func(ctx context.Context, id string, body kernel.BrowserReplayStartParams, opts ...option.RequestOption) (*kernel.BrowserReplayStartResponse, error) {
 		return &kernel.BrowserReplayStartResponse{ReplayID: "rid", ReplayViewURL: "http://view", StartedAt: time.Unix(0, 0)}, nil
 	}}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, replays: fake}
 	_ = b.ReplaysStart(context.Background(), BrowsersReplaysStartInput{Identifier: "id", Framerate: 30, MaxDurationSeconds: 60})
 	out := outBuf.String()
@@ -641,10 +778,7 @@ func TestBrowsersReplaysStart_PrintsInfo(t *testing.T) {
 func TestBrowsersReplaysStop_PrintsSuccess(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeReplaysService{}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, replays: fake}
 	_ = b.ReplaysStop(context.Background(), BrowsersReplaysStopInput{Identifier: "id", ReplayID: "rid"})
 	out := outBuf.String()
@@ -658,10 +792,7 @@ func TestBrowsersReplaysDownload_SavesFile(t *testing.T) {
 	fake := &FakeReplaysService{DownloadFunc: func(ctx context.Context, replayID string, query kernel.BrowserReplayDownloadParams, opts ...option.RequestOption) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"video/mp4"}}, Body: io.NopCloser(strings.NewReader("mp4data"))}, nil
 	}}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, replays: fake}
 	_ = b.ReplaysDownload(context.Background(), BrowsersReplaysDownloadInput{Identifier: "id", ReplayID: "rid", Output: outPath})
 	data, err := os.ReadFile(outPath)
@@ -674,10 +805,7 @@ func TestBrowsersReplaysDownload_SavesFile(t *testing.T) {
 func TestBrowsersProcessExec_PrintsSummary(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeProcessService{}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, process: fake}
 	_ = b.ProcessExec(context.Background(), BrowsersProcessExecInput{Identifier: "id", Command: "echo"})
 	out := outBuf.String()
@@ -688,10 +816,7 @@ func TestBrowsersProcessExec_PrintsSummary(t *testing.T) {
 func TestBrowsersProcessSpawn_PrintsInfo(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeProcessService{}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, process: fake}
 	_ = b.ProcessSpawn(context.Background(), BrowsersProcessSpawnInput{Identifier: "id", Command: "sleep"})
 	out := outBuf.String()
@@ -702,10 +827,7 @@ func TestBrowsersProcessSpawn_PrintsInfo(t *testing.T) {
 func TestBrowsersProcessKill_PrintsSuccess(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeProcessService{}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, process: fake}
 	_ = b.ProcessKill(context.Background(), BrowsersProcessKillInput{Identifier: "id", ProcessID: "proc", Signal: "TERM"})
 	out := outBuf.String()
@@ -715,10 +837,7 @@ func TestBrowsersProcessKill_PrintsSuccess(t *testing.T) {
 func TestBrowsersProcessStatus_PrintsFields(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeProcessService{}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, process: fake}
 	_ = b.ProcessStatus(context.Background(), BrowsersProcessStatusInput{Identifier: "id", ProcessID: "proc"})
 	out := outBuf.String()
@@ -730,10 +849,7 @@ func TestBrowsersProcessStatus_PrintsFields(t *testing.T) {
 func TestBrowsersProcessStdin_PrintsSuccess(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeProcessService{}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, process: fake}
 	_ = b.ProcessStdin(context.Background(), BrowsersProcessStdinInput{Identifier: "id", ProcessID: "proc", DataB64: "ZGF0YQ=="})
 	out := outBuf.String()
@@ -743,10 +859,7 @@ func TestBrowsersProcessStdin_PrintsSuccess(t *testing.T) {
 func TestBrowsersProcessStdoutStream_PrintsExit(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeProcessService{}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, process: fake}
 	_ = b.ProcessStdoutStream(context.Background(), BrowsersProcessStdoutStreamInput{Identifier: "id", ProcessID: "proc"})
 	out := outBuf.String()
@@ -758,10 +871,7 @@ func TestBrowsersProcessStdoutStream_PrintsExit(t *testing.T) {
 func TestBrowsersFSNewDirectory_PrintsSuccess(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeFSService{}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, fs: fake}
 	_ = b.FSNewDirectory(context.Background(), BrowsersFSNewDirInput{Identifier: "id", Path: "/tmp/x"})
 	out := outBuf.String()
@@ -771,10 +881,7 @@ func TestBrowsersFSNewDirectory_PrintsSuccess(t *testing.T) {
 func TestBrowsersFSDeleteDirectory_PrintsSuccess(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeFSService{}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, fs: fake}
 	_ = b.FSDeleteDirectory(context.Background(), BrowsersFSDeleteDirInput{Identifier: "id", Path: "/tmp/x"})
 	out := outBuf.String()
@@ -784,10 +891,7 @@ func TestBrowsersFSDeleteDirectory_PrintsSuccess(t *testing.T) {
 func TestBrowsersFSDeleteFile_PrintsSuccess(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeFSService{}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, fs: fake}
 	_ = b.FSDeleteFile(context.Background(), BrowsersFSDeleteFileInput{Identifier: "id", Path: "/tmp/file"})
 	out := outBuf.String()
@@ -798,10 +902,7 @@ func TestBrowsersFSDownloadDirZip_SavesFile(t *testing.T) {
 	dir := t.TempDir()
 	outPath := filepath.Join(dir, "out.zip")
 	fake := &FakeFSService{}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, fs: fake}
 	_ = b.FSDownloadDirZip(context.Background(), BrowsersFSDownloadDirZipInput{Identifier: "id", Path: "/tmp", Output: outPath})
 	data, err := os.ReadFile(outPath)
@@ -814,10 +915,7 @@ func TestBrowsersFSFileInfo_PrintsFields(t *testing.T) {
 	fake := &FakeFSService{FileInfoFunc: func(ctx context.Context, id string, query kernel.BrowserFFileInfoParams, opts ...option.RequestOption) (*kernel.BrowserFFileInfoResponse, error) {
 		return &kernel.BrowserFFileInfoResponse{Path: "/tmp/a", Name: "a", Mode: "-rw-r--r--", IsDir: false, SizeBytes: 1, ModTime: time.Unix(0, 0)}, nil
 	}}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, fs: fake}
 	_ = b.FSFileInfo(context.Background(), BrowsersFSFileInfoInput{Identifier: "id", Path: "/tmp/a"})
 	out := outBuf.String()
@@ -828,10 +926,7 @@ func TestBrowsersFSFileInfo_PrintsFields(t *testing.T) {
 func TestBrowsersFSListFiles_PrintsRows(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeFSService{}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, fs: fake}
 	_ = b.FSListFiles(context.Background(), BrowsersFSListFilesInput{Identifier: "id", Path: "/"})
 	out := outBuf.String()
@@ -842,10 +937,7 @@ func TestBrowsersFSListFiles_PrintsRows(t *testing.T) {
 func TestBrowsersFSMove_PrintsSuccess(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeFSService{}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, fs: fake}
 	_ = b.FSMove(context.Background(), BrowsersFSMoveInput{Identifier: "id", SrcPath: "/a", DestPath: "/b"})
 	out := outBuf.String()
@@ -856,10 +948,7 @@ func TestBrowsersFSReadFile_SavesFile(t *testing.T) {
 	dir := t.TempDir()
 	outPath := filepath.Join(dir, "file.txt")
 	fake := &FakeFSService{}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, fs: fake}
 	_ = b.FSReadFile(context.Background(), BrowsersFSReadFileInput{Identifier: "id", Path: "/tmp/x", Output: outPath})
 	data, err := os.ReadFile(outPath)
@@ -870,10 +959,7 @@ func TestBrowsersFSReadFile_SavesFile(t *testing.T) {
 func TestBrowsersFSSetPermissions_PrintsSuccess(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeFSService{}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, fs: fake}
 	_ = b.FSSetPermissions(context.Background(), BrowsersFSSetPermsInput{Identifier: "id", Path: "/tmp/a", Mode: "644"})
 	out := outBuf.String()
@@ -887,10 +973,7 @@ func TestBrowsersFSUpload_MappingAndDestDir_Success(t *testing.T) {
 		captured = body
 		return nil
 	}}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, fs: fake}
 	in := BrowsersFSUploadInput{Identifier: "id", Mappings: []struct {
 		Local string
@@ -908,10 +991,7 @@ func TestBrowsersFSUploadZip_Success(t *testing.T) {
 	fake := &FakeFSService{UploadZipFunc: func(ctx context.Context, id string, body kernel.BrowserFUploadZipParams, opts ...option.RequestOption) error {
 		return nil
 	}}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, fs: fake}
 	_ = b.FSUploadZip(context.Background(), BrowsersFSUploadZipInput{Identifier: "id", ZipPath: z, DestDir: "/dst"})
 	out := outBuf.String()
@@ -923,10 +1003,7 @@ func TestBrowsersFSWriteFile_FromBase64_And_FromInput(t *testing.T) {
 	fake := &FakeFSService{WriteFileFunc: func(ctx context.Context, id string, contents io.Reader, body kernel.BrowserFWriteFileParams, opts ...option.RequestOption) error {
 		return nil
 	}}
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	b := BrowsersCmd{browsers: fakeBrowsers, fs: fake}
 	// input mode
 	p := __writeTempFile(t, "hello")
@@ -950,10 +1027,7 @@ func __writeTempFile(t *testing.T, data string) string {
 
 func TestBrowsersComputerClickMouse_PrintsSuccess(t *testing.T) {
 	setupStdoutCapture(t)
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	fakeComp := &FakeComputerService{}
 	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
 	_ = b.ComputerClickMouse(context.Background(), BrowsersComputerClickMouseInput{Identifier: "id", X: 10, Y: 20, NumClicks: 2, Button: string(kernel.BrowserComputerClickMouseParamsButtonLeft), ClickType: string(kernel.BrowserComputerClickMouseParamsClickTypeClick), HoldKeys: []string{"shift"}})
@@ -963,10 +1037,7 @@ func TestBrowsersComputerClickMouse_PrintsSuccess(t *testing.T) {
 
 func TestBrowsersComputerMoveMouse_PrintsSuccess(t *testing.T) {
 	setupStdoutCapture(t)
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	fakeComp := &FakeComputerService{}
 	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
 	_ = b.ComputerMoveMouse(context.Background(), BrowsersComputerMoveMouseInput{Identifier: "id", X: 5, Y: 6})
@@ -978,10 +1049,7 @@ func TestBrowsersComputerScreenshot_SavesFile(t *testing.T) {
 	setupStdoutCapture(t)
 	dir := t.TempDir()
 	outPath := filepath.Join(dir, "shot.png")
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	fakeComp := &FakeComputerService{CaptureScreenshotFunc: func(ctx context.Context, id string, body kernel.BrowserComputerCaptureScreenshotParams, opts ...option.RequestOption) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"image/png"}}, Body: io.NopCloser(strings.NewReader("pngDATA"))}, nil
 	}}
@@ -994,10 +1062,7 @@ func TestBrowsersComputerScreenshot_SavesFile(t *testing.T) {
 
 func TestBrowsersComputerPressKey_PrintsSuccess(t *testing.T) {
 	setupStdoutCapture(t)
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	fakeComp := &FakeComputerService{}
 	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
 	_ = b.ComputerPressKey(context.Background(), BrowsersComputerPressKeyInput{Identifier: "id", Keys: []string{"Return", "Shift"}, Duration: 25, HoldKeys: []string{"Ctrl"}})
@@ -1007,10 +1072,7 @@ func TestBrowsersComputerPressKey_PrintsSuccess(t *testing.T) {
 
 func TestBrowsersComputerScroll_PrintsSuccess(t *testing.T) {
 	setupStdoutCapture(t)
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	fakeComp := &FakeComputerService{}
 	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
 	_ = b.ComputerScroll(context.Background(), BrowsersComputerScrollInput{Identifier: "id", X: 100, Y: 200, DeltaY: 120, DeltaYSet: true})
@@ -1020,10 +1082,7 @@ func TestBrowsersComputerScroll_PrintsSuccess(t *testing.T) {
 
 func TestBrowsersComputerDragMouse_PrintsSuccess(t *testing.T) {
 	setupStdoutCapture(t)
-	fakeBrowsers := &FakeBrowsersService{ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-		rows := []kernel.BrowserListResponse{{SessionID: "id"}}
-		return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: rows}, nil
-	}}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
 	fakeComp := &FakeComputerService{}
 	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
 	path := [][]int64{{0, 0}, {50, 50}, {100, 100}}

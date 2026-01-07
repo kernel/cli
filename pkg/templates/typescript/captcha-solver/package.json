@@ -1,0 +1,14 @@
+{
+  "name": "ts-captcha-solver",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@onkernel/sdk": "^0.23.0",
+    "playwright-core": "^1.57.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.17",
+    "typescript": "^5.9.3"
+  }
+}

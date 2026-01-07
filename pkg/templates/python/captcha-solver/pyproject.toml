@@ -1,0 +1,13 @@
+[project]
+name = "kernel-python-advanced"
+version = "0.1.0"
+description = "Sample application implementing advanced Kernel configs"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "kernel>=0.23.0",
+    "playwright>=1.57.0"
+]
+
+[dependency-groups]
+dev = ["mypy>=1.19.0"]

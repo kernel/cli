@@ -78,9 +78,6 @@ You should see one error about there not being a git tag, and that's fine.
 To actually release, run:
 
 ```bash
-# use `git tag -l | grep cli` to find the latest version and what you want to bump it to
-export VERSION=0.1.1
-git tag -a v$VERSION -m "Bugfixes"
-git push origin v$VERSION
-make release
+# use `git describe --abbrev=0` to find the latest version and then bump it following https://semver.org/
+./scripts/release.sh <version> [description]
 ```

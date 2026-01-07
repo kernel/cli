@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -194,8 +195,15 @@ func handleSdkError(err error) error {
 func printResult(success bool, output string) {
 	var prettyJSON map[string]interface{}
 	if err := json.Unmarshal([]byte(output), &prettyJSON); err == nil {
-		bs, _ := json.MarshalIndent(prettyJSON, "", "  ")
-		output = string(bs)
+		// Use a custom encoder to prevent escaping &, <, > as \u0026, \u003c, \u003e
+		// which breaks copy/paste of URLs in the invoke output.
+		var buf bytes.Buffer
+		encoder := json.NewEncoder(&buf)
+		encoder.SetEscapeHTML(false)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(prettyJSON); err == nil {
+			output = strings.TrimSuffix(buf.String(), "\n")
+		}
 	}
 	// use pterm.Success if succeeded, pterm.Error if failed
 	if success {

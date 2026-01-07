@@ -3,11 +3,15 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/fang"
+	"github.com/charmbracelet/lipgloss/v2"
+	"github.com/onkernel/cli/cmd/mcp"
 	"github.com/onkernel/cli/cmd/proxies"
 	"github.com/onkernel/cli/pkg/auth"
 	"github.com/onkernel/cli/pkg/update"
@@ -71,18 +75,25 @@ func getKernelClient(cmd *cobra.Command) kernel.Client {
 	return util.GetKernelClient(cmd)
 }
 
-// isAuthExempt returns true if the command or any of its parents should skip auth.
+// isAuthExempt returns true if the command should skip auth.
 func isAuthExempt(cmd *cobra.Command) bool {
-	// bare root command does not need auth
+	// Root command doesn't need auth
 	if cmd == rootCmd {
 		return true
 	}
-	for c := cmd; c != nil; c = c.Parent() {
-		switch c.Name() {
-		case "login", "logout", "auth", "help", "completion":
-			return true
-		}
+
+	// Walk up to find the top-level command (direct child of rootCmd)
+	topLevel := cmd
+	for topLevel.Parent() != nil && topLevel.Parent() != rootCmd {
+		topLevel = topLevel.Parent()
 	}
+
+	// Check if the top-level command is in the exempt list
+	switch topLevel.Name() {
+	case "login", "logout", "auth", "help", "completion", "create", "mcp":
+		return true
+	}
+
 	return false
 }
 
@@ -129,6 +140,8 @@ func init() {
 	rootCmd.AddCommand(proxies.ProxiesCmd)
 	rootCmd.AddCommand(extensionsCmd)
 	rootCmd.AddCommand(agentsCmd)
+	rootCmd.AddCommand(createCmd)
+	rootCmd.AddCommand(mcp.MCPCmd)
 
 	rootCmd.PersistentPostRunE = func(cmd *cobra.Command, args []string) error {
 		// running synchronously so we never slow the command
@@ -160,10 +173,48 @@ func Execute(m Metadata) {
 	}
 	vt += "\n"
 	rootCmd.SetVersionTemplate(vt)
-	if err := fang.Execute(context.Background(), rootCmd, fang.WithVersion(metadata.Version), fang.WithCommit(metadata.Commit)); err != nil {
+	if err := fang.Execute(context.Background(), rootCmd,
+		fang.WithVersion(metadata.Version),
+		fang.WithCommit(metadata.Commit),
+		fang.WithErrorHandler(func(w io.Writer, styles fang.Styles, err error) {
+			err = util.CleanedUpSdkError{Err: err}
+			// remove margins so that it matches other pterm.error "style"
+			// we should add them back later as it looks cleaner
+			errorTextStyle := styles.ErrorText.UnsetMargins()
+			pterm.Error.Println(errorTextStyle.Render(strings.TrimSpace(err.Error())))
+			if isUsageError(err) {
+				pterm.Println()
+				pterm.Println(lipgloss.JoinHorizontal(
+					lipgloss.Left,
+					errorTextStyle.UnsetWidth().Render("Try"),
+					styles.Program.Flag.Render("--help"),
+					errorTextStyle.UnsetWidth().UnsetTransform().PaddingLeft(1).Render("for usage."),
+				))
+			}
+		}),
+	); err != nil {
 		// fang takes care of printing the error
 		os.Exit(1)
 	}
+}
+
+// isUsageError is a hack to detect usage errors.
+// See: https://github.com/spf13/cobra/pull/2266
+// from github.com/charmbracelet/fang/help.go
+func isUsageError(err error) bool {
+	s := err.Error()
+	for _, prefix := range []string{
+		"flag needs an argument:",
+		"unknown flag:",
+		"unknown shorthand flag:",
+		"unknown command",
+		"invalid argument",
+	} {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // onCancel runs a function when the provided context is cancelled
