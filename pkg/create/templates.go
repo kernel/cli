@@ -82,7 +82,7 @@ var Templates = map[string]TemplateInfo{
 	TemplateClaudeAgentSDK: {
 		Name:        "Claude Agent SDK",
 		Description: "Implements a Claude Agent SDK browser automation agent",
-		Languages:   []string{LanguageTypeScript},
+		Languages:   []string{LanguageTypeScript, LanguagePython},
 	},
 }
 
@@ -231,6 +231,11 @@ var Commands = map[string]map[string]DeployConfig{
 			EntryPoint:    "main.py",
 			NeedsEnvFile:  true,
 			InvokeCommand: `kernel invoke python-openagi-cua openagi-default-task -p '{"instruction": "Navigate to https://agiopen.org and click the What is Computer Use? button", "record_replay": "True"}'`,
+		},
+		TemplateClaudeAgentSDK: {
+			EntryPoint:    "main.py",
+			NeedsEnvFile:  true,
+			InvokeCommand: `kernel invoke py-claude-agent-sdk agent-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'`,
 		},
 	},
 }
