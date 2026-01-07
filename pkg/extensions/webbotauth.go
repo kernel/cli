@@ -20,6 +20,7 @@ import (
 const (
 	defaultLocalhostURL   = "http://localhost:8000"
 	defaultDirMode        = 0755
+	defaultFileMode       = 0644
 	webBotAuthDownloadURL = "https://github.com/cloudflare/web-bot-auth/archive/refs/heads/main.zip"
 	downloadTimeout       = 5 * time.Minute
 )
@@ -311,6 +312,25 @@ func copyExtensionArtifacts(browserExtDir, outputDir string) error {
 		return fmt.Errorf("failed to copy .crx file: %w", err)
 	}
 
+	// Copy private key
+	privateKeySrc := filepath.Join(browserExtDir, "private_key.pem")
+	privateKeyDst := filepath.Join(outputDir, "private_key.pem")
+	if _, err := os.Stat(privateKeySrc); err == nil {
+		if err := util.CopyFile(privateKeySrc, privateKeyDst); err != nil {
+			return fmt.Errorf("failed to copy private_key.pem: %w", err)
+		}
+
+		// Create .gitignore to prevent private key from being uploaded
+		gitignorePath := filepath.Join(outputDir, ".gitignore")
+		gitignoreContent := "# Exclude private key from uploads\nprivate_key.pem\n"
+		if err := os.WriteFile(gitignorePath, []byte(gitignoreContent), defaultFileMode); err != nil {
+			return fmt.Errorf("failed to create .gitignore: %w", err)
+		}
+		pterm.Info.Println("Private key preserved (private_key.pem)")
+	} else {
+		pterm.Warning.Println("No private_key.pem found - extension ID may change on rebuild")
+	}
+
 	return nil
 }
 
@@ -332,5 +352,6 @@ func displayWebBotAuthSuccess(outputDir, extensionID, hostURL string) {
 	pterm.Printf("2. Use in your browser, or upload to a session:\n")
 	pterm.Printf("   kernel browsers create --extension %s\n", extensionID)
 	pterm.Printf("   or run kernel browsers extensions upload <session-id> %s\n\n", outputDir)
-	pterm.Warning.Println("⚠️  Keep private_key.pem secure - it determines your extension ID!")
+	pterm.Warning.Println("⚠️  Private key saved to private_key.pem - keep it secure!")
+	pterm.Info.Println("   It's automatically excluded when uploading via .gitignore")
 }
