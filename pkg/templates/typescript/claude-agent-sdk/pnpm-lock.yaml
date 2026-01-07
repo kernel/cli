@@ -9,14 +9,14 @@ importers:
   .:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
-        specifier: ^0.1.6
-        version: 0.1.77(zod@3.25.76)
+        specifier: ^0.2.1
+        version: 0.2.1(zod@4.3.5)
       '@onkernel/sdk':
         specifier: ^0.23.0
         version: 0.23.0
       zod:
-        specifier: ^3.24.0
-        version: 3.25.76
+        specifier: ^4.0.0
+        version: 4.3.5
     devDependencies:
       '@types/node':
         specifier: ^22.15.17
@@ -30,11 +30,11 @@ importers:
 
 packages:
 
-  '@anthropic-ai/claude-agent-sdk@0.1.77':
-    resolution: {integrity: sha512-ZEjWQtkoB2MEY6K16DWMmF+8OhywAynH0m08V265cerbZ8xPD/2Ng2jPzbbO40mPeFSsMDJboShL+a3aObP0Jg==}
+  '@anthropic-ai/claude-agent-sdk@0.2.1':
+    resolution: {integrity: sha512-ZJO/TWcrFHGQTGHJDJl03mWozirWMBqdNpbuAgxZpLaHj2N5vyMxoeYiJC+7M0+gOSs7bjwKJLKTZcHGtGa34g==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
-      zod: ^3.25.0 || ^4.0.0
+      zod: ^4.0.0
 
   '@esbuild/aix-ppc64@0.27.2':
     resolution: {integrity: sha512-GZMB+a0mOMZs4MpDbj8RJp4cw+w1WV5NYD6xzgvzUJ5Ek2jerwfO2eADyI6ExDSUED+1X8aMbegahsJi+8mgpw==}
@@ -310,14 +310,14 @@ packages:
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+  zod@4.3.5:
+    resolution: {integrity: sha512-k7Nwx6vuWx1IJ9Bjuf4Zt1PEllcwe7cls3VNzm4CQ1/hgtFUK2bRNG3rvnpPUhFjmqJKAKtjV576KnUkHocg/g==}
 
 snapshots:
 
-  '@anthropic-ai/claude-agent-sdk@0.1.77(zod@3.25.76)':
+  '@anthropic-ai/claude-agent-sdk@0.2.1(zod@4.3.5)':
     dependencies:
-      zod: 3.25.76
+      zod: 4.3.5
     optionalDependencies:
       '@img/sharp-darwin-arm64': 0.33.5
       '@img/sharp-darwin-x64': 0.33.5
@@ -520,4 +520,4 @@ snapshots:
 
   undici-types@6.21.0: {}
 
-  zod@3.25.76: {}
+  zod@4.3.5: {}
