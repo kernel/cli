@@ -17,7 +17,7 @@ Best for structured workflows with predefined steps (todos).
 ## Setup
 
 1. Get your API keys:
-   - **Kernel**: [dashboard.kernel.sh](https://dashboard.kernel.sh)
+   - **Kernel**: [dashboard.onkernel.com](https://dashboard.onkernel.com)
    - **OpenAGI**: [developer.agiopen.org](https://developer.agiopen.org)
 
 2. Deploy the app:

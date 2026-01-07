@@ -94,7 +94,7 @@ You can also authenticate using an API key:
 export KERNEL_API_KEY=<YOUR_API_KEY>
 ```
 
-Create an API key from the [Kernel dashboard](https://dashboard.kernel.sh).
+Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
 
 ## Commands Reference
 

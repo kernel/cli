@@ -19,7 +19,7 @@ curl -fsSL https://claude.ai/install.sh | bash
 
 You'll need:
 - **ANTHROPIC_API_KEY**: Get from the [Anthropic Console](https://console.anthropic.com/)
-- **KERNEL_API_KEY**: Get from the [Kernel Dashboard](https://dashboard.kernel.sh/api-keys)
+- **KERNEL_API_KEY**: Get from the [Kernel Dashboard](https://dashboard.onkernel.com/api-keys)
 
 ## Overview
 
