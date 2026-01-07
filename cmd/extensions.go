@@ -457,5 +457,4 @@ func init() {
 	extensionsUploadCmd.Flags().String("name", "", "Optional unique extension name")
 	extensionsPrepareWebBotAuthCmd.Flags().String("output", "./web-bot-auth", "Output directory for the prepared extension")
 	extensionsPrepareWebBotAuthCmd.Flags().String("url", "http://127.0.0.1:10001", "Base URL for update.xml and policy templates")
-	extensionsPrepareWebBotAuthCmd.Flags().String("version", "main", "GitHub branch or tag to download")
 }

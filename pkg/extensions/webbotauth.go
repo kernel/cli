@@ -329,7 +329,8 @@ func displayWebBotAuthSuccess(outputDir, extensionID, hostURL string) {
 	pterm.Info.Println("Next steps:")
 	pterm.Printf("1. Upload using the extension ID as the name:\n")
 	pterm.Printf("   kernel extensions upload %s --name %s\n\n", outputDir, extensionID)
-	pterm.Printf("2. Use in your browser:\n")
-	pterm.Printf("   kernel browsers create --extension %s\n\n", extensionID)
+	pterm.Printf("2. Use in your browser, or upload to a session:\n")
+	pterm.Printf("   kernel browsers create --extension %s\n", extensionID)
+	pterm.Printf("   or run kernel browsers extensions upload <session-id> %s\n\n", outputDir)
 	pterm.Warning.Println("⚠️  Keep private_key.pem secure - it determines your extension ID!")
 }
