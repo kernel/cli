@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	defaultReleasesAPI = "https://api.github.com/repos/onkernel/cli/releases"
+	defaultReleasesAPI = "https://api.github.com/repos/kernel/cli/releases"
 	userAgent          = "kernel-cli/update-check"
 	cacheRelPath       = "kernel/update-check.json"
 	requestTimeout     = 3 * time.Second
@@ -273,9 +273,9 @@ func suggestUpgradeCommand() string {
 
 	rules := []rule{
 		{hasHomebrew, nil, "brew upgrade onkernel/tap/kernel"},
-		{hasBun, []string{"BUN_INSTALL"}, "bun add -g @onkernel/cli@latest"},
-		{hasPNPM, []string{"PNPM_HOME"}, "pnpm add -g @onkernel/cli@latest"},
-		{hasNPM, []string{"NPM_CONFIG_PREFIX", "npm_config_prefix", "VOLTA_HOME"}, "npm i -g @onkernel/cli@latest"},
+		{hasBun, []string{"BUN_INSTALL"}, "bun add -g @kernel/cli@latest"},
+		{hasPNPM, []string{"PNPM_HOME"}, "pnpm add -g @kernel/cli@latest"},
+		{hasNPM, []string{"NPM_CONFIG_PREFIX", "npm_config_prefix", "VOLTA_HOME"}, "npm i -g @kernel/cli@latest"},
 	}
 
 	// Path-based detection first

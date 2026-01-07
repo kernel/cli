@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="GitHub License" src="https://img.shields.io/github/license/onkernel/cli">
+  <img alt="GitHub License" src="https://img.shields.io/github/license/kernel/cli">
   <a href="https://discord.gg/FBrveQRcud"><img src="https://img.shields.io/discord/1342243238748225556?logo=discord&logoColor=white&color=7289DA" alt="Discord"></a>
   <a href="https://x.com/juecd__"><img src="https://img.shields.io/twitter/follow/juecd__" alt="Follow @juecd__"></a>
   <a href="https://x.com/rfgarcia"><img src="https://img.shields.io/twitter/follow/rfgarcia" alt="Follow @rfgarcia"></a>
@@ -36,10 +36,10 @@ Install the Kernel CLI using your favorite package manager:
 brew install onkernel/tap/kernel
 
 # Using pnpm
-pnpm install -g @onkernel/cli
+pnpm install -g @kernel/cli
 
 # Using npm
-npm install -g @onkernel/cli
+npm install -g @kernel/cli
 ```
 
 Verify the installation:

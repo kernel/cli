@@ -3,7 +3,7 @@ package main
 import (
 	"runtime"
 
-	"github.com/onkernel/cli/cmd"
+	"github.com/kernel/cli/cmd"
 )
 
 var (

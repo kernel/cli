@@ -29,19 +29,19 @@ archives:
 brews:
   - name: kernel
     repository:
-      owner: onkernel
+      owner: kernel
       name: homebrew-tap
       branch: main
     directory: Formula
     description: "Kernel CLI"
-    homepage: "https://github.com/onkernel/cli"
+    homepage: "https://github.com/kernel/cli"
     test: |
       system "#{bin}/kernel", "--version"
 
 npms:
-  - name: "@onkernel/cli"
-    repository: "https://github.com/onkernel"
-    bugs: https://github.com/onkernel/cli/issues
+  - name: "@kernel/cli"
+    repository: "https://github.com/kernel"
+    bugs: https://github.com/kernel/cli/issues
     description: Kernel CLI
     homepage: https://www.kernel.sh/docs
     license: MIT
@@ -85,7 +85,7 @@ changelog:
 release:
   name_template: "Kernel CLI v{{ .Version }}"
   footer: |
-    **Full Changelog**: https://github.com/onkernel/cli/compare/{{ .PreviousTag }}...{{ .Tag }}
+    **Full Changelog**: https://github.com/kernel/cli/compare/{{ .PreviousTag }}...{{ .Tag }}
 
     ## What to do next?
 
