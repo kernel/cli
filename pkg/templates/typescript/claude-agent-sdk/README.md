@@ -1,6 +1,6 @@
 # Claude Agent SDK + Kernel Browser Automation
 
-This template demonstrates how to use the [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview) with [Kernel's](https://onkernel.com) browser automation capabilities.
+This template demonstrates how to use the [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview) with [Kernel's](https://www.kernel.sh) browser automation capabilities.
 
 ## Prerequisites
 
@@ -19,7 +19,7 @@ curl -fsSL https://claude.ai/install.sh | bash
 
 You'll need:
 - **ANTHROPIC_API_KEY**: Get from the [Anthropic Console](https://console.anthropic.com/)
-- **KERNEL_API_KEY**: Get from the [Kernel Dashboard](https://dashboard.onkernel.com/api-keys)
+- **KERNEL_API_KEY**: Get from the [Kernel Dashboard](https://dashboard.kernel.sh/api-keys)
 
 ## Overview
 
@@ -127,5 +127,5 @@ When invoked via Kernel, the action returns:
 
 - [Claude Agent SDK Documentation](https://platform.claude.com/docs/en/agent-sdk/overview)
 - [Claude Agent SDK Get Started](https://platform.claude.com/docs/en/agent-sdk/overview#get-started)
-- [Kernel Documentation](https://onkernel.com/docs)
-- [Kernel Playwright Execution API](https://onkernel.com/docs/browsers/playwright-execution)
+- [Kernel Documentation](https://www.kernel.sh/docs)
+- [Kernel Playwright Execution API](https://www.kernel.sh/docs/browsers/playwright-execution)

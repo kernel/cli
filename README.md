@@ -13,7 +13,7 @@
 
 The Kernel CLI is a fast, friendly command‑line interface for Kernel — the platform that provides sandboxed, ready‑to‑use Chrome browsers for browser automations and web agents.
 
-Sign up at [onkernel.com](https://www.onkernel.com/) and read the [docs](https://onkernel.com/docs/introduction).
+Sign up at [kernel.sh](https://www.kernel.sh/) and read the [docs](https://www.kernel.sh/docs/introduction).
 
 ## What's Kernel?
 
@@ -94,7 +94,7 @@ You can also authenticate using an API key:
 export KERNEL_API_KEY=<YOUR_API_KEY>
 ```
 
-Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
+Create an API key from the [Kernel dashboard](https://dashboard.kernel.sh).
 
 ## Commands Reference
 
@@ -591,15 +591,15 @@ kernel proxies delete prx_123 --yes
 
 For complete documentation, visit:
 
-- [📖 Documentation](https://onkernel.com/docs)
-- [🚀 Quickstart Guide](https://onkernel.com/docs/quickstart)
-- [📋 CLI Reference](https://onkernel.com/docs/reference/cli)
+- [📖 Documentation](https://www.kernel.sh/docs)
+- [🚀 Quickstart Guide](https://www.kernel.sh/docs/quickstart)
+- [📋 CLI Reference](https://www.kernel.sh/docs/reference/cli)
 
 ## Support
 
 - [Discord Community](https://discord.gg/kernel)
 - [GitHub Issues](https://github.com/onkernel/kernel/issues)
-- [Documentation](https://onkernel.com/docs)
+- [Documentation](https://www.kernel.sh/docs)
 
 ---
 

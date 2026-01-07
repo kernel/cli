@@ -9,7 +9,7 @@ This app uses [Gemini 2.5's computer use model](https://blog.google/technology/g
 ## Setup
 
 1. **Add your API keys as environment variables:**
-   - `KERNEL_API_KEY` - Get from [Kernel dashboard](https://dashboard.onkernel.com/sign-in)
+   - `KERNEL_API_KEY` - Get from [Kernel dashboard](https://dashboard.kernel.sh/sign-in)
    - `GOOGLE_API_KEY` - Get from [Google AI Studio](https://aistudio.google.com/apikey)
 
 ## Running Locally
@@ -63,6 +63,6 @@ When using alternative providers, make sure to:
 
 ## Documentation
 
-- [Kernel Documentation](https://docs.onkernel.com/quickstart)
-- [Kernel Stagehand Guide](https://www.onkernel.com/docs/integrations/stagehand)
+- [Kernel Documentation](https://www.kernel.sh/docs/quickstart)
+- [Kernel Stagehand Guide](https://www.kernel.sh/docs/integrations/stagehand)
 - [Gemini 2.5 Computer Use](https://blog.google/technology/google-deepmind/gemini-computer-use-model/)

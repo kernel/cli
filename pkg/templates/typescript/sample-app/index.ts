@@ -78,7 +78,7 @@ app.action<PageTitleInput, PageTitleOutput>(
 /**
  * Example app that creates a long-running Kernel browser for manual testing
  * Invoke this action to test Kernel browsers manually with our browser live view
- * https://onkernel.com/docs/browsers/live-view
+ * https://www.kernel.sh/docs/browsers/live-view
  * Args:
  *     ctx: Kernel context containing invocation information
  * Returns:

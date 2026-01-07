@@ -17,7 +17,7 @@ Best for structured workflows with predefined steps (todos).
 ## Setup
 
 1. Get your API keys:
-   - **Kernel**: [dashboard.onkernel.com](https://dashboard.onkernel.com)
+   - **Kernel**: [dashboard.kernel.sh](https://dashboard.kernel.sh)
    - **OpenAGI**: [developer.agiopen.org](https://developer.agiopen.org)
 
 2. Deploy the app:
@@ -75,5 +75,5 @@ When enabled, the response will include a `replay_url` field with a link to view
 ## Resources
 
 - [OpenAGI Documentation](https://developer.agiopen.org)
-- [Kernel Documentation](https://onkernel.com/docs/quickstart)
+- [Kernel Documentation](https://www.kernel.sh/docs/quickstart)
 - [Kernel + OpenAGI Template Repository](https://github.com/onkernel/kernel-oagi)

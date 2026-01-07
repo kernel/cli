@@ -15,7 +15,7 @@ interface TeamSizeOutput {
 }
 
 // LLM API Keys are set in the environment during `kernel deploy <filename> -e OPENAI_API_KEY=XXX`
-// See https://www.onkernel.com/docs/apps/deploy#environment-variables
+// See https://www.kernel.sh/docs/apps/deploy#environment-variables
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
