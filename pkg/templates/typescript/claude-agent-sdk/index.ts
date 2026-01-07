@@ -327,9 +327,9 @@ function isRunningOnKernel(): boolean {
 }
 
 // Run locally if executed directly via CLI (not on Kernel)
-// Only run if explicitly called with a task argument and not on Kernel
-if (!isRunningOnKernel() && process.argv[2]) {
-  const task = process.argv[2];
+if (!isRunningOnKernel()) {
+  const task = process.argv[2] || 
+    "Go to https://news.ycombinator.com and tell me the titles of the top 3 stories on the front page";
 
   runAgent(task)
     .then((result) => {
