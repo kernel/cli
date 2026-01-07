@@ -160,7 +160,7 @@ async def run_agent(task: str, invocation_id: str | None = None) -> AgentOutput:
 
         # Configure agent options
         options = ClaudeAgentOptions(
-            model="claude-sonnet-4-20250514",
+            model="claude-opus-4-5-20251101",
             system_prompt="""You are a browser automation assistant that can control a web browser to accomplish tasks.
 
 You have access to a tool called "execute_playwright" that lets you run Playwright code against a real browser.

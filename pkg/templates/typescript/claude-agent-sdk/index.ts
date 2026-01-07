@@ -172,7 +172,7 @@ async function runAgent(
 
     // Configure agent options
     const options: Options = {
-      model: "claude-sonnet-4-20250514",
+      model: "claude-opus-4-5-20251101",
       systemPrompt: `You are a browser automation assistant that can control a web browser to accomplish tasks.
 
 You have access to a tool called "execute_playwright" that lets you run Playwright code against a real browser.
