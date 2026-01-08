@@ -16,8 +16,8 @@ import (
 	"github.com/onkernel/cli/pkg/auth"
 	"github.com/onkernel/cli/pkg/update"
 	"github.com/onkernel/cli/pkg/util"
-	"github.com/onkernel/kernel-go-sdk"
-	"github.com/onkernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -139,6 +139,8 @@ func init() {
 	rootCmd.AddCommand(profilesCmd)
 	rootCmd.AddCommand(proxies.ProxiesCmd)
 	rootCmd.AddCommand(extensionsCmd)
+	rootCmd.AddCommand(agentsCmd)
+	rootCmd.AddCommand(credentialsCmd)
 	rootCmd.AddCommand(createCmd)
 	rootCmd.AddCommand(mcp.MCPCmd)
 

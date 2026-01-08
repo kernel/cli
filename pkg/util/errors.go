@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/onkernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk"
 )
 
 // CleanedUpSdkError extracts a message field from the raw JSON resposne.

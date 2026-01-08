@@ -6,7 +6,7 @@ import (
 
 	"github.com/onkernel/cli/pkg/table"
 	"github.com/onkernel/cli/pkg/util"
-	"github.com/onkernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
