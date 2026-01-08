@@ -2,6 +2,7 @@ package proxies
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -12,12 +13,32 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func (p ProxyCmd) List(ctx context.Context) error {
-	pterm.Info.Println("Fetching proxy configurations...")
+func (p ProxyCmd) List(ctx context.Context, in ProxyListInput) error {
+	if in.Output != "" && in.Output != "json" {
+		pterm.Error.Println("unsupported --output value: use 'json'")
+		return nil
+	}
+
+	if in.Output != "json" {
+		pterm.Info.Println("Fetching proxy configurations...")
+	}
 
 	items, err := p.proxies.List(ctx)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		if items == nil || len(*items) == 0 {
+			fmt.Println("[]")
+			return nil
+		}
+		bs, err := json.MarshalIndent(*items, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(bs))
+		return nil
 	}
 
 	if items == nil || len(*items) == 0 {
@@ -119,7 +140,8 @@ func formatProxyConfig(proxy *kernel.ProxyListResponse) string {
 
 func runProxiesList(cmd *cobra.Command, args []string) error {
 	client := util.GetKernelClient(cmd)
+	output, _ := cmd.Flags().GetString("output")
 	svc := client.Proxies
 	p := ProxyCmd{proxies: &svc}
-	return p.List(cmd.Context())
+	return p.List(cmd.Context(), ProxyListInput{Output: output})
 }

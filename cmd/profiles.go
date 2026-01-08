@@ -27,10 +27,16 @@ type ProfilesService interface {
 
 type ProfilesGetInput struct {
 	Identifier string
+	Output     string
+}
+
+type ProfilesListInput struct {
+	Output string
 }
 
 type ProfilesCreateInput struct {
-	Name string
+	Name   string
+	Output string
 }
 
 type ProfilesDeleteInput struct {
@@ -49,12 +55,33 @@ type ProfilesCmd struct {
 	profiles ProfilesService
 }
 
-func (p ProfilesCmd) List(ctx context.Context) error {
-	pterm.Info.Println("Fetching profiles...")
+func (p ProfilesCmd) List(ctx context.Context, in ProfilesListInput) error {
+	if in.Output != "" && in.Output != "json" {
+		pterm.Error.Println("unsupported --output value: use 'json'")
+		return nil
+	}
+
+	if in.Output != "json" {
+		pterm.Info.Println("Fetching profiles...")
+	}
 	items, err := p.profiles.List(ctx)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
+
+	if in.Output == "json" {
+		if items == nil || len(*items) == 0 {
+			fmt.Println("[]")
+			return nil
+		}
+		bs, err := json.MarshalIndent(*items, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(bs))
+		return nil
+	}
+
 	if items == nil || len(*items) == 0 {
 		pterm.Info.Println("No profiles found")
 		return nil
@@ -78,6 +105,11 @@ func (p ProfilesCmd) List(ctx context.Context) error {
 }
 
 func (p ProfilesCmd) Get(ctx context.Context, in ProfilesGetInput) error {
+	if in.Output != "" && in.Output != "json" {
+		pterm.Error.Println("unsupported --output value: use 'json'")
+		return nil
+	}
+
 	item, err := p.profiles.Get(ctx, in.Identifier)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -86,6 +118,16 @@ func (p ProfilesCmd) Get(ctx context.Context, in ProfilesGetInput) error {
 		pterm.Error.Printf("Profile '%s' not found\n", in.Identifier)
 		return nil
 	}
+
+	if in.Output == "json" {
+		bs, err := json.MarshalIndent(item, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(bs))
+		return nil
+	}
+
 	name := item.Name
 	if name == "" {
 		name = "-"
@@ -101,6 +143,11 @@ func (p ProfilesCmd) Get(ctx context.Context, in ProfilesGetInput) error {
 }
 
 func (p ProfilesCmd) Create(ctx context.Context, in ProfilesCreateInput) error {
+	if in.Output != "" && in.Output != "json" {
+		pterm.Error.Println("unsupported --output value: use 'json'")
+		return nil
+	}
+
 	params := kernel.ProfileNewParams{}
 	if in.Name != "" {
 		params.Name = kernel.Opt(in.Name)
@@ -109,6 +156,16 @@ func (p ProfilesCmd) Create(ctx context.Context, in ProfilesCreateInput) error {
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
+
+	if in.Output == "json" {
+		bs, err := json.MarshalIndent(item, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(bs))
+		return nil
+	}
+
 	name := item.Name
 	if name == "" {
 		name = "-"
@@ -255,6 +312,9 @@ func init() {
 	profilesCmd.AddCommand(profilesDeleteCmd)
 	profilesCmd.AddCommand(profilesDownloadCmd)
 
+	profilesListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	profilesGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	profilesCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	profilesCreateCmd.Flags().String("name", "", "Optional unique profile name")
 	profilesDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 	profilesDownloadCmd.Flags().String("to", "", "Output zip file path")
@@ -263,24 +323,27 @@ func init() {
 
 func runProfilesList(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
+	output, _ := cmd.Flags().GetString("output")
 	svc := client.Profiles
 	p := ProfilesCmd{profiles: &svc}
-	return p.List(cmd.Context())
+	return p.List(cmd.Context(), ProfilesListInput{Output: output})
 }
 
 func runProfilesGet(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
+	output, _ := cmd.Flags().GetString("output")
 	svc := client.Profiles
 	p := ProfilesCmd{profiles: &svc}
-	return p.Get(cmd.Context(), ProfilesGetInput{Identifier: args[0]})
+	return p.Get(cmd.Context(), ProfilesGetInput{Identifier: args[0], Output: output})
 }
 
 func runProfilesCreate(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	name, _ := cmd.Flags().GetString("name")
+	output, _ := cmd.Flags().GetString("output")
 	svc := client.Profiles
 	p := ProfilesCmd{profiles: &svc}
-	return p.Create(cmd.Context(), ProfilesCreateInput{Name: name})
+	return p.Create(cmd.Context(), ProfilesCreateInput{Name: name, Output: output})
 }
 
 func runProfilesDelete(cmd *cobra.Command, args []string) error {

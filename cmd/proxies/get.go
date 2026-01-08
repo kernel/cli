@@ -2,6 +2,7 @@ package proxies
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/kernel/cli/pkg/table"
@@ -12,9 +13,23 @@ import (
 )
 
 func (p ProxyCmd) Get(ctx context.Context, in ProxyGetInput) error {
+	if in.Output != "" && in.Output != "json" {
+		pterm.Error.Println("unsupported --output value: use 'json'")
+		return nil
+	}
+
 	item, err := p.proxies.Get(ctx, in.ID)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		bs, err := json.MarshalIndent(item, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(bs))
+		return nil
 	}
 
 	// Display proxy details
@@ -127,7 +142,8 @@ func getProxyConfigRows(proxy *kernel.ProxyGetResponse) [][]string {
 
 func runProxiesGet(cmd *cobra.Command, args []string) error {
 	client := util.GetKernelClient(cmd)
+	output, _ := cmd.Flags().GetString("output")
 	svc := client.Proxies
 	p := ProxyCmd{proxies: &svc}
-	return p.Get(cmd.Context(), ProxyGetInput{ID: args[0]})
+	return p.Get(cmd.Context(), ProxyGetInput{ID: args[0], Output: output})
 }
