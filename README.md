@@ -150,6 +150,7 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
 
   - `--version <version>`, `-v` - Specify app version (default: latest)
   - `--payload <json>`, `-p` - JSON payload for the action
+  - `--payload-file <path>`, `-f` - Read JSON payload from a file (use `-` for stdin)
   - `--sync`, `-s` - Invoke synchronously (timeout after 60s)
 
 - `kernel app list` - List deployed apps
@@ -422,6 +423,15 @@ kernel invoke my-scraper scrape-page
 
 # With JSON payload
 kernel invoke my-scraper scrape-page --payload '{"url": "https://example.com"}'
+
+# Read payload from a file
+kernel invoke my-scraper scrape-page --payload-file payload.json
+
+# Read payload from stdin
+cat payload.json | kernel invoke my-scraper scrape-page --payload-file -
+
+# Pipe from another command
+echo '{"url": "https://example.com"}' | kernel invoke my-scraper scrape-page -f -
 
 # Synchronous invoke (wait for completion)
 kernel invoke my-scraper quick-task --sync
