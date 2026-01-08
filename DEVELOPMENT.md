@@ -83,9 +83,9 @@ The following secrets must be configured in the repository settings:
 
 | Secret | Description |
 |--------|-------------|
+| `GH_PAT` | GitHub Personal Access Token with `repo` scope. Must have write access to both this repository (for creating releases) and `onkernel/homebrew-tap` (for updating the Homebrew formula). Create at https://github.com/settings/tokens/new?scopes=repo |
 | `GORELEASER_KEY` | GoReleaser Pro license key (required for npm and homebrew publishing) |
 | `NPM_TOKEN` | npm access token for publishing `@onkernel/cli` |
-| `HOMEBREW_TAP_TOKEN` | GitHub PAT with write access to `onkernel/homebrew-tap` repository |
 
 #### Local dry-run (optional)
 
