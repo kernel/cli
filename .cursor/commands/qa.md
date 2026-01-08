@@ -57,12 +57,14 @@ Here are all valid language + template combinations:
 | typescript | magnitude              | ts-magnitude      | ts-magnitude          | Yes            | ANTHROPIC_API_KEY              |
 | typescript | openai-computer-use    | ts-openai-cua     | ts-openai-cua         | Yes            | OPENAI_API_KEY                 |
 | typescript | gemini-computer-use    | ts-gemini-cua     | ts-gemini-cua         | Yes            | GOOGLE_API_KEY                 |
+| typescript | claude-agent-sdk       | ts-claude-agent-sdk | ts-claude-agent-sdk | Yes            | ANTHROPIC_API_KEY              |
 | python     | sample-app             | py-sample-app     | python-basic          | No             | -                              |
 | python     | captcha-solver         | py-captcha-solver | python-captcha-solver | No             | -                              |
 | python     | browser-use            | py-browser-use    | python-bu             | Yes            | OPENAI_API_KEY                 |
 | python     | anthropic-computer-use | py-anthropic-cua  | python-anthropic-cua  | Yes            | ANTHROPIC_API_KEY              |
 | python     | openai-computer-use    | py-openai-cua     | python-openai-cua     | Yes            | OPENAI_API_KEY                 |
 | python     | openagi-computer-use   | py-openagi-cua    | python-openagi-cua    | Yes            | OAGI_API_KEY                   |
+| python     | claude-agent-sdk       | py-claude-agent-sdk | py-claude-agent-sdk | Yes            | ANTHROPIC_API_KEY              |
 
 ### Create Commands
 
@@ -77,6 +79,7 @@ Run each of these (they are non-interactive when all flags are provided):
 ../bin/kernel create -n ts-magnitude -l typescript -t magnitude
 ../bin/kernel create -n ts-openai-cua -l typescript -t openai-computer-use
 ../bin/kernel create -n ts-gemini-cua -l typescript -t gemini-computer-use
+../bin/kernel create -n ts-claude-agent-sdk -l typescript -t claude-agent-sdk
 
 # Python templates
 ../bin/kernel create -n py-sample-app -l python -t sample-app
@@ -85,6 +88,7 @@ Run each of these (they are non-interactive when all flags are provided):
 ../bin/kernel create -n py-anthropic-cua -l python -t anthropic-computer-use
 ../bin/kernel create -n py-openai-cua -l python -t openai-computer-use
 ../bin/kernel create -n py-openagi-cua -l python -t openagi-computer-use
+../bin/kernel create -n py-claude-agent-sdk -l python -t claude-agent-sdk
 ```
 
 ## Step 5: Deploy Each Template
@@ -163,6 +167,15 @@ echo "GOOGLE_API_KEY=<value from human>" > .env
 cd ..
 ```
 
+**ts-claude-agent-sdk** (needs ANTHROPIC_API_KEY):
+
+```bash
+cd ts-claude-agent-sdk
+echo "ANTHROPIC_API_KEY=<value from human>" > .env
+../bin/kernel deploy index.ts --env-file .env
+cd ..
+```
+
 **py-browser-use** (needs OPENAI_API_KEY):
 
 ```bash
@@ -199,6 +212,15 @@ echo "OAGI_API_KEY=<value from human>" > .env
 cd ..
 ```
 
+**py-claude-agent-sdk** (needs ANTHROPIC_API_KEY):
+
+```bash
+cd py-claude-agent-sdk
+echo "ANTHROPIC_API_KEY=<value from human>" > .env
+../bin/kernel deploy main.py --env-file .env
+cd ..
+```
+
 ## Step 6: Provide Invoke Commands
 
 Once all deployments are complete, present the human with these invoke commands to test manually:
@@ -212,6 +234,7 @@ kernel invoke ts-anthropic-cua cua-task --payload '{"query": "Return the first u
 kernel invoke ts-magnitude mag-url-extract --payload '{"url": "https://en.wikipedia.org/wiki/Special:Random"}'
 kernel invoke ts-openai-cua cua-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 5 articles"}'
 kernel invoke ts-gemini-cua gemini-cua-task --payload '{"startingUrl": "https://www.magnitasks.com/", "instruction": "Click the Tasks option in the left-side bar, and move the 5 items in the To Do and In Progress items to the Done section of the Kanban board? You are done successfully when the items are moved."}'
+kernel invoke ts-claude-agent-sdk agent-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'
 
 # Python apps
 kernel invoke python-basic get-page-title --payload '{"url": "https://www.google.com"}'
@@ -220,13 +243,14 @@ kernel invoke python-bu bu-task --payload '{"task": "Compare the price of gpt-4o
 kernel invoke python-anthropic-cua cua-task --payload '{"query": "Return the first url of a search result for NYC restaurant reviews Pete Wells"}'
 kernel invoke python-openai-cua cua-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 5 articles"}'
 kernel invoke python-openagi-cua openagi-default-task -p '{"instruction": "Navigate to https://agiopen.org and click the What is Computer Use? button"}'
+kernel invoke py-claude-agent-sdk agent-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'
 ```
 
 ## Step 7: Automated Runtime Testing (Optional)
 
-**STOP and ask the human:** "Would you like me to automatically invoke all 13 templates and report back on their runtime status?"
+**STOP and ask the human:** "Would you like me to automatically invoke all 15 templates and report back on their runtime status?"
 
-If the human agrees, invoke each template and collect results. Present findings in this format:
+If the human agrees, invoke each template use the Kernel CLI and collect results. Present findings in this format:
 
 ### Testing Guidelines
 - **Parallel execution:** You may run multiple invocations in parallel to speed up testing.
@@ -243,12 +267,14 @@ If the human agrees, invoke each template and collect results. Present findings 
 | ts-magnitude      | ts-magnitude          |         |       |
 | ts-openai-cua     | ts-openai-cua         |         |       |
 | ts-gemini-cua     | ts-gemini-cua         |         |       |
+| ts-claude-agent-sdk | ts-claude-agent-sdk |         |       |
 | py-sample-app     | python-basic          |         |       |
 | py-captcha-solver | python-captcha-solver |         |       |
 | py-browser-use    | python-bu             |         |       |
 | py-anthropic-cua  | python-anthropic-cua  |         |       |
 | py-openai-cua     | python-openai-cua     |         |       |
 | py-openagi-cua    | python-openagi-cua    |         |       |
+| py-claude-agent-sdk | py-claude-agent-sdk |         |       |
 
 Status values:
 - **SUCCESS**: App started and returned a result
@@ -261,9 +287,9 @@ Notes should include brief error messages for failures or confirmation of succes
 - [ ] Built CLI with `make build`
 - [ ] Created QA directory
 - [ ] Got KERNEL_API_KEY from human
-- [ ] Created all 13 template variations
+- [ ] Created all 15 template variations
 - [ ] Got required API keys from human (OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, OAGI_API_KEY)
-- [ ] Deployed all 13 apps
+- [ ] Deployed all 15 apps
 - [ ] Provided invoke commands to human for manual testing
 - [ ] (Optional) Ran automated runtime testing and reviewed results
 

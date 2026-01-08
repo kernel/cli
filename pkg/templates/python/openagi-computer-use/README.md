@@ -75,5 +75,5 @@ When enabled, the response will include a `replay_url` field with a link to view
 ## Resources
 
 - [OpenAGI Documentation](https://developer.agiopen.org)
-- [Kernel Documentation](https://onkernel.com/docs/quickstart)
+- [Kernel Documentation](https://www.kernel.sh/docs/quickstart)
 - [Kernel + OpenAGI Template Repository](https://github.com/onkernel/kernel-oagi)

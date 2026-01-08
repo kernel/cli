@@ -40,9 +40,7 @@ async def test_captcha_solver(ctx: kernel.KernelContext) -> None:
             )
             page = context.pages[0] if context.pages else await context.new_page()
 
-            # Access the live view. Retrieve this live_view_url from the Kernel logs in your CLI:
-            # kernel login  # or: export KERNEL_API_KEY=<Your API key>
-            # kernel logs python-captcha-solver --follow
+            # Access the live view URL printed below in the logs (logs stream automatically with kernel invoke)
             print(
                 "Kernel browser live view url: ", kernel_browser.browser_live_view_url
             )

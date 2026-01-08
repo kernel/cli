@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	defaultReleasesAPI = "https://api.github.com/repos/onkernel/cli/releases"
+	defaultReleasesAPI = "https://api.github.com/repos/kernel/cli/releases"
 	userAgent          = "kernel-cli/update-check"
 	cacheRelPath       = "kernel/update-check.json"
 	requestTimeout     = 3 * time.Second

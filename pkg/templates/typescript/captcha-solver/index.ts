@@ -18,7 +18,6 @@ const app = kernel.app("ts-captcha-solver");
  *  kernel login  # or: export KERNEL_API_KEY=<your_api_key>
  *  kernel deploy index.ts # If you haven't already deployed this app
  *  kernel invoke ts-captcha-solver test-captcha-solver
- *  kernel logs ts-captcha-solver -f # Open in separate tab
  */
 app.action("test-captcha-solver", async (ctx: KernelContext): Promise<void> => {
   const kernelBrowser = await kernel.browsers.create({
@@ -27,9 +26,7 @@ app.action("test-captcha-solver", async (ctx: KernelContext): Promise<void> => {
   });
   const browser = await chromium.connectOverCDP(kernelBrowser.cdp_ws_url);
 
-  // Access the live view. Retrieve this live_view_url from the Kernel logs in your CLI:
-  // kernel login  # or: export KERNEL_API_KEY=<Your API key>
-  // kernel logs ts-captcha-solver --follow
+  // Access the live view URL printed below in the logs (logs stream automatically with kernel invoke)
   console.log(
     "Kernel browser live view url: ",
     kernelBrowser.browser_live_view_url

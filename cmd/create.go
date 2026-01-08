@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/onkernel/cli/pkg/create"
+	"github.com/kernel/cli/pkg/create"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )

@@ -63,6 +63,6 @@ When using alternative providers, make sure to:
 
 ## Documentation
 
-- [Kernel Documentation](https://docs.onkernel.com/quickstart)
-- [Kernel Stagehand Guide](https://www.onkernel.com/docs/integrations/stagehand)
+- [Kernel Documentation](https://www.kernel.sh/docs/quickstart)
+- [Kernel Stagehand Guide](https://www.kernel.sh/docs/integrations/stagehand)
 - [Gemini 2.5 Computer Use](https://blog.google/technology/google-deepmind/gemini-computer-use-model/)

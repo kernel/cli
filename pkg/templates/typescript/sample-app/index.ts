@@ -16,7 +16,6 @@ const app = kernel.app("ts-basic");
  *  kernel login  # or: export KERNEL_API_KEY=<your_api_key>
  *  kernel deploy index.ts # If you haven't already deployed this app
  *  kernel invoke ts-basic get-page-title -p '{"url": "https://www.google.com"}'
- *  kernel logs ts-basic -f # Open in separate tab
  */
 interface PageTitleInput {
   url: string;
@@ -78,7 +77,7 @@ app.action<PageTitleInput, PageTitleOutput>(
 /**
  * Example app that creates a long-running Kernel browser for manual testing
  * Invoke this action to test Kernel browsers manually with our browser live view
- * https://onkernel.com/docs/browsers/live-view
+ * https://www.kernel.sh/docs/browsers/live-view
  * Args:
  *     ctx: Kernel context containing invocation information
  * Returns:
@@ -87,7 +86,6 @@ app.action<PageTitleInput, PageTitleOutput>(
  *  kernel login  # or: export KERNEL_API_KEY=<your_api_key>
  *  kernel deploy index.ts # If you haven't already deployed this app
  *  kernel invoke ts-basic create-browser-for-testing
- *  kernel logs ts-basic -f # Open in separate tab
  */
 interface CreateBrowserForTestingOutput {
   browser_live_view_url: string;

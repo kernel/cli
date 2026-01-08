@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="GitHub License" src="https://img.shields.io/github/license/onkernel/cli">
+  <img alt="GitHub License" src="https://img.shields.io/github/license/kernel/cli">
   <a href="https://discord.gg/FBrveQRcud"><img src="https://img.shields.io/discord/1342243238748225556?logo=discord&logoColor=white&color=7289DA" alt="Discord"></a>
   <a href="https://x.com/juecd__"><img src="https://img.shields.io/twitter/follow/juecd__" alt="Follow @juecd__"></a>
   <a href="https://x.com/rfgarcia"><img src="https://img.shields.io/twitter/follow/rfgarcia" alt="Follow @rfgarcia"></a>
@@ -13,7 +13,7 @@
 
 The Kernel CLI is a fast, friendly command‑line interface for Kernel — the platform that provides sandboxed, ready‑to‑use Chrome browsers for browser automations and web agents.
 
-Sign up at [onkernel.com](https://www.onkernel.com/) and read the [docs](https://onkernel.com/docs/introduction).
+Sign up at [kernel.sh](https://www.kernel.sh/) and read the [docs](https://www.kernel.sh/docs/introduction).
 
 ## What's Kernel?
 
@@ -124,6 +124,7 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
   - `gemini-computer-use` - Implements a Gemini computer use agent (TypeScript only)
   - `openagi-computer-use` - OpenAGI Lux computer-use models (Python only)
   - `magnitude` - Magnitude framework sample (TypeScript only)
+  - `claude-agent-sdk` - Claude Agent SDK browser automation agent
 
 ### App Deployment
 
@@ -395,6 +396,9 @@ kernel create --name my-agent --language ts --template stagehand
 
 # Create a Python Computer Use app
 kernel create --name my-cu-app --language py --template anthropic-computer-use
+
+# Create a Claude Agent SDK app (TypeScript or Python)
+kernel create --name my-claude-agent --language ts --template claude-agent-sdk
 ```
 
 ### Deploy with environment variables
@@ -587,15 +591,15 @@ kernel proxies delete prx_123 --yes
 
 For complete documentation, visit:
 
-- [📖 Documentation](https://onkernel.com/docs)
-- [🚀 Quickstart Guide](https://onkernel.com/docs/quickstart)
-- [📋 CLI Reference](https://onkernel.com/docs/reference/cli)
+- [📖 Documentation](https://www.kernel.sh/docs)
+- [🚀 Quickstart Guide](https://www.kernel.sh/docs/quickstart)
+- [📋 CLI Reference](https://www.kernel.sh/docs/reference/cli)
 
 ## Support
 
 - [Discord Community](https://discord.gg/kernel)
 - [GitHub Issues](https://github.com/onkernel/kernel/issues)
-- [Documentation](https://onkernel.com/docs)
+- [Documentation](https://www.kernel.sh/docs)
 
 ---
 

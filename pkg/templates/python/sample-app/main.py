@@ -20,7 +20,6 @@ Invoke this via CLI:
     kernel login  # or: export KERNEL_API_KEY=<your_api_key>
     kernel deploy main.py # If you haven't already deployed this app
     kernel invoke python-basic get-page-title -p '{"url": "https://www.google.com"}'
-    kernel logs python-basic -f # Open in separate tab
 """
 class PageTitleInput(TypedDict):
     url: str
@@ -68,7 +67,7 @@ async def get_page_title(ctx: kernel.KernelContext, input_data: PageTitleInput) 
 """
 Example app that creates a long-running Kernel browser for manual testing
 Invoke this action to test Kernel browsers manually with our browser live view
-https://onkernel.com/docs/browsers/live-view
+https://www.kernel.sh/docs/browsers/live-view
 Args:
     ctx: Kernel context containing invocation information
 Returns:
@@ -77,7 +76,6 @@ Invoke this via CLI:
     kernel login  # or: export KERNEL_API_KEY=<your_api_key>
     kernel deploy main.py # If you haven't already deployed this app
     kernel invoke python-basic create-browser-for-testing
-    kernel logs python-basic -f # Open in separate tab
 """
 class CreateBrowserForTestingOutput(TypedDict):
     browser_live_view_url: str
