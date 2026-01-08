@@ -42,3 +42,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
