@@ -13,9 +13,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kernel/cli/pkg/update"
 	"github.com/kernel/cli/pkg/util"
-	"github.com/onkernel/kernel-go-sdk"
-	"github.com/onkernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -188,7 +189,11 @@ func handleSdkError(err error) error {
 	pterm.Info.Println("- Validate that your payload is properly formatted")
 	pterm.Info.Println("- Check `kernel app history <app name>` to see if the app is deployed")
 	pterm.Info.Println("- Try redeploying the app")
-	pterm.Info.Println("- Make sure you're on the latest version of the CLI: `brew upgrade onkernel/tap/kernel`")
+	if cmd := update.SuggestUpgradeCommand(); cmd != "" {
+		pterm.Info.Printf("- Make sure you're on the latest version of the CLI: `%s`\n", cmd)
+	} else {
+		pterm.Info.Println("- Make sure you're on the latest version of the CLI")
+	}
 	return nil
 }
 

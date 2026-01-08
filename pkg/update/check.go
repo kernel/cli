@@ -134,7 +134,7 @@ func printUpgradeMessage(current, latest, url string) {
 	if url != "" {
 		pterm.Info.Printf("Release notes: %s\n", url)
 	}
-	if cmd := suggestUpgradeCommand(); cmd != "" {
+	if cmd := SuggestUpgradeCommand(); cmd != "" {
 		pterm.Info.Printf("To upgrade, run: %s\n", cmd)
 	} else {
 		pterm.Info.Println("To upgrade, visit the release page above or use your package manager.")
@@ -234,9 +234,9 @@ func saveCache(path string, c Cache) error {
 	return os.WriteFile(path, b, 0o600)
 }
 
-// suggestUpgradeCommand attempts to infer how the user installed kernel and
+// SuggestUpgradeCommand attempts to infer how the user installed kernel and
 // returns a tailored upgrade command. Falls back to empty string on unknown.
-func suggestUpgradeCommand() string {
+func SuggestUpgradeCommand() string {
 	// Collect candidate paths: current executable and shell-resolved binary
 	candidates := []string{}
 	if exe, err := os.Executable(); err == nil && exe != "" {
@@ -272,7 +272,7 @@ func suggestUpgradeCommand() string {
 	}
 
 	rules := []rule{
-		{hasHomebrew, nil, "brew upgrade onkernel/tap/kernel"},
+		{hasHomebrew, nil, ""}, // Homebrew handled specially below
 		{hasBun, []string{"BUN_INSTALL"}, "bun add -g @onkernel/cli@latest"},
 		{hasPNPM, []string{"PNPM_HOME"}, "pnpm add -g @onkernel/cli@latest"},
 		{hasNPM, []string{"NPM_CONFIG_PREFIX", "npm_config_prefix", "VOLTA_HOME"}, "npm i -g @onkernel/cli@latest"},
@@ -282,6 +282,10 @@ func suggestUpgradeCommand() string {
 	for _, c := range candidates {
 		for _, r := range rules {
 			if r.check != nil && r.check(c) {
+				if r.cmd == "" {
+					// Homebrew detected, check which tap
+					return suggestHomebrewCommand(c)
+				}
 				return r.cmd
 			}
 		}
@@ -306,7 +310,50 @@ func suggestUpgradeCommand() string {
 	}
 
 	// Default suggestion when unknown
-	return "brew upgrade onkernel/tap/kernel"
+	return "brew upgrade kernel/tap/kernel"
+}
+
+// suggestHomebrewCommand returns the appropriate brew command based on which tap
+// the user has installed. If they have the old onkernel/tap, they need to uninstall
+// and reinstall from the new kernel/tap.
+func suggestHomebrewCommand(exePath string) string {
+	// Check if the executable path indicates the old tap by looking at version.
+	// The Cellar path format is: /opt/homebrew/Cellar/kernel/<version>/bin/kernel
+	// Versions before 0.13.0 were published to onkernel/tap, 0.13.0+ to kernel/tap.
+	if isOldTapVersion(exePath) {
+		return "brew uninstall kernel && brew install kernel/tap/kernel"
+	}
+
+	return "brew upgrade kernel/tap/kernel"
+}
+
+// isOldTapVersion checks if the Homebrew Cellar path contains a version < 0.13.0,
+// which indicates it was installed from the old onkernel/tap.
+func isOldTapVersion(exePath string) bool {
+	// Expected path format: .../Cellar/kernel/<version>/...
+	normPath := strings.ToLower(filepath.ToSlash(exePath))
+	if !strings.Contains(normPath, "/cellar/kernel/") {
+		return false
+	}
+
+	// Extract version from path
+	parts := strings.Split(normPath, "/cellar/kernel/")
+	if len(parts) < 2 {
+		return false
+	}
+	remainder := parts[1] // e.g., "0.12.4/bin/kernel"
+	versionPart := strings.Split(remainder, "/")[0]
+	if versionPart == "" {
+		return false
+	}
+
+	// Parse and compare versions
+	installed, err := semver.NewVersion(versionPart)
+	if err != nil {
+		return false
+	}
+	threshold, _ := semver.NewVersion("0.13.0")
+	return installed.LessThan(threshold)
 }
 
 // invokedTrivialCommand returns true if the argv suggests a trivial invocation

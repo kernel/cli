@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/onkernel/kernel-go-sdk"
-	"github.com/onkernel/kernel-go-sdk/option"
-	"github.com/onkernel/kernel-go-sdk/packages/pagination"
-	"github.com/onkernel/kernel-go-sdk/packages/ssestream"
-	"github.com/onkernel/kernel-go-sdk/shared"
+	"github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
+	"github.com/kernel/kernel-go-sdk/packages/ssestream"
+	"github.com/kernel/kernel-go-sdk/shared"
 	"github.com/pterm/pterm"
 	"github.com/stretchr/testify/assert"
 )

@@ -16,8 +16,8 @@ import (
 	"github.com/kernel/cli/pkg/auth"
 	"github.com/kernel/cli/pkg/update"
 	"github.com/kernel/cli/pkg/util"
-	"github.com/onkernel/kernel-go-sdk"
-	"github.com/onkernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )

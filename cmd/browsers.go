@@ -16,18 +16,18 @@ import (
 	"strings"
 
 	"github.com/kernel/cli/pkg/util"
-	"github.com/onkernel/kernel-go-sdk"
-	"github.com/onkernel/kernel-go-sdk/option"
-	"github.com/onkernel/kernel-go-sdk/packages/pagination"
-	"github.com/onkernel/kernel-go-sdk/packages/ssestream"
-	"github.com/onkernel/kernel-go-sdk/shared"
+	"github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
+	"github.com/kernel/kernel-go-sdk/packages/ssestream"
+	"github.com/kernel/kernel-go-sdk/shared"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
 // BrowsersService defines the subset of the Kernel SDK browser client that we use.
-// See https://github.com/onkernel/kernel-go-sdk/blob/main/browser.go
+// See https://github.com/kernel/kernel-go-sdk/blob/main/browser.go
 type BrowsersService interface {
 	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.BrowserGetResponse, err error)
 	List(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.BrowserListResponse], err error)
