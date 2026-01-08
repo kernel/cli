@@ -20,7 +20,7 @@ func TestProxyList_Empty(t *testing.T) {
 	}
 
 	p := ProxyCmd{proxies: fake}
-	err := p.List(context.Background())
+	err := p.List(context.Background(), ProxyListInput{})
 
 	assert.NoError(t, err)
 	assert.Contains(t, buf.String(), "No proxy configurations found")
@@ -59,7 +59,7 @@ func TestProxyList_WithProxies(t *testing.T) {
 	}
 
 	p := ProxyCmd{proxies: fake}
-	err := p.List(context.Background())
+	err := p.List(context.Background(), ProxyListInput{})
 
 	assert.NoError(t, err)
 	output := buf.String()
@@ -101,7 +101,7 @@ func TestProxyList_Error(t *testing.T) {
 	}
 
 	p := ProxyCmd{proxies: fake}
-	err := p.List(context.Background())
+	err := p.List(context.Background(), ProxyListInput{})
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "API error")
