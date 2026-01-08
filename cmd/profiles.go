@@ -115,6 +115,10 @@ func (p ProfilesCmd) Get(ctx context.Context, in ProfilesGetInput) error {
 		return util.CleanedUpSdkError{Err: err}
 	}
 	if item == nil || item.ID == "" {
+		if in.Output == "json" {
+			fmt.Println("null")
+			return nil
+		}
 		pterm.Error.Printf("Profile '%s' not found\n", in.Identifier)
 		return nil
 	}

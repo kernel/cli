@@ -96,6 +96,16 @@ func runInvoke(cmd *cobra.Command, args []string) error {
 	// Create the invocation
 	resp, err := client.Invocations.New(cmd.Context(), params, option.WithMaxRetries(0))
 	if err != nil {
+		if jsonOutput {
+			// In JSON mode, output error as JSON object
+			errObj := map[string]interface{}{"error": err.Error()}
+			if apiErr, ok := err.(*kernel.Error); ok {
+				errObj["status_code"] = apiErr.StatusCode
+			}
+			bs, _ := json.Marshal(errObj)
+			fmt.Println(string(bs))
+			return fmt.Errorf("invocation failed: %w", err)
+		}
 		return handleSdkError(err)
 	}
 	// Log the invocation ID for user reference
