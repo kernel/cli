@@ -441,10 +441,10 @@ var agentsAuthCreateCmd = &cobra.Command{
 }
 
 var agentsAuthInvokeCmd = &cobra.Command{
-	Use:   "invoke <auth-agent-id>",
+	Use:   "invoke [auth-agent-id]",
 	Short: "Start an auth invocation",
 	Long:  "Start an authentication invocation using the hosted UI flow",
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runAgentsAuthInvoke,
 }
 
@@ -516,6 +516,7 @@ func init() {
 	// invoke flags
 	agentsAuthInvokeCmd.Flags().String("save-credential-as", "", "Save credentials under this name after successful login")
 	agentsAuthInvokeCmd.Flags().Bool("no-browser", false, "Don't automatically open browser")
+	agentsAuthInvokeCmd.Flags().BoolP("interactive", "i", false, "Interactive mode - select auth agent from list")
 
 	// list flags
 	agentsAuthListCmd.Flags().String("domain", "", "Filter by domain")
@@ -656,16 +657,59 @@ func runAgentsAuthCreate(cmd *cobra.Command, args []string) error {
 
 func runAgentsAuthInvoke(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
+	ctx := cmd.Context()
 
 	saveCredentialAs, _ := cmd.Flags().GetString("save-credential-as")
 	noBrowser, _ := cmd.Flags().GetBool("no-browser")
+	interactive, _ := cmd.Flags().GetBool("interactive")
+
+	var authAgentID string
+	if len(args) > 0 {
+		authAgentID = args[0]
+	}
+
+	if interactive || authAgentID == "" {
+		// Fetch auth agents and let user select
+		page, err := client.Agents.Auth.List(ctx, kernel.AgentAuthListParams{})
+		if err != nil {
+			return util.CleanedUpSdkError{Err: err}
+		}
+
+		if len(page.Items) == 0 {
+			pterm.Error.Println("No auth agents found. Create one first with: kernel agents auth create")
+			return nil
+		}
+
+		options := []string{}
+		agentMap := make(map[string]string) // display -> id
+		for _, agent := range page.Items {
+			display := fmt.Sprintf("%s - %s (%s)", agent.ID[:8], agent.Domain, agent.ProfileName)
+			options = append(options, display)
+			agentMap[display] = agent.ID
+		}
+
+		selected, err := pterm.DefaultInteractiveSelect.
+			WithDefaultText("Select an auth agent to invoke").
+			WithOptions(options).
+			WithFilter(true).
+			Show()
+		if err != nil {
+			return fmt.Errorf("failed to select auth agent: %w", err)
+		}
+
+		authAgentID = agentMap[selected]
+	}
+
+	if authAgentID == "" {
+		return fmt.Errorf("auth-agent-id is required (or use -i for interactive mode)")
+	}
 
 	svc := client.Agents.Auth
 	invocationsSvc := client.Agents.Auth.Invocations
 	a := AgentAuthCmd{auth: &svc, invocations: &invocationsSvc}
 
-	return a.Invoke(cmd.Context(), InvokeInput{
-		AuthAgentID:      args[0],
+	return a.Invoke(ctx, InvokeInput{
+		AuthAgentID:      authAgentID,
 		SaveCredentialAs: saveCredentialAs,
 		NoBrowser:        noBrowser,
 	})
