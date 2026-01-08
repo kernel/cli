@@ -120,28 +120,20 @@ func (a AgentAuthCmd) Invoke(ctx context.Context, in InvokeInput) error {
 	pterm.Println(fmt.Sprintf("  Expires: %s", invocation.ExpiresAt.Format(time.RFC3339)))
 	pterm.Println()
 
-	// Get the live view URL from the first poll
-	state, err := a.invocations.Get(ctx, invocation.InvocationID)
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
+	pterm.Info.Println("Open this URL in your browser to log in:")
+	pterm.Println()
+	pterm.Println(fmt.Sprintf("  %s", invocation.HostedURL))
+	pterm.Println()
 
-	if state.LiveViewURL != "" {
-		pterm.Info.Println("Open this URL in your browser to log in:")
-		pterm.Println()
-		pterm.Println(fmt.Sprintf("  %s", state.LiveViewURL))
-		pterm.Println()
-
-		if !in.NoBrowser {
-			if err := browser.OpenURL(state.LiveViewURL); err != nil {
-				pterm.Warning.Printf("Could not open browser automatically: %v\n", err)
-			} else {
-				pterm.Info.Println("(Opened in browser)")
-			}
+	if !in.NoBrowser {
+		if err := browser.OpenURL(invocation.HostedURL); err != nil {
+			pterm.Warning.Printf("Could not open browser automatically: %v\n", err)
+		} else {
+			pterm.Info.Println("(Opened in browser)")
 		}
-		pterm.Println()
 	}
 
+	pterm.Println()
 	pterm.Info.Println("Polling for completion...")
 
 	startTime := time.Now()
