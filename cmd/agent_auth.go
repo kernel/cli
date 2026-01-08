@@ -82,6 +82,11 @@ func (a AgentAuthCmd) Create(ctx context.Context, in CreateInput) error {
 	}
 
 	PrintTableNoPad(rows, true)
+
+	pterm.Println()
+	pterm.Info.Println("Next step: Start the authentication flow with:")
+	pterm.Printf("  kernel agents auth invoke %s\n", agent.ID)
+
 	return nil
 }
 
