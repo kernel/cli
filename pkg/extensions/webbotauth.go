@@ -63,7 +63,10 @@ func BuildWebBotAuth(ctx context.Context, in ExtensionsBuildWebBotAuthInput) (*B
 		if !st.IsDir() {
 			return nil, fmt.Errorf("output path exists and is not a directory: %s", outputDir)
 		}
-		entries, _ := os.ReadDir(outputDir)
+		entries, err := os.ReadDir(outputDir)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read output directory: %w", err)
+		}
 		if len(entries) > 0 {
 			return nil, fmt.Errorf("output directory must be empty: %s", outputDir)
 		}
