@@ -83,8 +83,11 @@ func MarshalPKCS8PrivateKey(key ed25519.PrivateKey) ([]byte, error) {
 	// Extract seed (first 32 bytes of private key)
 	seed := key.Seed()
 
-	// Inner OCTET STRING (seed)
+	// Inner OCTET STRING (seed) - RFC 8410: CurvePrivateKey
 	innerOctetString := append([]byte{0x04, byte(len(seed))}, seed...)
+
+	// Outer OCTET STRING wrapping the inner one - RFC 8410: privateKey field
+	outerOctetString := append([]byte{0x04, byte(len(innerOctetString))}, innerOctetString...)
 
 	// Algorithm identifier SEQUENCE
 	algSeq := append([]byte{0x30, byte(len(oid))}, oid...)
@@ -94,7 +97,7 @@ func MarshalPKCS8PrivateKey(key ed25519.PrivateKey) ([]byte, error) {
 
 	// Combine all parts
 	content := append(version, algSeq...)
-	content = append(content, innerOctetString...)
+	content = append(content, outerOctetString...)
 
 	// Outer SEQUENCE
 	result := append([]byte{0x30, byte(len(content))}, content...)
