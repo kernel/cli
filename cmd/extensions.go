@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/kernel/cli/pkg/extensions"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
@@ -422,12 +423,60 @@ var extensionsUploadCmd = &cobra.Command{
 	},
 }
 
+var extensionsPrepareWebBotAuthCmd = &cobra.Command{
+	Use:   "build-web-bot-auth",
+	Short: "Build the Cloudflare web-bot-auth extension for Kernel",
+	Long: `Download, build, and prepare the Cloudflare web-bot-auth extension with Kernel-specific configurations.
+					Defaults to RFC9421 test key (works with Cloudflare's test site).
+					Optionally accepts a custom Ed25519 JWK key file and can upload directly to Kernel.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		output, _ := cmd.Flags().GetString("to")
+		url, _ := cmd.Flags().GetString("url")
+		keyPath, _ := cmd.Flags().GetString("key")
+		shouldUpload, _ := cmd.Flags().GetBool("upload")
+		name, _ := cmd.Flags().GetString("name")
+
+		// Use provided name, or default to "web-bot-auth"
+		extensionName := name
+		if extensionName == "" {
+			extensionName = "web-bot-auth"
+		}
+
+		// Build the extension
+		result, err := extensions.BuildWebBotAuth(cmd.Context(), extensions.ExtensionsBuildWebBotAuthInput{
+			Output:        output,
+			HostURL:       url,
+			KeyPath:       keyPath,
+			ExtensionName: extensionName,
+		})
+		if err != nil {
+			return err
+		}
+
+		// Upload if requested
+		if shouldUpload {
+			client := getKernelClient(cmd)
+			svc := client.Extensions
+			e := ExtensionsCmd{extensions: &svc}
+			pterm.Info.Println("Uploading extension to Kernel...")
+			return e.Upload(cmd.Context(), ExtensionsUploadInput{
+				Dir:  result.OutputDir,
+				Name: extensionName,
+			})
+		}
+
+		return nil
+	},
+}
+
 func init() {
 	extensionsCmd.AddCommand(extensionsListCmd)
 	extensionsCmd.AddCommand(extensionsDeleteCmd)
 	extensionsCmd.AddCommand(extensionsDownloadCmd)
 	extensionsCmd.AddCommand(extensionsDownloadWebStoreCmd)
 	extensionsCmd.AddCommand(extensionsUploadCmd)
+	extensionsCmd.AddCommand(extensionsPrepareWebBotAuthCmd)
 
 	extensionsListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	extensionsDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
@@ -436,4 +485,9 @@ func init() {
 	extensionsDownloadWebStoreCmd.Flags().String("os", "", "Target OS: mac, win, or linux (default linux)")
 	extensionsUploadCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	extensionsUploadCmd.Flags().String("name", "", "Optional unique extension name")
+	extensionsPrepareWebBotAuthCmd.Flags().String("to", "./web-bot-auth", "Output directory for the prepared extension")
+	extensionsPrepareWebBotAuthCmd.Flags().String("url", "http://127.0.0.1:10001", "Base URL for update.xml and policy templates")
+	extensionsPrepareWebBotAuthCmd.Flags().String("key", "", "Path to custom Ed25519 JWK key file (defaults to RFC9421 test key)")
+	extensionsPrepareWebBotAuthCmd.Flags().Bool("upload", false, "Upload extension to Kernel after building")
+	extensionsPrepareWebBotAuthCmd.Flags().String("name", "", "Extension name when uploading (defaults to 'web-bot-auth')")
 }
