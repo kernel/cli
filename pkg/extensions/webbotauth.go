@@ -29,9 +29,10 @@ const (
 )
 
 type ExtensionsBuildWebBotAuthInput struct {
-	Output  string
-	HostURL string
-	KeyPath string // Path to user's JWK file (optional, defaults to RFC9421 test key)
+	Output        string
+	HostURL       string
+	KeyPath       string // Path to user's JWK file (optional, defaults to RFC9421 test key)
+	ExtensionName string // Name for the extension paths (defaults to "web-bot-auth")
 }
 
 // BuildWebBotAuthOutput contains the result of building the extension
@@ -46,6 +47,12 @@ func BuildWebBotAuth(ctx context.Context, in ExtensionsBuildWebBotAuthInput) (*B
 	// Validate preconditions
 	if err := validateToolDependencies(); err != nil {
 		return nil, err
+	}
+
+	// Set default extension name if not provided
+	extensionName := in.ExtensionName
+	if extensionName == "" {
+		extensionName = "web-bot-auth"
 	}
 
 	outputDir, err := filepath.Abs(in.Output)
@@ -91,7 +98,7 @@ func BuildWebBotAuth(ctx context.Context, in ExtensionsBuildWebBotAuthInput) (*B
 	}
 
 	// Build extension
-	extensionID, err := buildWebBotAuthExtension(ctx, browserExtDir, in.HostURL, jwkData)
+	extensionID, err := buildWebBotAuthExtension(ctx, browserExtDir, in.HostURL, jwkData, extensionName)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +109,7 @@ func BuildWebBotAuth(ctx context.Context, in ExtensionsBuildWebBotAuthInput) (*B
 	}
 
 	// Display success message
-	displayWebBotAuthSuccess(outputDir, extensionID, in.HostURL, usingDefaultKey)
+	displayWebBotAuthSuccess(outputDir, extensionName, extensionID, in.HostURL, usingDefaultKey)
 
 	return &BuildWebBotAuthOutput{
 		ExtensionID: extensionID,
@@ -210,7 +217,8 @@ func downloadAndExtractWebBotAuth(ctx context.Context) (browserExtDir string, cl
 }
 
 // buildWebBotAuthExtension modifies templates, builds the extension, and returns the extension ID
-func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, jwkData string) (string, error) {
+// extensionName is used for URL paths (e.g., "web-bot-auth") instead of the Chrome extension ID
+func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, jwkData, extensionName string) (string, error) {
 	// Normalize hostURL by removing trailing slashes to prevent double slashes in URLs
 	hostURL = strings.TrimRight(hostURL, "/")
 
@@ -289,17 +297,18 @@ func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, jwkDa
 		return "", fmt.Errorf("npm run bundle:chrome failed: %w", err)
 	}
 
-	// Extract extension ID
+	// Extract extension ID (still needed for logging/reference)
 	extensionID := extractExtensionID(bundleOutput.String())
 	if extensionID == "" {
 		return "", fmt.Errorf("failed to extract extension ID from bundle output")
 	}
 
-	// Update URLs with extension-specific paths
-	pterm.Info.Printf("Updating URLs to use extension ID: %s\n", extensionID)
+	// Update URLs with extension name paths (not extension ID)
+	// This allows using readable names like "web-bot-auth" instead of the Chrome extension ID
+	pterm.Info.Printf("Updating URLs to use extension name: %s (Chrome ID: %s)\n", extensionName, extensionID)
 
 	updateXMLPath := filepath.Join(browserExtDir, "dist", "web-ext-artifacts", "update.xml")
-	extensionSpecificCodebase := fmt.Sprintf("%s/extensions/%s/http-message-signatures-extension.crx", hostURL, extensionID)
+	extensionSpecificCodebase := fmt.Sprintf("%s/extensions/%s/http-message-signatures-extension.crx", hostURL, extensionName)
 	if err := util.ModifyFile(updateXMLPath,
 		fmt.Sprintf("%s/http-message-signatures-extension.crx", hostURL),
 		extensionSpecificCodebase); err != nil {
@@ -311,14 +320,14 @@ func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, jwkDa
 	policyJSONPath := filepath.Join(browserExtDir, "policy", "policy.json")
 	if err := util.ModifyFile(policyJSONPath,
 		fmt.Sprintf("%s/update.xml", hostURL),
-		fmt.Sprintf("%s/extensions/%s/update.xml", hostURL, extensionID)); err != nil {
+		fmt.Sprintf("%s/extensions/%s/update.xml", hostURL, extensionName)); err != nil {
 		pterm.Warning.Printf("Failed to update policy.json: %v\n", err)
 	}
 
 	plistPath := filepath.Join(browserExtDir, "policy", "com.google.Chrome.managed.plist")
 	if err := util.ModifyFile(plistPath,
 		fmt.Sprintf("%s/update.xml", hostURL),
-		fmt.Sprintf("%s/extensions/%s/update.xml", hostURL, extensionID)); err != nil {
+		fmt.Sprintf("%s/extensions/%s/update.xml", hostURL, extensionName)); err != nil {
 		pterm.Warning.Printf("Failed to update plist: %v\n", err)
 	}
 
@@ -395,12 +404,13 @@ func copyExtensionArtifacts(browserExtDir, outputDir string) error {
 }
 
 // displayWebBotAuthSuccess displays success message and next steps
-func displayWebBotAuthSuccess(outputDir, extensionID, hostURL string, usingDefaultKey bool) {
+func displayWebBotAuthSuccess(outputDir, extensionName, extensionID, hostURL string, usingDefaultKey bool) {
 	pterm.Success.Println("Web-bot-auth extension prepared successfully!")
 	pterm.Println()
 
 	rows := pterm.TableData{{"Property", "Value"}}
-	rows = append(rows, []string{"Extension ID", extensionID})
+	rows = append(rows, []string{"Extension Name", extensionName})
+	rows = append(rows, []string{"Chrome Extension ID", extensionID})
 	rows = append(rows, []string{"Output directory", outputDir})
 	rows = append(rows, []string{"Host URL", hostURL})
 	if usingDefaultKey {
@@ -412,10 +422,10 @@ func displayWebBotAuthSuccess(outputDir, extensionID, hostURL string, usingDefau
 
 	pterm.Println()
 	pterm.Info.Println("Next steps:")
-	pterm.Printf("1. Upload using the extension ID as the name:\n")
-	pterm.Printf("   kernel extensions upload %s --name %s\n\n", outputDir, extensionID)
+	pterm.Printf("1. Upload the extension:\n")
+	pterm.Printf("   kernel extensions upload %s --name %s\n\n", outputDir, extensionName)
 	pterm.Printf("2. Use in your browser:\n")
-	pterm.Printf("   kernel browsers create --extension %s\n\n", extensionID)
+	pterm.Printf("   kernel browsers create --extension %s\n\n", extensionName)
 
 	pterm.Println()
 	pterm.Info.Println("   For testing with Cloudflare's test site:")

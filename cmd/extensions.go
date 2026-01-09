@@ -435,12 +435,20 @@ var extensionsPrepareWebBotAuthCmd = &cobra.Command{
 		url, _ := cmd.Flags().GetString("url")
 		keyPath, _ := cmd.Flags().GetString("key")
 		shouldUpload, _ := cmd.Flags().GetBool("upload")
+		name, _ := cmd.Flags().GetString("name")
+
+		// Use provided name, or default to "web-bot-auth"
+		extensionName := name
+		if extensionName == "" {
+			extensionName = "web-bot-auth"
+		}
 
 		// Build the extension
 		result, err := extensions.BuildWebBotAuth(cmd.Context(), extensions.ExtensionsBuildWebBotAuthInput{
-			Output:  output,
-			HostURL: url,
-			KeyPath: keyPath,
+			Output:        output,
+			HostURL:       url,
+			KeyPath:       keyPath,
+			ExtensionName: extensionName,
 		})
 		if err != nil {
 			return err
@@ -454,7 +462,7 @@ var extensionsPrepareWebBotAuthCmd = &cobra.Command{
 			pterm.Info.Println("Uploading extension to Kernel...")
 			return e.Upload(cmd.Context(), ExtensionsUploadInput{
 				Dir:  result.OutputDir,
-				Name: result.ExtensionID,
+				Name: extensionName,
 			})
 		}
 
@@ -481,4 +489,5 @@ func init() {
 	extensionsPrepareWebBotAuthCmd.Flags().String("url", "http://127.0.0.1:10001", "Base URL for update.xml and policy templates")
 	extensionsPrepareWebBotAuthCmd.Flags().String("key", "", "Path to custom Ed25519 JWK key file (defaults to RFC9421 test key)")
 	extensionsPrepareWebBotAuthCmd.Flags().Bool("upload", false, "Upload extension to Kernel after building")
+	extensionsPrepareWebBotAuthCmd.Flags().String("name", "", "Extension name when uploading (defaults to 'web-bot-auth')")
 }
