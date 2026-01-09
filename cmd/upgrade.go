@@ -75,12 +75,27 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
+		pterm.Info.Printf("Detected installation method: %s\n", method)
+		pterm.Info.Printf("Binary path: %s\n", binaryPath)
 		pterm.Info.Printf("Would run: %s\n", getUpgradeCommand(method))
 		return nil
 	}
 
 	pterm.Info.Printf("Upgrading via %s...\n", method)
-	return executeUpgrade(method)
+	if err := executeUpgrade(method); err != nil {
+		// If Homebrew upgrade fails, it might be due to old tap installation
+		if method == update.InstallMethodBrew {
+			pterm.Error.Println("Homebrew upgrade failed.")
+			pterm.Info.Println("If you installed from the old onkernel/tap, run:")
+			pterm.Println()
+			fmt.Println("  brew uninstall kernel")
+			fmt.Println("  brew untap onkernel/tap 2>/dev/null || true")
+			fmt.Println("  brew install kernel/tap/kernel")
+			pterm.Println()
+		}
+		return err
+	}
+	return nil
 }
 
 // getUpgradeCommand returns the command string for a given installation method
@@ -144,6 +159,6 @@ func printManualUpgradeInstructions(version, binaryPath string) {
 	pterm.Println()
 	fmt.Printf("  wget %s -O /tmp/kernel.tar.gz\n", downloadURL)
 	fmt.Printf("  tar -xzf /tmp/kernel.tar.gz -C /tmp\n")
-	fmt.Printf("  sudo cp /tmp/kernel %s\n", binaryPath)
+	fmt.Printf("  sudo cp /tmp/kernel %q\n", binaryPath)
 	pterm.Println()
 }
