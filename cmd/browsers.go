@@ -201,8 +201,7 @@ type BrowsersListInput struct {
 
 func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	params := kernel.BrowserListParams{}
@@ -290,8 +289,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 
 func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	if in.Output != "json" {
@@ -475,8 +473,7 @@ func (b BrowsersCmd) Delete(ctx context.Context, in BrowsersDeleteInput) error {
 
 func (b BrowsersCmd) View(ctx context.Context, in BrowsersViewInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	browser, err := b.browsers.Get(ctx, in.Identifier)
@@ -506,8 +503,7 @@ func (b BrowsersCmd) View(ctx context.Context, in BrowsersViewInput) error {
 
 func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	browser, err := b.browsers.Get(ctx, in.Identifier)
@@ -909,8 +905,7 @@ type BrowsersReplaysDownloadInput struct {
 
 func (b BrowsersCmd) ReplaysList(ctx context.Context, in BrowsersReplaysListInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	br, err := b.browsers.Get(ctx, in.Identifier)
@@ -949,8 +944,7 @@ func (b BrowsersCmd) ReplaysList(ctx context.Context, in BrowsersReplaysListInpu
 
 func (b BrowsersCmd) ReplaysStart(ctx context.Context, in BrowsersReplaysStartInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	br, err := b.browsers.Get(ctx, in.Identifier)
@@ -1121,8 +1115,7 @@ func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrigh
 
 func (b BrowsersCmd) ProcessExec(ctx context.Context, in BrowsersProcessExecInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	if b.process == nil {
@@ -1194,8 +1187,7 @@ func (b BrowsersCmd) ProcessExec(ctx context.Context, in BrowsersProcessExecInpu
 
 func (b BrowsersCmd) ProcessSpawn(ctx context.Context, in BrowsersProcessSpawnInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	if b.process == nil {
@@ -1499,8 +1491,7 @@ func (b BrowsersCmd) FSDownloadDirZip(ctx context.Context, in BrowsersFSDownload
 
 func (b BrowsersCmd) FSFileInfo(ctx context.Context, in BrowsersFSFileInfoInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	if b.fs == nil {
@@ -1532,8 +1523,7 @@ func (b BrowsersCmd) FSFileInfo(ctx context.Context, in BrowsersFSFileInfoInput)
 
 func (b BrowsersCmd) FSListFiles(ctx context.Context, in BrowsersFSListFilesInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	if b.fs == nil {
@@ -2178,6 +2168,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 			"pool-id":   true,
 			"pool-name": true,
 			"timeout":   true,
+			"output":    true,
 			// Global persistent flags that don't configure browsers
 			"no-color":  true,
 			"log-level": true,

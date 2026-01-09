@@ -14,8 +14,7 @@ import (
 
 func (p ProxyCmd) Get(ctx context.Context, in ProxyGetInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	item, err := p.proxies.Get(ctx, in.ID)

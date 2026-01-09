@@ -97,8 +97,7 @@ func runDeployGithub(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 
 	if output != "" && output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	// Collect env vars similar to runDeploy
@@ -216,8 +215,7 @@ func runDeploy(cmd *cobra.Command, args []string) (err error) {
 	output, _ := cmd.Flags().GetString("output")
 
 	if output != "" && output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	if version == "" {
@@ -388,8 +386,7 @@ func runDeployHistory(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 
 	if output != "" && output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	// Prefer page/per-page when provided; map legacy --limit otherwise

@@ -14,8 +14,7 @@ import (
 
 func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	// Validate proxy type

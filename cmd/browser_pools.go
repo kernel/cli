@@ -35,8 +35,7 @@ type BrowserPoolsListInput struct {
 
 func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	pools, err := c.client.List(ctx)
@@ -100,8 +99,7 @@ type BrowserPoolsCreateInput struct {
 
 func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	params := kernel.BrowserPoolNewParams{
@@ -180,8 +178,7 @@ type BrowserPoolsGetInput struct {
 
 func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	pool, err := c.client.Get(ctx, in.IDOrName)
@@ -244,8 +241,7 @@ type BrowserPoolsUpdateInput struct {
 
 func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	params := kernel.BrowserPoolUpdateParams{}
@@ -347,8 +343,7 @@ type BrowserPoolsAcquireInput struct {
 
 func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	params := kernel.BrowserPoolAcquireParams{}

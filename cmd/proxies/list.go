@@ -15,8 +15,7 @@ import (
 
 func (p ProxyCmd) List(ctx context.Context, in ProxyListInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	if in.Output != "json" {

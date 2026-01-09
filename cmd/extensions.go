@@ -60,8 +60,7 @@ type ExtensionsCmd struct {
 
 func (e ExtensionsCmd) List(ctx context.Context, in ExtensionsListInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	if in.Output != "json" {
@@ -285,8 +284,7 @@ func (e ExtensionsCmd) DownloadWebStore(ctx context.Context, in ExtensionsDownlo
 
 func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	if in.Dir == "" {

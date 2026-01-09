@@ -57,8 +57,7 @@ type ProfilesCmd struct {
 
 func (p ProfilesCmd) List(ctx context.Context, in ProfilesListInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	if in.Output != "json" {
@@ -106,8 +105,7 @@ func (p ProfilesCmd) List(ctx context.Context, in ProfilesListInput) error {
 
 func (p ProfilesCmd) Get(ctx context.Context, in ProfilesGetInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	item, err := p.profiles.Get(ctx, in.Identifier)
@@ -148,8 +146,7 @@ func (p ProfilesCmd) Get(ctx context.Context, in ProfilesGetInput) error {
 
 func (p ProfilesCmd) Create(ctx context.Context, in ProfilesCreateInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	params := kernel.ProfileNewParams{}
