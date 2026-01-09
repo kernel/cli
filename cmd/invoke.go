@@ -180,18 +180,21 @@ func runInvoke(cmd *cobra.Command, args []string) error {
 			if err == nil {
 				fmt.Println(string(bs))
 			}
-			// Check for terminal states
-			if ev.Event == "invocation_state" {
-				stateEv := ev.AsInvocationState()
-				status := stateEv.Invocation.Status
-				if status == string(kernel.InvocationGetResponseStatusSucceeded) ||
-					status == string(kernel.InvocationGetResponseStatusFailed) {
-					return nil
-				}
-			}
-			if ev.Event == "error" {
+		// Check for terminal states
+		if ev.Event == "invocation_state" {
+			stateEv := ev.AsInvocationState()
+			status := stateEv.Invocation.Status
+			if status == string(kernel.InvocationGetResponseStatusSucceeded) {
 				return nil
 			}
+			if status == string(kernel.InvocationGetResponseStatusFailed) {
+				return fmt.Errorf("invocation failed")
+			}
+		}
+		if ev.Event == "error" {
+			errEv := ev.AsError()
+			return fmt.Errorf("%s: %s", errEv.Error.Code, errEv.Error.Message)
+		}
 			continue
 		}
 

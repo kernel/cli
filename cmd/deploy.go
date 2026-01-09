@@ -531,19 +531,22 @@ func followDeployment(ctx context.Context, client kernel.Client, deploymentID st
 			if err == nil {
 				fmt.Println(string(bs))
 			}
-			// Check for terminal states
-			if data.Event == "deployment_state" {
-				deploymentState := data.AsDeploymentState()
-				status := deploymentState.Deployment.Status
-				if status == string(kernel.DeploymentGetResponseStatusFailed) ||
-					status == string(kernel.DeploymentGetResponseStatusStopped) ||
-					status == string(kernel.DeploymentGetResponseStatusRunning) {
-					return nil
-				}
+		// Check for terminal states
+		if data.Event == "deployment_state" {
+			deploymentState := data.AsDeploymentState()
+			status := deploymentState.Deployment.Status
+			if status == string(kernel.DeploymentGetResponseStatusFailed) ||
+				status == string(kernel.DeploymentGetResponseStatusStopped) {
+				return fmt.Errorf("deployment %s: %s", status, deploymentState.Deployment.StatusReason)
 			}
-			if data.Event == "error" {
+			if status == string(kernel.DeploymentGetResponseStatusRunning) {
 				return nil
 			}
+		}
+		if data.Event == "error" {
+			errorEv := data.AsErrorEvent()
+			return fmt.Errorf("%s: %s", errorEv.Error.Code, errorEv.Error.Message)
+		}
 			continue
 		}
 

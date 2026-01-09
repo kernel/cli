@@ -360,6 +360,10 @@ func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInpu
 		return util.CleanedUpSdkError{Err: err}
 	}
 	if resp == nil {
+		if in.Output == "json" {
+			fmt.Println("null")
+			return nil
+		}
 		pterm.Warning.Println("Acquire request timed out (no browser available). Retry to continue waiting.")
 		return nil
 	}

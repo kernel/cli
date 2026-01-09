@@ -2228,6 +2228,10 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 			return util.CleanedUpSdkError{Err: err}
 		}
 		if resp == nil {
+			if output == "json" {
+				fmt.Println("null")
+				return nil
+			}
 			pterm.Error.Println("Acquire request timed out (no browser available). Retry to continue waiting.")
 			return nil
 		}
@@ -2364,7 +2368,7 @@ func runBrowsersReplaysStop(cmd *cobra.Command, args []string) error {
 func runBrowsersReplaysDownload(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	svc := client.Browsers
-	out, _ := cmd.Flags().GetString("output")
+	out, _ := cmd.Flags().GetString("output-file")
 	b := BrowsersCmd{browsers: &svc, replays: &svc.Replays}
 	return b.ReplaysDownload(cmd.Context(), BrowsersReplaysDownloadInput{Identifier: args[0], ReplayID: args[1], Output: out})
 }
