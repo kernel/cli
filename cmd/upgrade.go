@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -15,22 +14,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// InstallMethod represents how kernel was installed
-type InstallMethod string
-
-const (
-	InstallMethodBrew    InstallMethod = "brew"
-	InstallMethodPNPM    InstallMethod = "pnpm"
-	InstallMethodNPM     InstallMethod = "npm"
-	InstallMethodBun     InstallMethod = "bun"
-	InstallMethodUnknown InstallMethod = "unknown"
-)
-
 var dryRun bool
 
 var upgradeCmd = &cobra.Command{
-	Use:   "upgrade",
-	Short: "Upgrade the Kernel CLI to the latest version",
+	Use:     "upgrade",
+	Aliases: []string{"update"},
+	Short:   "Upgrade the Kernel CLI to the latest version",
 	Long: `Upgrade the Kernel CLI to the latest version.
 
 Supported installation methods:
@@ -56,7 +45,7 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 
 	pterm.Info.Println("Checking for updates...")
 
-	latestTag, _, err := update.FetchLatest(ctx)
+	latestTag, releaseURL, err := update.FetchLatest(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to check for updates: %w", err)
 	}
@@ -68,16 +57,19 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 		pterm.Warning.Printf("Could not compare versions (%s vs %s): %v\n", currentVersion, latestTag, err)
 		pterm.Info.Println("Proceeding with upgrade...")
 	} else if !isNewer {
-		pterm.Success.Printf("You are already on the latest version (%s)\n", currentVersion)
+		pterm.Success.Printf("You are already on the latest version (%s)\n", strings.TrimPrefix(currentVersion, "v"))
 		return nil
 	} else {
-		pterm.Info.Printf("New version available: %s → %s\n", currentVersion, strings.TrimPrefix(latestTag, "v"))
+		pterm.Info.Printf("New version available: %s → %s\n", strings.TrimPrefix(currentVersion, "v"), strings.TrimPrefix(latestTag, "v"))
+		if releaseURL != "" {
+			pterm.Info.Printf("Release notes: %s\n", releaseURL)
+		}
 	}
 
 	// Detect installation method
-	method, binaryPath := DetectInstallMethod()
+	method, binaryPath := update.DetectInstallMethod()
 
-	if method == InstallMethodUnknown {
+	if method == update.InstallMethodUnknown {
 		printManualUpgradeInstructions(latestTag, binaryPath)
 		return fmt.Errorf("could not detect installation method")
 	}
@@ -91,96 +83,16 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	return executeUpgrade(method)
 }
 
-// DetectInstallMethod detects how kernel was installed and returns the method
-// along with the path to the kernel binary.
-func DetectInstallMethod() (InstallMethod, string) {
-	// Collect candidate paths: current executable and shell-resolved binary
-	candidates := []string{}
-	binaryPath := ""
-
-	if exe, err := os.Executable(); err == nil && exe != "" {
-		if real, err2 := filepath.EvalSymlinks(exe); err2 == nil && real != "" {
-			exe = real
-		}
-		candidates = append(candidates, exe)
-		binaryPath = exe
-	}
-	if which, err := exec.LookPath("kernel"); err == nil && which != "" {
-		candidates = append(candidates, which)
-		if binaryPath == "" {
-			binaryPath = which
-		}
-	}
-
-	// Helpers
-	norm := func(p string) string { return strings.ToLower(filepath.ToSlash(p)) }
-	hasHomebrew := func(p string) bool {
-		p = norm(p)
-		return strings.Contains(p, "homebrew") || strings.Contains(p, "/cellar/")
-	}
-	hasBun := func(p string) bool { p = norm(p); return strings.Contains(p, "/.bun/") }
-	hasPNPM := func(p string) bool {
-		p = norm(p)
-		return strings.Contains(p, "/pnpm/") || strings.Contains(p, "/.pnpm/")
-	}
-	hasNPM := func(p string) bool {
-		p = norm(p)
-		return strings.Contains(p, "/npm/") || strings.Contains(p, "/node_modules/.bin/")
-	}
-
-	type rule struct {
-		check   func(string) bool
-		envKeys []string
-		method  InstallMethod
-	}
-
-	rules := []rule{
-		{hasHomebrew, nil, InstallMethodBrew},
-		{hasBun, []string{"BUN_INSTALL"}, InstallMethodBun},
-		{hasPNPM, []string{"PNPM_HOME"}, InstallMethodPNPM},
-		{hasNPM, []string{"NPM_CONFIG_PREFIX", "npm_config_prefix", "VOLTA_HOME"}, InstallMethodNPM},
-	}
-
-	// Path-based detection first
-	for _, c := range candidates {
-		for _, r := range rules {
-			if r.check != nil && r.check(c) {
-				return r.method, binaryPath
-			}
-		}
-	}
-
-	// Env-only fallbacks
-	envSet := func(keys []string) bool {
-		for _, k := range keys {
-			if k == "" {
-				continue
-			}
-			if os.Getenv(k) != "" {
-				return true
-			}
-		}
-		return false
-	}
-	for _, r := range rules {
-		if len(r.envKeys) > 0 && envSet(r.envKeys) {
-			return r.method, binaryPath
-		}
-	}
-
-	return InstallMethodUnknown, binaryPath
-}
-
 // getUpgradeCommand returns the command string for a given installation method
-func getUpgradeCommand(method InstallMethod) string {
+func getUpgradeCommand(method update.InstallMethod) string {
 	switch method {
-	case InstallMethodBrew:
+	case update.InstallMethodBrew:
 		return "brew upgrade kernel/tap/kernel"
-	case InstallMethodPNPM:
+	case update.InstallMethodPNPM:
 		return "pnpm add -g @onkernel/cli@latest"
-	case InstallMethodNPM:
+	case update.InstallMethodNPM:
 		return "npm i -g @onkernel/cli@latest"
-	case InstallMethodBun:
+	case update.InstallMethodBun:
 		return "bun add -g @onkernel/cli@latest"
 	default:
 		return ""
@@ -188,17 +100,17 @@ func getUpgradeCommand(method InstallMethod) string {
 }
 
 // executeUpgrade runs the appropriate upgrade command based on the installation method
-func executeUpgrade(method InstallMethod) error {
+func executeUpgrade(method update.InstallMethod) error {
 	var cmd *exec.Cmd
 
 	switch method {
-	case InstallMethodBrew:
+	case update.InstallMethodBrew:
 		cmd = exec.Command("brew", "upgrade", "kernel/tap/kernel")
-	case InstallMethodPNPM:
+	case update.InstallMethodPNPM:
 		cmd = exec.Command("pnpm", "add", "-g", "@onkernel/cli@latest")
-	case InstallMethodNPM:
+	case update.InstallMethodNPM:
 		cmd = exec.Command("npm", "i", "-g", "@onkernel/cli@latest")
-	case InstallMethodBun:
+	case update.InstallMethodBun:
 		cmd = exec.Command("bun", "add", "-g", "@onkernel/cli@latest")
 	default:
 		return fmt.Errorf("unknown installation method")
