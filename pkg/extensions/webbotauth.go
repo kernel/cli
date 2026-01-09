@@ -23,36 +23,46 @@ const (
 	defaultFileMode       = 0644
 	webBotAuthDownloadURL = "https://github.com/cloudflare/web-bot-auth/archive/refs/heads/main.zip"
 	downloadTimeout       = 5 * time.Minute
+	// defaultWebBotAuthKey is the RFC9421 test key that works with Cloudflare's test site
+	// https://developers.cloudflare.com/bots/reference/bot-verification/web-bot-auth/
+	defaultWebBotAuthKey = `{"kty":"OKP","crv":"Ed25519","d":"n4Ni-HpISpVObnQMW0wOhCKROaIKqKtW_2ZYb2p9KcU","x":"JrQLj5P_89iXES9-vFgrIy29clF9CC_oPPsw3c5D0bs"}`
 )
 
-type ExtensionsPrepareWebBotAuthInput struct {
+type ExtensionsBuildWebBotAuthInput struct {
 	Output  string
 	HostURL string
+	KeyPath string // Path to user's JWK file (optional, defaults to RFC9421 test key)
 }
 
-func PrepareWebBotAuth(ctx context.Context, in ExtensionsPrepareWebBotAuthInput) error {
+// BuildWebBotAuthOutput contains the result of building the extension
+type BuildWebBotAuthOutput struct {
+	ExtensionID string
+	OutputDir   string
+}
+
+func BuildWebBotAuth(ctx context.Context, in ExtensionsBuildWebBotAuthInput) (*BuildWebBotAuthOutput, error) {
 	pterm.Info.Println("Preparing web-bot-auth extension...")
 
 	// Validate preconditions
 	if err := validateToolDependencies(); err != nil {
-		return err
+		return nil, err
 	}
 
 	outputDir, err := filepath.Abs(in.Output)
 	if err != nil {
-		return fmt.Errorf("failed to resolve output path: %w", err)
+		return nil, fmt.Errorf("failed to resolve output path: %w", err)
 	}
 	if st, err := os.Stat(outputDir); err == nil {
 		if !st.IsDir() {
-			return fmt.Errorf("output path exists and is not a directory: %s", outputDir)
+			return nil, fmt.Errorf("output path exists and is not a directory: %s", outputDir)
 		}
 		entries, _ := os.ReadDir(outputDir)
 		if len(entries) > 0 {
-			return fmt.Errorf("output directory must be empty: %s", outputDir)
+			return nil, fmt.Errorf("output directory must be empty: %s", outputDir)
 		}
 	} else {
 		if err := os.MkdirAll(outputDir, defaultDirMode); err != nil {
-			return fmt.Errorf("failed to create output directory: %w", err)
+			return nil, fmt.Errorf("failed to create output directory: %w", err)
 		}
 	}
 
@@ -60,24 +70,44 @@ func PrepareWebBotAuth(ctx context.Context, in ExtensionsPrepareWebBotAuthInput)
 	browserExtDir, cleanup, err := downloadAndExtractWebBotAuth(ctx)
 	defer cleanup()
 	if err != nil {
-		return err
+		return nil, err
+	}
+
+	// Load key (custom or default)
+	var jwkData string
+	var usingDefaultKey bool
+	if in.KeyPath != "" {
+		pterm.Info.Printf("Loading custom JWK from %s...\n", in.KeyPath)
+		keyBytes, err := os.ReadFile(in.KeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read key file: %w", err)
+		}
+		jwkData = string(keyBytes)
+		usingDefaultKey = false
+	} else {
+		pterm.Info.Println("Using default RFC9421 test key (works with Cloudflare test site)...")
+		jwkData = defaultWebBotAuthKey
+		usingDefaultKey = true
 	}
 
 	// Build extension
-	extensionID, err := buildWebBotAuthExtension(ctx, browserExtDir, in.HostURL)
+	extensionID, err := buildWebBotAuthExtension(ctx, browserExtDir, in.HostURL, jwkData)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Copy artifacts
 	if err := copyExtensionArtifacts(browserExtDir, outputDir); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Display success message
-	displayWebBotAuthSuccess(outputDir, extensionID, in.HostURL)
+	displayWebBotAuthSuccess(outputDir, extensionID, in.HostURL, usingDefaultKey)
 
-	return nil
+	return &BuildWebBotAuthOutput{
+		ExtensionID: extensionID,
+		OutputDir:   outputDir,
+	}, nil
 }
 
 // extractExtensionID extracts the extension ID from npm bundle output
@@ -89,6 +119,7 @@ func extractExtensionID(output string) string {
 	}
 	return ""
 }
+
 
 // validateToolDependencies checks for required tools (node and npm)
 func validateToolDependencies() error {
@@ -179,9 +210,22 @@ func downloadAndExtractWebBotAuth(ctx context.Context) (browserExtDir string, cl
 }
 
 // buildWebBotAuthExtension modifies templates, builds the extension, and returns the extension ID
-func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL string) (string, error) {
+func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, jwkData string) (string, error) {
 	// Normalize hostURL by removing trailing slashes to prevent double slashes in URLs
 	hostURL = strings.TrimRight(hostURL, "/")
+
+	// Convert JWK to PEM and write to browserExtDir before building
+	pterm.Info.Println("Converting JWK to PEM format...")
+	pemData, err := util.JWKToPEM(jwkData)
+	if err != nil {
+		return "", fmt.Errorf("failed to convert JWK to PEM: %w", err)
+	}
+
+	privateKeyPath := filepath.Join(browserExtDir, "private_key.pem")
+	if err := os.WriteFile(privateKeyPath, pemData, 0600); err != nil {
+		return "", fmt.Errorf("failed to write private key: %w", err)
+	}
+	pterm.Success.Println("Private key written successfully")
 
 	// Modify template files
 	pterm.Info.Println("Modifying templates with host URL...")
@@ -337,11 +381,21 @@ func copyExtensionArtifacts(browserExtDir, outputDir string) error {
 		pterm.Warning.Println("No private_key.pem found - extension ID may change on rebuild")
 	}
 
+	// Copy policy directory (contains Chrome enterprise policy configuration)
+	policySrc := filepath.Join(browserExtDir, "policy")
+	policyDst := filepath.Join(outputDir, "policy")
+	if _, err := os.Stat(policySrc); err == nil {
+		if err := util.CopyDir(policySrc, policyDst); err != nil {
+			return fmt.Errorf("failed to copy policy directory: %w", err)
+		}
+		pterm.Info.Println("Policy files copied (required for Chrome configuration)")
+	}
+
 	return nil
 }
 
 // displayWebBotAuthSuccess displays success message and next steps
-func displayWebBotAuthSuccess(outputDir, extensionID, hostURL string) {
+func displayWebBotAuthSuccess(outputDir, extensionID, hostURL string, usingDefaultKey bool) {
 	pterm.Success.Println("Web-bot-auth extension prepared successfully!")
 	pterm.Println()
 
@@ -349,15 +403,31 @@ func displayWebBotAuthSuccess(outputDir, extensionID, hostURL string) {
 	rows = append(rows, []string{"Extension ID", extensionID})
 	rows = append(rows, []string{"Output directory", outputDir})
 	rows = append(rows, []string{"Host URL", hostURL})
+	if usingDefaultKey {
+		rows = append(rows, []string{"Signing Key", "RFC9421 test key (Cloudflare test site)"})
+	} else {
+		rows = append(rows, []string{"Signing Key", "Custom JWK"})
+	}
 	table.PrintTableNoPad(rows, true)
 
 	pterm.Println()
 	pterm.Info.Println("Next steps:")
 	pterm.Printf("1. Upload using the extension ID as the name:\n")
 	pterm.Printf("   kernel extensions upload %s --name %s\n\n", outputDir, extensionID)
-	pterm.Printf("2. Use in your browser, or upload to a session:\n")
-	pterm.Printf("   kernel browsers create --extension %s\n", extensionID)
-	pterm.Printf("   or run kernel browsers extensions upload <session-id> %s\n\n", outputDir)
-	pterm.Warning.Println("⚠️  Private key saved to private_key.pem - keep it secure!")
-	pterm.Info.Println("   It's automatically excluded when uploading via .gitignore")
+	pterm.Printf("2. Use in your browser:\n")
+	pterm.Printf("   kernel browsers create --extension %s\n\n", extensionID)
+
+	pterm.Println()
+	pterm.Info.Println("   For testing with Cloudflare's test site:")
+	pterm.Printf("   • Test URL: https://http-message-signatures-example.research.cloudflare.com\n")
+	pterm.Printf("   • Or: https://webbotauth.io/test\n")
+	pterm.Println()
+
+	if usingDefaultKey {
+		pterm.Info.Println("Using default RFC9421 test key - compatible with Cloudflare test sites")
+	} else {
+		pterm.Warning.Println("⚠️  Private key saved to private_key.pem - keep it secure!")
+		pterm.Info.Println("   It's automatically excluded when uploading via .gitignore")
+	}
+
 }
