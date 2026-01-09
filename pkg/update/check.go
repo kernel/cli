@@ -59,8 +59,8 @@ func isSemverLike(v string) bool {
 	return err == nil
 }
 
-// isNewerVersion reports whether latest > current using semver rules.
-func isNewerVersion(current, latest string) (bool, error) {
+// IsNewerVersion reports whether latest > current using semver rules.
+func IsNewerVersion(current, latest string) (bool, error) {
 	c := normalizeSemver(current)
 	l := normalizeSemver(latest)
 	if c == "" || l == "" {
@@ -77,10 +77,10 @@ func isNewerVersion(current, latest string) (bool, error) {
 	return lv.GreaterThan(cv), nil
 }
 
-// fetchLatest queries GitHub Releases and returns the latest stable tag and URL.
+// FetchLatest queries GitHub Releases and returns the latest stable tag and URL.
 // It expects that the GitHub API returns releases in descending chronological order
 // (newest first), which is standard behavior.
-func fetchLatest(ctx context.Context) (tag string, url string, err error) {
+func FetchLatest(ctx context.Context) (tag string, url string, err error) {
 	apiURL := os.Getenv("KERNEL_RELEASES_URL")
 	if apiURL == "" {
 		apiURL = defaultReleasesAPI
@@ -172,13 +172,13 @@ func MaybeShowMessage(ctx context.Context, currentVersion string, frequency time
 
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
-	latestTag, releaseURL, err := fetchLatest(ctx)
+	latestTag, releaseURL, err := FetchLatest(ctx)
 	if err != nil {
 		cache.LastChecked = time.Now().UTC()
 		_ = saveCache(cachePath, cache)
 		return
 	}
-	isNewer, err := isNewerVersion(currentVersion, latestTag)
+	isNewer, err := IsNewerVersion(currentVersion, latestTag)
 	if err != nil || !isNewer {
 		cache.LastChecked = time.Now().UTC()
 		_ = saveCache(cachePath, cache)
