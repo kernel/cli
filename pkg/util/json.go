@@ -52,6 +52,8 @@ func PrintPrettyJSONSlice[T RawJSONProvider](items []T) error {
 			buf.WriteString("  ")
 			buf.WriteString(raw)
 		} else {
+			// json.Indent adds prefix after newlines, not before first line
+			buf.WriteString("  ")
 			buf.Write(elemBuf.Bytes())
 		}
 		if i < len(items)-1 {
