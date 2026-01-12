@@ -5,6 +5,9 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestWebBotAuthDownloadable verifies that the web-bot-auth package can be downloaded from GitHub
@@ -17,19 +20,13 @@ func TestWebBotAuthDownloadable(t *testing.T) {
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, webBotAuthDownloadURL, nil)
-	if err != nil {
-		t.Fatalf("Failed to create request: %v", err)
-	}
+	require.NoError(t, err, "Failed to create request")
 
 	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("Failed to download web-bot-auth: %v", err)
-	}
+	require.NoError(t, err, "Failed to download web-bot-auth")
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("Expected status 200, got %d", resp.StatusCode)
-	}
+	require.Equal(t, http.StatusOK, resp.StatusCode, "Expected status 200")
 
 	// Verify Content-Type indicates a zip file
 	contentType := resp.Header.Get("Content-Type")
@@ -39,8 +36,8 @@ func TestWebBotAuthDownloadable(t *testing.T) {
 
 	// Verify Content-Length is reasonable (should be at least 1KB)
 	contentLength := resp.ContentLength
-	if contentLength > 0 && contentLength < 1024 {
-		t.Fatalf("Content-Length too small: %d bytes (expected at least 1KB)", contentLength)
+	if contentLength > 0 {
+		assert.GreaterOrEqual(t, contentLength, int64(1024), "Content-Length should be at least 1KB")
 	}
 
 	t.Logf("Successfully verified web-bot-auth is downloadable")
@@ -60,13 +57,8 @@ func TestDownloadAndExtractWebBotAuth(t *testing.T) {
 	browserExtDir, cleanup, err := downloadAndExtractWebBotAuth(ctx)
 	defer cleanup()
 
-	if err != nil {
-		t.Fatalf("Failed to download and extract web-bot-auth: %v", err)
-	}
-
-	if browserExtDir == "" {
-		t.Fatal("Expected non-empty browser extension directory path")
-	}
+	require.NoError(t, err, "Failed to download and extract web-bot-auth")
+	require.NotEmpty(t, browserExtDir, "Expected non-empty browser extension directory path")
 
 	t.Logf("Successfully downloaded and extracted to: %s", browserExtDir)
 }
