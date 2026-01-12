@@ -67,6 +67,11 @@ func init() {
 	ProxiesCmd.AddCommand(proxiesCreateCmd)
 	ProxiesCmd.AddCommand(proxiesDeleteCmd)
 
+	// Add output flags
+	proxiesListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	proxiesGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	proxiesCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+
 	// Add flags for create command
 	proxiesCreateCmd.Flags().String("name", "", "Proxy configuration name")
 	proxiesCreateCmd.Flags().String("type", "", "Proxy type (datacenter|isp|residential|mobile|custom)")

@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	"github.com/onkernel/cli/pkg/util"
-	kernel "github.com/onkernel/kernel-go-sdk"
-	"github.com/onkernel/kernel-go-sdk/option"
+	"github.com/kernel/cli/pkg/util"
+	kernel "github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/pterm/pterm"
 	"github.com/samber/lo"
 	"github.com/spf13/cobra"
@@ -57,6 +57,7 @@ func init() {
 	deployCmd.Flags().Bool("force", false, "Allow overwrite of an existing version with the same name")
 	deployCmd.Flags().StringArrayP("env", "e", []string{}, "Set environment variables (e.g., KEY=value). May be specified multiple times")
 	deployCmd.Flags().StringArray("env-file", []string{}, "Read environment variables from a file (.env format). May be specified multiple times")
+	deployCmd.Flags().StringP("output", "o", "", "Output format: json for JSONL streaming output")
 
 	// Subcommands under deploy
 	deployLogsCmd.Flags().BoolP("follow", "f", false, "Follow logs in real-time (stream continuously)")
@@ -67,6 +68,7 @@ func init() {
 	deployHistoryCmd.Flags().Int("limit", 20, "Max deployments to return (default 20)")
 	deployHistoryCmd.Flags().Int("per-page", 20, "Items per page (alias of --limit)")
 	deployHistoryCmd.Flags().Int("page", 1, "Page number (1-based)")
+	deployHistoryCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	deployCmd.AddCommand(deployHistoryCmd)
 
 	// Flags for GitHub deploy
@@ -92,6 +94,11 @@ func runDeployGithub(cmd *cobra.Command, args []string) error {
 
 	version, _ := cmd.Flags().GetString("version")
 	force, _ := cmd.Flags().GetBool("force")
+	output, _ := cmd.Flags().GetString("output")
+
+	if output != "" && output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
 
 	// Collect env vars similar to runDeploy
 	envPairs, _ := cmd.Flags().GetStringArray("env")
@@ -119,7 +126,9 @@ func runDeployGithub(cmd *cobra.Command, args []string) error {
 
 	// Build the multipart request body directly for source-based deploy
 
-	pterm.Info.Println("Deploying from GitHub source...")
+	if output != "json" {
+		pterm.Info.Println("Deploying from GitHub source...")
+	}
 	startTime := time.Now()
 
 	// Manually POST multipart with a JSON 'source' field to match backend expectations
@@ -190,7 +199,7 @@ func runDeployGithub(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("decode deployment response: %w", err)
 	}
 
-	return followDeployment(cmd.Context(), client, depCreated.ID, startTime,
+	return followDeployment(cmd.Context(), client, depCreated.ID, startTime, output,
 		option.WithBaseURL(baseURL),
 		option.WithHeader("Authorization", "Bearer "+apiKey),
 		option.WithMaxRetries(0),
@@ -203,6 +212,12 @@ func runDeploy(cmd *cobra.Command, args []string) (err error) {
 	entrypoint := args[0]
 	version, _ := cmd.Flags().GetString("version")
 	force, _ := cmd.Flags().GetBool("force")
+	output, _ := cmd.Flags().GetString("output")
+
+	if output != "" && output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
 	if version == "" {
 		version = "latest"
 	}
@@ -215,14 +230,21 @@ func runDeploy(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	sourceDir := filepath.Dir(resolvedEntrypoint)
-	spinner, _ := pterm.DefaultSpinner.Start("Compressing files...")
+	var spinner *pterm.SpinnerPrinter
+	if output != "json" {
+		spinner, _ = pterm.DefaultSpinner.Start("Compressing files...")
+	}
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("kernel_%d.zip", time.Now().UnixNano()))
 	logger.Debug("compressing files", logger.Args("sourceDir", sourceDir, "tmpFile", tmpFile))
 	if err := util.ZipDirectory(sourceDir, tmpFile); err != nil {
-		spinner.Fail("Failed to compress files")
+		if spinner != nil {
+			spinner.Fail("Failed to compress files")
+		}
 		return err
 	}
-	spinner.Success("Compressed files")
+	if spinner != nil {
+		spinner.Success("Compressed files")
+	}
 	defer os.Remove(tmpFile)
 
 	// make io.Reader from tmpFile
@@ -259,7 +281,9 @@ func runDeploy(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	logger.Debug("deploying app", logger.Args("version", version, "force", force, "entrypoint", filepath.Base(resolvedEntrypoint)))
-	pterm.Info.Println("Deploying...")
+	if output != "json" {
+		pterm.Info.Println("Deploying...")
+	}
 
 	resp, err := client.Deployments.New(cmd.Context(), kernel.DeploymentNewParams{
 		File:              file,
@@ -272,7 +296,7 @@ func runDeploy(cmd *cobra.Command, args []string) (err error) {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
-	return followDeployment(cmd.Context(), client, resp.ID, startTime, option.WithMaxRetries(0))
+	return followDeployment(cmd.Context(), client, resp.ID, startTime, output, option.WithMaxRetries(0))
 }
 
 func quoteIfNeeded(s string) string {
@@ -359,6 +383,11 @@ func runDeployHistory(cmd *cobra.Command, args []string) error {
 	lim, _ := cmd.Flags().GetInt("limit")
 	perPage, _ := cmd.Flags().GetInt("per-page")
 	page, _ := cmd.Flags().GetInt("page")
+	output, _ := cmd.Flags().GetString("output")
+
+	if output != "" && output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
 
 	// Prefer page/per-page when provided; map legacy --limit otherwise
 	usePager := cmd.Flags().Changed("per-page") || cmd.Flags().Changed("page")
@@ -390,12 +419,28 @@ func runDeployHistory(cmd *cobra.Command, args []string) error {
 	params.Limit = kernel.Opt(int64(perPage + 1))
 	params.Offset = kernel.Opt(int64((page - 1) * perPage))
 
-	pterm.Debug.Println("Fetching deployments...")
+	if output != "json" {
+		pterm.Debug.Println("Fetching deployments...")
+	}
 	deployments, err := client.Deployments.List(cmd.Context(), params)
 	if err != nil {
 		pterm.Error.Printf("Failed to list deployments: %v\n", err)
 		return nil
 	}
+
+	if output == "json" {
+		if deployments == nil || len(deployments.Items) == 0 {
+			fmt.Println("[]")
+			return nil
+		}
+		bs, err := json.MarshalIndent(deployments.Items, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(bs))
+		return nil
+	}
+
 	if deployments == nil || len(deployments.Items) == 0 {
 		pterm.Info.Println("No deployments found")
 		return nil
@@ -470,10 +515,38 @@ func runDeployHistory(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func followDeployment(ctx context.Context, client kernel.Client, deploymentID string, startTime time.Time, opts ...option.RequestOption) error {
+func followDeployment(ctx context.Context, client kernel.Client, deploymentID string, startTime time.Time, output string, opts ...option.RequestOption) error {
 	stream := client.Deployments.FollowStreaming(ctx, deploymentID, kernel.DeploymentFollowParams{}, opts...)
+	jsonOutput := output == "json"
+
 	for stream.Next() {
 		data := stream.Current()
+
+		if jsonOutput {
+			// Output each event as a JSON line
+			bs, err := json.Marshal(data)
+			if err == nil {
+				fmt.Println(string(bs))
+			}
+		// Check for terminal states
+		if data.Event == "deployment_state" {
+			deploymentState := data.AsDeploymentState()
+			status := deploymentState.Deployment.Status
+			if status == string(kernel.DeploymentGetResponseStatusFailed) ||
+				status == string(kernel.DeploymentGetResponseStatusStopped) {
+				return fmt.Errorf("deployment %s: %s", status, deploymentState.Deployment.StatusReason)
+			}
+			if status == string(kernel.DeploymentGetResponseStatusRunning) {
+				return nil
+			}
+		}
+		if data.Event == "error" {
+			errorEv := data.AsErrorEvent()
+			return fmt.Errorf("%s: %s", errorEv.Error.Code, errorEv.Error.Message)
+		}
+			continue
+		}
+
 		switch data.Event {
 		case "log":
 			logEv := data.AsLog()
@@ -510,9 +583,11 @@ func followDeployment(ctx context.Context, client kernel.Client, deploymentID st
 	}
 
 	if serr := stream.Err(); serr != nil {
-		pterm.Error.Println("✖ Stream error")
-		pterm.Error.Printf("Deployment ID: %s\n", deploymentID)
-		pterm.Info.Printf("View logs: kernel deploy logs %s --since 1h\n", deploymentID)
+		if !jsonOutput {
+			pterm.Error.Println("✖ Stream error")
+			pterm.Error.Printf("Deployment ID: %s\n", deploymentID)
+			pterm.Info.Printf("View logs: kernel deploy logs %s --since 1h\n", deploymentID)
+		}
 		return fmt.Errorf("stream error: %w", serr)
 	}
 	return nil

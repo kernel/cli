@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -13,9 +14,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/onkernel/cli/pkg/util"
-	"github.com/onkernel/kernel-go-sdk"
-	"github.com/onkernel/kernel-go-sdk/option"
+	"github.com/kernel/cli/pkg/update"
+	"github.com/kernel/cli/pkg/util"
+	"github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -36,11 +38,15 @@ var invocationHistoryCmd = &cobra.Command{
 func init() {
 	invokeCmd.Flags().StringP("version", "v", "latest", "Specify a version of the app to invoke (optional, defaults to 'latest')")
 	invokeCmd.Flags().StringP("payload", "p", "", "JSON payload for the invocation (optional)")
+	invokeCmd.Flags().StringP("payload-file", "f", "", "Path to a JSON file containing the payload (use '-' for stdin)")
 	invokeCmd.Flags().BoolP("sync", "s", false, "Invoke synchronously (default false). A synchronous invocation will open a long-lived HTTP POST to the Kernel API to wait for the invocation to complete. This will time out after 60 seconds, so only use this option if you expect your invocation to complete in less than 60 seconds. The default is to invoke asynchronously, in which case the CLI will open an SSE connection to the Kernel API after submitting the invocation and wait for the invocation to complete.")
+	invokeCmd.Flags().StringP("output", "o", "", "Output format: json for JSONL streaming output")
+	invokeCmd.MarkFlagsMutuallyExclusive("payload", "payload-file")
 
 	invocationHistoryCmd.Flags().Int("limit", 100, "Max invocations to return (default 100)")
 	invocationHistoryCmd.Flags().StringP("app", "a", "", "Filter by app name")
 	invocationHistoryCmd.Flags().String("version", "", "Filter by invocation version")
+	invocationHistoryCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	invokeCmd.AddCommand(invocationHistoryCmd)
 }
 
@@ -53,6 +59,13 @@ func runInvoke(cmd *cobra.Command, args []string) error {
 	appName := args[0]
 	actionName := args[1]
 	version, _ := cmd.Flags().GetString("version")
+	output, _ := cmd.Flags().GetString("output")
+
+	if output != "" && output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+	jsonOutput := output == "json"
+
 	if version == "" {
 		return fmt.Errorf("version cannot be an empty string")
 	}
@@ -64,30 +77,40 @@ func runInvoke(cmd *cobra.Command, args []string) error {
 		Async:      kernel.Opt(!isSync),
 	}
 
-	payloadStr, _ := cmd.Flags().GetString("payload")
-	if cmd.Flags().Changed("payload") {
-		// validate JSON unless empty string explicitly set
-		if payloadStr != "" {
-			var v interface{}
-			if err := json.Unmarshal([]byte(payloadStr), &v); err != nil {
-				return fmt.Errorf("invalid JSON payload: %w", err)
-			}
-		}
+	payloadStr, hasPayload, err := getPayload(cmd)
+	if err != nil {
+		return err
+	}
+	if hasPayload {
 		params.Payload = kernel.Opt(payloadStr)
 	}
 	// we don't really care to cancel the context, we just want to handle signals
 	ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	cmd.SetContext(ctx)
 
-	pterm.Info.Printf("Invoking \"%s\" (action: %s, version: %s)…\n", appName, actionName, version)
+	if !jsonOutput {
+		pterm.Info.Printf("Invoking \"%s\" (action: %s, version: %s)…\n", appName, actionName, version)
+	}
 
 	// Create the invocation
 	resp, err := client.Invocations.New(cmd.Context(), params, option.WithMaxRetries(0))
 	if err != nil {
+		if jsonOutput {
+			// In JSON mode, output error as JSON object
+			errObj := map[string]interface{}{"error": err.Error()}
+			if apiErr, ok := err.(*kernel.Error); ok {
+				errObj["status_code"] = apiErr.StatusCode
+			}
+			bs, _ := json.Marshal(errObj)
+			fmt.Println(string(bs))
+			return fmt.Errorf("invocation failed: %w", err)
+		}
 		return handleSdkError(err)
 	}
 	// Log the invocation ID for user reference
-	pterm.Info.Printfln("Invocation ID: %s", resp.ID)
+	if !jsonOutput {
+		pterm.Info.Printfln("Invocation ID: %s", resp.ID)
+	}
 	// coordinate the cleanup with the polling loop to ensure this is given enough time to run
 	// before this function returns
 	cleanupDone := make(chan struct{})
@@ -99,6 +122,11 @@ func runInvoke(cmd *cobra.Command, args []string) error {
 	}()
 
 	if resp.Status != kernel.InvocationNewResponseStatusQueued {
+		if jsonOutput {
+			bs, _ := json.Marshal(resp)
+			fmt.Println(string(bs))
+			return nil
+		}
 		succeeded := resp.Status == kernel.InvocationNewResponseStatusSucceeded
 		printResult(succeeded, resp.Output)
 
@@ -116,7 +144,9 @@ func runInvoke(cmd *cobra.Command, args []string) error {
 		once.Do(func() {
 			cleanupStarted.Store(true)
 			defer close(cleanupDone)
-			pterm.Warning.Println("Invocation cancelled...cleaning up...")
+			if !jsonOutput {
+				pterm.Warning.Println("Invocation cancelled...cleaning up...")
+			}
 			if _, err := client.Invocations.Update(
 				context.Background(),
 				resp.ID,
@@ -126,10 +156,14 @@ func runInvoke(cmd *cobra.Command, args []string) error {
 				},
 				option.WithRequestTimeout(30*time.Second),
 			); err != nil {
-				pterm.Error.Printf("Failed to mark invocation as failed: %v\n", err)
+				if !jsonOutput {
+					pterm.Error.Printf("Failed to mark invocation as failed: %v\n", err)
+				}
 			}
 			if err := client.Invocations.DeleteBrowsers(context.Background(), resp.ID, option.WithRequestTimeout(30*time.Second)); err != nil {
-				pterm.Error.Printf("Failed to cancel invocation: %v\n", err)
+				if !jsonOutput {
+					pterm.Error.Printf("Failed to cancel invocation: %v\n", err)
+				}
 			}
 		})
 	})
@@ -138,6 +172,30 @@ func runInvoke(cmd *cobra.Command, args []string) error {
 	stream := client.Invocations.FollowStreaming(cmd.Context(), resp.ID, kernel.InvocationFollowParams{}, option.WithMaxRetries(0))
 	for stream.Next() {
 		ev := stream.Current()
+
+		if jsonOutput {
+			// Output each event as a JSON line
+			bs, err := json.Marshal(ev)
+			if err == nil {
+				fmt.Println(string(bs))
+			}
+		// Check for terminal states
+		if ev.Event == "invocation_state" {
+			stateEv := ev.AsInvocationState()
+			status := stateEv.Invocation.Status
+			if status == string(kernel.InvocationGetResponseStatusSucceeded) {
+				return nil
+			}
+			if status == string(kernel.InvocationGetResponseStatusFailed) {
+				return fmt.Errorf("invocation failed")
+			}
+		}
+		if ev.Event == "error" {
+			errEv := ev.AsError()
+			return fmt.Errorf("%s: %s", errEv.Error.Code, errEv.Error.Message)
+		}
+			continue
+		}
 
 		switch ev.Event {
 		case "log":
@@ -188,7 +246,11 @@ func handleSdkError(err error) error {
 	pterm.Info.Println("- Validate that your payload is properly formatted")
 	pterm.Info.Println("- Check `kernel app history <app name>` to see if the app is deployed")
 	pterm.Info.Println("- Try redeploying the app")
-	pterm.Info.Println("- Make sure you're on the latest version of the CLI: `brew upgrade onkernel/tap/kernel`")
+	if cmd := update.SuggestUpgradeCommand(); cmd != "" {
+		pterm.Info.Printf("- Make sure you're on the latest version of the CLI: `%s`\n", cmd)
+	} else {
+		pterm.Info.Println("- Make sure you're on the latest version of the CLI")
+	}
 	return nil
 }
 
@@ -213,12 +275,69 @@ func printResult(success bool, output string) {
 	}
 }
 
+// getPayload reads the payload from either --payload flag or --payload-file flag.
+// Returns the payload string, whether a payload was explicitly provided, and any error.
+// The second return value (hasPayload) is true when the user explicitly set a payload,
+// even if that payload is an empty string.
+func getPayload(cmd *cobra.Command) (payload string, hasPayload bool, err error) {
+	payloadStr, _ := cmd.Flags().GetString("payload")
+	payloadFile, _ := cmd.Flags().GetString("payload-file")
+
+	// If --payload was explicitly set, use it (even if empty string)
+	if cmd.Flags().Changed("payload") {
+		// Validate JSON unless empty string explicitly set
+		if payloadStr != "" {
+			var v interface{}
+			if err := json.Unmarshal([]byte(payloadStr), &v); err != nil {
+				return "", false, fmt.Errorf("invalid JSON payload: %w", err)
+			}
+		}
+		return payloadStr, true, nil
+	}
+
+	// If --payload-file was set, read from file
+	if cmd.Flags().Changed("payload-file") {
+		var data []byte
+
+		if payloadFile == "-" {
+			// Read from stdin
+			data, err = io.ReadAll(os.Stdin)
+			if err != nil {
+				return "", false, fmt.Errorf("failed to read payload from stdin: %w", err)
+			}
+		} else {
+			// Read from file
+			data, err = os.ReadFile(payloadFile)
+			if err != nil {
+				return "", false, fmt.Errorf("failed to read payload file: %w", err)
+			}
+		}
+
+		payloadStr = strings.TrimSpace(string(data))
+		// Validate JSON unless empty
+		if payloadStr != "" {
+			var v interface{}
+			if err := json.Unmarshal([]byte(payloadStr), &v); err != nil {
+				return "", false, fmt.Errorf("invalid JSON in payload file: %w", err)
+			}
+		}
+		return payloadStr, true, nil
+	}
+
+	return "", false, nil
+}
+
 func runInvocationHistory(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 
 	lim, _ := cmd.Flags().GetInt("limit")
 	appFilter, _ := cmd.Flags().GetString("app")
 	versionFilter, _ := cmd.Flags().GetString("version")
+	output, _ := cmd.Flags().GetString("output")
+
+	if output != "" && output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
 
 	// Build parameters for the API call
 	params := kernel.InvocationListParams{
@@ -236,20 +355,35 @@ func runInvocationHistory(cmd *cobra.Command, args []string) error {
 	}
 
 	// Build debug message based on filters
-	if appFilter != "" && versionFilter != "" {
-		pterm.Debug.Printf("Listing invocations for app '%s' version '%s'...\n", appFilter, versionFilter)
-	} else if appFilter != "" {
-		pterm.Debug.Printf("Listing invocations for app '%s'...\n", appFilter)
-	} else if versionFilter != "" {
-		pterm.Debug.Printf("Listing invocations for version '%s'...\n", versionFilter)
-	} else {
-		pterm.Debug.Printf("Listing all invocations...\n")
+	if output != "json" {
+		if appFilter != "" && versionFilter != "" {
+			pterm.Debug.Printf("Listing invocations for app '%s' version '%s'...\n", appFilter, versionFilter)
+		} else if appFilter != "" {
+			pterm.Debug.Printf("Listing invocations for app '%s'...\n", appFilter)
+		} else if versionFilter != "" {
+			pterm.Debug.Printf("Listing invocations for version '%s'...\n", versionFilter)
+		} else {
+			pterm.Debug.Printf("Listing all invocations...\n")
+		}
 	}
 
 	// Make a single API call to get invocations
 	invocations, err := client.Invocations.List(cmd.Context(), params)
 	if err != nil {
 		pterm.Error.Printf("Failed to list invocations: %v\n", err)
+		return nil
+	}
+
+	if output == "json" {
+		if len(invocations.Items) == 0 {
+			fmt.Println("[]")
+			return nil
+		}
+		bs, err := json.MarshalIndent(invocations.Items, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(bs))
 		return nil
 	}
 

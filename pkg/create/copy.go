@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/onkernel/cli/pkg/templates"
+	"github.com/kernel/cli/pkg/templates"
 )
 
 const (

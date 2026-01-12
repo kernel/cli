@@ -2,4 +2,4 @@
 
 This is a simple Kernel application that implements the Browser Use SDK.
 
-See the [docs](https://onkernel.com/docs/build/browser-frameworks) for information.
+See the [docs](https://www.kernel.sh/docs/build/browser-frameworks) for information.
