@@ -90,11 +90,12 @@ func (u UpgradeCmd) Run(ctx context.Context, in UpgradeInput) error {
 	return nil
 }
 
-// isOldTapError checks if the brew error output indicates the old onkernel/tap issue.
+// isOldTapError checks if the brew error output indicates the user has the old onkernel/tap
+// installed and needs to migrate to kernel/tap.
 func isOldTapError(stderr string) bool {
-	// Error message: "No available formula or cask with the name "onkernel/tap/kernel""
-	// or mentions "Please tap it and then try again: brew tap onkernel/tap"
-	return strings.Contains(stderr, "onkernel/tap")
+	// When a user has onkernel/tap/kernel installed and runs `brew upgrade kernel/tap/kernel`,
+	// Homebrew will suggest: "Please tap it and then try again: brew tap kernel/tap"
+	return strings.Contains(stderr, "brew tap kernel/tap")
 }
 
 // upgradeCommandArgs returns the command and arguments for a given installation method.
