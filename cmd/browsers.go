@@ -226,16 +226,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	}
 
 	if in.Output == "json" {
-		if len(browsers) == 0 {
-			fmt.Println("[]")
-			return nil
-		}
-		bs, err := json.MarshalIndent(browsers, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSONSlice(browsers)
 	}
 
 	if len(browsers) == 0 {
@@ -371,12 +362,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(browser, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(browser)
 	}
 
 	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Persistence, browser.Profile)
@@ -482,9 +468,8 @@ func (b BrowsersCmd) View(ctx context.Context, in BrowsersViewInput) error {
 	}
 
 	if in.Output == "json" {
-		result := map[string]string{"liveViewUrl": browser.BrowserLiveViewURL}
-		bs, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Println(string(bs))
+		// View command returns a custom response, not the full browser object
+		fmt.Printf("{\n  \"liveViewUrl\": %q\n}\n", browser.BrowserLiveViewURL)
 		return nil
 	}
 
@@ -511,12 +496,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		return util.CleanedUpSdkError{Err: err}
 	}
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(browser, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(browser)
 	}
 
 	// Build table starting with common browser fields
@@ -922,12 +902,7 @@ func (b BrowsersCmd) ReplaysList(ctx context.Context, in BrowsersReplaysListInpu
 			fmt.Println("[]")
 			return nil
 		}
-		bs, err := json.MarshalIndent(*items, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSONSlice(*items)
 	}
 
 	if items == nil || len(*items) == 0 {
@@ -964,12 +939,7 @@ func (b BrowsersCmd) ReplaysStart(ctx context.Context, in BrowsersReplaysStartIn
 	}
 
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(res, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(res)
 	}
 
 	rows := pterm.TableData{{"Property", "Value"}, {"Replay ID", res.ReplayID}, {"View URL", res.ReplayViewURL}, {"Started At", util.FormatLocal(res.StartedAt)}}
@@ -1148,12 +1118,7 @@ func (b BrowsersCmd) ProcessExec(ctx context.Context, in BrowsersProcessExecInpu
 	}
 
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(res, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(res)
 	}
 
 	rows := pterm.TableData{{"Property", "Value"}, {"Exit Code", fmt.Sprintf("%d", res.ExitCode)}, {"Duration (ms)", fmt.Sprintf("%d", res.DurationMs)}}
@@ -1220,12 +1185,7 @@ func (b BrowsersCmd) ProcessSpawn(ctx context.Context, in BrowsersProcessSpawnIn
 	}
 
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(res, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(res)
 	}
 
 	rows := pterm.TableData{{"Property", "Value"}, {"Process ID", res.ProcessID}, {"PID", fmt.Sprintf("%d", res.Pid)}, {"Started At", util.FormatLocal(res.StartedAt)}}
@@ -1508,12 +1468,7 @@ func (b BrowsersCmd) FSFileInfo(ctx context.Context, in BrowsersFSFileInfoInput)
 	}
 
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(res, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(res)
 	}
 
 	rows := pterm.TableData{{"Property", "Value"}, {"Path", res.Path}, {"Name", res.Name}, {"Mode", res.Mode}, {"IsDir", fmt.Sprintf("%t", res.IsDir)}, {"SizeBytes", fmt.Sprintf("%d", res.SizeBytes)}, {"ModTime", util.FormatLocal(res.ModTime)}}
@@ -1544,12 +1499,7 @@ func (b BrowsersCmd) FSListFiles(ctx context.Context, in BrowsersFSListFilesInpu
 			fmt.Println("[]")
 			return nil
 		}
-		bs, err := json.MarshalIndent(*res, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSONSlice(*res)
 	}
 
 	if res == nil || len(*res) == 0 {
@@ -2227,12 +2177,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		if output == "json" {
-			bs, err := json.MarshalIndent(resp, "", "  ")
-			if err != nil {
-				return err
-			}
-			fmt.Println(string(bs))
-			return nil
+			return util.PrintPrettyJSON(resp)
 		}
 		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Persistence, resp.Profile)
 		return nil

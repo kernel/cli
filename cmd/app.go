@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -107,12 +106,7 @@ func runAppList(cmd *cobra.Command, args []string) error {
 			fmt.Println("[]")
 			return nil
 		}
-		bs, err := json.MarshalIndent(apps.Items, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSONSlice(apps.Items)
 	}
 
 	if apps == nil || len(apps.Items) == 0 {
@@ -242,12 +236,7 @@ func runAppHistory(cmd *cobra.Command, args []string) error {
 			fmt.Println("[]")
 			return nil
 		}
-		bs, err := json.MarshalIndent(deployments.Items, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSONSlice(deployments.Items)
 	}
 
 	if deployments == nil || len(deployments.Items) == 0 {

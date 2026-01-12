@@ -2,7 +2,6 @@ package proxies
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/kernel/cli/pkg/table"
@@ -175,12 +174,7 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 	}
 
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(proxy, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(proxy)
 	}
 
 	pterm.Success.Printf("Successfully created proxy\n")

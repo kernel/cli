@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -76,12 +75,7 @@ func (e ExtensionsCmd) List(ctx context.Context, in ExtensionsListInput) error {
 			fmt.Println("[]")
 			return nil
 		}
-		bs, err := json.MarshalIndent(*items, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSONSlice(*items)
 	}
 
 	if items == nil || len(*items) == 0 {
@@ -325,12 +319,7 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 	}
 
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(item, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(item)
 	}
 
 	name := item.Name
