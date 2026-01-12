@@ -18,10 +18,12 @@ import (
 )
 
 const (
-	defaultLocalhostURL   = "http://localhost:8000"
-	defaultDirMode        = 0755
-	defaultFileMode       = 0644
-	webBotAuthDownloadURL = "https://github.com/cloudflare/web-bot-auth/archive/refs/heads/main.zip"
+	defaultLocalhostURL = "http://localhost:8000"
+	defaultDirMode      = 0755
+	defaultFileMode     = 0644
+	// Current: v0.6.0 release (e3d76846b64be03ae00e2b9e53b697beab81541d) - Dec 19, 2025
+	webBotAuthCommit      = "e3d76846b64be03ae00e2b9e53b697beab81541d"
+	webBotAuthDownloadURL = "https://github.com/cloudflare/web-bot-auth/archive/" + webBotAuthCommit + ".zip"
 	downloadTimeout       = 5 * time.Minute
 	// defaultWebBotAuthKey is the RFC9421 test key that works with Cloudflare's test site
 	// https://developers.cloudflare.com/bots/reference/bot-verification/web-bot-auth/
@@ -31,7 +33,7 @@ const (
 type ExtensionsBuildWebBotAuthInput struct {
 	Output        string
 	HostURL       string
-	KeyPath       string // Path to user's JWK file (optional, defaults to RFC9421 test key)
+	KeyPath       string // Path to user's JWK or PEM file (optional, defaults to RFC9421 test key)
 	ExtensionName string // Name for the extension paths (defaults to "web-bot-auth")
 }
 
@@ -70,10 +72,12 @@ func BuildWebBotAuth(ctx context.Context, in ExtensionsBuildWebBotAuthInput) (*B
 		if len(entries) > 0 {
 			return nil, fmt.Errorf("output directory must be empty: %s", outputDir)
 		}
-	} else {
+	} else if os.IsNotExist(err) {
 		if err := os.MkdirAll(outputDir, defaultDirMode); err != nil {
 			return nil, fmt.Errorf("failed to create output directory: %w", err)
 		}
+	} else {
+		return nil, fmt.Errorf("failed to check output directory: %w", err)
 	}
 
 	// Download and extract
@@ -84,24 +88,24 @@ func BuildWebBotAuth(ctx context.Context, in ExtensionsBuildWebBotAuthInput) (*B
 	}
 
 	// Load key (custom or default)
-	var jwkData string
+	var keyData string
 	var usingDefaultKey bool
 	if in.KeyPath != "" {
-		pterm.Info.Printf("Loading custom JWK from %s...\n", in.KeyPath)
+		pterm.Info.Printf("Loading custom key from %s...\n", in.KeyPath)
 		keyBytes, err := os.ReadFile(in.KeyPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read key file: %w", err)
 		}
-		jwkData = string(keyBytes)
+		keyData = string(keyBytes)
 		usingDefaultKey = false
 	} else {
 		pterm.Info.Println("Using default RFC9421 test key (works with Cloudflare test site)...")
-		jwkData = defaultWebBotAuthKey
+		keyData = defaultWebBotAuthKey
 		usingDefaultKey = true
 	}
 
 	// Build extension
-	extensionID, err := buildWebBotAuthExtension(ctx, browserExtDir, in.HostURL, jwkData, extensionName)
+	extensionID, err := buildWebBotAuthExtension(ctx, browserExtDir, in.HostURL, keyData, extensionName)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +133,6 @@ func extractExtensionID(output string) string {
 	}
 	return ""
 }
-
 
 // validateToolDependencies checks for required tools (node and npm)
 func validateToolDependencies() error {
@@ -221,15 +224,27 @@ func downloadAndExtractWebBotAuth(ctx context.Context) (browserExtDir string, cl
 
 // buildWebBotAuthExtension modifies templates, builds the extension, and returns the extension ID
 // extensionName is used for URL paths (e.g., "web-bot-auth") instead of the Chrome extension ID
-func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, jwkData, extensionName string) (string, error) {
+func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, keyData, extensionName string) (string, error) {
 	// Normalize hostURL by removing trailing slashes to prevent double slashes in URLs
 	hostURL = strings.TrimRight(hostURL, "/")
 
-	// Convert JWK to PEM and write to browserExtDir before building
-	pterm.Info.Println("Converting JWK to PEM format...")
-	pemData, err := util.JWKToPEM(jwkData)
-	if err != nil {
-		return "", fmt.Errorf("failed to convert JWK to PEM: %w", err)
+	// Validate key and write to browserExtDir before building
+	pterm.Info.Println("Validating key...")
+	var pemData []byte
+	var err error
+
+	if util.IsPEMKey(keyData) {
+		// Key is already in PEM format, validate it
+		if err := util.ValidatePEMKey(keyData); err != nil {
+			return "", fmt.Errorf("failed to validate PEM key: %w", err)
+		}
+		pemData = []byte(keyData)
+	} else {
+		// Key is in JWK format, convert to PEM
+		pemData, err = util.ConvertJWKToPEM(keyData)
+		if err != nil {
+			return "", fmt.Errorf("failed to convert JWK to PEM: %w", err)
+		}
 	}
 
 	privateKeyPath := filepath.Join(browserExtDir, "private_key.pem")
@@ -315,7 +330,7 @@ func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, jwkDa
 	if err := util.ModifyFile(updateXMLPath,
 		fmt.Sprintf("%s/http-message-signatures-extension.crx", hostURL),
 		extensionSpecificCodebase); err != nil {
-		pterm.Warning.Printf("Failed to update update.xml codebase: %v\n", err)
+		return "", fmt.Errorf("failed to update update.xml codebase: %w", err)
 	}
 
 	pterm.Info.Println("Updating policy files with extension-specific paths...")
@@ -324,14 +339,14 @@ func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, jwkDa
 	if err := util.ModifyFile(policyJSONPath,
 		fmt.Sprintf("%s/update.xml", hostURL),
 		fmt.Sprintf("%s/extensions/%s/update.xml", hostURL, extensionName)); err != nil {
-		pterm.Warning.Printf("Failed to update policy.json: %v\n", err)
+		return "", fmt.Errorf("failed to update policy.json: %w", err)
 	}
 
 	plistPath := filepath.Join(browserExtDir, "policy", "com.google.Chrome.managed.plist")
 	if err := util.ModifyFile(plistPath,
 		fmt.Sprintf("%s/update.xml", hostURL),
 		fmt.Sprintf("%s/extensions/%s/update.xml", hostURL, extensionName)); err != nil {
-		pterm.Warning.Printf("Failed to update plist: %v\n", err)
+		return "", fmt.Errorf("failed to update plist: %w", err)
 	}
 
 	return extensionID, nil
@@ -389,19 +404,20 @@ func copyExtensionArtifacts(browserExtDir, outputDir string) error {
 			return fmt.Errorf("failed to create .gitignore: %w", err)
 		}
 		pterm.Info.Println("Private key preserved (private_key.pem)")
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to stat private_key.pem: %w", err)
 	} else {
 		pterm.Warning.Println("No private_key.pem found - extension ID may change on rebuild")
 	}
 
 	// Copy policy directory (contains Chrome enterprise policy configuration)
+	// Note: This directory must exist since we modified files in it earlier during the build
 	policySrc := filepath.Join(browserExtDir, "policy")
 	policyDst := filepath.Join(outputDir, "policy")
-	if _, err := os.Stat(policySrc); err == nil {
-		if err := util.CopyDir(policySrc, policyDst); err != nil {
-			return fmt.Errorf("failed to copy policy directory: %w", err)
-		}
-		pterm.Info.Println("Policy files copied (required for Chrome configuration)")
+	if err := util.CopyDir(policySrc, policyDst); err != nil {
+		return fmt.Errorf("failed to copy policy directory: %w", err)
 	}
+	pterm.Info.Println("Policy files copied (required for Chrome configuration)")
 
 	return nil
 }
@@ -419,7 +435,7 @@ func displayWebBotAuthSuccess(outputDir, extensionName, extensionID, hostURL str
 	if usingDefaultKey {
 		rows = append(rows, []string{"Signing Key", "RFC9421 test key (Cloudflare test site)"})
 	} else {
-		rows = append(rows, []string{"Signing Key", "Custom JWK"})
+		rows = append(rows, []string{"Signing Key", "Custom key"})
 	}
 	table.PrintTableNoPad(rows, true)
 

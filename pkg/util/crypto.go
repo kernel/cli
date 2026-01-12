@@ -2,6 +2,7 @@ package util
 
 import (
 	"crypto/ed25519"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
@@ -16,22 +17,42 @@ type jwkKey struct {
 	X   string `json:"x"`   // Public key (base64url encoded)
 }
 
-// JWKToPEM converts an Ed25519 JWK to PEM format (PKCS#8)
-// If the input is already in PEM format, it validates and returns it as-is
-func JWKToPEM(jwkJSON string) ([]byte, error) {
-	// Check if input is already PEM-encoded
-	if block, _ := pem.Decode([]byte(jwkJSON)); block != nil {
-		if block.Type != "PRIVATE KEY" {
-			return nil, fmt.Errorf("invalid PEM type: expected PRIVATE KEY, got %s", block.Type)
-		}
-		// TODO: Could add validation that it's actually an Ed25519 key
-		return []byte(jwkJSON), nil
+// ValidatePEMKey validates that a PEM-encoded string contains a valid Ed25519 private key
+func ValidatePEMKey(pemData string) error {
+	block, _ := pem.Decode([]byte(pemData))
+	if block == nil {
+		return fmt.Errorf("failed to decode PEM block")
 	}
 
+	if block.Type != "PRIVATE KEY" {
+		return fmt.Errorf("invalid PEM type: expected PRIVATE KEY, got %s", block.Type)
+	}
+
+	// Validate that it's actually an Ed25519 key
+	privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("failed to parse PKCS#8 private key: %w", err)
+	}
+
+	if _, ok := privateKey.(ed25519.PrivateKey); !ok {
+		return fmt.Errorf("invalid key type: expected Ed25519 private key, got %T", privateKey)
+	}
+
+	return nil
+}
+
+// IsPEMFormat checks if the input string is in PEM format
+func IsPEMKey(data string) bool {
+	block, _ := pem.Decode([]byte(data))
+	return block != nil
+}
+
+// ConvertJWKToPEM converts an Ed25519 JWK to PEM format
+func ConvertJWKToPEM(jwkJSON string) ([]byte, error) {
 	// Parse as JWK
 	var key jwkKey
 	if err := json.Unmarshal([]byte(jwkJSON), &key); err != nil {
-		return nil, fmt.Errorf("failed to parse as JWK or PEM: %w", err)
+		return nil, fmt.Errorf("failed to parse JWK: %w", err)
 	}
 
 	if key.Kty != "OKP" || key.Crv != "Ed25519" {
@@ -51,8 +72,8 @@ func JWKToPEM(jwkJSON string) ([]byte, error) {
 	// Generate Ed25519 private key from seed
 	privateKey := ed25519.NewKeyFromSeed(privateKeyBytes)
 
-	// Create PKCS#8 structure
-	pkcs8Bytes, err := MarshalPKCS8PrivateKey(privateKey)
+	// Marshal to PKCS#8 format using stdlib
+	pkcs8Bytes, err := x509.MarshalPKCS8PrivateKey(privateKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal PKCS#8: %w", err)
 	}
@@ -64,43 +85,4 @@ func JWKToPEM(jwkJSON string) ([]byte, error) {
 	}
 
 	return pem.EncodeToMemory(pemBlock), nil
-}
-
-// MarshalPKCS8PrivateKey creates a PKCS#8 structure for Ed25519 private key
-func MarshalPKCS8PrivateKey(key ed25519.PrivateKey) ([]byte, error) {
-	// PKCS#8 structure for Ed25519:
-	// SEQUENCE {
-	//   INTEGER 0 (version)
-	//   SEQUENCE {
-	//     OBJECT IDENTIFIER 1.3.101.112 (Ed25519)
-	//   }
-	//   OCTET STRING (containing the 32-byte seed as OCTET STRING)
-	// }
-
-	// Ed25519 OID: 1.3.101.112
-	oid := []byte{0x06, 0x03, 0x2b, 0x65, 0x70}
-
-	// Extract seed (first 32 bytes of private key)
-	seed := key.Seed()
-
-	// Inner OCTET STRING (seed) - RFC 8410: CurvePrivateKey
-	innerOctetString := append([]byte{0x04, byte(len(seed))}, seed...)
-
-	// Outer OCTET STRING wrapping the inner one - RFC 8410: privateKey field
-	outerOctetString := append([]byte{0x04, byte(len(innerOctetString))}, innerOctetString...)
-
-	// Algorithm identifier SEQUENCE
-	algSeq := append([]byte{0x30, byte(len(oid))}, oid...)
-
-	// Version (INTEGER 0)
-	version := []byte{0x02, 0x01, 0x00}
-
-	// Combine all parts
-	content := append(version, algSeq...)
-	content = append(content, outerOctetString...)
-
-	// Outer SEQUENCE
-	result := append([]byte{0x30, byte(len(content))}, content...)
-
-	return result, nil
 }

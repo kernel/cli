@@ -487,7 +487,7 @@ func init() {
 	extensionsUploadCmd.Flags().String("name", "", "Optional unique extension name")
 	extensionsPrepareWebBotAuthCmd.Flags().String("to", "./web-bot-auth", "Output directory for the prepared extension")
 	extensionsPrepareWebBotAuthCmd.Flags().String("url", "http://127.0.0.1:10001", "Base URL for update.xml and policy templates")
-	extensionsPrepareWebBotAuthCmd.Flags().String("key", "", "Path to custom Ed25519 JWK key file (defaults to RFC9421 test key)")
+	extensionsPrepareWebBotAuthCmd.Flags().String("key", "", "Path to Ed25519 private key file (JWK or PEM format)")
 	extensionsPrepareWebBotAuthCmd.Flags().Bool("upload", false, "Upload extension to Kernel after building")
 	extensionsPrepareWebBotAuthCmd.Flags().String("name", "", "Extension name when uploading (defaults to 'web-bot-auth')")
 }
