@@ -469,7 +469,12 @@ func (b BrowsersCmd) View(ctx context.Context, in BrowsersViewInput) error {
 
 	if in.Output == "json" {
 		// View command returns a custom response, not the full browser object
-		fmt.Printf("{\n  \"liveViewUrl\": %q\n}\n", browser.BrowserLiveViewURL)
+		// Use json.Marshal to ensure proper JSON escaping of the URL
+		urlBytes, err := json.Marshal(browser.BrowserLiveViewURL)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("{\n  \"liveViewUrl\": %s\n}\n", urlBytes)
 		return nil
 	}
 

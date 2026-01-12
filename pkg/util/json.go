@@ -23,9 +23,7 @@ func PrintPrettyJSON(v RawJSONProvider) error {
 
 	var buf bytes.Buffer
 	if err := json.Indent(&buf, []byte(raw), "", "  "); err != nil {
-		// If indentation fails, print the raw JSON as-is
-		fmt.Println(raw)
-		return nil
+		return err
 	}
 	fmt.Println(buf.String())
 	return nil
@@ -54,7 +52,6 @@ func PrintPrettyJSONSlice[T RawJSONProvider](items []T) error {
 			buf.WriteString("  ")
 			buf.WriteString(raw)
 		} else {
-			buf.WriteString("  ")
 			buf.Write(elemBuf.Bytes())
 		}
 		if i < len(items)-1 {
