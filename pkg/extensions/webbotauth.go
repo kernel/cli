@@ -442,9 +442,9 @@ func displayWebBotAuthSuccess(outputDir, extensionName, extensionID, hostURL str
 	pterm.Println()
 	pterm.Info.Println("Next steps:")
 	pterm.Printf("1. Upload the extension:\n")
-	pterm.Printf("   kernel extensions upload %s --name %s\n\n", outputDir, extensionName)
+	pterm.Printf("   kernel extensions upload %s --name web-bot-auth\n\n", outputDir)
 	pterm.Printf("2. Use in your browser:\n")
-	pterm.Printf("   kernel browsers create --extension %s\n\n", extensionName)
+	pterm.Printf("   kernel browsers create --extension web-bot-auth\n\n")
 
 	pterm.Println()
 	pterm.Info.Println("   For testing with Cloudflare's test site:")

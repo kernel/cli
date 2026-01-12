@@ -428,19 +428,18 @@ var extensionsPrepareWebBotAuthCmd = &cobra.Command{
 	Short: "Build the Cloudflare web-bot-auth extension for Kernel",
 	Long: `Download, build, and prepare the Cloudflare web-bot-auth extension with Kernel-specific configurations.
 					Defaults to RFC9421 test key (works with Cloudflare's test site).
-					Optionally accepts a custom Ed25519 JWK key file and can upload directly to Kernel.`,
+					Uploads it to Kernel as 'web-bot-auth'. Optionally accepts a custom JWK or PEM key file.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		output, _ := cmd.Flags().GetString("to")
 		url, _ := cmd.Flags().GetString("url")
 		keyPath, _ := cmd.Flags().GetString("key")
-		shouldUpload, _ := cmd.Flags().GetBool("upload")
-		name, _ := cmd.Flags().GetString("name")
+		uploadName, _ := cmd.Flags().GetString("upload")
 
-		// Use provided name, or default to "web-bot-auth"
-		extensionName := name
-		if extensionName == "" {
-			extensionName = "web-bot-auth"
+		// Use upload name for extension name, or default to "my-web-bot-auth"
+		extensionName := "web-bot-auth"
+		if uploadName != "" {
+			extensionName = uploadName
 		}
 
 		// Build the extension
@@ -455,7 +454,7 @@ var extensionsPrepareWebBotAuthCmd = &cobra.Command{
 		}
 
 		// Upload if requested
-		if shouldUpload {
+		if uploadName != "" {
 			client := getKernelClient(cmd)
 			svc := client.Extensions
 			e := ExtensionsCmd{extensions: &svc}
@@ -488,6 +487,5 @@ func init() {
 	extensionsPrepareWebBotAuthCmd.Flags().String("to", "./web-bot-auth", "Output directory for the prepared extension")
 	extensionsPrepareWebBotAuthCmd.Flags().String("url", "http://127.0.0.1:10001", "Base URL for update.xml and policy templates")
 	extensionsPrepareWebBotAuthCmd.Flags().String("key", "", "Path to Ed25519 private key file (JWK or PEM format)")
-	extensionsPrepareWebBotAuthCmd.Flags().Bool("upload", false, "Upload extension to Kernel after building")
-	extensionsPrepareWebBotAuthCmd.Flags().String("name", "", "Extension name when uploading (defaults to 'web-bot-auth')")
+	extensionsPrepareWebBotAuthCmd.Flags().String("upload", "", "Upload extension to Kernel with specified name (e.g., --upload web-bot-auth)")
 }
