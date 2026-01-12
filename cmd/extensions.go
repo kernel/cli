@@ -436,7 +436,7 @@ var extensionsPrepareWebBotAuthCmd = &cobra.Command{
 		keyPath, _ := cmd.Flags().GetString("key")
 		uploadName, _ := cmd.Flags().GetString("upload")
 
-		// Use upload name for extension name, or default to "my-web-bot-auth"
+		// Use upload name for extension name, or default to "web-bot-auth"
 		extensionName := "web-bot-auth"
 		if uploadName != "" {
 			extensionName = uploadName

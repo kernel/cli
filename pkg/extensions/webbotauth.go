@@ -51,12 +51,6 @@ func BuildWebBotAuth(ctx context.Context, in ExtensionsBuildWebBotAuthInput) (*B
 		return nil, err
 	}
 
-	// Set default extension name if not provided
-	extensionName := in.ExtensionName
-	if extensionName == "" {
-		extensionName = "web-bot-auth"
-	}
-
 	outputDir, err := filepath.Abs(in.Output)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve output path: %w", err)
@@ -105,7 +99,7 @@ func BuildWebBotAuth(ctx context.Context, in ExtensionsBuildWebBotAuthInput) (*B
 	}
 
 	// Build extension
-	extensionID, err := buildWebBotAuthExtension(ctx, browserExtDir, in.HostURL, keyData, extensionName)
+	extensionID, err := buildWebBotAuthExtension(ctx, browserExtDir, in.HostURL, keyData, in.ExtensionName)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +110,7 @@ func BuildWebBotAuth(ctx context.Context, in ExtensionsBuildWebBotAuthInput) (*B
 	}
 
 	// Display success message
-	displayWebBotAuthSuccess(outputDir, extensionName, extensionID, in.HostURL, usingDefaultKey)
+	displayWebBotAuthSuccess(outputDir, in.ExtensionName, extensionID, in.HostURL, usingDefaultKey)
 
 	return &BuildWebBotAuthOutput{
 		ExtensionID: extensionID,
