@@ -41,7 +41,7 @@ func ValidatePEMKey(pemData string) error {
 	return nil
 }
 
-// IsPEMFormat checks if the input string is in PEM format
+// IsPEMKey checks if the input string is in PEM format
 func IsPEMKey(data string) bool {
 	block, _ := pem.Decode([]byte(data))
 	return block != nil

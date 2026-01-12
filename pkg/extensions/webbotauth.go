@@ -35,6 +35,7 @@ type ExtensionsBuildWebBotAuthInput struct {
 	HostURL       string
 	KeyPath       string // Path to user's JWK or PEM file (optional, defaults to RFC9421 test key)
 	ExtensionName string // Name for the extension paths (defaults to "web-bot-auth")
+	AutoUpload    bool   // Whether the extension will be automatically uploaded after building
 }
 
 // BuildWebBotAuthOutput contains the result of building the extension
@@ -110,7 +111,7 @@ func BuildWebBotAuth(ctx context.Context, in ExtensionsBuildWebBotAuthInput) (*B
 	}
 
 	// Display success message
-	displayWebBotAuthSuccess(outputDir, in.ExtensionName, extensionID, in.HostURL, usingDefaultKey)
+	displayWebBotAuthSuccess(outputDir, in.ExtensionName, extensionID, in.HostURL, usingDefaultKey, in.AutoUpload)
 
 	return &BuildWebBotAuthOutput{
 		ExtensionID: extensionID,
@@ -417,7 +418,7 @@ func copyExtensionArtifacts(browserExtDir, outputDir string) error {
 }
 
 // displayWebBotAuthSuccess displays success message and next steps
-func displayWebBotAuthSuccess(outputDir, extensionName, extensionID, hostURL string, usingDefaultKey bool) {
+func displayWebBotAuthSuccess(outputDir, extensionName, extensionID, hostURL string, usingDefaultKey, autoUpload bool) {
 	pterm.Success.Println("Web-bot-auth extension prepared successfully!")
 	pterm.Println()
 
@@ -435,10 +436,16 @@ func displayWebBotAuthSuccess(outputDir, extensionName, extensionID, hostURL str
 
 	pterm.Println()
 	pterm.Info.Println("Next steps:")
-	pterm.Printf("1. Upload the extension:\n")
-	pterm.Printf("   kernel extensions upload %s --name web-bot-auth\n\n", outputDir)
-	pterm.Printf("2. Use in your browser:\n")
-	pterm.Printf("   kernel browsers create --extension web-bot-auth\n\n")
+
+	stepNum := 1
+	if !autoUpload {
+		pterm.Printf("%d. Upload the extension:\n", stepNum)
+		pterm.Printf("   kernel extensions upload %s --name %s\n\n", outputDir, extensionName)
+		stepNum++
+	}
+
+	pterm.Printf("%d. Use in your browser:\n", stepNum)
+	pterm.Printf("   kernel browsers create --extension %s\n\n", extensionName)
 
 	pterm.Println()
 	pterm.Info.Println("   For testing with Cloudflare's test site:")
