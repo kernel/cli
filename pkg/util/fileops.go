@@ -1,6 +1,7 @@
 package util
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -73,13 +74,22 @@ func CopyDir(src, dst string) error {
 	return nil
 }
 
-// ModifyFile replaces all occurrences of oldStr with newStr in the file
+// ModifyFile replaces all occurrences of oldStr with newStr in the file.
+// Returns an error if no replacements were made
 func ModifyFile(path, oldStr, newStr string) error {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	modified := strings.ReplaceAll(string(content), oldStr, newStr)
+
+	original := string(content)
+	modified := strings.ReplaceAll(original, oldStr, newStr)
+
+	// Error if no replacements were made
+	if modified == original {
+		return fmt.Errorf("pattern %q not found in file %s", oldStr, path)
+	}
+
 	return os.WriteFile(path, []byte(modified), 0644)
 }
 
