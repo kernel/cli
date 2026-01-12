@@ -75,7 +75,7 @@ func CopyDir(src, dst string) error {
 }
 
 // ModifyFile replaces all occurrences of oldStr with newStr in the file.
-// Returns an error if no replacements were made
+// Returns an error if the pattern is not found in the file
 func ModifyFile(path, oldStr, newStr string) error {
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -83,11 +83,17 @@ func ModifyFile(path, oldStr, newStr string) error {
 	}
 
 	original := string(content)
+
+	// Check if pattern exists in the file
+	if !strings.Contains(original, oldStr) {
+		return fmt.Errorf("pattern %q not found in file %s", oldStr, path)
+	}
+
 	modified := strings.ReplaceAll(original, oldStr, newStr)
 
-	// Error if no replacements were made
+	// Skip writing if the replacement is a no-op (oldStr == newStr or pattern doesn't change content)
 	if modified == original {
-		return fmt.Errorf("pattern %q not found in file %s", oldStr, path)
+		return nil
 	}
 
 	return os.WriteFile(path, []byte(modified), 0644)
