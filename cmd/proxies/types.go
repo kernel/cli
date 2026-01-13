@@ -21,10 +21,13 @@ type ProxyCmd struct {
 }
 
 // Input types for proxy operations
-type ProxyListInput struct{}
+type ProxyListInput struct {
+	Output string
+}
 
 type ProxyGetInput struct {
-	ID string
+	ID     string
+	Output string
 }
 
 type ProxyCreateInput struct {
@@ -46,6 +49,7 @@ type ProxyCreateInput struct {
 	Port     int
 	Username string
 	Password string
+	Output   string
 }
 
 type ProxyDeleteInput struct {

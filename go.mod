@@ -1,4 +1,4 @@
-module github.com/onkernel/cli
+module github.com/kernel/cli
 
 go 1.25.0
 

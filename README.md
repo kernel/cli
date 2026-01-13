@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="GitHub License" src="https://img.shields.io/github/license/onkernel/cli">
+  <img alt="GitHub License" src="https://img.shields.io/github/license/kernel/cli">
   <a href="https://discord.gg/FBrveQRcud"><img src="https://img.shields.io/discord/1342243238748225556?logo=discord&logoColor=white&color=7289DA" alt="Discord"></a>
   <a href="https://x.com/juecd__"><img src="https://img.shields.io/twitter/follow/juecd__" alt="Follow @juecd__"></a>
   <a href="https://x.com/rfgarcia"><img src="https://img.shields.io/twitter/follow/rfgarcia" alt="Follow @rfgarcia"></a>
@@ -13,7 +13,7 @@
 
 The Kernel CLI is a fast, friendly command‑line interface for Kernel — the platform that provides sandboxed, ready‑to‑use Chrome browsers for browser automations and web agents.
 
-Sign up at [onkernel.com](https://www.onkernel.com/) and read the [docs](https://onkernel.com/docs/introduction).
+Sign up at [kernel.sh](https://www.kernel.sh/) and read the [docs](https://www.kernel.sh/docs/introduction).
 
 ## What's Kernel?
 
@@ -104,6 +104,32 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
 - `--no-color` - Disable color output
 - `--log-level <level>` - Set log level (trace, debug, info, warn, error, fatal, print)
 
+## JSON Output
+
+Many commands support JSON output for scripting and automation. Use `--output json` or `-o json` to get machine-readable output:
+
+```bash
+# Get browser session details as JSON
+kernel browsers create -o json
+
+# List apps as JSON
+kernel app list -o json
+
+# Deploy with JSONL streaming output (one JSON object per line)
+kernel deploy index.ts -o json
+```
+
+Commands with JSON output support:
+- **Browsers**: `create`, `list`, `get`, `view`
+- **Browser Pools**: `create`, `list`, `get`, `update`, `acquire`
+- **Profiles**: `create`, `list`, `get`
+- **Extensions**: `upload`, `list`
+- **Proxies**: `create`, `list`, `get`
+- **Apps**: `list`, `history`
+- **Deploy**: `deploy` (JSONL streaming), `history`
+- **Invoke**: `invoke` (JSONL streaming), `history`
+- **Browser Sub-commands**: `replays list/start`, `process exec/spawn`, `fs file-info/list-files`
+
 ### Authentication
 
 - `kernel login [--force]` - Login via OAuth 2.0
@@ -124,6 +150,7 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
   - `gemini-computer-use` - Implements a Gemini computer use agent (TypeScript only)
   - `openagi-computer-use` - OpenAGI Lux computer-use models (Python only)
   - `magnitude` - Magnitude framework sample (TypeScript only)
+  - `claude-agent-sdk` - Claude Agent SDK browser automation agent
 
 ### App Deployment
 
@@ -133,6 +160,7 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
   - `--force` - Allow overwriting existing version
   - `--env <KEY=VALUE>`, `-e` - Set environment variables (can be used multiple times)
   - `--env-file <file>` - Load environment variables from file (can be used multiple times)
+  - `--output json`, `-o json` - Output JSONL (one JSON object per line for each event)
 
 - `kernel deploy logs <deployment_id>` - Stream logs for a deployment
 
@@ -142,6 +170,7 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
 
 - `kernel deploy history [app_name]` - Show deployment history
   - `--limit <n>` - Max deployments to return (default: 100; 0 = all)
+  - `--output json`, `-o json` - Output raw JSON array
 
 ### App Management
 
@@ -149,15 +178,19 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
 
   - `--version <version>`, `-v` - Specify app version (default: latest)
   - `--payload <json>`, `-p` - JSON payload for the action
+  - `--payload-file <path>`, `-f` - Read JSON payload from a file (use `-` for stdin)
   - `--sync`, `-s` - Invoke synchronously (timeout after 60s)
+  - `--output json`, `-o json` - Output JSONL (one JSON object per line for each event)
 
 - `kernel app list` - List deployed apps
 
   - `--name <app_name>` - Filter by app name
   - `--version <version>` - Filter by version
+  - `--output json`, `-o json` - Output raw JSON array
 
 - `kernel app history <app_name>` - Show deployment history for an app
   - `--limit <n>` - Max deployments to return (default: 100; 0 = all)
+  - `--output json`, `-o json` - Output raw JSON array
 
 ### Logs
 
@@ -170,21 +203,26 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
 ### Browser Management
 
 - `kernel browsers list` - List running browsers
+  - `--output json`, `-o json` - Output raw JSON array
 - `kernel browsers create` - Create a new browser session
   - `-s, --stealth` - Launch browser in stealth mode to avoid detection
   - `-H, --headless` - Launch browser without GUI access
   - `--kiosk` - Launch browser in kiosk mode
   - `--pool-id <id>` - Acquire a browser from the specified pool (mutually exclusive with --pool-name; ignores other session flags)
   - `--pool-name <name>` - Acquire a browser from the pool name (mutually exclusive with --pool-id; ignores other session flags)
+  - `--output json`, `-o json` - Output raw JSON object
   - _Note: When a pool is specified, omit other session configuration flags—pool settings determine profile, proxy, viewport, etc._
 - `kernel browsers delete <id>` - Delete a browser
   - `-y, --yes` - Skip confirmation prompt
 - `kernel browsers view <id>` - Get live view URL for a browser
+  - `--output json`, `-o json` - Output JSON with liveViewUrl
+- `kernel browsers get <id>` - Get detailed browser session info
+  - `--output json`, `-o json` - Output raw JSON object
 
 ### Browser Pools
 
 - `kernel browser-pools list` - List browser pools
-  - `-o, --output json` - Output raw JSON response
+  - `--output json`, `-o json` - Output raw JSON array
 - `kernel browser-pools create` - Create a browser pool
   - `--name <name>` - Optional unique name for the pool
   - `--size <n>` - Number of browsers in the pool (required)
@@ -192,14 +230,17 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
   - `--timeout <seconds>` - Idle timeout for browsers acquired from the pool
   - `--stealth`, `--headless`, `--kiosk` - Default pool configuration
   - `--profile-id`, `--profile-name`, `--save-changes`, `--proxy-id`, `--extension`, `--viewport` - Same semantics as `kernel browsers create`
+  - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools get <id-or-name>` - Get pool details
-  - `-o, --output json` - Output raw JSON response
+  - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools update <id-or-name>` - Update pool configuration
   - Same flags as create plus `--discard-all-idle` to discard all idle browsers in the pool and refill at the specified fill rate
+  - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools delete <id-or-name>` - Delete a pool
   - `--force` - Force delete even if browsers are leased
 - `kernel browser-pools acquire <id-or-name>` - Acquire a browser from the pool
   - `--timeout <seconds>` - Acquire timeout before returning 204
+  - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools release <id-or-name>` - Release a browser back to the pool
   - `--session-id <id>` - Browser session ID to release (required)
   - `--reuse` - Reuse the browser instance (default: true)
@@ -216,12 +257,14 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
 ### Browser Replays
 
 - `kernel browsers replays list <id>` - List replays for a browser
+  - `--output json`, `-o json` - Output raw JSON array
 - `kernel browsers replays start <id>` - Start a replay recording
   - `--framerate <fps>` - Recording framerate (fps)
   - `--max-duration <seconds>` - Maximum duration in seconds
+  - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers replays stop <id> <replay-id>` - Stop a replay recording
 - `kernel browsers replays download <id> <replay-id>` - Download a replay video
-  - `-o, --output <path>` - Output file path for the replay video
+  - `-f, --output-file <path>` - Output file path for the replay video
 
 ### Browser Process Control
 
@@ -232,6 +275,7 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
   - `--timeout <seconds>` - Timeout in seconds
   - `--as-user <user>` - Run as user
   - `--as-root` - Run as root
+  - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers process spawn <id> [--] [command...]` - Execute a command asynchronously
   - `--command <cmd>` - Command to execute (optional; if omitted, trailing args are executed via /bin/bash -c)
   - `--args <args>` - Command arguments
@@ -239,6 +283,7 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
   - `--timeout <seconds>` - Timeout in seconds
   - `--as-user <user>` - Run as user
   - `--as-root` - Run as root
+  - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers process kill <id> <process-id>` - Send a signal to a process
   - `--signal <signal>` - Signal to send: TERM, KILL, INT, HUP (default: TERM)
 - `kernel browsers process status <id> <process-id>` - Get process status
@@ -260,8 +305,10 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
   - `-o, --output <path>` - Output zip file path
 - `kernel browsers fs file-info <id>` - Get file or directory info
   - `--path <path>` - Absolute file or directory path (required)
+  - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers fs list-files <id>` - List files in a directory
   - `--path <path>` - Absolute directory path (required)
+  - `--output json`, `-o json` - Output raw JSON array
 - `kernel browsers fs move <id>` - Move or rename a file or directory
   - `--src <path>` - Absolute source path (required)
   - `--dest <path>` - Absolute destination path (required)
@@ -342,8 +389,10 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
 ### Extension Management
 
 - `kernel extensions list` - List all uploaded extensions
+  - `--output json`, `-o json` - Output raw JSON array
 - `kernel extensions upload <directory>` - Upload an unpacked browser extension directory
   - `--name <name>` - Optional unique extension name
+  - `--output json`, `-o json` - Output raw JSON object
 - `kernel extensions download <id-or-name>` - Download an extension archive
   - `--to <directory>` - Output directory (required)
 - `kernel extensions download-web-store <url>` - Download an extension from the Chrome Web Store
@@ -355,8 +404,11 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
 ### Proxy Management
 
 - `kernel proxies list` - List proxy configurations
+  - `--output json`, `-o json` - Output raw JSON array
 - `kernel proxies get <id>` - Get a proxy configuration by ID
+  - `--output json`, `-o json` - Output raw JSON object
 - `kernel proxies create` - Create a new proxy configuration
+  - `--output json`, `-o json` - Output raw JSON object
 
   - `--name <name>` - Proxy configuration name
   - `--type <type>` - Proxy type: datacenter, isp, residential, mobile, custom (required)
@@ -395,6 +447,9 @@ kernel create --name my-agent --language ts --template stagehand
 
 # Create a Python Computer Use app
 kernel create --name my-cu-app --language py --template anthropic-computer-use
+
+# Create a Claude Agent SDK app (TypeScript or Python)
+kernel create --name my-claude-agent --language ts --template claude-agent-sdk
 ```
 
 ### Deploy with environment variables
@@ -418,6 +473,15 @@ kernel invoke my-scraper scrape-page
 
 # With JSON payload
 kernel invoke my-scraper scrape-page --payload '{"url": "https://example.com"}'
+
+# Read payload from a file
+kernel invoke my-scraper scrape-page --payload-file payload.json
+
+# Read payload from stdin
+cat payload.json | kernel invoke my-scraper scrape-page --payload-file -
+
+# Pipe from another command
+echo '{"url": "https://example.com"}' | kernel invoke my-scraper scrape-page -f -
 
 # Synchronous invoke (wait for completion)
 kernel invoke my-scraper quick-task --sync
@@ -587,15 +651,15 @@ kernel proxies delete prx_123 --yes
 
 For complete documentation, visit:
 
-- [📖 Documentation](https://onkernel.com/docs)
-- [🚀 Quickstart Guide](https://onkernel.com/docs/quickstart)
-- [📋 CLI Reference](https://onkernel.com/docs/reference/cli)
+- [📖 Documentation](https://www.kernel.sh/docs)
+- [🚀 Quickstart Guide](https://www.kernel.sh/docs/quickstart)
+- [📋 CLI Reference](https://www.kernel.sh/docs/reference/cli)
 
 ## Support
 
 - [Discord Community](https://discord.gg/kernel)
 - [GitHub Issues](https://github.com/onkernel/kernel/issues)
-- [Documentation](https://onkernel.com/docs)
+- [Documentation](https://www.kernel.sh/docs)
 
 ---
 

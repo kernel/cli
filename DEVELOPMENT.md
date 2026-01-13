@@ -58,26 +58,45 @@ A typical workflow we encounter is updating the API and integrating those change
 
 ### Releasing a new version
 
+Releases are automated via GitHub Actions. Simply push a version tag and the release workflow will handle the rest.
+
+#### To release:
+
+```bash
+# Find the latest version
+git describe --abbrev=0
+
+# Create and push a new tag (bump version following https://semver.org/)
+git tag -a v<VERSION> -m "Version <VERSION>"
+git push origin v<VERSION>
+```
+
+The release workflow will automatically:
+- Build binaries for darwin, linux, and windows (amd64 and arm64)
+- Create a GitHub release with changelog
+- Publish to npm as `@onkernel/cli`
+- Update the Homebrew formula in `onkernel/homebrew-tap`
+
+#### Required GitHub Secrets
+
+The following secrets must be configured in the repository settings:
+
+| Secret | Description |
+|--------|-------------|
+| `GH_PAT` | GitHub Personal Access Token with `repo` scope. Must have write access to both this repository (for creating releases) and `onkernel/homebrew-tap` (for updating the Homebrew formula). Create at https://github.com/settings/tokens/new?scopes=repo |
+| `GORELEASER_KEY` | GoReleaser Pro license key (required for npm and homebrew publishing) |
+| `NPM_TOKEN` | npm access token for publishing `@onkernel/cli` |
+
+#### Local dry-run (optional)
+
+To test the release process locally before pushing a tag:
+
 Prerequisites:
-
-- Make sure you have **goreleaser-pro** installed via `brew install --cask goreleaser/tap/goreleaser-pro`. You will need a license key (in 1pw), and then `export GORELEASER_KEY=<the key>`. **Note: goreleaser-pro is required, not the standard goreleaser version.**
-
-- Grab the NPM token for our org (in 1pw) and run `npm config set '//registry.npmjs.org/:_authToken'=<the token>`
-
-- export a `GITHUB_TOKEN` with repo and write:packages permissions: https://github.com/settings/tokens/new?scopes=repo,write:packages.
-
-With a clean tree on the branch you want to release (can be main or a pr branch you're about to merge, doesn't matter), run:
+- Install **goreleaser-pro** via `brew install --cask goreleaser/tap/goreleaser-pro`
+- Export `GORELEASER_KEY=<license key from 1pw>`
 
 ```bash
 make release-dry-run
 ```
 
-This will check that everything is working, but not actually release anything.
-You should see one error about there not being a git tag, and that's fine.
-
-To actually release, run:
-
-```bash
-# use `git describe --abbrev=0` to find the latest version and then bump it following https://semver.org/
-./scripts/release.sh <version> [description]
-```
+This will check that everything is working without actually releasing anything.

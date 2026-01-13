@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/onkernel/cli/pkg/util"
+	"github.com/kernel/cli/pkg/util"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )

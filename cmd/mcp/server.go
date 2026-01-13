@@ -48,7 +48,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	pterm.Println()
 	pterm.DefaultSection.Println("Documentation")
-	pterm.Println("  https://onkernel.com/docs/reference/mcp-server")
+	pterm.Println("  https://www.kernel.sh/docs/reference/mcp-server")
 
 	pterm.Println()
 	pterm.Info.Println("Use 'kernel mcp install --target <tool>' to configure your AI tool automatically.")

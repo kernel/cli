@@ -19,7 +19,6 @@ Invoke this via CLI:
     kernel login  # or: export KERNEL_API_KEY=<your_api_key>
     kernel deploy main.py -e OPENAI_API_KEY=XXXXX --force
     kernel invoke python-openai-cua cua-task -p '{"task":"go to https://news.ycombinator.com and list top 5 articles"}'
-    kernel logs python-openai-cua -f # Open in separate tab
 """
 
 

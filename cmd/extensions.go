@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,7 +11,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/onkernel/cli/pkg/util"
+	"github.com/kernel/cli/pkg/extensions"
+	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/pterm/pterm"
@@ -26,7 +28,9 @@ type ExtensionsService interface {
 	Upload(ctx context.Context, body kernel.ExtensionUploadParams, opts ...option.RequestOption) (res *kernel.ExtensionUploadResponse, err error)
 }
 
-type ExtensionsListInput struct{}
+type ExtensionsListInput struct {
+	Output string
+}
 
 type ExtensionsDeleteInput struct {
 	Identifier  string
@@ -45,8 +49,9 @@ type ExtensionsDownloadWebStoreInput struct {
 }
 
 type ExtensionsUploadInput struct {
-	Dir  string
-	Name string
+	Dir    string
+	Name   string
+	Output string
 }
 
 // ExtensionsCmd handles extension operations independent of cobra.
@@ -54,12 +59,32 @@ type ExtensionsCmd struct {
 	extensions ExtensionsService
 }
 
-func (e ExtensionsCmd) List(ctx context.Context, _ ExtensionsListInput) error {
-	pterm.Info.Println("Fetching extensions...")
+func (e ExtensionsCmd) List(ctx context.Context, in ExtensionsListInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
+	if in.Output != "json" {
+		pterm.Info.Println("Fetching extensions...")
+	}
 	items, err := e.extensions.List(ctx)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
+
+	if in.Output == "json" {
+		if items == nil || len(*items) == 0 {
+			fmt.Println("[]")
+			return nil
+		}
+		bs, err := json.MarshalIndent(*items, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(bs))
+		return nil
+	}
+
 	if items == nil || len(*items) == 0 {
 		pterm.Info.Println("No extensions found")
 		return nil
@@ -259,6 +284,10 @@ func (e ExtensionsCmd) DownloadWebStore(ctx context.Context, in ExtensionsDownlo
 }
 
 func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
 	if in.Dir == "" {
 		return fmt.Errorf("missing directory argument")
 	}
@@ -272,7 +301,9 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 	}
 
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("kernel_ext_%d.zip", time.Now().UnixNano()))
-	pterm.Info.Println("Zipping extension directory...")
+	if in.Output != "json" {
+		pterm.Info.Println("Zipping extension directory...")
+	}
 	if err := util.ZipDirectory(absDir, tmpFile); err != nil {
 		pterm.Error.Println("Failed to zip directory")
 		return err
@@ -292,6 +323,15 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 	item, err := e.extensions.Upload(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		bs, err := json.MarshalIndent(item, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(bs))
+		return nil
 	}
 
 	name := item.Name
@@ -322,9 +362,10 @@ var extensionsListCmd = &cobra.Command{
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := getKernelClient(cmd)
+		output, _ := cmd.Flags().GetString("output")
 		svc := client.Extensions
 		e := ExtensionsCmd{extensions: &svc}
-		return e.List(cmd.Context(), ExtensionsListInput{})
+		return e.List(cmd.Context(), ExtensionsListInput{Output: output})
 	},
 }
 
@@ -375,9 +416,57 @@ var extensionsUploadCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := getKernelClient(cmd)
 		name, _ := cmd.Flags().GetString("name")
+		output, _ := cmd.Flags().GetString("output")
 		svc := client.Extensions
 		e := ExtensionsCmd{extensions: &svc}
-		return e.Upload(cmd.Context(), ExtensionsUploadInput{Dir: args[0], Name: name})
+		return e.Upload(cmd.Context(), ExtensionsUploadInput{Dir: args[0], Name: name, Output: output})
+	},
+}
+
+var extensionsBuildWebBotAuthCmd = &cobra.Command{
+	Use:   "build-web-bot-auth",
+	Short: "Build the Cloudflare web-bot-auth extension for Kernel",
+	Long: `Download, build, and prepare the Cloudflare web-bot-auth extension with Kernel-specific configurations.
+					Defaults to RFC9421 test key (works with Cloudflare's test site).
+					Uploads it to Kernel as 'web-bot-auth'. Optionally accepts a custom JWK or PEM key file.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		output, _ := cmd.Flags().GetString("to")
+		url, _ := cmd.Flags().GetString("url")
+		keyPath, _ := cmd.Flags().GetString("key")
+		uploadName, _ := cmd.Flags().GetString("upload")
+
+		// Use upload name for extension name, or default to "web-bot-auth"
+		extensionName := "web-bot-auth"
+		if uploadName != "" {
+			extensionName = uploadName
+		}
+
+		// Build the extension
+		result, err := extensions.BuildWebBotAuth(cmd.Context(), extensions.ExtensionsBuildWebBotAuthInput{
+			Output:        output,
+			HostURL:       url,
+			KeyPath:       keyPath,
+			ExtensionName: extensionName,
+			AutoUpload:    uploadName != "",
+		})
+		if err != nil {
+			return err
+		}
+
+		// Upload if requested
+		if uploadName != "" {
+			client := getKernelClient(cmd)
+			svc := client.Extensions
+			e := ExtensionsCmd{extensions: &svc}
+			pterm.Info.Println("Uploading extension to Kernel...")
+			return e.Upload(cmd.Context(), ExtensionsUploadInput{
+				Dir:  result.OutputDir,
+				Name: extensionName,
+			})
+		}
+
+		return nil
 	},
 }
 
@@ -387,10 +476,17 @@ func init() {
 	extensionsCmd.AddCommand(extensionsDownloadCmd)
 	extensionsCmd.AddCommand(extensionsDownloadWebStoreCmd)
 	extensionsCmd.AddCommand(extensionsUploadCmd)
+	extensionsCmd.AddCommand(extensionsBuildWebBotAuthCmd)
 
+	extensionsListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	extensionsDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 	extensionsDownloadCmd.Flags().String("to", "", "Output zip file path")
 	extensionsDownloadWebStoreCmd.Flags().String("to", "", "Output zip file path for the downloaded archive")
 	extensionsDownloadWebStoreCmd.Flags().String("os", "", "Target OS: mac, win, or linux (default linux)")
+	extensionsUploadCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	extensionsUploadCmd.Flags().String("name", "", "Optional unique extension name")
+	extensionsBuildWebBotAuthCmd.Flags().String("to", "./web-bot-auth", "Output directory for the prepared extension")
+	extensionsBuildWebBotAuthCmd.Flags().String("url", "http://127.0.0.1:10001", "Base URL for update.xml and policy templates")
+	extensionsBuildWebBotAuthCmd.Flags().String("key", "", "Path to Ed25519 private key file (JWK or PEM format)")
+	extensionsBuildWebBotAuthCmd.Flags().String("upload", "", "Upload extension to Kernel with specified name (e.g., --upload web-bot-auth)")
 }

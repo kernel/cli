@@ -17,6 +17,7 @@ const (
 	TemplateBrowserUse           = "browser-use"
 	TemplateStagehand            = "stagehand"
 	TemplateOpenAGIComputerUse   = "openagi-computer-use"
+	TemplateClaudeAgentSDK       = "claude-agent-sdk"
 )
 
 type TemplateInfo struct {
@@ -77,6 +78,11 @@ var Templates = map[string]TemplateInfo{
 		Name:        "OpenAGI Computer Use",
 		Description: "Implements an OpenAGI computer use agent",
 		Languages:   []string{LanguagePython},
+	},
+	TemplateClaudeAgentSDK: {
+		Name:        "Claude Agent SDK",
+		Description: "Implements a Claude Agent SDK browser automation agent",
+		Languages:   []string{LanguageTypeScript, LanguagePython},
 	},
 }
 
@@ -189,6 +195,11 @@ var Commands = map[string]map[string]DeployConfig{
 			NeedsEnvFile:  true,
 			InvokeCommand: "kernel invoke ts-gemini-cua gemini-cua-task",
 		},
+		TemplateClaudeAgentSDK: {
+			EntryPoint:    "index.ts",
+			NeedsEnvFile:  true,
+			InvokeCommand: `kernel invoke ts-claude-agent-sdk agent-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'`,
+		},
 	},
 	LanguagePython: {
 		TemplateSampleApp: {
@@ -220,6 +231,11 @@ var Commands = map[string]map[string]DeployConfig{
 			EntryPoint:    "main.py",
 			NeedsEnvFile:  true,
 			InvokeCommand: `kernel invoke python-openagi-cua openagi-default-task -p '{"instruction": "Navigate to https://agiopen.org and click the What is Computer Use? button", "record_replay": "True"}'`,
+		},
+		TemplateClaudeAgentSDK: {
+			EntryPoint:    "main.py",
+			NeedsEnvFile:  true,
+			InvokeCommand: `kernel invoke py-claude-agent-sdk agent-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'`,
 		},
 	},
 }

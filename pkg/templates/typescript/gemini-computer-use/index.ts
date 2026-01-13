@@ -21,7 +21,7 @@ interface SearchQueryOutput {
 // API Key for LLM provider
 // - GOOGLE_API_KEY: Required for Gemini 2.5 Computer Use Agent
 // Set via environment variables or `kernel deploy <filename> --env-file .env`
-// See https://docs.onkernel.com/launch/deploy#environment-variables
+// See https://www.kernel.sh/docs/launch/deploy#environment-variables
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 
 if (!GOOGLE_API_KEY) {
