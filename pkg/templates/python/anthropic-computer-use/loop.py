@@ -1,25 +1,16 @@
 """
 Agentic sampling loop that calls the Anthropic API and local implementation of anthropic-defined computer use tools.
 From https://github.com/anthropics/anthropic-quickstarts/blob/main/computer-use-demo/computer_use_demo/loop.py
+Modified to use Kernel Computer Controls API instead of Playwright.
 """
 
 import os
-import platform
-from collections.abc import Callable
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, cast
-from playwright.async_api import Page
 
-import httpx
-from anthropic import (
-    Anthropic,
-    AnthropicBedrock,
-    AnthropicVertex,
-    APIError,
-    APIResponseValidationError,
-    APIStatusError,
-)
+from kernel import Kernel
+from anthropic import Anthropic
 from anthropic.types.beta import (
     BetaCacheControlEphemeralParam,
     BetaContentBlockParam,
@@ -78,6 +69,8 @@ async def sampling_loop(
     model: str,
     messages: list[BetaMessageParam],
     api_key: str,
+    kernel: Kernel,
+    session_id: str,
     provider: APIProvider = APIProvider.ANTHROPIC,
     system_prompt_suffix: str = "",
     only_n_most_recent_images: int | None = None,
@@ -85,7 +78,6 @@ async def sampling_loop(
     tool_version: ToolVersion = "computer_use_20250124",
     thinking_budget: int | None = None,
     token_efficient_tools_beta: bool = False,
-    playwright_page: Page,
 ):
     """
     Agentic sampling loop for the assistant/tool interaction of computer use.
@@ -94,6 +86,8 @@ async def sampling_loop(
         model: The model to use for the API call
         messages: The conversation history
         api_key: The API key for authentication
+        kernel: The Kernel client instance
+        session_id: The Kernel browser session ID
         provider: The API provider (defaults to ANTHROPIC)
         system_prompt_suffix: Additional system prompt text (defaults to empty string)
         only_n_most_recent_images: Optional limit on number of recent images to keep
@@ -101,12 +95,11 @@ async def sampling_loop(
         tool_version: Version of tools to use (defaults to V20250124)
         thinking_budget: Optional token budget for thinking
         token_efficient_tools_beta: Whether to use token efficient tools beta
-        playwright_page: The Playwright page instance for browser automation
     """
     tool_group = TOOL_GROUPS_BY_VERSION[tool_version]
     tool_collection = ToolCollection(
         *(
-            ToolCls(page=playwright_page if ToolCls.__name__.startswith("ComputerTool") else None)
+            ToolCls(kernel=kernel, session_id=session_id) if ToolCls.__name__.startswith("ComputerTool") else ToolCls()
             for ToolCls in tool_group.tools
         )
     )
@@ -252,21 +245,30 @@ def _response_to_params(
 ) -> list[BetaContentBlockParam]:
     res: list[BetaContentBlockParam] = []
     for block in response.content:
-        if isinstance(block, BetaTextBlock):
-            if block.text:
+        block_type = getattr(block, "type", None)
+        
+        # Handle thinking blocks
+        if block_type == "thinking":
+            thinking_block = {
+                "type": "thinking",
+                "thinking": getattr(block, "thinking", None),
+            }
+            if hasattr(block, "signature"):
+                thinking_block["signature"] = getattr(block, "signature", None)
+            res.append(cast(BetaContentBlockParam, thinking_block))
+        # Handle text blocks
+        elif block_type == "text" or isinstance(block, BetaTextBlock):
+            if getattr(block, "text", None):
                 res.append(BetaTextBlockParam(type="text", text=block.text))
-            elif getattr(block, "type", None) == "thinking":
-                # Handle thinking blocks - include signature field
-                thinking_block = {
-                    "type": "thinking",
-                    "thinking": getattr(block, "thinking", None),
-                }
-                if hasattr(block, "signature"):
-                    thinking_block["signature"] = getattr(block, "signature", None)
-                res.append(cast(BetaContentBlockParam, thinking_block))
-        else:
-            # Handle tool use blocks normally
-            res.append(cast(BetaToolUseBlockParam, block.model_dump()))
+        # Handle tool use blocks
+        elif block_type == "tool_use":
+            tool_use_block: BetaToolUseBlockParam = {
+                "type": "tool_use",
+                "id": block.id,
+                "name": block.name,
+                "input": block.input,
+            }
+            res.append(tool_use_block)
     return res
 
 
