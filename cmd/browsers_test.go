@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/onkernel/kernel-go-sdk"
-	"github.com/onkernel/kernel-go-sdk/option"
-	"github.com/onkernel/kernel-go-sdk/packages/pagination"
-	"github.com/onkernel/kernel-go-sdk/packages/ssestream"
-	"github.com/onkernel/kernel-go-sdk/shared"
+	"github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
+	"github.com/kernel/kernel-go-sdk/packages/ssestream"
+	"github.com/kernel/kernel-go-sdk/shared"
 	"github.com/pterm/pterm"
 	"github.com/stretchr/testify/assert"
 )
@@ -407,10 +407,13 @@ func TestBrowsersGet_JSONOutput(t *testing.T) {
 
 	fake := &FakeBrowsersService{
 		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
-			return &kernel.BrowserGetResponse{
-				SessionID: "sess-json",
-				CdpWsURL:  "ws://cdp",
-			}, nil
+			// Unmarshal JSON to populate RawJSON() properly
+			jsonData := `{"session_id": "sess-json", "cdp_ws_url": "ws://cdp", "created_at": "2024-01-01T00:00:00Z", "headless": false, "stealth": false, "timeout_seconds": 60}`
+			var resp kernel.BrowserGetResponse
+			if err := json.Unmarshal([]byte(jsonData), &resp); err != nil {
+				t.Fatalf("failed to unmarshal test response: %v", err)
+			}
+			return &resp, nil
 		},
 	}
 	b := BrowsersCmd{browsers: fake}

@@ -9,8 +9,9 @@ import (
 	"os"
 	"sync/atomic"
 
-	kernel "github.com/onkernel/kernel-go-sdk"
-	"github.com/onkernel/kernel-go-sdk/option"
+	"github.com/kernel/cli/pkg/update"
+	kernel "github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -76,7 +77,11 @@ func NewClient(opts ...option.RequestOption) kernel.Client {
 // is only displayed once per process.
 func showUpgradeMessage() {
 	pterm.Error.Println("Your Kernel CLI is out of date and is not compatible with this API.")
-	pterm.Info.Println("Please upgrade by running: `brew upgrade onkernel/tap/kernel`")
+	if cmd := update.SuggestUpgradeCommand(); cmd != "" {
+		pterm.Info.Printf("Please upgrade by running: `%s`\n", cmd)
+	} else {
+		pterm.Info.Println("Please upgrade using your package manager.")
+	}
 }
 
 // IsNotFound returns true if the error is a Kernel API error with HTTP 404.

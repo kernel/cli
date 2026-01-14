@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/onkernel/kernel-go-sdk"
-	"github.com/onkernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/pterm/pterm"
 	"github.com/stretchr/testify/assert"
 )
@@ -86,7 +86,7 @@ func TestProfilesList_Empty(t *testing.T) {
 	buf := captureProfilesOutput(t)
 	fake := &FakeProfilesService{}
 	p := ProfilesCmd{profiles: fake}
-	_ = p.List(context.Background())
+	_ = p.List(context.Background(), ProfilesListInput{})
 	assert.Contains(t, buf.String(), "No profiles found")
 }
 
@@ -96,7 +96,7 @@ func TestProfilesList_WithRows(t *testing.T) {
 	rows := []kernel.Profile{{ID: "p1", Name: "alpha", CreatedAt: created, UpdatedAt: created}, {ID: "p2", Name: "", CreatedAt: created, UpdatedAt: created}}
 	fake := &FakeProfilesService{ListFunc: func(ctx context.Context, opts ...option.RequestOption) (*[]kernel.Profile, error) { return &rows, nil }}
 	p := ProfilesCmd{profiles: fake}
-	_ = p.List(context.Background())
+	_ = p.List(context.Background(), ProfilesListInput{})
 	out := buf.String()
 	assert.Contains(t, out, "p1")
 	assert.Contains(t, out, "alpha")

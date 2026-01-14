@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/onkernel/cli/pkg/create"
+	"github.com/kernel/cli/pkg/create"
 	"github.com/pterm/pterm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -440,10 +440,10 @@ func TestCreateCommand_InvalidLanguageTemplateCombinations(t *testing.T) {
 			errContains: "template not found: python/magnitude",
 		},
 		{
-			name:        "gemini-cua not available for python",
+			name:        "gemini-computer-use not available for python",
 			language:    create.LanguagePython,
-			template:    create.TemplateGeminiCUA,
-			errContains: "template not found: python/gemini-cua",
+			template:    create.TemplateGeminiComputerUse,
+			errContains: "template not found: python/gemini-computer-use",
 		},
 		{
 			name:        "invalid language",
@@ -558,7 +558,7 @@ func TestCreateCommand_TemplateNotAvailableForLanguage(t *testing.T) {
 		create.TemplateBrowserUse: {create.LanguageTypeScript},
 		create.TemplateStagehand:  {create.LanguagePython},
 		create.TemplateMagnitude:  {create.LanguagePython},
-		create.TemplateGeminiCUA:  {create.LanguagePython},
+		create.TemplateGeminiComputerUse: {create.LanguagePython},
 	}
 
 	for template, unavailableLanguages := range unavailableCombinations {

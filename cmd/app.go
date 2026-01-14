@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/onkernel/cli/pkg/util"
-	"github.com/onkernel/kernel-go-sdk"
+	"github.com/kernel/cli/pkg/util"
+	"github.com/kernel/kernel-go-sdk"
 	"github.com/pterm/pterm"
 	"github.com/samber/lo"
 	"github.com/spf13/cobra"
@@ -44,9 +44,11 @@ func init() {
 	appListCmd.Flags().Int("limit", 20, "Max apps to return (default 20)")
 	appListCmd.Flags().Int("per-page", 20, "Items per page (alias of --limit)")
 	appListCmd.Flags().Int("page", 1, "Page number (1-based)")
+	appListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 
 	// Limit rows returned for app history (0 = all)
 	appHistoryCmd.Flags().Int("limit", 20, "Max deployments to return (default 20)")
+	appHistoryCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 }
 
 func runAppList(cmd *cobra.Command, args []string) error {
@@ -56,6 +58,11 @@ func runAppList(cmd *cobra.Command, args []string) error {
 	lim, _ := cmd.Flags().GetInt("limit")
 	perPage, _ := cmd.Flags().GetInt("per-page")
 	page, _ := cmd.Flags().GetInt("page")
+	output, _ := cmd.Flags().GetString("output")
+
+	if output != "" && output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
 
 	// Determine pagination inputs: prefer page/per-page if provided; else map legacy --limit
 	usePager := cmd.Flags().Changed("per-page") || cmd.Flags().Changed("page")
@@ -73,7 +80,9 @@ func runAppList(cmd *cobra.Command, args []string) error {
 		page = 1
 	}
 
-	pterm.Debug.Println("Fetching deployed applications...")
+	if output != "json" {
+		pterm.Debug.Println("Fetching deployed applications...")
+	}
 
 	params := kernel.AppListParams{}
 	if appName != "" {
@@ -90,6 +99,14 @@ func runAppList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		pterm.Error.Printf("Failed to list applications: %v\n", err)
 		return nil
+	}
+
+	if output == "json" {
+		if apps == nil || len(apps.Items) == 0 {
+			fmt.Println("[]")
+			return nil
+		}
+		return util.PrintPrettyJSONSlice(apps.Items)
 	}
 
 	if apps == nil || len(apps.Items) == 0 {
@@ -193,8 +210,15 @@ func runAppHistory(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	appName := args[0]
 	lim, _ := cmd.Flags().GetInt("limit")
+	output, _ := cmd.Flags().GetString("output")
 
-	pterm.Debug.Printf("Fetching deployment history for app '%s'...\n", appName)
+	if output != "" && output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
+	if output != "json" {
+		pterm.Debug.Printf("Fetching deployment history for app '%s'...\n", appName)
+	}
 
 	params := kernel.DeploymentListParams{}
 	if appName != "" {
@@ -205,6 +229,14 @@ func runAppHistory(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		pterm.Error.Printf("Failed to list deployments: %v\n", err)
 		return nil
+	}
+
+	if output == "json" {
+		if deployments == nil || len(deployments.Items) == 0 {
+			fmt.Println("[]")
+			return nil
+		}
+		return util.PrintPrettyJSONSlice(deployments.Items)
 	}
 
 	if deployments == nil || len(deployments.Items) == 0 {

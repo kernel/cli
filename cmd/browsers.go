@@ -15,19 +15,19 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/onkernel/cli/pkg/util"
-	"github.com/onkernel/kernel-go-sdk"
-	"github.com/onkernel/kernel-go-sdk/option"
-	"github.com/onkernel/kernel-go-sdk/packages/pagination"
-	"github.com/onkernel/kernel-go-sdk/packages/ssestream"
-	"github.com/onkernel/kernel-go-sdk/shared"
+	"github.com/kernel/cli/pkg/util"
+	"github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
+	"github.com/kernel/kernel-go-sdk/packages/ssestream"
+	"github.com/kernel/kernel-go-sdk/shared"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
 // BrowsersService defines the subset of the Kernel SDK browser client that we use.
-// See https://github.com/onkernel/kernel-go-sdk/blob/main/browser.go
+// See https://github.com/kernel/kernel-go-sdk/blob/main/browser.go
 type BrowsersService interface {
 	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.BrowserGetResponse, err error)
 	List(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.BrowserListResponse], err error)
@@ -163,6 +163,7 @@ type BrowsersCreateInput struct {
 	ProxyID            string
 	Extensions         []string
 	Viewport           string
+	Output             string
 }
 
 type BrowsersDeleteInput struct {
@@ -172,6 +173,7 @@ type BrowsersDeleteInput struct {
 
 type BrowsersViewInput struct {
 	Identifier string
+	Output     string
 }
 
 type BrowsersGetInput struct {
@@ -199,8 +201,7 @@ type BrowsersListInput struct {
 
 func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	params := kernel.BrowserListParams{}
@@ -225,16 +226,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	}
 
 	if in.Output == "json" {
-		if len(browsers) == 0 {
-			fmt.Println("[]")
-			return nil
-		}
-		bs, err := json.MarshalIndent(browsers, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSONSlice(browsers)
 	}
 
 	if len(browsers) == 0 {
@@ -287,7 +279,13 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 }
 
 func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
-	pterm.Info.Println("Creating browser session...")
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
+	if in.Output != "json" {
+		pterm.Info.Println("Creating browser session...")
+	}
 	params := kernel.BrowserNewParams{}
 	if in.PersistenceID != "" {
 		params.Persistence = kernel.BrowserPersistenceParam{ID: in.PersistenceID}
@@ -361,6 +359,10 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	browser, err := b.browsers.New(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(browser)
 	}
 
 	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Persistence, browser.Profile)
@@ -456,10 +458,26 @@ func (b BrowsersCmd) Delete(ctx context.Context, in BrowsersDeleteInput) error {
 }
 
 func (b BrowsersCmd) View(ctx context.Context, in BrowsersViewInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
 	browser, err := b.browsers.Get(ctx, in.Identifier)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
+
+	if in.Output == "json" {
+		// View command returns a custom response, not the full browser object
+		// Use json.Marshal to ensure proper JSON escaping of the URL
+		urlBytes, err := json.Marshal(browser.BrowserLiveViewURL)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("{\n  \"liveViewUrl\": %s\n}\n", urlBytes)
+		return nil
+	}
+
 	if browser.BrowserLiveViewURL == "" {
 		if browser.Headless {
 			pterm.Warning.Println("This browser is running in headless mode and does not have a live view URL")
@@ -475,8 +493,7 @@ func (b BrowsersCmd) View(ctx context.Context, in BrowsersViewInput) error {
 
 func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	browser, err := b.browsers.Get(ctx, in.Identifier)
@@ -484,12 +501,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		return util.CleanedUpSdkError{Err: err}
 	}
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(browser, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(browser)
 	}
 
 	// Build table starting with common browser fields
@@ -855,12 +867,14 @@ func (b BrowsersCmd) ComputerSetCursor(ctx context.Context, in BrowsersComputerS
 // Replays
 type BrowsersReplaysListInput struct {
 	Identifier string
+	Output     string
 }
 
 type BrowsersReplaysStartInput struct {
 	Identifier         string
 	Framerate          int
 	MaxDurationSeconds int
+	Output             string
 }
 
 type BrowsersReplaysStopInput struct {
@@ -875,6 +889,10 @@ type BrowsersReplaysDownloadInput struct {
 }
 
 func (b BrowsersCmd) ReplaysList(ctx context.Context, in BrowsersReplaysListInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
 	br, err := b.browsers.Get(ctx, in.Identifier)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -883,6 +901,15 @@ func (b BrowsersCmd) ReplaysList(ctx context.Context, in BrowsersReplaysListInpu
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
+
+	if in.Output == "json" {
+		if items == nil || len(*items) == 0 {
+			fmt.Println("[]")
+			return nil
+		}
+		return util.PrintPrettyJSONSlice(*items)
+	}
+
 	if items == nil || len(*items) == 0 {
 		pterm.Info.Println("No replays found")
 		return nil
@@ -896,6 +923,10 @@ func (b BrowsersCmd) ReplaysList(ctx context.Context, in BrowsersReplaysListInpu
 }
 
 func (b BrowsersCmd) ReplaysStart(ctx context.Context, in BrowsersReplaysStartInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
 	br, err := b.browsers.Get(ctx, in.Identifier)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -911,6 +942,11 @@ func (b BrowsersCmd) ReplaysStart(ctx context.Context, in BrowsersReplaysStartIn
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(res)
+	}
+
 	rows := pterm.TableData{{"Property", "Value"}, {"Replay ID", res.ReplayID}, {"View URL", res.ReplayViewURL}, {"Started At", util.FormatLocal(res.StartedAt)}}
 	PrintTableNoPad(rows, true)
 	return nil
@@ -967,9 +1003,19 @@ type BrowsersProcessExecInput struct {
 	Timeout    int
 	AsUser     string
 	AsRoot     BoolFlag
+	Output     string
 }
 
-type BrowsersProcessSpawnInput = BrowsersProcessExecInput
+type BrowsersProcessSpawnInput struct {
+	Identifier string
+	Command    string
+	Args       []string
+	Cwd        string
+	Timeout    int
+	AsUser     string
+	AsRoot     BoolFlag
+	Output     string
+}
 
 type BrowsersProcessKillInput struct {
 	Identifier string
@@ -1043,6 +1089,10 @@ func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrigh
 }
 
 func (b BrowsersCmd) ProcessExec(ctx context.Context, in BrowsersProcessExecInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
 	if b.process == nil {
 		pterm.Error.Println("process service not available")
 		return nil
@@ -1071,6 +1121,11 @@ func (b BrowsersCmd) ProcessExec(ctx context.Context, in BrowsersProcessExecInpu
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(res)
+	}
+
 	rows := pterm.TableData{{"Property", "Value"}, {"Exit Code", fmt.Sprintf("%d", res.ExitCode)}, {"Duration (ms)", fmt.Sprintf("%d", res.DurationMs)}}
 	PrintTableNoPad(rows, true)
 	if res.StdoutB64 != "" {
@@ -1101,6 +1156,10 @@ func (b BrowsersCmd) ProcessExec(ctx context.Context, in BrowsersProcessExecInpu
 }
 
 func (b BrowsersCmd) ProcessSpawn(ctx context.Context, in BrowsersProcessSpawnInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
 	if b.process == nil {
 		pterm.Error.Println("process service not available")
 		return nil
@@ -1129,6 +1188,11 @@ func (b BrowsersCmd) ProcessSpawn(ctx context.Context, in BrowsersProcessSpawnIn
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(res)
+	}
+
 	rows := pterm.TableData{{"Property", "Value"}, {"Process ID", res.ProcessID}, {"PID", fmt.Sprintf("%d", res.Pid)}, {"Started At", util.FormatLocal(res.StartedAt)}}
 	PrintTableNoPad(rows, true)
 	return nil
@@ -1247,11 +1311,13 @@ type BrowsersFSDownloadDirZipInput struct {
 type BrowsersFSFileInfoInput struct {
 	Identifier string
 	Path       string
+	Output     string
 }
 
 type BrowsersFSListFilesInput struct {
 	Identifier string
 	Path       string
+	Output     string
 }
 
 type BrowsersFSMoveInput struct {
@@ -1389,6 +1455,10 @@ func (b BrowsersCmd) FSDownloadDirZip(ctx context.Context, in BrowsersFSDownload
 }
 
 func (b BrowsersCmd) FSFileInfo(ctx context.Context, in BrowsersFSFileInfoInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
 	if b.fs == nil {
 		pterm.Error.Println("fs service not available")
 		return nil
@@ -1401,12 +1471,21 @@ func (b BrowsersCmd) FSFileInfo(ctx context.Context, in BrowsersFSFileInfoInput)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(res)
+	}
+
 	rows := pterm.TableData{{"Property", "Value"}, {"Path", res.Path}, {"Name", res.Name}, {"Mode", res.Mode}, {"IsDir", fmt.Sprintf("%t", res.IsDir)}, {"SizeBytes", fmt.Sprintf("%d", res.SizeBytes)}, {"ModTime", util.FormatLocal(res.ModTime)}}
 	PrintTableNoPad(rows, true)
 	return nil
 }
 
 func (b BrowsersCmd) FSListFiles(ctx context.Context, in BrowsersFSListFilesInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
 	if b.fs == nil {
 		pterm.Error.Println("fs service not available")
 		return nil
@@ -1419,6 +1498,15 @@ func (b BrowsersCmd) FSListFiles(ctx context.Context, in BrowsersFSListFilesInpu
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
+
+	if in.Output == "json" {
+		if res == nil || len(*res) == 0 {
+			fmt.Println("[]")
+			return nil
+		}
+		return util.PrintPrettyJSONSlice(*res)
+	}
+
 	if res == nil || len(*res) == 0 {
 		pterm.Info.Println("No files found")
 		return nil
@@ -1755,6 +1843,9 @@ func init() {
 	// get flags
 	browsersGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 
+	// view flags
+	browsersViewCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+
 	browsersCmd.AddCommand(browsersListCmd)
 	browsersCmd.AddCommand(browsersCreateCmd)
 	browsersCmd.AddCommand(browsersDeleteCmd)
@@ -1775,12 +1866,14 @@ func init() {
 	// replays
 	replaysRoot := &cobra.Command{Use: "replays", Short: "Manage browser replays"}
 	replaysList := &cobra.Command{Use: "list <id>", Short: "List replays for a browser", Args: cobra.ExactArgs(1), RunE: runBrowsersReplaysList}
+	replaysList.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	replaysStart := &cobra.Command{Use: "start <id>", Short: "Start a replay recording", Args: cobra.ExactArgs(1), RunE: runBrowsersReplaysStart}
 	replaysStart.Flags().Int("framerate", 0, "Recording framerate (fps)")
 	replaysStart.Flags().Int("max-duration", 0, "Maximum duration in seconds")
+	replaysStart.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	replaysStop := &cobra.Command{Use: "stop <id> <replay-id>", Short: "Stop a replay recording", Args: cobra.ExactArgs(2), RunE: runBrowsersReplaysStop}
 	replaysDownload := &cobra.Command{Use: "download <id> <replay-id>", Short: "Download a replay video", Args: cobra.ExactArgs(2), RunE: runBrowsersReplaysDownload}
-	replaysDownload.Flags().StringP("output", "o", "", "Output file path for the replay video")
+	replaysDownload.Flags().StringP("output-file", "f", "", "Output file path for the replay video")
 	replaysRoot.AddCommand(replaysList, replaysStart, replaysStop, replaysDownload)
 	browsersCmd.AddCommand(replaysRoot)
 
@@ -1793,6 +1886,7 @@ func init() {
 	procExec.Flags().Int("timeout", 0, "Timeout in seconds")
 	procExec.Flags().String("as-user", "", "Run as user")
 	procExec.Flags().Bool("as-root", false, "Run as root")
+	procExec.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	procSpawn := &cobra.Command{Use: "spawn <id> [--] [command...]", Short: "Execute a command asynchronously", Args: cobra.MinimumNArgs(1), RunE: runBrowsersProcessSpawn}
 	procSpawn.Flags().String("command", "", "Command to execute (optional; if omitted, trailing args are executed via /bin/bash -c)")
 	procSpawn.Flags().StringSlice("args", []string{}, "Command arguments")
@@ -1800,6 +1894,7 @@ func init() {
 	procSpawn.Flags().Int("timeout", 0, "Timeout in seconds")
 	procSpawn.Flags().String("as-user", "", "Run as user")
 	procSpawn.Flags().Bool("as-root", false, "Run as root")
+	procSpawn.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	procKill := &cobra.Command{Use: "kill <id> <process-id>", Short: "Send a signal to a process", Args: cobra.ExactArgs(2), RunE: runBrowsersProcessKill}
 	procKill.Flags().String("signal", "TERM", "Signal to send (TERM, KILL, INT, HUP)")
 	procStatus := &cobra.Command{Use: "status <id> <process-id>", Short: "Get process status", Args: cobra.ExactArgs(2), RunE: runBrowsersProcessStatus}
@@ -1829,9 +1924,11 @@ func init() {
 	fsFileInfo := &cobra.Command{Use: "file-info <id>", Short: "Get file or directory info", Args: cobra.ExactArgs(1), RunE: runBrowsersFSFileInfo}
 	fsFileInfo.Flags().String("path", "", "Absolute file or directory path")
 	_ = fsFileInfo.MarkFlagRequired("path")
+	fsFileInfo.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	fsListFiles := &cobra.Command{Use: "list-files <id>", Short: "List files in a directory", Args: cobra.ExactArgs(1), RunE: runBrowsersFSListFiles}
 	fsListFiles.Flags().String("path", "", "Absolute directory path")
 	_ = fsListFiles.MarkFlagRequired("path")
+	fsListFiles.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	fsMove := &cobra.Command{Use: "move <id>", Short: "Move or rename a file or directory", Args: cobra.ExactArgs(1), RunE: runBrowsersFSMove}
 	fsMove.Flags().String("src", "", "Absolute source path")
 	fsMove.Flags().String("dest", "", "Absolute destination path")
@@ -1953,6 +2050,7 @@ func init() {
 	browsersCmd.AddCommand(playwrightRoot)
 
 	// Add flags for create command
+	browsersCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	browsersCreateCmd.Flags().StringP("persistent-id", "p", "", "[DEPRECATED] Use --timeout and profiles instead. Unique identifier for browser session persistence")
 	_ = browsersCreateCmd.Flags().MarkDeprecated("persistent-id", "use --timeout (up to 72 hours) and profiles instead")
 	browsersCreateCmd.Flags().BoolP("stealth", "s", false, "Launch browser in stealth mode to avoid detection")
@@ -2012,6 +2110,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	viewportInteractive, _ := cmd.Flags().GetBool("viewport-interactive")
 	poolID, _ := cmd.Flags().GetString("pool-id")
 	poolName, _ := cmd.Flags().GetString("pool-name")
+	output, _ := cmd.Flags().GetString("output")
 
 	if poolID != "" && poolName != "" {
 		pterm.Error.Println("must specify at most one of --pool-id or --pool-name")
@@ -2024,6 +2123,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 			"pool-id":   true,
 			"pool-name": true,
 			"timeout":   true,
+			"output":    true,
 			// Global persistent flags that don't configure browsers
 			"no-color":  true,
 			"log-level": true,
@@ -2059,15 +2159,14 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 			pool = poolName
 		}
 
-		pterm.Info.Printf("Acquiring browser from pool %s...\n", pool)
+		if output != "json" {
+			pterm.Info.Printf("Acquiring browser from pool %s...\n", pool)
+		}
 		poolSvc := client.BrowserPools
 
-		req := kernel.BrowserPoolAcquireRequestParam{}
+		acquireParams := kernel.BrowserPoolAcquireParams{}
 		if cmd.Flags().Changed("timeout") && timeout > 0 {
-			req.AcquireTimeoutSeconds = kernel.Int(int64(timeout))
-		}
-		acquireParams := kernel.BrowserPoolAcquireParams{
-			BrowserPoolAcquireRequest: req,
+			acquireParams.AcquireTimeoutSeconds = kernel.Int(int64(timeout))
 		}
 
 		resp, err := (&poolSvc).Acquire(cmd.Context(), pool, acquireParams)
@@ -2075,8 +2174,15 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 			return util.CleanedUpSdkError{Err: err}
 		}
 		if resp == nil {
+			if output == "json" {
+				fmt.Println("null")
+				return nil
+			}
 			pterm.Error.Println("Acquire request timed out (no browser available). Retry to continue waiting.")
 			return nil
+		}
+		if output == "json" {
+			return util.PrintPrettyJSON(resp)
 		}
 		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Persistence, resp.Profile)
 		return nil
@@ -2111,6 +2217,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		ProxyID:            proxyID,
 		Extensions:         extensions,
 		Viewport:           viewport,
+		Output:             output,
 	}
 
 	svc := client.Browsers
@@ -2135,10 +2242,11 @@ func runBrowsersDelete(cmd *cobra.Command, args []string) error {
 
 func runBrowsersView(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
+	output, _ := cmd.Flags().GetString("output")
 
 	identifier := args[0]
 
-	in := BrowsersViewInput{Identifier: identifier}
+	in := BrowsersViewInput{Identifier: identifier, Output: output}
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
 	return b.View(cmd.Context(), in)
@@ -2176,8 +2284,9 @@ func runBrowsersLogsStream(cmd *cobra.Command, args []string) error {
 func runBrowsersReplaysList(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	svc := client.Browsers
+	output, _ := cmd.Flags().GetString("output")
 	b := BrowsersCmd{browsers: &svc, replays: &svc.Replays}
-	return b.ReplaysList(cmd.Context(), BrowsersReplaysListInput{Identifier: args[0]})
+	return b.ReplaysList(cmd.Context(), BrowsersReplaysListInput{Identifier: args[0], Output: output})
 }
 
 func runBrowsersReplaysStart(cmd *cobra.Command, args []string) error {
@@ -2185,8 +2294,9 @@ func runBrowsersReplaysStart(cmd *cobra.Command, args []string) error {
 	svc := client.Browsers
 	fr, _ := cmd.Flags().GetInt("framerate")
 	md, _ := cmd.Flags().GetInt("max-duration")
+	output, _ := cmd.Flags().GetString("output")
 	b := BrowsersCmd{browsers: &svc, replays: &svc.Replays}
-	return b.ReplaysStart(cmd.Context(), BrowsersReplaysStartInput{Identifier: args[0], Framerate: fr, MaxDurationSeconds: md})
+	return b.ReplaysStart(cmd.Context(), BrowsersReplaysStartInput{Identifier: args[0], Framerate: fr, MaxDurationSeconds: md, Output: output})
 }
 
 func runBrowsersReplaysStop(cmd *cobra.Command, args []string) error {
@@ -2199,7 +2309,7 @@ func runBrowsersReplaysStop(cmd *cobra.Command, args []string) error {
 func runBrowsersReplaysDownload(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	svc := client.Browsers
-	out, _ := cmd.Flags().GetString("output")
+	out, _ := cmd.Flags().GetString("output-file")
 	b := BrowsersCmd{browsers: &svc, replays: &svc.Replays}
 	return b.ReplaysDownload(cmd.Context(), BrowsersReplaysDownloadInput{Identifier: args[0], ReplayID: args[1], Output: out})
 }
@@ -2219,8 +2329,9 @@ func runBrowsersProcessExec(cmd *cobra.Command, args []string) error {
 		command = "/bin/bash"
 		argv = []string{"-c", shellCmd}
 	}
+	output, _ := cmd.Flags().GetString("output")
 	b := BrowsersCmd{browsers: &svc, process: &svc.Process}
-	return b.ProcessExec(cmd.Context(), BrowsersProcessExecInput{Identifier: args[0], Command: command, Args: argv, Cwd: cwd, Timeout: timeout, AsUser: asUser, AsRoot: BoolFlag{Set: cmd.Flags().Changed("as-root"), Value: asRoot}})
+	return b.ProcessExec(cmd.Context(), BrowsersProcessExecInput{Identifier: args[0], Command: command, Args: argv, Cwd: cwd, Timeout: timeout, AsUser: asUser, AsRoot: BoolFlag{Set: cmd.Flags().Changed("as-root"), Value: asRoot}, Output: output})
 }
 
 func runBrowsersProcessSpawn(cmd *cobra.Command, args []string) error {
@@ -2237,8 +2348,9 @@ func runBrowsersProcessSpawn(cmd *cobra.Command, args []string) error {
 		command = "/bin/bash"
 		argv = []string{"-c", shellCmd}
 	}
+	output, _ := cmd.Flags().GetString("output")
 	b := BrowsersCmd{browsers: &svc, process: &svc.Process}
-	return b.ProcessSpawn(cmd.Context(), BrowsersProcessSpawnInput{Identifier: args[0], Command: command, Args: argv, Cwd: cwd, Timeout: timeout, AsUser: asUser, AsRoot: BoolFlag{Set: cmd.Flags().Changed("as-root"), Value: asRoot}})
+	return b.ProcessSpawn(cmd.Context(), BrowsersProcessSpawnInput{Identifier: args[0], Command: command, Args: argv, Cwd: cwd, Timeout: timeout, AsUser: asUser, AsRoot: BoolFlag{Set: cmd.Flags().Changed("as-root"), Value: asRoot}, Output: output})
 }
 
 func runBrowsersProcessKill(cmd *cobra.Command, args []string) error {
@@ -2335,16 +2447,18 @@ func runBrowsersFSFileInfo(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	svc := client.Browsers
 	path, _ := cmd.Flags().GetString("path")
+	output, _ := cmd.Flags().GetString("output")
 	b := BrowsersCmd{browsers: &svc, fs: &svc.Fs}
-	return b.FSFileInfo(cmd.Context(), BrowsersFSFileInfoInput{Identifier: args[0], Path: path})
+	return b.FSFileInfo(cmd.Context(), BrowsersFSFileInfoInput{Identifier: args[0], Path: path, Output: output})
 }
 
 func runBrowsersFSListFiles(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	svc := client.Browsers
 	path, _ := cmd.Flags().GetString("path")
+	output, _ := cmd.Flags().GetString("output")
 	b := BrowsersCmd{browsers: &svc, fs: &svc.Fs}
-	return b.FSListFiles(cmd.Context(), BrowsersFSListFilesInput{Identifier: args[0], Path: path})
+	return b.FSListFiles(cmd.Context(), BrowsersFSListFilesInput{Identifier: args[0], Path: path, Output: output})
 }
 
 func runBrowsersFSMove(cmd *cobra.Command, args []string) error {

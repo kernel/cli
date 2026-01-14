@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/onkernel/cli/pkg/auth"
+	"github.com/kernel/cli/pkg/auth"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 	"github.com/zalando/go-keyring"

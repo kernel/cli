@@ -3,8 +3,8 @@ package proxies
 import (
 	"context"
 
-	"github.com/onkernel/kernel-go-sdk"
-	"github.com/onkernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
 )
 
 // ProxyService defines the subset of the Kernel SDK proxy client that we use.
@@ -21,10 +21,13 @@ type ProxyCmd struct {
 }
 
 // Input types for proxy operations
-type ProxyListInput struct{}
+type ProxyListInput struct {
+	Output string
+}
 
 type ProxyGetInput struct {
-	ID string
+	ID     string
+	Output string
 }
 
 type ProxyCreateInput struct {
@@ -46,6 +49,7 @@ type ProxyCreateInput struct {
 	Port     int
 	Username string
 	Password string
+	Output   string
 }
 
 type ProxyDeleteInput struct {

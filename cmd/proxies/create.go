@@ -4,14 +4,18 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/onkernel/cli/pkg/table"
-	"github.com/onkernel/cli/pkg/util"
-	"github.com/onkernel/kernel-go-sdk"
+	"github.com/kernel/cli/pkg/table"
+	"github.com/kernel/cli/pkg/util"
+	"github.com/kernel/kernel-go-sdk"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
 
 func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
 	// Validate proxy type
 	var proxyType kernel.ProxyNewParamsType
 	switch in.Type {
@@ -160,11 +164,17 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 		}
 	}
 
-	pterm.Info.Printf("Creating %s proxy...\n", proxyType)
+	if in.Output != "json" {
+		pterm.Info.Printf("Creating %s proxy...\n", proxyType)
+	}
 
 	proxy, err := p.proxies.New(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(proxy)
 	}
 
 	pterm.Success.Printf("Successfully created proxy\n")
@@ -210,6 +220,8 @@ func runProxiesCreate(cmd *cobra.Command, args []string) error {
 	username, _ := cmd.Flags().GetString("username")
 	password, _ := cmd.Flags().GetString("password")
 
+	output, _ := cmd.Flags().GetString("output")
+
 	svc := client.Proxies
 	p := ProxyCmd{proxies: &svc}
 	return p.Create(cmd.Context(), ProxyCreateInput{
@@ -227,5 +239,6 @@ func runProxiesCreate(cmd *cobra.Command, args []string) error {
 		Port:     port,
 		Username: username,
 		Password: password,
+		Output:   output,
 	})
 }

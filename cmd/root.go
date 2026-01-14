@@ -11,12 +11,13 @@ import (
 
 	"github.com/charmbracelet/fang"
 	"github.com/charmbracelet/lipgloss/v2"
-	"github.com/onkernel/cli/cmd/proxies"
-	"github.com/onkernel/cli/pkg/auth"
-	"github.com/onkernel/cli/pkg/update"
-	"github.com/onkernel/cli/pkg/util"
-	"github.com/onkernel/kernel-go-sdk"
-	"github.com/onkernel/kernel-go-sdk/option"
+	"github.com/kernel/cli/cmd/mcp"
+	"github.com/kernel/cli/cmd/proxies"
+	"github.com/kernel/cli/pkg/auth"
+	"github.com/kernel/cli/pkg/update"
+	"github.com/kernel/cli/pkg/util"
+	"github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -89,7 +90,7 @@ func isAuthExempt(cmd *cobra.Command) bool {
 
 	// Check if the top-level command is in the exempt list
 	switch topLevel.Name() {
-	case "login", "logout", "auth", "help", "completion", "create":
+	case "login", "logout", "auth", "help", "completion", "create", "mcp", "upgrade":
 		return true
 	}
 
@@ -139,6 +140,8 @@ func init() {
 	rootCmd.AddCommand(proxies.ProxiesCmd)
 	rootCmd.AddCommand(extensionsCmd)
 	rootCmd.AddCommand(createCmd)
+	rootCmd.AddCommand(mcp.MCPCmd)
+	rootCmd.AddCommand(upgradeCmd)
 
 	rootCmd.PersistentPostRunE = func(cmd *cobra.Command, args []string) error {
 		// running synchronously so we never slow the command

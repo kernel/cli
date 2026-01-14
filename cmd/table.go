@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/onkernel/cli/pkg/table"
+	"github.com/kernel/cli/pkg/table"
 	"github.com/pterm/pterm"
 )
 

@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	defaultReleasesAPI = "https://api.github.com/repos/onkernel/cli/releases"
+	defaultReleasesAPI = "https://api.github.com/repos/kernel/cli/releases"
 	userAgent          = "kernel-cli/update-check"
 	cacheRelPath       = "kernel/update-check.json"
 	requestTimeout     = 3 * time.Second
@@ -59,8 +59,8 @@ func isSemverLike(v string) bool {
 	return err == nil
 }
 
-// isNewerVersion reports whether latest > current using semver rules.
-func isNewerVersion(current, latest string) (bool, error) {
+// IsNewerVersion reports whether latest > current using semver rules.
+func IsNewerVersion(current, latest string) (bool, error) {
 	c := normalizeSemver(current)
 	l := normalizeSemver(latest)
 	if c == "" || l == "" {
@@ -77,10 +77,10 @@ func isNewerVersion(current, latest string) (bool, error) {
 	return lv.GreaterThan(cv), nil
 }
 
-// fetchLatest queries GitHub Releases and returns the latest stable tag and URL.
+// FetchLatest queries GitHub Releases and returns the latest stable tag and URL.
 // It expects that the GitHub API returns releases in descending chronological order
 // (newest first), which is standard behavior.
-func fetchLatest(ctx context.Context) (tag string, url string, err error) {
+func FetchLatest(ctx context.Context) (tag string, url string, err error) {
 	apiURL := os.Getenv("KERNEL_RELEASES_URL")
 	if apiURL == "" {
 		apiURL = defaultReleasesAPI
@@ -134,7 +134,7 @@ func printUpgradeMessage(current, latest, url string) {
 	if url != "" {
 		pterm.Info.Printf("Release notes: %s\n", url)
 	}
-	if cmd := suggestUpgradeCommand(); cmd != "" {
+	if cmd := SuggestUpgradeCommand(); cmd != "" {
 		pterm.Info.Printf("To upgrade, run: %s\n", cmd)
 	} else {
 		pterm.Info.Println("To upgrade, visit the release page above or use your package manager.")
@@ -172,13 +172,13 @@ func MaybeShowMessage(ctx context.Context, currentVersion string, frequency time
 
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
-	latestTag, releaseURL, err := fetchLatest(ctx)
+	latestTag, releaseURL, err := FetchLatest(ctx)
 	if err != nil {
 		cache.LastChecked = time.Now().UTC()
 		_ = saveCache(cachePath, cache)
 		return
 	}
-	isNewer, err := isNewerVersion(currentVersion, latestTag)
+	isNewer, err := IsNewerVersion(currentVersion, latestTag)
 	if err != nil || !isNewer {
 		cache.LastChecked = time.Now().UTC()
 		_ = saveCache(cachePath, cache)
@@ -234,19 +234,36 @@ func saveCache(path string, c Cache) error {
 	return os.WriteFile(path, b, 0o600)
 }
 
-// suggestUpgradeCommand attempts to infer how the user installed kernel and
-// returns a tailored upgrade command. Falls back to empty string on unknown.
-func suggestUpgradeCommand() string {
+// InstallMethod represents how kernel was installed
+type InstallMethod string
+
+const (
+	InstallMethodBrew    InstallMethod = "brew"
+	InstallMethodPNPM    InstallMethod = "pnpm"
+	InstallMethodNPM     InstallMethod = "npm"
+	InstallMethodBun     InstallMethod = "bun"
+	InstallMethodUnknown InstallMethod = "unknown"
+)
+
+// DetectInstallMethod detects how kernel was installed and returns the method
+// along with the path to the kernel binary.
+func DetectInstallMethod() (InstallMethod, string) {
 	// Collect candidate paths: current executable and shell-resolved binary
 	candidates := []string{}
+	binaryPath := ""
+
 	if exe, err := os.Executable(); err == nil && exe != "" {
 		if real, err2 := filepath.EvalSymlinks(exe); err2 == nil && real != "" {
 			exe = real
 		}
 		candidates = append(candidates, exe)
+		binaryPath = exe
 	}
 	if which, err := exec.LookPath("kernel"); err == nil && which != "" {
 		candidates = append(candidates, which)
+		if binaryPath == "" {
+			binaryPath = which
+		}
 	}
 
 	// Helpers
@@ -268,21 +285,21 @@ func suggestUpgradeCommand() string {
 	type rule struct {
 		check   func(string) bool
 		envKeys []string
-		cmd     string
+		method  InstallMethod
 	}
 
 	rules := []rule{
-		{hasHomebrew, nil, "brew upgrade onkernel/tap/kernel"},
-		{hasBun, []string{"BUN_INSTALL"}, "bun add -g @onkernel/cli@latest"},
-		{hasPNPM, []string{"PNPM_HOME"}, "pnpm add -g @onkernel/cli@latest"},
-		{hasNPM, []string{"NPM_CONFIG_PREFIX", "npm_config_prefix", "VOLTA_HOME"}, "npm i -g @onkernel/cli@latest"},
+		{hasHomebrew, nil, InstallMethodBrew},
+		{hasBun, []string{"BUN_INSTALL"}, InstallMethodBun},
+		{hasPNPM, []string{"PNPM_HOME"}, InstallMethodPNPM},
+		{hasNPM, []string{"NPM_CONFIG_PREFIX", "npm_config_prefix", "VOLTA_HOME"}, InstallMethodNPM},
 	}
 
 	// Path-based detection first
 	for _, c := range candidates {
 		for _, r := range rules {
 			if r.check != nil && r.check(c) {
-				return r.cmd
+				return r.method, binaryPath
 			}
 		}
 	}
@@ -301,12 +318,31 @@ func suggestUpgradeCommand() string {
 	}
 	for _, r := range rules {
 		if len(r.envKeys) > 0 && envSet(r.envKeys) {
-			return r.cmd
+			return r.method, binaryPath
 		}
 	}
 
-	// Default suggestion when unknown
-	return "brew upgrade onkernel/tap/kernel"
+	return InstallMethodUnknown, binaryPath
+}
+
+// SuggestUpgradeCommand attempts to infer how the user installed kernel and
+// returns a tailored upgrade command. Falls back to default brew command on unknown.
+func SuggestUpgradeCommand() string {
+	method, _ := DetectInstallMethod()
+
+	switch method {
+	case InstallMethodBrew:
+		return "brew upgrade kernel/tap/kernel"
+	case InstallMethodPNPM:
+		return "pnpm add -g @onkernel/cli@latest"
+	case InstallMethodNPM:
+		return "npm i -g @onkernel/cli@latest"
+	case InstallMethodBun:
+		return "bun add -g @onkernel/cli@latest"
+	default:
+		// Default suggestion when unknown
+		return "brew upgrade kernel/tap/kernel"
+	}
 }
 
 // invokedTrivialCommand returns true if the argv suggests a trivial invocation

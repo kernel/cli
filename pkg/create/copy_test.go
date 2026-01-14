@@ -179,10 +179,10 @@ func TestCopyTemplateFiles_PreservesDirectoryStructure(t *testing.T) {
 	require.NoError(t, err)
 
 	// Use a template that has subdirectories
-	err = CopyTemplateFiles(appPath, LanguageTypeScript, TemplateComputerUse)
+	err = CopyTemplateFiles(appPath, LanguageTypeScript, TemplateAnthropicComputerUse)
 	require.NoError(t, err)
 
-	// Verify that subdirectories are created (computer-use has src/ directory)
+	// Verify that subdirectories are created (anthropic-computer-use has src/ directory)
 	srcDir := filepath.Join(appPath, "src")
 	if _, err := os.Stat(srcDir); err == nil {
 		assert.DirExists(t, srcDir, "Subdirectories should be preserved")

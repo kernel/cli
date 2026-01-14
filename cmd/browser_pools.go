@@ -2,13 +2,12 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
-	"github.com/onkernel/cli/pkg/util"
-	"github.com/onkernel/kernel-go-sdk"
-	"github.com/onkernel/kernel-go-sdk/option"
+	"github.com/kernel/cli/pkg/util"
+	"github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -35,8 +34,7 @@ type BrowserPoolsListInput struct {
 
 func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	pools, err := c.client.List(ctx)
@@ -45,16 +43,11 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 	}
 
 	if in.Output == "json" {
-		if pools == nil {
+		if pools == nil || len(*pools) == 0 {
 			fmt.Println("[]")
 			return nil
 		}
-		bs, err := json.MarshalIndent(*pools, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSONSlice(*pools)
 	}
 
 	if pools == nil || len(*pools) == 0 {
@@ -95,30 +88,35 @@ type BrowserPoolsCreateInput struct {
 	ProxyID            string
 	Extensions         []string
 	Viewport           string
+	Output             string
 }
 
 func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput) error {
-	req := kernel.BrowserPoolRequestParam{
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
+	params := kernel.BrowserPoolNewParams{
 		Size: in.Size,
 	}
 
 	if in.Name != "" {
-		req.Name = kernel.String(in.Name)
+		params.Name = kernel.String(in.Name)
 	}
 	if in.FillRate > 0 {
-		req.FillRatePerMinute = kernel.Int(in.FillRate)
+		params.FillRatePerMinute = kernel.Int(in.FillRate)
 	}
 	if in.TimeoutSeconds > 0 {
-		req.TimeoutSeconds = kernel.Int(in.TimeoutSeconds)
+		params.TimeoutSeconds = kernel.Int(in.TimeoutSeconds)
 	}
 	if in.Stealth.Set {
-		req.Stealth = kernel.Bool(in.Stealth.Value)
+		params.Stealth = kernel.Bool(in.Stealth.Value)
 	}
 	if in.Headless.Set {
-		req.Headless = kernel.Bool(in.Headless.Value)
+		params.Headless = kernel.Bool(in.Headless.Value)
 	}
 	if in.Kiosk.Set {
-		req.KioskMode = kernel.Bool(in.Kiosk.Value)
+		params.KioskMode = kernel.Bool(in.Kiosk.Value)
 	}
 
 	profile, err := buildProfileParam(in.ProfileID, in.ProfileName, in.ProfileSaveChanges)
@@ -127,14 +125,14 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 		return nil
 	}
 	if profile != nil {
-		req.Profile = *profile
+		params.Profile = *profile
 	}
 
 	if in.ProxyID != "" {
-		req.ProxyID = kernel.String(in.ProxyID)
+		params.ProxyID = kernel.String(in.ProxyID)
 	}
 
-	req.Extensions = buildExtensionsParam(in.Extensions)
+	params.Extensions = buildExtensionsParam(in.Extensions)
 
 	viewport, err := buildViewportParam(in.Viewport)
 	if err != nil {
@@ -142,16 +140,16 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 		return nil
 	}
 	if viewport != nil {
-		req.Viewport = *viewport
-	}
-
-	params := kernel.BrowserPoolNewParams{
-		BrowserPoolRequest: req,
+		params.Viewport = *viewport
 	}
 
 	pool, err := c.client.New(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(pool)
 	}
 
 	if pool.Name != "" {
@@ -169,8 +167,7 @@ type BrowserPoolsGetInput struct {
 
 func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error {
 	if in.Output != "" && in.Output != "json" {
-		pterm.Error.Println("unsupported --output value: use 'json'")
-		return nil
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
 	pool, err := c.client.Get(ctx, in.IDOrName)
@@ -179,12 +176,7 @@ func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error
 	}
 
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(pool, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(pool)
 	}
 
 	cfg := pool.BrowserPoolConfig
@@ -228,34 +220,39 @@ type BrowserPoolsUpdateInput struct {
 	Extensions         []string
 	Viewport           string
 	DiscardAllIdle     BoolFlag
+	Output             string
 }
 
 func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput) error {
-	req := kernel.BrowserPoolUpdateRequestParam{}
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
+	params := kernel.BrowserPoolUpdateParams{}
 
 	if in.Name != "" {
-		req.Name = kernel.String(in.Name)
+		params.Name = kernel.String(in.Name)
 	}
 	if in.Size > 0 {
-		req.Size = in.Size
+		params.Size = in.Size
 	}
 	if in.FillRate > 0 {
-		req.FillRatePerMinute = kernel.Int(in.FillRate)
+		params.FillRatePerMinute = kernel.Int(in.FillRate)
 	}
 	if in.TimeoutSeconds > 0 {
-		req.TimeoutSeconds = kernel.Int(in.TimeoutSeconds)
+		params.TimeoutSeconds = kernel.Int(in.TimeoutSeconds)
 	}
 	if in.Stealth.Set {
-		req.Stealth = kernel.Bool(in.Stealth.Value)
+		params.Stealth = kernel.Bool(in.Stealth.Value)
 	}
 	if in.Headless.Set {
-		req.Headless = kernel.Bool(in.Headless.Value)
+		params.Headless = kernel.Bool(in.Headless.Value)
 	}
 	if in.Kiosk.Set {
-		req.KioskMode = kernel.Bool(in.Kiosk.Value)
+		params.KioskMode = kernel.Bool(in.Kiosk.Value)
 	}
 	if in.DiscardAllIdle.Set {
-		req.DiscardAllIdle = kernel.Bool(in.DiscardAllIdle.Value)
+		params.DiscardAllIdle = kernel.Bool(in.DiscardAllIdle.Value)
 	}
 
 	profile, err := buildProfileParam(in.ProfileID, in.ProfileName, in.ProfileSaveChanges)
@@ -264,14 +261,14 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 		return nil
 	}
 	if profile != nil {
-		req.Profile = *profile
+		params.Profile = *profile
 	}
 
 	if in.ProxyID != "" {
-		req.ProxyID = kernel.String(in.ProxyID)
+		params.ProxyID = kernel.String(in.ProxyID)
 	}
 
-	req.Extensions = buildExtensionsParam(in.Extensions)
+	params.Extensions = buildExtensionsParam(in.Extensions)
 
 	viewport, err := buildViewportParam(in.Viewport)
 	if err != nil {
@@ -279,17 +276,18 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 		return nil
 	}
 	if viewport != nil {
-		req.Viewport = *viewport
-	}
-
-	params := kernel.BrowserPoolUpdateParams{
-		BrowserPoolUpdateRequest: req,
+		params.Viewport = *viewport
 	}
 
 	pool, err := c.client.Update(ctx, in.IDOrName, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(pool)
+	}
+
 	if pool.Name != "" {
 		pterm.Success.Printf("Updated browser pool %s (%s)\n", pool.Name, pool.ID)
 	} else {
@@ -319,23 +317,33 @@ func (c BrowserPoolsCmd) Delete(ctx context.Context, in BrowserPoolsDeleteInput)
 type BrowserPoolsAcquireInput struct {
 	IDOrName       string
 	TimeoutSeconds int64
+	Output         string
 }
 
 func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInput) error {
-	req := kernel.BrowserPoolAcquireRequestParam{}
-	if in.TimeoutSeconds > 0 {
-		req.AcquireTimeoutSeconds = kernel.Int(in.TimeoutSeconds)
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
-	params := kernel.BrowserPoolAcquireParams{
-		BrowserPoolAcquireRequest: req,
+
+	params := kernel.BrowserPoolAcquireParams{}
+	if in.TimeoutSeconds > 0 {
+		params.AcquireTimeoutSeconds = kernel.Int(in.TimeoutSeconds)
 	}
 	resp, err := c.client.Acquire(ctx, in.IDOrName, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 	if resp == nil {
+		if in.Output == "json" {
+			fmt.Println("null")
+			return nil
+		}
 		pterm.Warning.Println("Acquire request timed out (no browser available). Retry to continue waiting.")
 		return nil
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(resp)
 	}
 
 	tableData := pterm.TableData{
@@ -355,14 +363,11 @@ type BrowserPoolsReleaseInput struct {
 }
 
 func (c BrowserPoolsCmd) Release(ctx context.Context, in BrowserPoolsReleaseInput) error {
-	req := kernel.BrowserPoolReleaseRequestParam{
+	params := kernel.BrowserPoolReleaseParams{
 		SessionID: in.SessionID,
 	}
 	if in.Reuse.Set {
-		req.Reuse = kernel.Bool(in.Reuse.Value)
-	}
-	params := kernel.BrowserPoolReleaseParams{
-		BrowserPoolReleaseRequest: req,
+		params.Reuse = kernel.Bool(in.Reuse.Value)
 	}
 	err := c.client.Release(ctx, in.IDOrName, params)
 	if err != nil {
@@ -449,6 +454,7 @@ var browserPoolsFlushCmd = &cobra.Command{
 func init() {
 	browserPoolsListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 
+	browserPoolsCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	browserPoolsCreateCmd.Flags().String("name", "", "Optional unique name for the pool")
 	browserPoolsCreateCmd.Flags().Int64("size", 0, "Number of browsers in the pool")
 	_ = browserPoolsCreateCmd.MarkFlagRequired("size")
@@ -480,10 +486,12 @@ func init() {
 	browserPoolsUpdateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsUpdateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
 	browserPoolsUpdateCmd.Flags().Bool("discard-all-idle", false, "Discard all idle browsers")
+	browserPoolsUpdateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 
 	browserPoolsDeleteCmd.Flags().Bool("force", false, "Force delete even if browsers are leased")
 
 	browserPoolsAcquireCmd.Flags().Int64("timeout", 0, "Acquire timeout in seconds")
+	browserPoolsAcquireCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 
 	browserPoolsReleaseCmd.Flags().String("session-id", "", "Browser session ID to release")
 	_ = browserPoolsReleaseCmd.MarkFlagRequired("session-id")
@@ -522,6 +530,7 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
+	output, _ := cmd.Flags().GetString("output")
 
 	in := BrowserPoolsCreateInput{
 		Name:               name,
@@ -537,6 +546,7 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 		ProxyID:            proxyID,
 		Extensions:         extensions,
 		Viewport:           viewport,
+		Output:             output,
 	}
 
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
@@ -567,6 +577,7 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	discardIdle, _ := cmd.Flags().GetBool("discard-all-idle")
+	output, _ := cmd.Flags().GetString("output")
 
 	in := BrowserPoolsUpdateInput{
 		IDOrName:           args[0],
@@ -584,6 +595,7 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 		Extensions:         extensions,
 		Viewport:           viewport,
 		DiscardAllIdle:     BoolFlag{Set: cmd.Flags().Changed("discard-all-idle"), Value: discardIdle},
+		Output:             output,
 	}
 
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
@@ -600,8 +612,9 @@ func runBrowserPoolsDelete(cmd *cobra.Command, args []string) error {
 func runBrowserPoolsAcquire(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	timeout, _ := cmd.Flags().GetInt64("timeout")
+	output, _ := cmd.Flags().GetString("output")
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
-	return c.Acquire(cmd.Context(), BrowserPoolsAcquireInput{IDOrName: args[0], TimeoutSeconds: timeout})
+	return c.Acquire(cmd.Context(), BrowserPoolsAcquireInput{IDOrName: args[0], TimeoutSeconds: timeout, Output: output})
 }
 
 func runBrowserPoolsRelease(cmd *cobra.Command, args []string) error {
