@@ -305,7 +305,7 @@ func init() {
 	// create flags
 	credentialsCreateCmd.Flags().String("name", "", "Unique name for the credential (required)")
 	credentialsCreateCmd.Flags().String("domain", "", "Target domain this credential is for (required)")
-	credentialsCreateCmd.Flags().StringToString("value", nil, "Field values (key=value, can specify multiple)")
+	credentialsCreateCmd.Flags().StringToString("value", nil, "Field values as key=value pairs (use multiple --value flags for multiple fields, e.g. --value username=user --value password=pass)")
 	credentialsCreateCmd.Flags().String("sso-provider", "", "SSO provider (e.g., google, github, microsoft)")
 	credentialsCreateCmd.Flags().String("totp-secret", "", "Base32-encoded TOTP secret for 2FA")
 	_ = credentialsCreateCmd.MarkFlagRequired("name")
@@ -318,7 +318,7 @@ func init() {
 
 	// update flags
 	credentialsUpdateCmd.Flags().String("name", "", "New name for the credential")
-	credentialsUpdateCmd.Flags().StringToString("value", nil, "Field values to update (key=value)")
+	credentialsUpdateCmd.Flags().StringToString("value", nil, "Field values to update as key=value pairs (use multiple --value flags for multiple fields)")
 	credentialsUpdateCmd.Flags().String("sso-provider", "", "SSO provider (e.g., google, github, microsoft)")
 	credentialsUpdateCmd.Flags().String("totp-secret", "", "Base32-encoded TOTP secret for 2FA")
 }
