@@ -43,6 +43,7 @@ type CreateInput struct {
 	CredentialName string
 	LoginURL       string
 	AllowedDomains []string
+	ProxyID        string
 }
 
 // Create creates a new auth agent.
@@ -62,6 +63,11 @@ func (a AgentAuthCmd) Create(ctx context.Context, in CreateInput) error {
 	}
 	if len(in.AllowedDomains) > 0 {
 		params.AuthAgentCreateRequest.AllowedDomains = in.AllowedDomains
+	}
+	if in.ProxyID != "" {
+		params.AuthAgentCreateRequest.Proxy = kernel.AuthAgentCreateRequestProxyParam{
+			ProxyID: kernel.Opt(in.ProxyID),
+		}
 	}
 
 	agent, err := a.auth.New(ctx, params)
@@ -511,6 +517,7 @@ func init() {
 	agentsAuthCreateCmd.Flags().String("credential-name", "", "Optional credential name to link")
 	agentsAuthCreateCmd.Flags().String("login-url", "", "Optional login URL to skip discovery")
 	agentsAuthCreateCmd.Flags().StringSlice("allowed-domains", nil, "Additional allowed domains for OAuth redirects")
+	agentsAuthCreateCmd.Flags().String("proxy-id", "", "Optional proxy ID to use for browser sessions")
 	agentsAuthCreateCmd.Flags().BoolP("interactive", "i", false, "Interactive mode - select profile and credential from lists")
 
 	// invoke flags
@@ -538,6 +545,7 @@ func runAgentsAuthCreate(cmd *cobra.Command, args []string) error {
 	credentialName, _ := cmd.Flags().GetString("credential-name")
 	loginURL, _ := cmd.Flags().GetString("login-url")
 	allowedDomains, _ := cmd.Flags().GetStringSlice("allowed-domains")
+	proxyID, _ := cmd.Flags().GetString("proxy-id")
 	interactive, _ := cmd.Flags().GetBool("interactive")
 
 	if interactive {
@@ -652,6 +660,7 @@ func runAgentsAuthCreate(cmd *cobra.Command, args []string) error {
 		CredentialName: credentialName,
 		LoginURL:       loginURL,
 		AllowedDomains: allowedDomains,
+		ProxyID:        proxyID,
 	})
 }
 
