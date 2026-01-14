@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/onkernel/cli/pkg/util"
+	"github.com/kernel/cli/pkg/util"
 	kernel "github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
