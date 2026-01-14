@@ -13,6 +13,9 @@ export class ComputerTool implements BaseAnthropicTool {
   protected sessionId: string;
   protected _screenshotDelay = 2.0;
   protected version: '20241022' | '20250124';
+  
+  // Track the last known mouse position for drag operations
+  private lastMousePosition: [number, number] = [0, 0];
 
   private readonly mouseActions = new Set([
     Action.LEFT_CLICK,
@@ -52,8 +55,8 @@ export class ComputerTool implements BaseAnthropicTool {
     const params = {
       name: this.name,
       type: this.apiType,
-      display_width_px: 1280,
-      display_height_px: 720,
+      display_width_px: 1920,
+      display_height_px: 1080,
       display_number: null,
     };
     return params;
@@ -85,6 +88,8 @@ export class ComputerTool implements BaseAnthropicTool {
         x,
         y,
       });
+      // Track mouse position for drag operations
+      this.lastMousePosition = [x, y];
     } else if (action === Action.LEFT_MOUSE_DOWN) {
       await this.kernel.browsers.computer.clickMouse(this.sessionId, {
         x,
@@ -92,6 +97,7 @@ export class ComputerTool implements BaseAnthropicTool {
         button: 'left',
         click_type: 'down',
       });
+      this.lastMousePosition = [x, y];
     } else if (action === Action.LEFT_MOUSE_UP) {
       await this.kernel.browsers.computer.clickMouse(this.sessionId, {
         x,
@@ -99,6 +105,7 @@ export class ComputerTool implements BaseAnthropicTool {
         button: 'left',
         click_type: 'up',
       });
+      this.lastMousePosition = [x, y];
     } else {
       const button = this.getMouseButton(action);
       let numClicks = 1;
@@ -115,6 +122,8 @@ export class ComputerTool implements BaseAnthropicTool {
         click_type: 'click',
         num_clicks: numClicks,
       });
+      // Track mouse position for drag operations
+      this.lastMousePosition = [x, y];
     }
 
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -290,15 +299,32 @@ export class ComputerTool implements BaseAnthropicTool {
       if (!coordinate) {
         throw new ToolError(`coordinate is required for ${action}`);
       }
-      // For drag, we need a path - for now, we'll handle it as a simple click
-      // The drag action would need additional path information
-      const [x, y] = ActionValidator.validateAndGetCoordinates(coordinate);
-      await this.kernel.browsers.computer.clickMouse(this.sessionId, {
-        x,
-        y,
+      
+      // Get the destination coordinate
+      const [endX, endY] = ActionValidator.validateAndGetCoordinates(coordinate);
+      
+      // Check if start_coordinate is provided in kwargs (for newer API versions)
+      let startX: number, startY: number;
+      const startCoordinate = kwargs.start_coordinate as [number, number] | undefined;
+      
+      if (startCoordinate) {
+        [startX, startY] = ActionValidator.validateAndGetCoordinates(startCoordinate);
+      } else {
+        // Use last known mouse position as the start point
+        [startX, startY] = this.lastMousePosition;
+      }
+      
+      console.log(`Dragging from (${startX}, ${startY}) to (${endX}, ${endY})`);
+      
+      // Use Kernel's dragMouse API with a path from start to end
+      await this.kernel.browsers.computer.dragMouse(this.sessionId, {
+        path: [[startX, startY], [endX, endY]],
         button: 'left',
-        click_type: 'click',
       });
+      
+      // Update tracked mouse position to the end of the drag
+      this.lastMousePosition = [endX, endY];
+      
       await new Promise(resolve => setTimeout(resolve, 500));
       return await this.screenshot();
     }
