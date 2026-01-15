@@ -107,8 +107,8 @@ class BaseComputerTool:
     """
 
     name: Literal["computer"] = "computer"
-    width: int = 1920
-    height: int = 1080
+    width: int = 1024
+    height: int = 768
     display_num: int | None = None
     
     # Kernel client and session

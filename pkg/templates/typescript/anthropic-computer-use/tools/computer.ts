@@ -55,8 +55,8 @@ export class ComputerTool implements BaseAnthropicTool {
     const params = {
       name: this.name,
       type: this.apiType,
-      display_width_px: 1920,
-      display_height_px: 1080,
+      display_width_px: 1024,
+      display_height_px: 768,
       display_number: null,
     };
     return params;

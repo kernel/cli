@@ -93,6 +93,11 @@ export class KernelBrowserSession {
     const browser = await this.kernel.browsers.create({
       stealth: this.options.stealth,
       timeout_seconds: this.options.timeoutSeconds,
+      viewport: {
+        width: 1024,
+        height: 768,
+        refresh_rate: 60,
+      },
     });
 
     this._sessionId = browser.session_id;

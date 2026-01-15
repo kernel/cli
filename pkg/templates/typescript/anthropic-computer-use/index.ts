@@ -43,7 +43,7 @@ app.action<QueryInput, QueryOutput>(
     try {
       // Run the sampling loop
       const finalMessages = await samplingLoop({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-5-20250929',
         messages: [{
           role: 'user',
           content: payload.query,

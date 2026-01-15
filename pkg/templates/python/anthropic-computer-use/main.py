@@ -55,7 +55,7 @@ async def cua_task(
 
         # Run the sampling loop
         final_messages = await sampling_loop(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-5-20250929",
             messages=[
                 {
                     "role": "user",
