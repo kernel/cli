@@ -226,11 +226,18 @@ func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, keyDa
 	pterm.Info.Println("Validating key...")
 	var pemData []byte
 	var err error
+	// JWK data is used for keyid signing in background.ts
+	var jwkData string
 
 	if util.IsPEMKey(keyData) {
 		// Key is already in PEM format, validate it
 		if err := util.ValidatePEMKey(keyData); err != nil {
 			return "", fmt.Errorf("failed to validate PEM key: %w", err)
+		}
+
+		jwkData, err = util.ConvertPEMToJWK(keyData)
+		if err != nil {
+			return "", fmt.Errorf("failed to convert PEM to JWK: %w", err)
 		}
 		pemData = []byte(keyData)
 	} else {
@@ -239,6 +246,7 @@ func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, keyDa
 		if err != nil {
 			return "", fmt.Errorf("failed to convert JWK to PEM: %w", err)
 		}
+		jwkData = keyData
 	}
 
 	privateKeyPath := filepath.Join(browserExtDir, "private_key.pem")
@@ -250,7 +258,7 @@ func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, keyDa
 	// Inject the JWK into background.ts (replacing the hardcoded test key)
 	pterm.Info.Println("Injecting custom JWK into background.ts...")
 	backgroundTsPath := filepath.Join(browserExtDir, "src", "background.ts")
-	if err := injectJWKIntoBackgroundTs(backgroundTsPath, keyData); err != nil {
+	if err := injectJWKIntoBackgroundTs(backgroundTsPath, jwkData); err != nil {
 		return "", fmt.Errorf("failed to inject JWK: %w", err)
 	}
 	pterm.Success.Println("Custom JWK injected successfully")
