@@ -455,8 +455,6 @@ var extensionsBuildWebBotAuthCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Println("Signature Agent URL:", signatureAgentURL)
-
 		// Upload if requested
 		if uploadName != "" {
 			client := getKernelClient(cmd)
