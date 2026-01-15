@@ -21,7 +21,8 @@ const (
 	defaultLocalhostURL   = "http://localhost:8000"
 	defaultDirMode        = 0755
 	defaultFileMode       = 0644
-	webBotAuthDownloadURL = "https://github.com/kernel/web-bot-auth/archive/refs/heads/main.zip"
+	webBotAuthCommit      = "3f437a1fb17dcfd31a33b268f2f9447a83122057"
+	webBotAuthDownloadURL = "https://github.com/kernel/web-bot-auth/archive/" + webBotAuthCommit + ".zip"
 	downloadTimeout       = 5 * time.Minute
 	// defaultWebBotAuthKey is the RFC9421 test key that works with Cloudflare's test site
 	// https://developers.cloudflare.com/bots/reference/bot-verification/web-bot-auth/
