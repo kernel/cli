@@ -108,7 +108,12 @@ export class KernelBrowserSession {
 
     // Start replay recording if enabled
     if (this.options.recordReplay) {
-      await this.startReplay();
+      try {
+        await this.startReplay();
+      } catch (error) {
+        console.warn(`Warning: Failed to start replay recording: ${error}`);
+        console.warn('Continuing without replay recording.');
+      }
     }
 
     return this.info;
@@ -201,7 +206,9 @@ export class KernelBrowserSession {
 
     // Reset state
     this._sessionId = null;
+    this._liveViewUrl = null;
     this._replayId = null;
+    this._replayViewUrl = null;
 
     return info;
   }

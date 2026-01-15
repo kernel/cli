@@ -266,6 +266,10 @@ def _response_to_params(
                 "input": block.input,
             }
             res.append(tool_use_block)
+        else:
+            # Preserve unexpected block types to avoid silently dropping content
+            if hasattr(block, "model_dump"):
+                res.append(cast(BetaContentBlockParam, block.model_dump()))
     return res
 
 
