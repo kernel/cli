@@ -2,7 +2,6 @@ import { Buffer } from 'buffer';
 import type { Kernel } from '@onkernel/sdk';
 import type { ActionParams, BaseAnthropicTool, ToolResult } from './types/computer';
 import { Action, ToolError } from './types/computer';
-import { KeyboardUtils } from './utils/keyboard';
 import { ActionValidator } from './utils/validator';
 
 const TYPING_DELAY_MS = 12;
@@ -129,13 +128,13 @@ export class ComputerTool implements BaseAnthropicTool {
 
   private async handleKeyboardAction(action: Action, text: string, duration?: number): Promise<ToolResult> {
     if (action === Action.HOLD_KEY) {
-      const key = this.convertToOnKernelKey(text);
+      const key = this.convertToKernelKey(text);
       await this.kernel.browsers.computer.pressKey(this.sessionId, {
         keys: [key],
         duration: duration ? duration * 1000 : undefined,
       });
     } else if (action === Action.KEY) {
-      const key = this.convertKeyCombinationToOnKernel(text);
+      const key = this.convertKeyCombinationToKernel(text);
       await this.kernel.browsers.computer.pressKey(this.sessionId, {
         keys: [key],
       });
@@ -150,44 +149,98 @@ export class ComputerTool implements BaseAnthropicTool {
     return await this.screenshot();
   }
 
-  private convertToOnKernelKey(key: string): string {
-    // Convert Playwright key names to OnKernel format
-    const keyMap: Record<string, string> = {
-      'Control': 'Ctrl',
-      'Meta': 'Meta',
-      'Alt': 'Alt',
-      'Shift': 'Shift',
-      'Enter': 'Enter',
-      'ArrowLeft': 'ArrowLeft',
-      'ArrowRight': 'ArrowRight',
-      'ArrowUp': 'ArrowUp',
-      'ArrowDown': 'ArrowDown',
-      'Home': 'Home',
-      'End': 'End',
-      'PageUp': 'PageUp',
-      'PageDown': 'PageDown',
-      'Delete': 'Delete',
-      'Backspace': 'Backspace',
-      'Tab': 'Tab',
-      'Escape': 'Escape',
-      'Insert': 'Insert',
-    };
-    return keyMap[key] || key;
+  // Key mappings for Kernel Computer Controls API (xdotool format)
+  private static readonly KEY_MAP: Record<string, string> = {
+    // Enter/Return
+    'return': 'Return',
+    'enter': 'Return',
+    'Enter': 'Return',
+    // Arrow keys
+    'left': 'Left',
+    'right': 'Right',
+    'up': 'Up',
+    'down': 'Down',
+    'ArrowLeft': 'Left',
+    'ArrowRight': 'Right',
+    'ArrowUp': 'Up',
+    'ArrowDown': 'Down',
+    // Navigation
+    'home': 'Home',
+    'end': 'End',
+    'pageup': 'Page_Up',
+    'page_up': 'Page_Up',
+    'PageUp': 'Page_Up',
+    'pagedown': 'Page_Down',
+    'page_down': 'Page_Down',
+    'PageDown': 'Page_Down',
+    // Editing
+    'delete': 'Delete',
+    'backspace': 'BackSpace',
+    'Backspace': 'BackSpace',
+    'tab': 'Tab',
+    'insert': 'Insert',
+    // Escape
+    'esc': 'Escape',
+    'escape': 'Escape',
+    // Function keys
+    'f1': 'F1',
+    'f2': 'F2',
+    'f3': 'F3',
+    'f4': 'F4',
+    'f5': 'F5',
+    'f6': 'F6',
+    'f7': 'F7',
+    'f8': 'F8',
+    'f9': 'F9',
+    'f10': 'F10',
+    'f11': 'F11',
+    'f12': 'F12',
+    // Misc
+    'space': 'space',
+    'minus': 'minus',
+    'equal': 'equal',
+    'plus': 'plus',
+  };
+
+  // Modifier key mappings (xdotool format)
+  private static readonly MODIFIER_MAP: Record<string, string> = {
+    'ctrl': 'ctrl',
+    'control': 'ctrl',
+    'Control': 'ctrl',
+    'alt': 'alt',
+    'Alt': 'alt',
+    'shift': 'shift',
+    'Shift': 'shift',
+    'meta': 'super',
+    'Meta': 'super',
+    'cmd': 'super',
+    'command': 'super',
+    'win': 'super',
+    'super': 'super',
+  };
+
+  private convertToKernelKey(key: string): string {
+    // Check modifier keys first
+    if (ComputerTool.MODIFIER_MAP[key]) {
+      return ComputerTool.MODIFIER_MAP[key];
+    }
+    // Check special keys
+    if (ComputerTool.KEY_MAP[key]) {
+      return ComputerTool.KEY_MAP[key];
+    }
+    // Return as-is if no mapping exists
+    return key;
   }
 
-  private convertKeyCombinationToOnKernel(combo: string): string {
-    // Convert key combinations like "Control+t" to "Ctrl+t"
-    const parts = combo.split('+').map(part => {
-      const trimmed = part.trim();
-      if (trimmed.toLowerCase() === 'control' || trimmed.toLowerCase() === 'ctrl') {
-        return 'Ctrl';
-      }
-      if (trimmed.toLowerCase() === 'meta' || trimmed.toLowerCase() === 'command' || trimmed.toLowerCase() === 'cmd') {
-        return 'Meta';
-      }
-      return trimmed;
-    });
-    return parts.join('+');
+  private convertKeyCombinationToKernel(combo: string): string {
+    // Handle key combinations (e.g., "ctrl+a", "Control+t")
+    if (combo.includes('+')) {
+      const parts = combo.split('+');
+      const mappedParts = parts.map(part => this.convertToKernelKey(part.trim()));
+      return mappedParts.join('+');
+    }
+    // Single key - just convert it
+    return this.convertToKernelKey(combo);
   }
 
   async screenshot(): Promise<ToolResult> {
@@ -227,7 +280,7 @@ export class ComputerTool implements BaseAnthropicTool {
     }
 
     if (action === Action.CURSOR_POSITION) {
-      throw new ToolError('Cursor position is not available with OnKernel computer controls API');
+      throw new ToolError('Cursor position is not available with Kernel Computer Controls API');
     }
 
     if (action === Action.SCROLL) {
@@ -247,11 +300,11 @@ export class ComputerTool implements BaseAnthropicTool {
 
       const [x, y] = coordinate 
         ? ActionValidator.validateAndGetCoordinates(coordinate)
-        : [0, 0];
+        : this.lastMousePosition;
 
       let delta_x = 0;
       let delta_y = 0;
-      const scrollDelta = scrollAmountValue || 120;
+      const scrollDelta = scrollAmountValue ?? 120;
 
       if (scrollDirection === 'down') {
         delta_y = scrollDelta;

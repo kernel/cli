@@ -66,7 +66,11 @@ class KernelBrowserSession:
 
         # Start replay recording if enabled
         if self.record_replay:
-            await self._start_replay()
+            try:
+                await self._start_replay()
+            except Exception as e:
+                print(f"Warning: Failed to start replay recording: {e}")
+                print("Continuing without replay recording.")
 
         return self
 
@@ -122,17 +126,18 @@ class KernelBrowserSession:
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Stop recording and delete the browser session."""
         if self._kernel and self.session_id:
-            # Stop replay if recording was enabled
-            if self.record_replay and self.replay_id:
-                # Wait grace period before stopping to capture final state
-                if self.replay_grace_period > 0:
-                    print(f"Waiting {self.replay_grace_period}s grace period...")
-                    await asyncio.sleep(self.replay_grace_period)
-                await self._stop_and_get_replay_url()
-
-            print(f"Destroying browser session: {self.session_id}")
-            self._kernel.browsers.delete_by_id(self.session_id)
-            print("Browser session destroyed.")
+            try:
+                # Stop replay if recording was enabled
+                if self.record_replay and self.replay_id:
+                    # Wait grace period before stopping to capture final state
+                    if self.replay_grace_period > 0:
+                        print(f"Waiting {self.replay_grace_period}s grace period...")
+                        await asyncio.sleep(self.replay_grace_period)
+                    await self._stop_and_get_replay_url()
+            finally:
+                print(f"Destroying browser session: {self.session_id}")
+                self._kernel.browsers.delete_by_id(self.session_id)
+                print("Browser session destroyed.")
 
         self._kernel = None
 
