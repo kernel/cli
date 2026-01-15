@@ -107,8 +107,8 @@ class BaseComputerTool:
     """
 
     name: Literal["computer"] = "computer"
-    width: int = 1920
-    height: int = 1080
+    width: int = 1024
+    height: int = 768
     display_num: int | None = None
     
     # Kernel client and session
@@ -208,13 +208,8 @@ class BaseComputerTool:
                 self._last_mouse_position = (x, y)
                 return await self.screenshot()
             elif action == "left_click_drag":
-                # Get start position from kwargs or use last known position
                 start_coord = kwargs.get("start_coordinate")
-                if start_coord:
-                    start_coord = self.validate_coordinates(start_coord)
-                    start_x, start_y = start_coord
-                else:
-                    start_x, start_y = self._last_mouse_position
+                start_x, start_y = self.validate_coordinates(start_coord) if start_coord else self._last_mouse_position
                 
                 print(f"Dragging from ({start_x}, {start_y}) to ({x}, {y})")
                 
@@ -375,9 +370,7 @@ class ComputerTool20250124(BaseComputerTool, BaseAnthropicTool):
             else:
                 x, y = self._last_mouse_position
 
-            # Calculate scroll delta based on direction and amount
-            # Use a reasonable scroll factor
-            scroll_factor = scroll_amount * 10  # Adjust multiplier as needed
+            scroll_factor = scroll_amount * 10
             
             delta_x = 0
             delta_y = 0
@@ -452,10 +445,8 @@ class ComputerTool20250124(BaseComputerTool, BaseAnthropicTool):
             elif action == "triple_click":
                 num_clicks = 3
 
-            # Handle modifier key if provided
             if key:
                 mapped_key = self.map_key(key)
-                # Press modifier key down
                 self.kernel.browsers.computer.press_key(
                     id=self.session_id,
                     keys=[mapped_key],
@@ -471,7 +462,6 @@ class ComputerTool20250124(BaseComputerTool, BaseAnthropicTool):
             )
 
             if key:
-                # Release modifier key
                 self.kernel.browsers.computer.press_key(
                     id=self.session_id,
                     keys=[mapped_key],

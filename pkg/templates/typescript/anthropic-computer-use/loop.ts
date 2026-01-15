@@ -118,7 +118,7 @@ export async function samplingLoop({
       messages,
       model,
       system: [system],
-      tools: toolParams as any, // Type assertion needed due to ActionParams being used for both tool definition and input
+      tools: toolParams,
       betas,
       ...extraBody,
     });

@@ -53,9 +53,8 @@ async def cua_task(
     ) as session:
         print("Kernel browser live view url:", session.live_view_url)
 
-        # Run the sampling loop
         final_messages = await sampling_loop(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-5-20250929",
             messages=[
                 {
                     "role": "user",
@@ -68,7 +67,6 @@ async def cua_task(
             session_id=session.session_id,
         )
 
-        # Extract the final result
         if not final_messages:
             raise ValueError("No messages were generated during the sampling loop")
 
@@ -88,7 +86,6 @@ async def cua_task(
                 if isinstance(block, Dict) and block.get("type") == "text"
             )
 
-    # Session is cleaned up, replay_url is available if recording was enabled
     return {
         "result": result,
         "replay_url": session.replay_view_url,
