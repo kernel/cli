@@ -43,7 +43,7 @@ app.action<QueryInput, QueryOutput>(
     try {
       // Run the sampling loop
       const finalMessages = await samplingLoop({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-5-20250929',
         messages: [{
           role: 'user',
           content: payload.query,
@@ -79,7 +79,6 @@ app.action<QueryInput, QueryOutput>(
       };
     } catch (error) {
       console.error('Error in sampling loop:', error);
-      // Make sure to clean up the session even on error
       await session.stop();
       throw error;
     }

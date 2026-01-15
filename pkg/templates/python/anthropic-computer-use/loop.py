@@ -247,7 +247,6 @@ def _response_to_params(
     for block in response.content:
         block_type = getattr(block, "type", None)
         
-        # Handle thinking blocks
         if block_type == "thinking":
             thinking_block = {
                 "type": "thinking",
@@ -256,11 +255,9 @@ def _response_to_params(
             if hasattr(block, "signature"):
                 thinking_block["signature"] = getattr(block, "signature", None)
             res.append(cast(BetaContentBlockParam, thinking_block))
-        # Handle text blocks
         elif block_type == "text" or isinstance(block, BetaTextBlock):
             if getattr(block, "text", None):
                 res.append(BetaTextBlockParam(type="text", text=block.text))
-        # Handle tool use blocks
         elif block_type == "tool_use":
             tool_use_block: BetaToolUseBlockParam = {
                 "type": "tool_use",

@@ -14,7 +14,6 @@ export class ComputerTool implements BaseAnthropicTool {
   protected _screenshotDelay = 2.0;
   protected version: '20241022' | '20250124';
   
-  // Track the last known mouse position for drag operations
   private lastMousePosition: [number, number] = [0, 0];
 
   private readonly mouseActions = new Set([
@@ -55,8 +54,8 @@ export class ComputerTool implements BaseAnthropicTool {
     const params = {
       name: this.name,
       type: this.apiType,
-      display_width_px: 1920,
-      display_height_px: 1080,
+      display_width_px: 1024,
+      display_height_px: 768,
       display_number: null,
     };
     return params;
@@ -88,7 +87,6 @@ export class ComputerTool implements BaseAnthropicTool {
         x,
         y,
       });
-      // Track mouse position for drag operations
       this.lastMousePosition = [x, y];
     } else if (action === Action.LEFT_MOUSE_DOWN) {
       await this.kernel.browsers.computer.clickMouse(this.sessionId, {
@@ -122,7 +120,6 @@ export class ComputerTool implements BaseAnthropicTool {
         click_type: 'click',
         num_clicks: numClicks,
       });
-      // Track mouse position for drag operations
       this.lastMousePosition = [x, y];
     }
 
@@ -132,21 +129,17 @@ export class ComputerTool implements BaseAnthropicTool {
 
   private async handleKeyboardAction(action: Action, text: string, duration?: number): Promise<ToolResult> {
     if (action === Action.HOLD_KEY) {
-      // For HOLD_KEY, we need to press and hold for the duration
-      // OnKernel doesn't have a direct hold API, so we'll use pressKey with duration
       const key = this.convertToOnKernelKey(text);
       await this.kernel.browsers.computer.pressKey(this.sessionId, {
         keys: [key],
         duration: duration ? duration * 1000 : undefined,
       });
     } else if (action === Action.KEY) {
-      // Convert key combination to OnKernel format (e.g., "Ctrl+t")
       const key = this.convertKeyCombinationToOnKernel(text);
       await this.kernel.browsers.computer.pressKey(this.sessionId, {
         keys: [key],
       });
     } else {
-      // TYPE action - use typeText
       await this.kernel.browsers.computer.typeText(this.sessionId, {
         text,
         delay: TYPING_DELAY_MS,
@@ -234,9 +227,6 @@ export class ComputerTool implements BaseAnthropicTool {
     }
 
     if (action === Action.CURSOR_POSITION) {
-      // OnKernel computer controls don't have a direct cursor position API
-      // This would need to be handled differently or removed
-      // For now, we'll return an error indicating this feature isn't available
       throw new ToolError('Cursor position is not available with OnKernel computer controls API');
     }
 
@@ -257,14 +247,11 @@ export class ComputerTool implements BaseAnthropicTool {
 
       const [x, y] = coordinate 
         ? ActionValidator.validateAndGetCoordinates(coordinate)
-        : [0, 0]; // Default to top-left if no coordinate provided
+        : [0, 0];
 
-      // Convert scroll direction and amount to delta_x and delta_y
-      // OnKernel uses positive delta_y for scrolling down, negative for up
-      // Positive delta_x for scrolling right, negative for left
       let delta_x = 0;
       let delta_y = 0;
-      const scrollDelta = scrollAmountValue || 120; // Default scroll amount
+      const scrollDelta = scrollAmountValue || 120;
 
       if (scrollDirection === 'down') {
         delta_y = scrollDelta;
@@ -300,29 +287,19 @@ export class ComputerTool implements BaseAnthropicTool {
         throw new ToolError(`coordinate is required for ${action}`);
       }
       
-      // Get the destination coordinate
       const [endX, endY] = ActionValidator.validateAndGetCoordinates(coordinate);
-      
-      // Check if start_coordinate is provided in kwargs (for newer API versions)
-      let startX: number, startY: number;
       const startCoordinate = kwargs.start_coordinate as [number, number] | undefined;
-      
-      if (startCoordinate) {
-        [startX, startY] = ActionValidator.validateAndGetCoordinates(startCoordinate);
-      } else {
-        // Use last known mouse position as the start point
-        [startX, startY] = this.lastMousePosition;
-      }
+      const [startX, startY] = startCoordinate 
+        ? ActionValidator.validateAndGetCoordinates(startCoordinate)
+        : this.lastMousePosition;
       
       console.log(`Dragging from (${startX}, ${startY}) to (${endX}, ${endY})`);
       
-      // Use Kernel's dragMouse API with a path from start to end
       await this.kernel.browsers.computer.dragMouse(this.sessionId, {
         path: [[startX, startY], [endX, endY]],
         button: 'left',
       });
       
-      // Update tracked mouse position to the end of the drag
       this.lastMousePosition = [endX, endY];
       
       await new Promise(resolve => setTimeout(resolve, 500));
