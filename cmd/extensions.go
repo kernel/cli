@@ -479,5 +479,5 @@ func init() {
 	extensionsBuildWebBotAuthCmd.Flags().String("url", "http://127.0.0.1:10001", "Base URL for update.xml and policy templates")
 	extensionsBuildWebBotAuthCmd.Flags().String("key", "", "Path to Ed25519 private key file (JWK or PEM format)")
 	extensionsBuildWebBotAuthCmd.Flags().String("upload", "", "Upload extension to Kernel with specified name (e.g., --upload web-bot-auth)")
-	extensionsBuildWebBotAuthCmd.Flags().String("signature-agent", "", "URL of the signature agent")
+	extensionsBuildWebBotAuthCmd.Flags().String("signature-agent", "", "Base URL of the signature agent (e.g., https://agent.example.com). Verifiers will look up /.well-known/http-message-signatures-directory at this URL.")
 }
