@@ -32,6 +32,7 @@ type BrowsersService interface {
 	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.BrowserGetResponse, err error)
 	List(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.BrowserListResponse], err error)
 	New(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (res *kernel.BrowserNewResponse, err error)
+	Update(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (res *kernel.BrowserUpdateResponse, err error)
 	Delete(ctx context.Context, body kernel.BrowserDeleteParams, opts ...option.RequestOption) (err error)
 	DeleteByID(ctx context.Context, id string, opts ...option.RequestOption) (err error)
 	LoadExtensions(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) (err error)
@@ -178,6 +179,13 @@ type BrowsersViewInput struct {
 
 type BrowsersGetInput struct {
 	Identifier string
+	Output     string
+}
+
+type BrowsersUpdateInput struct {
+	Identifier string
+	ProxyID    string
+	ClearProxy bool
 	Output     string
 }
 
@@ -534,6 +542,54 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	}
 
 	PrintTableNoPad(tableData, true)
+	return nil
+}
+
+func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
+	// Validate that at least one update option is provided
+	if in.ProxyID == "" && !in.ClearProxy {
+		return fmt.Errorf("must specify --proxy-id or --clear-proxy")
+	}
+
+	// Cannot specify both --proxy-id and --clear-proxy
+	if in.ProxyID != "" && in.ClearProxy {
+		return fmt.Errorf("cannot specify both --proxy-id and --clear-proxy")
+	}
+
+	params := kernel.BrowserUpdateParams{}
+	if in.ClearProxy {
+		// Set to empty string to remove proxy
+		params.ProxyID = kernel.Opt("")
+	} else if in.ProxyID != "" {
+		params.ProxyID = kernel.Opt(in.ProxyID)
+	}
+
+	if in.Output != "json" {
+		if in.ClearProxy {
+			pterm.Info.Printf("Removing proxy from browser %s...\n", in.Identifier)
+		} else {
+			pterm.Info.Printf("Updating browser %s with proxy %s...\n", in.Identifier, in.ProxyID)
+		}
+	}
+
+	browser, err := b.browsers.Update(ctx, in.Identifier, params)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(browser)
+	}
+
+	if in.ClearProxy {
+		pterm.Success.Printf("Removed proxy from browser %s\n", browser.SessionID)
+	} else {
+		pterm.Success.Printf("Updated browser %s with proxy %s\n", browser.SessionID, browser.ProxyID)
+	}
 	return nil
 }
 
@@ -1833,6 +1889,22 @@ var browsersGetCmd = &cobra.Command{
 	RunE:  runBrowsersGet,
 }
 
+var browsersUpdateCmd = &cobra.Command{
+	Use:   "update <id>",
+	Short: "Update a browser session",
+	Long:  "Update a running browser session. Currently supports changing or removing the proxy.",
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return fmt.Errorf("missing required argument: browser ID\n\nUsage: kernel browsers update <id> [flags]")
+		}
+		if len(args) > 1 {
+			return fmt.Errorf("expected 1 argument (browser ID), got %d", len(args))
+		}
+		return nil
+	},
+	RunE: runBrowsersUpdate,
+}
+
 func init() {
 	// list flags
 	browsersListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
@@ -1846,11 +1918,17 @@ func init() {
 	// view flags
 	browsersViewCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 
+	// update flags
+	browsersUpdateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	browsersUpdateCmd.Flags().String("proxy-id", "", "ID of the proxy to use for the browser session")
+	browsersUpdateCmd.Flags().Bool("clear-proxy", false, "Remove the proxy from the browser session")
+
 	browsersCmd.AddCommand(browsersListCmd)
 	browsersCmd.AddCommand(browsersCreateCmd)
 	browsersCmd.AddCommand(browsersDeleteCmd)
 	browsersCmd.AddCommand(browsersViewCmd)
 	browsersCmd.AddCommand(browsersGetCmd)
+	browsersCmd.AddCommand(browsersUpdateCmd)
 
 	// logs
 	logsRoot := &cobra.Command{Use: "logs", Short: "Browser logs operations"}
@@ -2260,6 +2338,22 @@ func runBrowsersGet(cmd *cobra.Command, args []string) error {
 	b := BrowsersCmd{browsers: &svc}
 	return b.Get(cmd.Context(), BrowsersGetInput{
 		Identifier: args[0],
+		Output:     out,
+	})
+}
+
+func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	out, _ := cmd.Flags().GetString("output")
+	proxyID, _ := cmd.Flags().GetString("proxy-id")
+	clearProxy, _ := cmd.Flags().GetBool("clear-proxy")
+
+	svc := client.Browsers
+	b := BrowsersCmd{browsers: &svc}
+	return b.Update(cmd.Context(), BrowsersUpdateInput{
+		Identifier: args[0],
+		ProxyID:    proxyID,
+		ClearProxy: clearProxy,
 		Output:     out,
 	})
 }
