@@ -1,6 +1,6 @@
 import { Anthropic } from '@anthropic-ai/sdk';
 import { DateTime } from 'luxon';
-import type { Page } from 'playwright-core';
+import type { Kernel } from '@onkernel/sdk';
 import { DEFAULT_TOOL_VERSION, TOOL_GROUPS_BY_VERSION, ToolCollection, type ToolVersion } from './tools/collection';
 import { ComputerTool20241022, ComputerTool20250124 } from './tools/computer';
 import type { ActionParams } from './tools/types/computer';
@@ -55,7 +55,8 @@ export async function samplingLoop({
   toolVersion,
   thinkingBudget,
   tokenEfficientToolsBeta = false,
-  playwrightPage,
+  kernel,
+  sessionId,
 }: {
   model: string;
   systemPromptSuffix?: string;
@@ -66,11 +67,12 @@ export async function samplingLoop({
   toolVersion?: ToolVersion;
   thinkingBudget?: number;
   tokenEfficientToolsBeta?: boolean;
-  playwrightPage: Page;
+  kernel: Kernel;
+  sessionId: string;
 }): Promise<BetaMessageParam[]> {
   const selectedVersion = toolVersion || DEFAULT_TOOL_VERSION;
   const toolGroup = TOOL_GROUPS_BY_VERSION[selectedVersion];
-  const toolCollection = new ToolCollection(...toolGroup.tools.map((Tool: typeof ComputerTool20241022 | typeof ComputerTool20250124) => new Tool(playwrightPage)));
+  const toolCollection = new ToolCollection(...toolGroup.tools.map((Tool: typeof ComputerTool20241022 | typeof ComputerTool20250124) => new Tool(kernel, sessionId)));
 
   const system: BetaTextBlock = {
     type: 'text',

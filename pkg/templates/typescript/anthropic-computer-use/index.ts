@@ -1,6 +1,6 @@
 import { Kernel, type KernelContext } from '@onkernel/sdk';
-import { chromium } from 'playwright-core';
 import { samplingLoop } from './loop';
+import { KernelBrowserSession } from './session';
 
 const kernel = new Kernel();
 
@@ -8,10 +8,12 @@ const app = kernel.app('ts-anthropic-cua');
 
 interface QueryInput {
   query: string;
+  record_replay?: boolean;
 }
 
 interface QueryOutput {
   result: string;
+  replay_url?: string;
 }
 
 // LLM API Keys are set in the environment during `kernel deploy <filename> -e ANTHROPIC_API_KEY=XXX`
@@ -29,31 +31,27 @@ app.action<QueryInput, QueryOutput>(
       throw new Error('Query is required');
     }
 
-    const kernelBrowser = await kernel.browsers.create({
-      invocation_id: ctx.invocation_id,
+    // Create browser session with optional replay recording
+    const session = new KernelBrowserSession(kernel, {
       stealth: true,
+      recordReplay: payload.record_replay ?? false,
     });
 
-    console.log("Kernel browser live view url: ", kernelBrowser.browser_live_view_url);
-
-    const browser = await chromium.connectOverCDP(kernelBrowser.cdp_ws_url);
-    const context = await browser.contexts()[0];
-    const page = await context?.pages()[0];
-    if (!page) {
-      throw new Error('Error getting initial page');
-    }
+    await session.start();
+    console.log('Kernel browser live view url:', session.liveViewUrl);
 
     try {
       // Run the sampling loop
       const finalMessages = await samplingLoop({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-5-20250929',
         messages: [{
           role: 'user',
           content: payload.query,
         }],
         apiKey: ANTHROPIC_API_KEY,
         thinkingBudget: 1024,
-        playwrightPage: page,
+        kernel,
+        sessionId: session.sessionId,
       });
 
       // Extract the final result from the messages
@@ -72,13 +70,17 @@ app.action<QueryInput, QueryOutput>(
           block.type === 'text' ? block.text : ''
         ).join('');
 
-      return { result };
+      // Stop session and get replay URL if recording was enabled
+      const sessionInfo = await session.stop();
+
+      return {
+        result,
+        replay_url: sessionInfo.replayViewUrl,
+      };
     } catch (error) {
       console.error('Error in sampling loop:', error);
+      await session.stop();
       throw error;
-    } finally {
-      await browser.close();
-      await kernel.browsers.deleteByID(kernelBrowser.session_id);
     }
   },
 );

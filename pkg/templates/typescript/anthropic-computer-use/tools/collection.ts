@@ -46,7 +46,7 @@ export class ToolCollection {
     return Array.from(this.tools.values()).map(tool => tool.toParams());
   }
 
-  async run(name: string, toolInput: { action: Action } & Record<string, ActionParams>): Promise<ToolResult> {
+  async run(name: string, toolInput: ActionParams): Promise<ToolResult> {
     const tool = this.tools.get(name);
     if (!tool) {
       throw new Error(`Tool ${name} not found`);

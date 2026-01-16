@@ -1,97 +1,92 @@
 import os
-from typing import Dict, TypedDict
+from typing import Dict, Optional, TypedDict
 
 import kernel
-from kernel import Kernel
 from loop import sampling_loop
-from playwright.async_api import async_playwright
+from session import KernelBrowserSession
 
 
 class QueryInput(TypedDict):
     query: str
+    record_replay: Optional[bool]
 
 
 class QueryOutput(TypedDict):
     result: str
+    replay_url: Optional[str]
 
 
 api_key = os.getenv("ANTHROPIC_API_KEY")
 if not api_key:
     raise ValueError("ANTHROPIC_API_KEY is not set")
 
-client = Kernel()
 app = kernel.App("python-anthropic-cua")
+
 
 @app.action("cua-task")
 async def cua_task(
     ctx: kernel.KernelContext,
     payload: QueryInput,
 ) -> QueryOutput:
-    # A function that processes a user query using a browser-based sampling loop
+    """
+    Process a user query using Anthropic Computer Use with Kernel's browser automation.
 
-    # Args:
-    #     ctx: Kernel context containing invocation information
-    #     payload: An object containing a query string to process
+    Args:
+        ctx: Kernel context containing invocation information
+        payload: An object containing:
+            - query: The task/query string to process
+            - record_replay: Optional boolean to enable video replay recording
 
-    # Returns:
-    #     A dictionary containing the result of the sampling loop as a string
+    Returns:
+        A dictionary containing:
+            - result: The result of the sampling loop as a string
+            - replay_url: URL to view the replay (if recording was enabled)
+    """
     if not payload or not payload.get("query"):
         raise ValueError("Query is required")
 
-    kernel_browser = client.browsers.create(
-        invocation_id=ctx.invocation_id, stealth=True
-    )
-    print("Kernel browser live view url: ", kernel_browser.browser_live_view_url)
+    record_replay = payload.get("record_replay", False)
 
-    try:
-        async with async_playwright() as playwright:
-            browser = await playwright.chromium.connect_over_cdp(
-                kernel_browser.cdp_ws_url
+    async with KernelBrowserSession(
+        stealth=True,
+        record_replay=record_replay,
+    ) as session:
+        print("Kernel browser live view url:", session.live_view_url)
+
+        final_messages = await sampling_loop(
+            model="claude-sonnet-4-5-20250929",
+            messages=[
+                {
+                    "role": "user",
+                    "content": payload["query"],
+                }
+            ],
+            api_key=str(api_key),
+            thinking_budget=1024,
+            kernel=session.kernel,
+            session_id=session.session_id,
+        )
+
+        if not final_messages:
+            raise ValueError("No messages were generated during the sampling loop")
+
+        last_message = final_messages[-1]
+        if not last_message:
+            raise ValueError(
+                "Failed to get the last message from the sampling loop"
             )
-            context = (
-                browser.contexts[0] if browser.contexts else await browser.new_context()
-            )
-            page = context.pages[0] if context.pages else await context.new_page()
 
-            # Run the sampling loop
-            final_messages = await sampling_loop(
-                model="claude-sonnet-4-20250514",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": payload["query"],
-                    }
-                ],
-                api_key=str(api_key),
-                thinking_budget=1024,
-                playwright_page=page,
+        result = ""
+        if isinstance(last_message.get("content"), str):
+            result = last_message["content"]  # type: ignore[assignment]
+        else:
+            result = "".join(
+                block["text"]
+                for block in last_message["content"]  # type: ignore[index]
+                if isinstance(block, Dict) and block.get("type") == "text"
             )
 
-            # Extract the final result
-            if not final_messages:
-                raise ValueError("No messages were generated during the sampling loop")
-
-            last_message = final_messages[-1]
-            if not last_message:
-                raise ValueError(
-                    "Failed to get the last message from the sampling loop"
-                )
-
-            result = ""
-            if isinstance(last_message.get("content"), str):
-                result = last_message["content"]  # type: ignore[assignment]
-            else:
-                result = "".join(
-                    block["text"]
-                    for block in last_message["content"]  # type: ignore[index]
-                    if isinstance(block, Dict) and block.get("type") == "text"
-                )
-
-            return {"result": result}
-    except Exception as exc:
-        print(f"Error in sampling loop: {exc}")
-        raise
-    finally:
-        if browser is not None:
-            await browser.close()
-        client.browsers.delete_by_id(kernel_browser.session_id)
+    return {
+        "result": result,
+        "replay_url": session.replay_view_url,
+    }
