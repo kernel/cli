@@ -370,7 +370,8 @@ class ComputerTool20250124(BaseComputerTool, BaseAnthropicTool):
             else:
                 x, y = self._last_mouse_position
 
-            scroll_factor = scroll_amount * 10
+            # Each scroll_amount unit = 1 scroll wheel click ≈ 120 pixels (matches Anthropic's xdotool behavior)
+            scroll_factor = scroll_amount * 120
             
             delta_x = 0
             delta_y = 0
