@@ -1893,8 +1893,16 @@ var browsersUpdateCmd = &cobra.Command{
 	Use:   "update <id>",
 	Short: "Update a browser session",
 	Long:  "Update a running browser session. Currently supports changing or removing the proxy.",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runBrowsersUpdate,
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return fmt.Errorf("missing required argument: browser ID\n\nUsage: kernel browsers update <id> [flags]")
+		}
+		if len(args) > 1 {
+			return fmt.Errorf("expected 1 argument (browser ID), got %d", len(args))
+		}
+		return nil
+	},
+	RunE: runBrowsersUpdate,
 }
 
 func init() {
