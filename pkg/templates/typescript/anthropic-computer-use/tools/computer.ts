@@ -304,7 +304,8 @@ export class ComputerTool implements BaseAnthropicTool {
 
       let delta_x = 0;
       let delta_y = 0;
-      const scrollDelta = scrollAmountValue ?? 120;
+      // Each scroll_amount unit = 1 scroll wheel click ≈ 120 pixels (matches Anthropic's xdotool behavior)
+      const scrollDelta = (scrollAmountValue ?? 1) * 120;
 
       if (scrollDirection === 'down') {
         delta_y = scrollDelta;
