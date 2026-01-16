@@ -57,6 +57,7 @@ type FakeBrowsersService struct {
 	GetFunc            func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error)
 	ListFunc           func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error)
 	NewFunc            func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error)
+	UpdateFunc         func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error)
 	DeleteFunc         func(ctx context.Context, body kernel.BrowserDeleteParams, opts ...option.RequestOption) error
 	DeleteByIDFunc     func(ctx context.Context, id string, opts ...option.RequestOption) error
 	LoadExtensionsFunc func(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) error
@@ -81,6 +82,13 @@ func (f *FakeBrowsersService) New(ctx context.Context, body kernel.BrowserNewPar
 		return f.NewFunc(ctx, body, opts...)
 	}
 	return &kernel.BrowserNewResponse{}, nil
+}
+
+func (f *FakeBrowsersService) Update(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+	if f.UpdateFunc != nil {
+		return f.UpdateFunc(ctx, id, body, opts...)
+	}
+	return &kernel.BrowserUpdateResponse{}, nil
 }
 
 func (f *FakeBrowsersService) Delete(ctx context.Context, body kernel.BrowserDeleteParams, opts ...option.RequestOption) error {
