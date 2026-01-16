@@ -188,20 +188,23 @@ export class KernelBrowserSession {
     const info = this.info;
 
     if (this._sessionId) {
-      // Stop replay if recording was enabled
-      if (this.options.recordReplay && this._replayId) {
-        // Wait grace period before stopping to capture final state
-        if (this.options.replayGracePeriod > 0) {
-          console.log(`Waiting ${this.options.replayGracePeriod}s grace period...`);
-          await this.sleep(this.options.replayGracePeriod * 1000);
+      try {
+        // Stop replay if recording was enabled
+        if (this.options.recordReplay && this._replayId) {
+          // Wait grace period before stopping to capture final state
+          if (this.options.replayGracePeriod > 0) {
+            console.log(`Waiting ${this.options.replayGracePeriod}s grace period...`);
+            await this.sleep(this.options.replayGracePeriod * 1000);
+          }
+          await this.stopReplay();
+          info.replayViewUrl = this._replayViewUrl || undefined;
         }
-        await this.stopReplay();
-        info.replayViewUrl = this._replayViewUrl || undefined;
+      } finally {
+        // Always clean up the browser session, even if replay stopping fails
+        console.log(`Destroying browser session: ${this._sessionId}`);
+        await this.kernel.browsers.deleteByID(this._sessionId);
+        console.log('Browser session destroyed.');
       }
-
-      console.log(`Destroying browser session: ${this._sessionId}`);
-      await this.kernel.browsers.deleteByID(this._sessionId);
-      console.log('Browser session destroyed.');
     }
 
     // Reset state
