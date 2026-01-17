@@ -62,8 +62,8 @@ var proxiesDeleteCmd = &cobra.Command{
 
 var proxiesCheckCmd = &cobra.Command{
 	Use:   "check <id>",
-	Short: "Check a proxy's health status",
-	Long:  `Perform a health check on a proxy configuration and return its current status.`,
+	Short: "Run a health check on a proxy",
+	Long:  "Run a health check on a proxy to verify it's working and update its status.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runProxiesCheck,
 }

@@ -41,6 +41,7 @@ type FakeProxyService struct {
 	GetFunc    func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ProxyGetResponse, error)
 	NewFunc    func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error)
 	DeleteFunc func(ctx context.Context, id string, opts ...option.RequestOption) error
+	CheckFunc  func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ProxyCheckResponse, error)
 }
 
 func (f *FakeProxyService) List(ctx context.Context, opts ...option.RequestOption) (*[]kernel.ProxyListResponse, error) {
@@ -70,6 +71,13 @@ func (f *FakeProxyService) Delete(ctx context.Context, id string, opts ...option
 		return f.DeleteFunc(ctx, id, opts...)
 	}
 	return nil
+}
+
+func (f *FakeProxyService) Check(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ProxyCheckResponse, error) {
+	if f.CheckFunc != nil {
+		return f.CheckFunc(ctx, id, opts...)
+	}
+	return &kernel.ProxyCheckResponse{ID: id, Type: kernel.ProxyCheckResponseTypeDatacenter, Status: kernel.ProxyCheckResponseStatusAvailable}, nil
 }
 
 // Helper function to create test proxy responses
