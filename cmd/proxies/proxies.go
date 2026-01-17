@@ -60,12 +60,21 @@ var proxiesDeleteCmd = &cobra.Command{
 	RunE:  runProxiesDelete,
 }
 
+var proxiesCheckCmd = &cobra.Command{
+	Use:   "check <id>",
+	Short: "Check a proxy's health status",
+	Long:  `Perform a health check on a proxy configuration and return its current status.`,
+	Args:  cobra.ExactArgs(1),
+	RunE:  runProxiesCheck,
+}
+
 func init() {
 	// Add subcommands
 	ProxiesCmd.AddCommand(proxiesListCmd)
 	ProxiesCmd.AddCommand(proxiesGetCmd)
 	ProxiesCmd.AddCommand(proxiesCreateCmd)
 	ProxiesCmd.AddCommand(proxiesDeleteCmd)
+	ProxiesCmd.AddCommand(proxiesCheckCmd)
 
 	// Add output flags
 	proxiesListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
@@ -99,4 +108,7 @@ func init() {
 
 	// Delete flags
 	proxiesDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+
+	// Check flags
+	proxiesCheckCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 }

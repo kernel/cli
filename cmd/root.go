@@ -139,6 +139,7 @@ func init() {
 	rootCmd.AddCommand(profilesCmd)
 	rootCmd.AddCommand(proxies.ProxiesCmd)
 	rootCmd.AddCommand(extensionsCmd)
+	rootCmd.AddCommand(credentialsCmd)
 	rootCmd.AddCommand(createCmd)
 	rootCmd.AddCommand(mcp.MCPCmd)
 	rootCmd.AddCommand(upgradeCmd)
