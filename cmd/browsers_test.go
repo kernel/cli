@@ -590,6 +590,7 @@ func (f *FakeFSService) WriteFile(ctx context.Context, id string, contents io.Re
 type FakeProcessService struct {
 	ExecFunc         func(ctx context.Context, id string, body kernel.BrowserProcessExecParams, opts ...option.RequestOption) (*kernel.BrowserProcessExecResponse, error)
 	KillFunc         func(ctx context.Context, processID string, params kernel.BrowserProcessKillParams, opts ...option.RequestOption) (*kernel.BrowserProcessKillResponse, error)
+	ResizeFunc       func(ctx context.Context, processID string, params kernel.BrowserProcessResizeParams, opts ...option.RequestOption) (*kernel.BrowserProcessResizeResponse, error)
 	SpawnFunc        func(ctx context.Context, id string, body kernel.BrowserProcessSpawnParams, opts ...option.RequestOption) (*kernel.BrowserProcessSpawnResponse, error)
 	StatusFunc       func(ctx context.Context, processID string, query kernel.BrowserProcessStatusParams, opts ...option.RequestOption) (*kernel.BrowserProcessStatusResponse, error)
 	StdinFunc        func(ctx context.Context, processID string, params kernel.BrowserProcessStdinParams, opts ...option.RequestOption) (*kernel.BrowserProcessStdinResponse, error)
@@ -631,6 +632,12 @@ func (f *FakeProcessService) StdoutStreamStreaming(ctx context.Context, processI
 		return f.StdoutStreamFunc(ctx, processID, query, opts...)
 	}
 	return makeStream([]kernel.BrowserProcessStdoutStreamResponse{{Stream: kernel.BrowserProcessStdoutStreamResponseStreamStdout, DataB64: "aGVsbG8=", Event: ""}, {Event: "exit", ExitCode: 0}})
+}
+func (f *FakeProcessService) Resize(ctx context.Context, processID string, params kernel.BrowserProcessResizeParams, opts ...option.RequestOption) (*kernel.BrowserProcessResizeResponse, error) {
+	if f.ResizeFunc != nil {
+		return f.ResizeFunc(ctx, processID, params, opts...)
+	}
+	return &kernel.BrowserProcessResizeResponse{Ok: true}, nil
 }
 
 type FakeLogService struct {
