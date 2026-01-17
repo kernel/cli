@@ -66,10 +66,18 @@ type BrowserFSService interface {
 type BrowserProcessService interface {
 	Exec(ctx context.Context, id string, body kernel.BrowserProcessExecParams, opts ...option.RequestOption) (res *kernel.BrowserProcessExecResponse, err error)
 	Kill(ctx context.Context, processID string, params kernel.BrowserProcessKillParams, opts ...option.RequestOption) (res *kernel.BrowserProcessKillResponse, err error)
+	Resize(ctx context.Context, processID string, params kernel.BrowserProcessResizeParams, opts ...option.RequestOption) (res *kernel.BrowserProcessResizeResponse, err error)
 	Spawn(ctx context.Context, id string, body kernel.BrowserProcessSpawnParams, opts ...option.RequestOption) (res *kernel.BrowserProcessSpawnResponse, err error)
 	Status(ctx context.Context, processID string, query kernel.BrowserProcessStatusParams, opts ...option.RequestOption) (res *kernel.BrowserProcessStatusResponse, err error)
 	Stdin(ctx context.Context, processID string, params kernel.BrowserProcessStdinParams, opts ...option.RequestOption) (res *kernel.BrowserProcessStdinResponse, err error)
 	StdoutStreamStreaming(ctx context.Context, processID string, query kernel.BrowserProcessStdoutStreamParams, opts ...option.RequestOption) (stream *ssestream.Stream[kernel.BrowserProcessStdoutStreamResponse])
+}
+
+// BrowserFWatchService defines the subset we use for browser filesystem watch APIs.
+type BrowserFWatchService interface {
+	EventsStreaming(ctx context.Context, watchID string, query kernel.BrowserFWatchEventsParams, opts ...option.RequestOption) (stream *ssestream.Stream[kernel.BrowserFWatchEventsResponse])
+	Start(ctx context.Context, id string, body kernel.BrowserFWatchStartParams, opts ...option.RequestOption) (res *kernel.BrowserFWatchStartResponse, err error)
+	Stop(ctx context.Context, watchID string, body kernel.BrowserFWatchStopParams, opts ...option.RequestOption) (err error)
 }
 
 // BrowserLogService defines the subset we use for browser log APIs.
@@ -193,6 +201,7 @@ type BrowsersCmd struct {
 	browsers   BrowsersService
 	replays    BrowserReplaysService
 	fs         BrowserFSService
+	fsWatch    BrowserFWatchService
 	process    BrowserProcessService
 	logs       BrowserLogService
 	computer   BrowserComputerService
@@ -1062,6 +1071,31 @@ type BrowsersProcessStdoutStreamInput struct {
 	ProcessID  string
 }
 
+type BrowsersProcessResizeInput struct {
+	Identifier string
+	ProcessID  string
+	Cols       int64
+	Rows       int64
+}
+
+// FS Watch
+type BrowsersFSWatchStartInput struct {
+	Identifier string
+	Path       string
+	Recursive  BoolFlag
+	Output     string
+}
+
+type BrowsersFSWatchStopInput struct {
+	Identifier string
+	WatchID    string
+}
+
+type BrowsersFSWatchEventsInput struct {
+	Identifier string
+	WatchID    string
+}
+
 // Playwright
 type BrowsersPlaywrightExecuteInput struct {
 	Identifier string
@@ -1301,6 +1335,97 @@ func (b BrowsersCmd) ProcessStdoutStream(ctx context.Context, in BrowsersProcess
 			continue
 		}
 		os.Stdout.Write(data)
+	}
+	if err := stream.Err(); err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	return nil
+}
+
+func (b BrowsersCmd) ProcessResize(ctx context.Context, in BrowsersProcessResizeInput) error {
+	if b.process == nil {
+		pterm.Error.Println("process service not available")
+		return nil
+	}
+	br, err := b.browsers.Get(ctx, in.Identifier)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	params := kernel.BrowserProcessResizeParams{ID: br.SessionID, Cols: in.Cols, Rows: in.Rows}
+	_, err = b.process.Resize(ctx, in.ProcessID, params)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	pterm.Success.Printf("Resized process %s PTY to %dx%d\n", in.ProcessID, in.Cols, in.Rows)
+	return nil
+}
+
+// FS Watch
+func (b BrowsersCmd) FSWatchStart(ctx context.Context, in BrowsersFSWatchStartInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
+	if b.fsWatch == nil {
+		pterm.Error.Println("fs watch service not available")
+		return nil
+	}
+	br, err := b.browsers.Get(ctx, in.Identifier)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	params := kernel.BrowserFWatchStartParams{Path: in.Path}
+	if in.Recursive.Set {
+		params.Recursive = kernel.Opt(in.Recursive.Value)
+	}
+	res, err := b.fsWatch.Start(ctx, br.SessionID, params)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(res)
+	}
+
+	pterm.Success.Printf("Started watch on %s with ID: %s\n", in.Path, res.WatchID)
+	return nil
+}
+
+func (b BrowsersCmd) FSWatchStop(ctx context.Context, in BrowsersFSWatchStopInput) error {
+	if b.fsWatch == nil {
+		pterm.Error.Println("fs watch service not available")
+		return nil
+	}
+	br, err := b.browsers.Get(ctx, in.Identifier)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	err = b.fsWatch.Stop(ctx, in.WatchID, kernel.BrowserFWatchStopParams{ID: br.SessionID})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	pterm.Success.Printf("Stopped watch %s\n", in.WatchID)
+	return nil
+}
+
+func (b BrowsersCmd) FSWatchEvents(ctx context.Context, in BrowsersFSWatchEventsInput) error {
+	if b.fsWatch == nil {
+		pterm.Error.Println("fs watch service not available")
+		return nil
+	}
+	br, err := b.browsers.Get(ctx, in.Identifier)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	stream := b.fsWatch.EventsStreaming(ctx, in.WatchID, kernel.BrowserFWatchEventsParams{ID: br.SessionID})
+	if stream == nil {
+		pterm.Error.Println("failed to open watch events stream")
+		return nil
+	}
+	defer stream.Close()
+	for stream.Next() {
+		ev := stream.Current()
+		pterm.Printf("[%s] %s: %s\n", ev.Type, ev.Name, ev.Path)
 	}
 	if err := stream.Err(); err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -1947,7 +2072,12 @@ func init() {
 	procStdin.Flags().String("data-b64", "", "Base64-encoded data to write to stdin")
 	_ = procStdin.MarkFlagRequired("data-b64")
 	procStdoutStream := &cobra.Command{Use: "stdout-stream <id> <process-id>", Short: "Stream process stdout/stderr", Args: cobra.ExactArgs(2), RunE: runBrowsersProcessStdoutStream}
-	procRoot.AddCommand(procExec, procSpawn, procKill, procStatus, procStdin, procStdoutStream)
+	procResize := &cobra.Command{Use: "resize <id> <process-id>", Short: "Resize a PTY-backed process terminal", Args: cobra.ExactArgs(2), RunE: runBrowsersProcessResize}
+	procResize.Flags().Int64("cols", 0, "New terminal columns (required)")
+	procResize.Flags().Int64("rows", 0, "New terminal rows (required)")
+	_ = procResize.MarkFlagRequired("cols")
+	_ = procResize.MarkFlagRequired("rows")
+	procRoot.AddCommand(procExec, procSpawn, procKill, procStatus, procStdin, procStdoutStream, procResize)
 	browsersCmd.AddCommand(procRoot)
 
 	// fs
@@ -2012,7 +2142,18 @@ func init() {
 	fsWriteFile.Flags().String("source", "", "Local source file path")
 	_ = fsWriteFile.MarkFlagRequired("source")
 
-	fsRoot.AddCommand(fsNewDir, fsDelDir, fsDelFile, fsDownloadZip, fsFileInfo, fsListFiles, fsMove, fsReadFile, fsSetPerms, fsUpload, fsUploadZip, fsWriteFile)
+	// fs watch
+	fsWatchRoot := &cobra.Command{Use: "watch", Short: "Watch directories for changes"}
+	fsWatchStart := &cobra.Command{Use: "start <id>", Short: "Start watching a directory", Args: cobra.ExactArgs(1), RunE: runBrowsersFSWatchStart}
+	fsWatchStart.Flags().String("path", "", "Directory to watch (required)")
+	_ = fsWatchStart.MarkFlagRequired("path")
+	fsWatchStart.Flags().Bool("recursive", false, "Watch recursively")
+	fsWatchStart.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	fsWatchStop := &cobra.Command{Use: "stop <id> <watch-id>", Short: "Stop watching a directory", Args: cobra.ExactArgs(2), RunE: runBrowsersFSWatchStop}
+	fsWatchEvents := &cobra.Command{Use: "events <id> <watch-id>", Short: "Stream filesystem events", Args: cobra.ExactArgs(2), RunE: runBrowsersFSWatchEvents}
+	fsWatchRoot.AddCommand(fsWatchStart, fsWatchStop, fsWatchEvents)
+
+	fsRoot.AddCommand(fsNewDir, fsDelDir, fsDelFile, fsDownloadZip, fsFileInfo, fsListFiles, fsMove, fsReadFile, fsSetPerms, fsUpload, fsUploadZip, fsWriteFile, fsWatchRoot)
 	browsersCmd.AddCommand(fsRoot)
 
 	// extensions
@@ -2439,6 +2580,44 @@ func runBrowsersProcessStdoutStream(cmd *cobra.Command, args []string) error {
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc, process: &svc.Process}
 	return b.ProcessStdoutStream(cmd.Context(), BrowsersProcessStdoutStreamInput{Identifier: args[0], ProcessID: args[1]})
+}
+
+func runBrowsersProcessResize(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	cols, _ := cmd.Flags().GetInt64("cols")
+	rows, _ := cmd.Flags().GetInt64("rows")
+	b := BrowsersCmd{browsers: &svc, process: &svc.Process}
+	return b.ProcessResize(cmd.Context(), BrowsersProcessResizeInput{Identifier: args[0], ProcessID: args[1], Cols: cols, Rows: rows})
+}
+
+func runBrowsersFSWatchStart(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	path, _ := cmd.Flags().GetString("path")
+	recursive, _ := cmd.Flags().GetBool("recursive")
+	output, _ := cmd.Flags().GetString("output")
+	b := BrowsersCmd{browsers: &svc, fsWatch: &svc.Fs.Watch}
+	return b.FSWatchStart(cmd.Context(), BrowsersFSWatchStartInput{
+		Identifier: args[0],
+		Path:       path,
+		Recursive:  BoolFlag{Set: cmd.Flags().Changed("recursive"), Value: recursive},
+		Output:     output,
+	})
+}
+
+func runBrowsersFSWatchStop(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	b := BrowsersCmd{browsers: &svc, fsWatch: &svc.Fs.Watch}
+	return b.FSWatchStop(cmd.Context(), BrowsersFSWatchStopInput{Identifier: args[0], WatchID: args[1]})
+}
+
+func runBrowsersFSWatchEvents(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	b := BrowsersCmd{browsers: &svc, fsWatch: &svc.Fs.Watch}
+	return b.FSWatchEvents(cmd.Context(), BrowsersFSWatchEventsInput{Identifier: args[0], WatchID: args[1]})
 }
 
 func runBrowsersPlaywrightExecute(cmd *cobra.Command, args []string) error {
