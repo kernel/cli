@@ -77,7 +77,7 @@ func (f *FakeProxyService) Check(ctx context.Context, id string, opts ...option.
 	if f.CheckFunc != nil {
 		return f.CheckFunc(ctx, id, opts...)
 	}
-	return &kernel.ProxyCheckResponse{ID: id, Type: kernel.ProxyCheckResponseTypeDatacenter, Status: kernel.ProxyCheckResponseStatusAvailable}, nil
+	return &kernel.ProxyCheckResponse{ID: id, Type: kernel.ProxyCheckResponseTypeDatacenter}, nil
 }
 
 // Helper function to create test proxy responses

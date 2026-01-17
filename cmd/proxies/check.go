@@ -20,61 +20,61 @@ func (p ProxyCmd) Check(ctx context.Context, in ProxyCheckInput) error {
 		pterm.Info.Printf("Running health check on proxy %s...\n", in.ID)
 	}
 
-	item, err := p.proxies.Check(ctx, in.ID)
+	proxy, err := p.proxies.Check(ctx, in.ID)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
 	if in.Output == "json" {
-		return util.PrintPrettyJSON(item)
+		return util.PrintPrettyJSON(proxy)
 	}
 
 	// Display proxy details after check
 	rows := pterm.TableData{{"Property", "Value"}}
 
-	rows = append(rows, []string{"ID", item.ID})
+	rows = append(rows, []string{"ID", proxy.ID})
 
-	name := item.Name
+	name := proxy.Name
 	if name == "" {
 		name = "-"
 	}
 	rows = append(rows, []string{"Name", name})
-	rows = append(rows, []string{"Type", string(item.Type)})
+	rows = append(rows, []string{"Type", string(proxy.Type)})
 
 	// Display protocol (default to https if not set)
-	protocol := string(item.Protocol)
+	protocol := string(proxy.Protocol)
 	if protocol == "" {
 		protocol = "https"
 	}
 	rows = append(rows, []string{"Protocol", protocol})
 
 	// Display IP address if available
-	if item.IPAddress != "" {
-		rows = append(rows, []string{"IP Address", item.IPAddress})
+	if proxy.IPAddress != "" {
+		rows = append(rows, []string{"IP Address", proxy.IPAddress})
 	}
 
 	// Display type-specific config details
-	rows = append(rows, getProxyCheckConfigRows(item)...)
+	rows = append(rows, getProxyCheckConfigRows(proxy)...)
 
 	// Display status with color
-	status := string(item.Status)
+	status := string(proxy.Status)
 	if status == "" {
 		status = "-"
-	} else if item.Status == kernel.ProxyCheckResponseStatusAvailable {
+	} else if proxy.Status == kernel.ProxyCheckResponseStatusAvailable {
 		status = pterm.Green(status)
-	} else if item.Status == kernel.ProxyCheckResponseStatusUnavailable {
+	} else if proxy.Status == kernel.ProxyCheckResponseStatusUnavailable {
 		status = pterm.Red(status)
 	}
 	rows = append(rows, []string{"Status", status})
 
 	// Display last checked timestamp
-	lastChecked := util.FormatLocal(item.LastChecked)
+	lastChecked := util.FormatLocal(proxy.LastChecked)
 	rows = append(rows, []string{"Last Checked", lastChecked})
 
 	table.PrintTableNoPad(rows, true)
 
 	// Print a summary message
-	if item.Status == kernel.ProxyCheckResponseStatusAvailable {
+	if proxy.Status == kernel.ProxyCheckResponseStatusAvailable {
 		pterm.Success.Println("Proxy health check passed")
 	} else {
 		pterm.Warning.Println("Proxy health check failed - proxy is unavailable")
