@@ -243,7 +243,7 @@ func TestBrowsersCreate_PrintsErrorOnFailure(t *testing.T) {
 	assert.Contains(t, err.Error(), "create failed")
 }
 
-func TestBrowsersDelete_SkipConfirm_Success(t *testing.T) {
+func TestBrowsersDelete_Success(t *testing.T) {
 	setupStdoutCapture(t)
 
 	fake := &FakeBrowsersService{
@@ -255,13 +255,13 @@ func TestBrowsersDelete_SkipConfirm_Success(t *testing.T) {
 		},
 	}
 	b := BrowsersCmd{browsers: fake}
-	_ = b.Delete(context.Background(), BrowsersDeleteInput{Identifier: "any", SkipConfirm: true})
+	_ = b.Delete(context.Background(), BrowsersDeleteInput{Identifier: "any"})
 
 	out := outBuf.String()
 	assert.Contains(t, out, "Successfully deleted (or already absent) browser: any")
 }
 
-func TestBrowsersDelete_SkipConfirm_Failure(t *testing.T) {
+func TestBrowsersDelete_Failure(t *testing.T) {
 	setupStdoutCapture(t)
 
 	fake := &FakeBrowsersService{
@@ -273,23 +273,13 @@ func TestBrowsersDelete_SkipConfirm_Failure(t *testing.T) {
 		},
 	}
 	b := BrowsersCmd{browsers: fake}
-	err := b.Delete(context.Background(), BrowsersDeleteInput{Identifier: "any", SkipConfirm: true})
+	err := b.Delete(context.Background(), BrowsersDeleteInput{Identifier: "any"})
 
 	assert.Error(t, err)
 	errMsg := err.Error()
 	assert.True(t, strings.Contains(errMsg, "right failed") || strings.Contains(errMsg, "left failed"), "expected error message to contain either 'right failed' or 'left failed', got: %s", errMsg)
 }
 
-func TestBrowsersDelete_WithConfirm_NotFound(t *testing.T) {
-	setupStdoutCapture(t)
-
-	fake := &FakeBrowsersService{}
-	b := BrowsersCmd{browsers: fake}
-	err := b.Delete(context.Background(), BrowsersDeleteInput{Identifier: "missing", SkipConfirm: false})
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
-}
 
 func TestBrowsersView_ByID_PrintsURL(t *testing.T) {
 	// Capture both pterm output and raw stdout
