@@ -168,8 +168,7 @@ type BrowsersCreateInput struct {
 }
 
 type BrowsersDeleteInput struct {
-	Identifier  string
-	SkipConfirm bool
+	Identifier string
 }
 
 type BrowsersViewInput struct {
@@ -406,39 +405,7 @@ func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, persistence ke
 }
 
 func (b BrowsersCmd) Delete(ctx context.Context, in BrowsersDeleteInput) error {
-	if !in.SkipConfirm {
-		found, err := b.browsers.Get(ctx, in.Identifier)
-		if err != nil {
-			return util.CleanedUpSdkError{Err: err}
-		}
-
-		confirmMsg := fmt.Sprintf("Are you sure you want to delete browser \"%s\"?", in.Identifier)
-		pterm.DefaultInteractiveConfirm.DefaultText = confirmMsg
-		result, _ := pterm.DefaultInteractiveConfirm.Show()
-		if !result {
-			pterm.Info.Println("Deletion cancelled")
-			return nil
-		}
-
-		if found.Persistence.ID == in.Identifier {
-			err = b.browsers.Delete(ctx, kernel.BrowserDeleteParams{PersistentID: in.Identifier})
-			if err != nil && !util.IsNotFound(err) {
-				return util.CleanedUpSdkError{Err: err}
-			}
-			pterm.Success.Printf("Successfully deleted browser: %s\n", in.Identifier)
-			return nil
-		}
-
-		pterm.Info.Printf("Deleting browser: %s\n", in.Identifier)
-		err = b.browsers.DeleteByID(ctx, in.Identifier)
-		if err != nil && !util.IsNotFound(err) {
-			return util.CleanedUpSdkError{Err: err}
-		}
-		pterm.Success.Printf("Successfully deleted browser: %s\n", in.Identifier)
-		return nil
-	}
-
-	// Skip confirmation: try both deletion modes without listing first
+	// Try both deletion modes without confirmation
 	// Treat not found as a success (idempotent delete)
 	var nonNotFoundErrors []error
 
@@ -2145,8 +2112,6 @@ func init() {
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
 
-	// Add flags for delete command
-	browsersDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 
 	// no flags for view; it takes a single positional argument
 }
@@ -2305,13 +2270,12 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 
 func runBrowsersDelete(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
-	skipConfirm, _ := cmd.Flags().GetBool("yes")
 
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
 	// Iterate all provided identifiers
 	for _, identifier := range args {
-		if err := b.Delete(cmd.Context(), BrowsersDeleteInput{Identifier: identifier, SkipConfirm: skipConfirm}); err != nil {
+		if err := b.Delete(cmd.Context(), BrowsersDeleteInput{Identifier: identifier}); err != nil {
 			return err
 		}
 	}

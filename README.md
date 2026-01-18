@@ -213,7 +213,6 @@ Commands with JSON output support:
   - `--output json`, `-o json` - Output raw JSON object
   - _Note: When a pool is specified, omit other session configuration flags—pool settings determine profile, proxy, viewport, etc._
 - `kernel browsers delete <id>` - Delete a browser
-  - `-y, --yes` - Skip confirmation prompt
 - `kernel browsers view <id>` - Get live view URL for a browser
   - `--output json`, `-o json` - Output JSON with liveViewUrl
 - `kernel browsers get <id>` - Get detailed browser session info
@@ -519,7 +518,7 @@ kernel browsers create --kiosk
 kernel browsers create --profile-name my-profile
 
 # Delete a browser
-kernel browsers delete browser123 --yes
+kernel browsers delete browser123
 
 # Get live view URL
 kernel browsers view browser123
