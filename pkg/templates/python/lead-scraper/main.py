@@ -150,9 +150,8 @@ async def scrape_leads(ctx: kernel.KernelContext, input_data: dict) -> dict:
                 last_action = action_results[-1]
                 if hasattr(last_action, 'extracted_content') and last_action.extracted_content:
                     content = last_action.extracted_content
-                    if '[' in content and '"name"' in content:
-                        print(f"Found leads in last action ({len(content)} chars)...")
-                        leads = parse_leads_from_result(content)
+                    print(f"Found content in last action ({len(content)} chars)...")
+                    leads = parse_leads_from_result(content)
         
         print(f"Successfully extracted {len(leads)} leads")
         
