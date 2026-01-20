@@ -32,6 +32,11 @@ class KernelBrowserSession:
     stealth: bool = True
     timeout_seconds: int = 300
 
+    # Viewport dimensions - Yutori n1 recommended: 1280x800, Kernel supports 1200x800
+    # See: https://docs.yutori.com/reference/n1#screenshot-requirements
+    viewport_width: int = 1200
+    viewport_height: int = 800
+
     # Replay recording options
     record_replay: bool = False
     replay_grace_period: float = 5.0  # Seconds to wait before stopping replay
@@ -48,15 +53,14 @@ class KernelBrowserSession:
         """Create a Kernel browser session and optionally start recording."""
         self._kernel = Kernel()
 
-        # Create browser with viewport closest to Yutori n1's recommended 1280x800
-        # Using 1200x800 (WXGA at 25Hz) - the closest supported Kernel viewport
+        # Create browser with Yutori n1's recommended viewport
         # See: https://docs.yutori.com/reference/n1#screenshot-requirements
         browser = self._kernel.browsers.create(
             stealth=self.stealth,
             timeout_seconds=self.timeout_seconds,
             viewport={
-                "width": 1200,
-                "height": 800,
+                "width": self.viewport_width,
+                "height": self.viewport_height,
                 "refresh_rate": 25,
             },
         )

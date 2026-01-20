@@ -10,4 +10,5 @@ dependencies = [
     "typing-extensions>=4.15.0",
     "kernel>=0.24.0",
     "python-dotenv>=1.2.1",
+    "playwright>=1.52.0",
 ]

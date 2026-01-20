@@ -16,6 +16,10 @@ export interface SessionOptions {
   recordReplay?: boolean;
   /** Grace period in seconds before stopping replay */
   replayGracePeriod?: number;
+  /** Viewport width (default: 1280 per Yutori recommendation) */
+  viewportWidth?: number;
+  /** Viewport height (default: 800 per Yutori recommendation) */
+  viewportHeight?: number;
 }
 
 export interface SessionInfo {
@@ -24,6 +28,8 @@ export interface SessionInfo {
   cdpWsUrl: string;
   replayId?: string;
   replayViewUrl?: string;
+  viewportWidth: number;
+  viewportHeight: number;
 }
 
 const DEFAULT_OPTIONS: Required<SessionOptions> = {
@@ -31,6 +37,10 @@ const DEFAULT_OPTIONS: Required<SessionOptions> = {
   timeoutSeconds: 300,
   recordReplay: false,
   replayGracePeriod: 5.0,
+  // Yutori n1 recommended viewport: 1280x800, but Kernel supports 1200x800
+  // See: https://docs.yutori.com/reference/n1#screenshot-requirements
+  viewportWidth: 1200,
+  viewportHeight: 800,
 };
 
 /**
@@ -82,6 +92,14 @@ export class KernelBrowserSession {
     return this._replayViewUrl;
   }
 
+  get viewportWidth(): number {
+    return this.options.viewportWidth;
+  }
+
+  get viewportHeight(): number {
+    return this.options.viewportHeight;
+  }
+
   get info(): SessionInfo {
     return {
       sessionId: this.sessionId,
@@ -89,6 +107,8 @@ export class KernelBrowserSession {
       cdpWsUrl: this._cdpWsUrl || '',
       replayId: this._replayId || undefined,
       replayViewUrl: this._replayViewUrl || undefined,
+      viewportWidth: this.options.viewportWidth,
+      viewportHeight: this.options.viewportHeight,
     };
   }
 
@@ -96,15 +116,14 @@ export class KernelBrowserSession {
    * Create a Kernel browser session and optionally start recording.
    */
   async start(): Promise<SessionInfo> {
-    // Create browser with viewport closest to Yutori n1's recommended 1280x800
-    // Using 1200x800 (WXGA at 25Hz) - the closest supported Kernel viewport
+    // Create browser with Yutori n1's recommended viewport
     // See: https://docs.yutori.com/reference/n1#screenshot-requirements
     const browser = await this.kernel.browsers.create({
       stealth: this.options.stealth,
       timeout_seconds: this.options.timeoutSeconds,
       viewport: {
-        width: 1200,
-        height: 800,
+        width: this.options.viewportWidth,
+        height: this.options.viewportHeight,
         refresh_rate: 25,
       },
     });

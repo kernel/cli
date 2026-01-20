@@ -7,12 +7,26 @@
  * - Coordinates are returned in 1000x1000 space and need scaling
  * - WebP format recommended for screenshots
  * 
+ * Supports two modes:
+ * - computer_use: Uses Kernel's Computer Controls API (full VM screenshots)
+ * - playwright: Uses Playwright via CDP (viewport-only screenshots, optimized for n1)
+ * 
  * @see https://docs.yutori.com/reference/n1
  */
 
 import OpenAI from 'openai';
 import type { Kernel } from '@onkernel/sdk';
 import { ComputerTool, type N1Action, type ToolResult } from './tools/computer';
+import { PlaywrightComputerTool } from './tools/playwright-computer';
+
+/** Mode for browser interaction */
+export type BrowserMode = 'computer_use' | 'playwright';
+
+/** Interface for tool that can execute n1 actions */
+interface N1ComputerTool {
+  execute(action: N1Action): Promise<ToolResult>;
+  screenshot(): Promise<ToolResult>;
+}
 
 // n1 uses its own system prompt - custom prompts may degrade performance
 // Per docs: "we generally do not recommend providing custom system prompts"
@@ -36,12 +50,21 @@ interface SamplingLoopOptions {
   apiKey: string;
   kernel: Kernel;
   sessionId: string;
+  /** CDP WebSocket URL for playwright mode */
+  cdpWsUrl?: string;
   maxTokens?: number;
   maxIterations?: number;
-  /** Viewport width for coordinate scaling (default: 1200 to match WXGA) */
+  /** Viewport width for coordinate scaling (default: 1200, closest to Yutori's 1280 recommendation) */
   viewportWidth?: number;
-  /** Viewport height for coordinate scaling (default: 800 to match WXGA) */
+  /** Viewport height for coordinate scaling (default: 800 per Yutori recommendation) */
   viewportHeight?: number;
+  /**
+   * Browser interaction mode:
+   * - computer_use: Uses Kernel's Computer Controls API (full VM screenshots)
+   * - playwright: Uses Playwright via CDP (viewport-only screenshots, optimized for n1)
+   * @default 'computer_use'
+   */
+  mode?: BrowserMode;
 }
 
 interface SamplingLoopResult {
@@ -58,165 +81,192 @@ export async function samplingLoop({
   apiKey,
   kernel,
   sessionId,
+  cdpWsUrl,
   maxTokens = 4096,
   maxIterations = 50,
-  // Default viewport matches WXGA (1200x800) - closest to Yutori's recommended 1280x800
+  // Default viewport: 1200x800 (closest Kernel-supported size to Yutori's recommended 1280x800)
   viewportWidth = 1200,
   viewportHeight = 800,
+  mode = 'computer_use',
 }: SamplingLoopOptions): Promise<SamplingLoopResult> {
   const client = new OpenAI({
     apiKey,
     baseURL: 'https://api.yutori.com/v1',
   });
 
-  const computerTool = new ComputerTool(kernel, sessionId, viewportWidth, viewportHeight);
+  // Create the appropriate tool based on mode
+  let computerTool: N1ComputerTool;
+  let playwrightTool: PlaywrightComputerTool | null = null;
 
-  // Take initial screenshot
-  const initialScreenshot = await computerTool.screenshot();
+  console.log(`Mode requested: '${mode}', cdpWsUrl available: ${cdpWsUrl != null}`);
 
-  // Build conversation per n1 format:
-  // 1. User message with task
-  // 2. Observation message with screenshot
-  const conversationMessages: Message[] = [
-    {
-      role: 'user',
-      content: [{ type: 'text', text: task }],
-    },
-  ];
-
-  // Add initial screenshot as observation (n1's required format)
-  if (initialScreenshot.base64Image) {
-    conversationMessages.push({
-      role: 'observation',
-      content: [
-        {
-          type: 'image_url',
-          image_url: {
-            url: `data:image/png;base64,${initialScreenshot.base64Image}`,
-          },
-        },
-      ],
-    });
+  if (mode === 'playwright') {
+    if (!cdpWsUrl) {
+      throw new Error('cdpWsUrl is required for playwright mode');
+    }
+    console.log(`Connecting to CDP WebSocket: ${cdpWsUrl.substring(0, 50)}...`);
+    playwrightTool = new PlaywrightComputerTool(cdpWsUrl, viewportWidth, viewportHeight);
+    await playwrightTool.connect();
+    computerTool = playwrightTool;
+    console.log('Using playwright mode (viewport-only screenshots)');
+  } else {
+    computerTool = new ComputerTool(kernel, sessionId, viewportWidth, viewportHeight);
+    console.log('Using computer_use mode (Computer Controls API)');
   }
 
-  let iteration = 0;
-  let finalAnswer: string | undefined;
+  try {
+    // Take initial screenshot
+    const initialScreenshot = await computerTool.screenshot();
 
-  while (iteration < maxIterations) {
-    iteration++;
-    console.log(`\n=== Iteration ${iteration} ===`);
+    // Build conversation per n1 format:
+    // 1. User message with task
+    // 2. Observation message with screenshot
+    const conversationMessages: Message[] = [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: task }],
+      },
+    ];
 
-    // Call the n1 API (no system prompt - n1 uses its own)
-    let response;
-    try {
-      response = await client.chat.completions.create({
-        model,
-        messages: conversationMessages as OpenAI.ChatCompletionMessageParam[],
-        max_tokens: maxTokens,
-        temperature: 0.3,
-      });
-    } catch (apiError) {
-      console.error('API call failed:', apiError);
-      throw apiError;
-    }
-
-    if (!response.choices || response.choices.length === 0) {
-      console.error('No choices in response:', JSON.stringify(response, null, 2));
-      throw new Error('No choices in API response');
-    }
-
-    const assistantMessage = response.choices[0]?.message;
-    if (!assistantMessage) {
-      throw new Error('No response from model');
-    }
-
-    const responseContent = assistantMessage.content || '';
-    console.log('Assistant response:', responseContent);
-
-    // Add assistant message to conversation
-    conversationMessages.push({
-      role: 'assistant',
-      content: responseContent,
-    });
-
-    // Parse the action(s) from the response
-    // n1 returns JSON with "thoughts" and "actions" array
-    const parsed = parseN1Response(responseContent);
-
-    if (!parsed || !parsed.actions || parsed.actions.length === 0) {
-      console.log('No actions found in response, ending loop');
-      break;
-    }
-
-    // Execute each action in the actions array
-    for (const action of parsed.actions) {
-      console.log('Executing action:', action.action_type, action);
-
-      // Check for stop action
-      if (action.action_type === 'stop') {
-        finalAnswer = action.answer;
-        console.log('Stop action received, final answer:', finalAnswer);
-        return { messages: conversationMessages, finalAnswer };
-      }
-
-      // Scale coordinates from n1's 1000x1000 space to actual viewport
-      const scaledAction = scaleCoordinates(action, viewportWidth, viewportHeight);
-
-      // Execute the action
-      let result: ToolResult;
-      try {
-        result = await computerTool.execute(scaledAction);
-      } catch (error) {
-        console.error('Action failed:', error);
-        result = {
-          error: error instanceof Error ? error.message : String(error),
-        };
-      }
-
-      // After action, add observation with screenshot and optional text output
-      if (result.base64Image || result.output) {
-        const observationContent: MessageContent[] = [];
-
-        // Add text output first (e.g., from read_texts_and_links)
-        if (result.output) {
-          observationContent.push({
-            type: 'text',
-            text: result.output,
-          });
-        }
-
-        // Add screenshot
-        if (result.base64Image) {
-          observationContent.push({
+    // Add initial screenshot as observation (n1's required format)
+    if (initialScreenshot.base64Image) {
+      conversationMessages.push({
+        role: 'observation',
+        content: [
+          {
             type: 'image_url',
             image_url: {
-              url: `data:image/png;base64,${result.base64Image}`,
+              url: `data:image/png;base64,${initialScreenshot.base64Image}`,
             },
-          });
+          },
+        ],
+      });
+    }
+
+    let iteration = 0;
+    let finalAnswer: string | undefined;
+
+    while (iteration < maxIterations) {
+      iteration++;
+      console.log(`\n=== Iteration ${iteration} ===`);
+
+      // Call the n1 API (no system prompt - n1 uses its own)
+      let response;
+      try {
+        response = await client.chat.completions.create({
+          model,
+          messages: conversationMessages as OpenAI.ChatCompletionMessageParam[],
+          max_tokens: maxTokens,
+          temperature: 0.3,
+        });
+      } catch (apiError) {
+        console.error('API call failed:', apiError);
+        throw apiError;
+      }
+
+      if (!response.choices || response.choices.length === 0) {
+        console.error('No choices in response:', JSON.stringify(response, null, 2));
+        throw new Error('No choices in API response');
+      }
+
+      const assistantMessage = response.choices[0]?.message;
+      if (!assistantMessage) {
+        throw new Error('No response from model');
+      }
+
+      const responseContent = assistantMessage.content || '';
+      console.log('Assistant response:', responseContent);
+
+      // Add assistant message to conversation
+      conversationMessages.push({
+        role: 'assistant',
+        content: responseContent,
+      });
+
+      // Parse the action(s) from the response
+      // n1 returns JSON with "thoughts" and "actions" array
+      const parsed = parseN1Response(responseContent);
+
+      if (!parsed || !parsed.actions || parsed.actions.length === 0) {
+        console.log('No actions found in response, ending loop');
+        break;
+      }
+
+      // Execute each action in the actions array
+      for (const action of parsed.actions) {
+        console.log('Executing action:', action.action_type, action);
+
+        // Check for stop action
+        if (action.action_type === 'stop') {
+          finalAnswer = action.answer;
+          console.log('Stop action received, final answer:', finalAnswer);
+          return { messages: conversationMessages, finalAnswer };
         }
 
-        conversationMessages.push({
-          role: 'observation',
-          content: observationContent,
-        });
-      } else if (result.error) {
-        // If there was an error, add it as text observation
-        conversationMessages.push({
-          role: 'observation',
-          content: [{ type: 'text', text: `Action failed: ${result.error}` }],
-        });
+        // Scale coordinates from n1's 1000x1000 space to actual viewport
+        const scaledAction = scaleCoordinates(action, viewportWidth, viewportHeight);
+
+        // Execute the action
+        let result: ToolResult;
+        try {
+          result = await computerTool.execute(scaledAction);
+        } catch (error) {
+          console.error('Action failed:', error);
+          result = {
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+
+        // After action, add observation with screenshot and optional text output
+        if (result.base64Image || result.output) {
+          const observationContent: MessageContent[] = [];
+
+          // Add text output first (e.g., from read_texts_and_links)
+          if (result.output) {
+            observationContent.push({
+              type: 'text',
+              text: result.output,
+            });
+          }
+
+          // Add screenshot
+          if (result.base64Image) {
+            observationContent.push({
+              type: 'image_url',
+              image_url: {
+                url: `data:image/png;base64,${result.base64Image}`,
+              },
+            });
+          }
+
+          conversationMessages.push({
+            role: 'observation',
+            content: observationContent,
+          });
+        } else if (result.error) {
+          // If there was an error, add it as text observation
+          conversationMessages.push({
+            role: 'observation',
+            content: [{ type: 'text', text: `Action failed: ${result.error}` }],
+          });
+        }
       }
     }
-  }
 
-  if (iteration >= maxIterations) {
-    console.log('Max iterations reached');
-  }
+    if (iteration >= maxIterations) {
+      console.log('Max iterations reached');
+    }
 
-  return {
-    messages: conversationMessages,
-    finalAnswer,
-  };
+    return {
+      messages: conversationMessages,
+      finalAnswer,
+    };
+  } finally {
+    // Clean up playwright connection if used
+    if (playwrightTool) {
+      await playwrightTool.disconnect();
+    }
+  }
 }
 
 /**
