@@ -2,13 +2,17 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
+	"github.com/pkg/browser"
+	"github.com/pquerna/otp/totp"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -86,6 +90,47 @@ type AgentAuthInvocationSubmitInput struct {
 	SSOButton       string
 	SelectedMfaType string
 	Output          string
+}
+
+// AgentAuthRunInput contains all parameters for the automated auth run flow.
+type AgentAuthRunInput struct {
+	Domain           string
+	ProfileName      string
+	Values           map[string]string
+	CredentialName   string
+	SaveCredentialAs string
+	TotpSecret       string
+	ProxyID          string
+	LoginURL         string
+	AllowedDomains   []string
+	Timeout          time.Duration
+	OpenLiveView     bool
+	Output           string
+}
+
+// AgentAuthRunResult is the result of a successful auth run.
+type AgentAuthRunResult struct {
+	ProfileName string `json:"profile_name"`
+	ProfileID   string `json:"profile_id"`
+	Domain      string `json:"domain"`
+	AuthAgentID string `json:"auth_agent_id"`
+}
+
+// AgentAuthRunEvent represents a status update during the auth run (for JSON output).
+type AgentAuthRunEvent struct {
+	Type        string `json:"type"` // status, error, success, waiting
+	Step        string `json:"step,omitempty"`
+	Status      string `json:"status,omitempty"`
+	Message     string `json:"message,omitempty"`
+	LiveViewURL string `json:"live_view_url,omitempty"`
+}
+
+// AgentAuthRunCmd handles the automated auth run flow.
+type AgentAuthRunCmd struct {
+	auth        AgentAuthService
+	invocations AgentAuthInvocationsService
+	profiles    ProfilesService
+	credentials CredentialsService
 }
 
 func (c AgentAuthCmd) Create(ctx context.Context, in AgentAuthCreateInput) error {
@@ -465,6 +510,458 @@ func (c AgentAuthCmd) InvocationSubmit(ctx context.Context, in AgentAuthInvocati
 	return nil
 }
 
+const (
+	totpPeriod            = 30 // TOTP codes are valid for 30-second windows
+	minSecondsRemaining   = 5  // Minimum seconds remaining before we wait for next window
+)
+
+// generateTOTPCode generates a TOTP code from a base32 secret.
+// Waits for a fresh window if needed to ensure enough time to submit the code.
+func generateTOTPCode(secret string) (string, error) {
+	// Check if we have enough time in the current window
+	now := time.Now().Unix()
+	secondsIntoWindow := now % totpPeriod
+	remaining := totpPeriod - secondsIntoWindow
+
+	if remaining < minSecondsRemaining {
+		waitTime := remaining + 1 // Wait until just after the new window starts
+		pterm.Info.Printf("TOTP window has only %ds remaining, waiting %ds for fresh window...\n", remaining, waitTime)
+		time.Sleep(time.Duration(waitTime) * time.Second)
+	}
+
+	// Clean the secret (remove spaces that may be added for readability)
+	cleanSecret := strings.ReplaceAll(strings.ToUpper(secret), " ", "")
+
+	code, err := totp.GenerateCode(cleanSecret, time.Now())
+	if err != nil {
+		return "", fmt.Errorf("failed to generate TOTP code: %w", err)
+	}
+	return code, nil
+}
+
+// Run executes the full automated auth flow: create profile, credential, auth agent, and run invocation to completion.
+func (c AgentAuthRunCmd) Run(ctx context.Context, in AgentAuthRunInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
+	if in.Domain == "" {
+		return fmt.Errorf("--domain is required")
+	}
+	if in.ProfileName == "" {
+		return fmt.Errorf("--profile is required")
+	}
+
+	// Validate that we have credentials to work with
+	if in.CredentialName == "" && len(in.Values) == 0 {
+		return fmt.Errorf("must provide either --credential or --value flags with credentials")
+	}
+
+	jsonOutput := in.Output == "json"
+	emitEvent := func(event AgentAuthRunEvent) {
+		if jsonOutput {
+			data, _ := json.Marshal(event)
+			fmt.Println(string(data))
+		}
+	}
+
+	// Step 1: Find or create the profile
+	if !jsonOutput {
+		pterm.Info.Printf("Looking for profile '%s'...\n", in.ProfileName)
+	}
+	emitEvent(AgentAuthRunEvent{Type: "status", Message: "Looking for profile"})
+
+	var profileID string
+	profile, err := c.profiles.Get(ctx, in.ProfileName)
+	if err != nil {
+		if !util.IsNotFound(err) {
+			return util.CleanedUpSdkError{Err: err}
+		}
+		// Profile not found, create it
+		if !jsonOutput {
+			pterm.Info.Printf("Creating profile '%s'...\n", in.ProfileName)
+		}
+		emitEvent(AgentAuthRunEvent{Type: "status", Message: "Creating profile"})
+
+		newProfile, err := c.profiles.New(ctx, kernel.ProfileNewParams{
+			Name: kernel.Opt(in.ProfileName),
+		})
+		if err != nil {
+			return util.CleanedUpSdkError{Err: err}
+		}
+		profileID = newProfile.ID
+		if !jsonOutput {
+			pterm.Success.Printf("Created profile: %s\n", newProfile.ID)
+		}
+	} else {
+		profileID = profile.ID
+		if !jsonOutput {
+			pterm.Success.Printf("Found existing profile: %s\n", profile.ID)
+		}
+	}
+
+	// Step 2: Handle credentials
+	var credentialName string
+	if in.CredentialName != "" {
+		// Using existing credential
+		credentialName = in.CredentialName
+		if !jsonOutput {
+			pterm.Info.Printf("Using existing credential '%s'\n", credentialName)
+		}
+		emitEvent(AgentAuthRunEvent{Type: "status", Message: "Using existing credential"})
+	} else if in.SaveCredentialAs != "" {
+		// Create new credential with provided values
+		credentialName = in.SaveCredentialAs
+		if !jsonOutput {
+			pterm.Info.Printf("Creating credential '%s'...\n", credentialName)
+		}
+		emitEvent(AgentAuthRunEvent{Type: "status", Message: "Creating credential"})
+
+		params := kernel.CredentialNewParams{
+			CreateCredentialRequest: kernel.CreateCredentialRequestParam{
+				Name:   credentialName,
+				Domain: in.Domain,
+				Values: in.Values,
+			},
+		}
+		if in.TotpSecret != "" {
+			params.CreateCredentialRequest.TotpSecret = kernel.Opt(in.TotpSecret)
+		}
+
+		_, err := c.credentials.New(ctx, params)
+		if err != nil {
+			return util.CleanedUpSdkError{Err: err}
+		}
+		if !jsonOutput {
+			pterm.Success.Printf("Created credential: %s\n", credentialName)
+		}
+	}
+
+	// Step 3: Create auth agent
+	if !jsonOutput {
+		pterm.Info.Printf("Creating auth agent for %s...\n", in.Domain)
+	}
+	emitEvent(AgentAuthRunEvent{Type: "status", Message: "Creating auth agent"})
+
+	agentParams := kernel.AgentAuthNewParams{
+		AuthAgentCreateRequest: kernel.AuthAgentCreateRequestParam{
+			Domain:      in.Domain,
+			ProfileName: in.ProfileName,
+		},
+	}
+	if credentialName != "" {
+		agentParams.AuthAgentCreateRequest.CredentialName = kernel.Opt(credentialName)
+	}
+	if in.LoginURL != "" {
+		agentParams.AuthAgentCreateRequest.LoginURL = kernel.Opt(in.LoginURL)
+	}
+	if len(in.AllowedDomains) > 0 {
+		agentParams.AuthAgentCreateRequest.AllowedDomains = in.AllowedDomains
+	}
+	if in.ProxyID != "" {
+		agentParams.AuthAgentCreateRequest.Proxy = kernel.AuthAgentCreateRequestProxyParam{
+			ProxyID: kernel.Opt(in.ProxyID),
+		}
+	}
+
+	agent, err := c.auth.New(ctx, agentParams)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	if !jsonOutput {
+		pterm.Success.Printf("Created auth agent: %s\n", agent.ID)
+	}
+
+	// Step 4: Create invocation
+	if !jsonOutput {
+		pterm.Info.Println("Starting authentication flow...")
+	}
+	emitEvent(AgentAuthRunEvent{Type: "status", Message: "Starting authentication"})
+
+	invocationParams := kernel.AgentAuthInvocationNewParams{
+		AuthAgentInvocationCreateRequest: kernel.AuthAgentInvocationCreateRequestParam{
+			AuthAgentID: agent.ID,
+		},
+	}
+	if in.SaveCredentialAs != "" && credentialName == "" {
+		// Save credential during invocation if we have values but didn't create upfront
+		invocationParams.AuthAgentInvocationCreateRequest.SaveCredentialAs = kernel.Opt(in.SaveCredentialAs)
+	}
+
+	invocation, err := c.invocations.New(ctx, invocationParams)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	// Step 5: Polling loop
+	deadline := time.Now().Add(in.Timeout)
+	pollInterval := 2 * time.Second
+	var lastStep string
+	liveViewShown := false
+	fieldsSubmitted := make(map[string]bool)
+
+	if !jsonOutput {
+		pterm.Info.Println("Waiting for authentication to complete...")
+	}
+
+	for {
+		if time.Now().After(deadline) {
+			emitEvent(AgentAuthRunEvent{Type: "error", Message: "Timeout waiting for authentication"})
+			return fmt.Errorf("timeout waiting for authentication to complete")
+		}
+
+		resp, err := c.invocations.Get(ctx, invocation.InvocationID)
+		if err != nil {
+			return util.CleanedUpSdkError{Err: err}
+		}
+
+		// Emit status update if step changed
+		if string(resp.Step) != lastStep {
+			lastStep = string(resp.Step)
+			emitEvent(AgentAuthRunEvent{
+				Type:        "status",
+				Step:        lastStep,
+				Status:      string(resp.Status),
+				LiveViewURL: resp.LiveViewURL,
+			})
+			if !jsonOutput {
+				pterm.Info.Printf("Step: %s (Status: %s)\n", resp.Step, resp.Status)
+			}
+		}
+
+		// Check terminal states
+		switch resp.Status {
+		case kernel.AgentAuthInvocationResponseStatusSuccess:
+			if !jsonOutput {
+				pterm.Success.Println("Authentication successful!")
+				pterm.Success.Printf("Profile '%s' is now authenticated for %s\n", in.ProfileName, in.Domain)
+			}
+			result := AgentAuthRunResult{
+				ProfileName: in.ProfileName,
+				ProfileID:   profileID,
+				Domain:      in.Domain,
+				AuthAgentID: agent.ID,
+			}
+			if jsonOutput {
+				emitEvent(AgentAuthRunEvent{Type: "success", Message: "Authentication successful"})
+				data, err := json.MarshalIndent(result, "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Println(string(data))
+				return nil
+			}
+			return nil
+
+		case kernel.AgentAuthInvocationResponseStatusFailed:
+			errMsg := "Authentication failed"
+			if resp.ErrorMessage != "" {
+				errMsg = resp.ErrorMessage
+			}
+			emitEvent(AgentAuthRunEvent{Type: "error", Message: errMsg})
+			return fmt.Errorf("authentication failed: %s", errMsg)
+
+		case kernel.AgentAuthInvocationResponseStatusExpired:
+			emitEvent(AgentAuthRunEvent{Type: "error", Message: "Authentication session expired"})
+			return fmt.Errorf("authentication session expired")
+
+		case kernel.AgentAuthInvocationResponseStatusCanceled:
+			emitEvent(AgentAuthRunEvent{Type: "error", Message: "Authentication was canceled"})
+			return fmt.Errorf("authentication was canceled")
+		}
+
+		// Handle awaiting_input step
+		if resp.Step == kernel.AgentAuthInvocationResponseStepAwaitingInput {
+			// Check for pending fields
+			if len(resp.PendingFields) > 0 {
+				// Build field values to submit
+				submitValues := make(map[string]string)
+				missingFields := []string{}
+
+				for _, field := range resp.PendingFields {
+					fieldName := field.Name
+					// Check if we already submitted this field
+					if fieldsSubmitted[fieldName] {
+						continue
+					}
+
+					// Try to find a matching value
+					if val, ok := in.Values[fieldName]; ok {
+						submitValues[fieldName] = val
+					} else {
+						// Check common field name aliases
+						matched := false
+						aliases := map[string][]string{
+							"identifier": {"username", "email", "login"},
+							"username":   {"identifier", "email", "login"},
+							"email":      {"identifier", "username", "login"},
+							"password":   {"pass", "passwd"},
+						}
+						if alts, ok := aliases[fieldName]; ok {
+							for _, alt := range alts {
+								if val, ok := in.Values[alt]; ok {
+									submitValues[fieldName] = val
+									matched = true
+									break
+								}
+							}
+						}
+
+						// Check if this looks like a TOTP/verification code field
+						if !matched && in.TotpSecret != "" {
+							fieldLower := strings.ToLower(fieldName)
+							totpPatterns := []string{"totp", "code", "verification", "otp", "2fa", "mfa", "authenticator", "token"}
+							for _, pattern := range totpPatterns {
+								if strings.Contains(fieldLower, pattern) {
+									code, err := generateTOTPCode(in.TotpSecret)
+									if err == nil {
+										submitValues[fieldName] = code
+										matched = true
+										if !jsonOutput {
+											pterm.Info.Printf("Generated TOTP code for field: %s\n", fieldName)
+										}
+									}
+									break
+								}
+							}
+						}
+
+						if !matched {
+							missingFields = append(missingFields, fieldName)
+						}
+					}
+				}
+
+				// Submit if we have values
+				if len(submitValues) > 0 {
+					if !jsonOutput {
+						var fieldNames []string
+						for k := range submitValues {
+							fieldNames = append(fieldNames, k)
+						}
+						pterm.Info.Printf("Submitting fields: %s\n", strings.Join(fieldNames, ", "))
+					}
+
+					submitParams := kernel.AgentAuthInvocationSubmitParams{
+						OfFieldValues: &kernel.AgentAuthInvocationSubmitParamsBodyFieldValues{
+							FieldValues: submitValues,
+						},
+					}
+					_, err := c.invocations.Submit(ctx, invocation.InvocationID, submitParams)
+					if err != nil {
+						return util.CleanedUpSdkError{Err: err}
+					}
+
+					// Mark fields as submitted
+					for k := range submitValues {
+						fieldsSubmitted[k] = true
+					}
+				}
+
+				// Show live view if we have missing fields
+				if len(missingFields) > 0 && !liveViewShown && resp.LiveViewURL != "" {
+					liveViewShown = true
+					emitEvent(AgentAuthRunEvent{
+						Type:        "waiting",
+						Message:     fmt.Sprintf("Need human input for: %s", strings.Join(missingFields, ", ")),
+						LiveViewURL: resp.LiveViewURL,
+					})
+					if !jsonOutput {
+						pterm.Warning.Printf("Missing values for fields: %s\n", strings.Join(missingFields, ", "))
+						pterm.Info.Printf("Live view: %s\n", resp.LiveViewURL)
+					}
+					if in.OpenLiveView {
+						_ = browser.OpenURL(resp.LiveViewURL)
+					}
+				}
+			}
+
+			// Check for MFA options
+			if len(resp.MfaOptions) > 0 {
+				// Check if TOTP is available and we have a secret
+				hasTOTP := false
+				for _, opt := range resp.MfaOptions {
+					if opt.Type == "totp" {
+						hasTOTP = true
+						break
+					}
+				}
+
+				if hasTOTP && in.TotpSecret != "" {
+					// Generate and submit TOTP code
+					code, err := generateTOTPCode(in.TotpSecret)
+					if err != nil {
+						return err
+					}
+
+					if !jsonOutput {
+						pterm.Info.Println("Submitting TOTP code...")
+					}
+
+					submitParams := kernel.AgentAuthInvocationSubmitParams{
+						OfFieldValues: &kernel.AgentAuthInvocationSubmitParamsBodyFieldValues{
+							FieldValues: map[string]string{"totp": code},
+						},
+					}
+					_, err = c.invocations.Submit(ctx, invocation.InvocationID, submitParams)
+					if err != nil {
+						return util.CleanedUpSdkError{Err: err}
+					}
+				} else if !liveViewShown && resp.LiveViewURL != "" {
+					// Need human for MFA
+					liveViewShown = true
+					var optTypes []string
+					for _, opt := range resp.MfaOptions {
+						optTypes = append(optTypes, opt.Type)
+					}
+					emitEvent(AgentAuthRunEvent{
+						Type:        "waiting",
+						Message:     fmt.Sprintf("MFA required: %s", strings.Join(optTypes, ", ")),
+						LiveViewURL: resp.LiveViewURL,
+					})
+					if !jsonOutput {
+						pterm.Warning.Printf("MFA required. Options: %s\n", strings.Join(optTypes, ", "))
+						pterm.Info.Printf("Complete MFA at: %s\n", resp.LiveViewURL)
+					}
+					if in.OpenLiveView {
+						_ = browser.OpenURL(resp.LiveViewURL)
+					}
+				}
+			}
+		}
+
+		// Handle awaiting_external_action step
+		if resp.Step == kernel.AgentAuthInvocationResponseStepAwaitingExternalAction && !liveViewShown {
+			liveViewShown = true
+			msg := "External action required"
+			if resp.ExternalActionMessage != "" {
+				msg = resp.ExternalActionMessage
+			}
+			emitEvent(AgentAuthRunEvent{
+				Type:        "waiting",
+				Message:     msg,
+				LiveViewURL: resp.LiveViewURL,
+			})
+			if !jsonOutput {
+				pterm.Warning.Printf("%s\n", msg)
+				if resp.LiveViewURL != "" {
+					pterm.Info.Printf("Live view: %s\n", resp.LiveViewURL)
+				}
+			}
+			if in.OpenLiveView && resp.LiveViewURL != "" {
+				_ = browser.OpenURL(resp.LiveViewURL)
+			}
+		}
+
+		// Wait before next poll
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pollInterval):
+		}
+	}
+}
+
 // --- Cobra wiring ---
 
 var agentsCmd = &cobra.Command{
@@ -554,6 +1051,46 @@ Examples:
 	RunE: runAgentsAuthInvocationsSubmit,
 }
 
+var agentsAuthRunCmd = &cobra.Command{
+	Use:   "run",
+	Short: "Run a complete auth flow",
+	Long: `Run a complete authentication flow for a domain, automatically handling credential submission and polling.
+
+This command orchestrates the entire agent auth process:
+1. Creates or finds a profile with the given name
+2. Creates a credential if --save-credential-as is specified
+3. Creates an auth agent linking domain, profile, and credential
+4. Starts an invocation and polls until completion
+5. Auto-submits credentials when prompted
+6. Auto-submits TOTP codes if --totp-secret is provided
+7. Shows live view URL when human intervention is needed
+
+Examples:
+  # Basic auth with inline credentials
+  kernel agents auth run --domain github.com --profile my-github \
+    --value username=myuser --value password=mypass
+
+  # With TOTP for automatic 2FA
+  kernel agents auth run --domain github.com --profile my-github \
+    --value username=myuser --value password=mypass \
+    --totp-secret JBSWY3DPEHPK3PXP
+
+  # Save credentials for future re-auth
+  kernel agents auth run --domain github.com --profile my-github \
+    --value username=myuser --value password=mypass \
+    --save-credential-as github-creds
+
+  # Re-use existing saved credential
+  kernel agents auth run --domain github.com --profile my-github \
+    --credential github-creds
+
+  # Auto-open browser for human intervention
+  kernel agents auth run --domain github.com --profile my-github \
+    --credential github-creds --open`,
+	Args: cobra.NoArgs,
+	RunE: runAgentsAuthRun,
+}
+
 func init() {
 	// Auth create flags
 	agentsAuthCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
@@ -599,6 +1136,22 @@ func init() {
 	agentsAuthInvocationsSubmitCmd.Flags().String("sso-button", "", "Selector of SSO button to click")
 	agentsAuthInvocationsSubmitCmd.Flags().String("mfa-type", "", "MFA type to select (sms, call, email, totp, push, security_key)")
 
+	// Auth run flags
+	agentsAuthRunCmd.Flags().StringP("output", "o", "", "Output format: json for JSONL events")
+	agentsAuthRunCmd.Flags().String("domain", "", "Target domain for authentication (required)")
+	agentsAuthRunCmd.Flags().String("profile", "", "Profile name to use/create (required)")
+	agentsAuthRunCmd.Flags().StringArray("value", []string{}, "Field name=value pair (e.g., --value username=foo --value password=bar)")
+	agentsAuthRunCmd.Flags().String("credential", "", "Existing credential name to use")
+	agentsAuthRunCmd.Flags().String("save-credential-as", "", "Save provided credentials under this name")
+	agentsAuthRunCmd.Flags().String("totp-secret", "", "Base32 TOTP secret for automatic 2FA")
+	agentsAuthRunCmd.Flags().String("proxy-id", "", "Proxy ID to use")
+	agentsAuthRunCmd.Flags().String("login-url", "", "Custom login page URL")
+	agentsAuthRunCmd.Flags().StringSlice("allowed-domain", []string{}, "Additional allowed domains")
+	agentsAuthRunCmd.Flags().Duration("timeout", 5*time.Minute, "Maximum time to wait for auth completion")
+	agentsAuthRunCmd.Flags().Bool("open", false, "Open live view URL in browser when human intervention needed")
+	_ = agentsAuthRunCmd.MarkFlagRequired("domain")
+	_ = agentsAuthRunCmd.MarkFlagRequired("profile")
+
 	// Wire up commands
 	agentsAuthInvocationsCmd.AddCommand(agentsAuthInvocationsCreateCmd)
 	agentsAuthInvocationsCmd.AddCommand(agentsAuthInvocationsGetCmd)
@@ -610,6 +1163,7 @@ func init() {
 	agentsAuthCmd.AddCommand(agentsAuthListCmd)
 	agentsAuthCmd.AddCommand(agentsAuthDeleteCmd)
 	agentsAuthCmd.AddCommand(agentsAuthInvocationsCmd)
+	agentsAuthCmd.AddCommand(agentsAuthRunCmd)
 
 	agentsCmd.AddCommand(agentsAuthCmd)
 }
@@ -746,5 +1300,58 @@ func runAgentsAuthInvocationsSubmit(cmd *cobra.Command, args []string) error {
 		SSOButton:       ssoButton,
 		SelectedMfaType: mfaType,
 		Output:          output,
+	})
+}
+
+func runAgentsAuthRun(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+
+	output, _ := cmd.Flags().GetString("output")
+	domain, _ := cmd.Flags().GetString("domain")
+	profileName, _ := cmd.Flags().GetString("profile")
+	valuePairs, _ := cmd.Flags().GetStringArray("value")
+	credentialName, _ := cmd.Flags().GetString("credential")
+	saveCredentialAs, _ := cmd.Flags().GetString("save-credential-as")
+	totpSecret, _ := cmd.Flags().GetString("totp-secret")
+	proxyID, _ := cmd.Flags().GetString("proxy-id")
+	loginURL, _ := cmd.Flags().GetString("login-url")
+	allowedDomains, _ := cmd.Flags().GetStringSlice("allowed-domain")
+	timeout, _ := cmd.Flags().GetDuration("timeout")
+	openLiveView, _ := cmd.Flags().GetBool("open")
+
+	// Parse value pairs into map
+	values := make(map[string]string)
+	for _, pair := range valuePairs {
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid value format: %s (expected key=value)", pair)
+		}
+		values[parts[0]] = parts[1]
+	}
+
+	authSvc := client.Agents.Auth
+	profilesSvc := client.Profiles
+	credentialsSvc := client.Credentials
+
+	c := AgentAuthRunCmd{
+		auth:        &authSvc,
+		invocations: &authSvc.Invocations,
+		profiles:    &profilesSvc,
+		credentials: &credentialsSvc,
+	}
+
+	return c.Run(cmd.Context(), AgentAuthRunInput{
+		Domain:           domain,
+		ProfileName:      profileName,
+		Values:           values,
+		CredentialName:   credentialName,
+		SaveCredentialAs: saveCredentialAs,
+		TotpSecret:       totpSecret,
+		ProxyID:          proxyID,
+		LoginURL:         loginURL,
+		AllowedDomains:   allowedDomains,
+		Timeout:          timeout,
+		OpenLiveView:     openLiveView,
+		Output:           output,
 	})
 }
