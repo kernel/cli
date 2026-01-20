@@ -320,20 +320,20 @@ class ComputerTool:
 
     async def _handle_read_texts_and_links(self, action: N1Action) -> ToolResult:
         """
-        Read texts and links using Playwright's accessibility tree.
+        Read texts and links using Playwright's _snapshotForAI().
         Per n1 docs this is "implemented as an external VLM call" - we use
-        Kernel's Playwright Execution API for the accessibility tree and
+        Kernel's Playwright Execution API for the AI snapshot and
         Computer Controls API for the screenshot.
         """
         try:
-            # Get accessibility tree via Playwright Execution API
+            # Get AI snapshot via Playwright Execution API
             result = self.kernel.browsers.playwright.execute(
                 self.session_id,
                 code="""
+                    const snapshot = await page._snapshotForAI();
                     const url = page.url();
                     const title = await page.title();
-                    const accessibilityTree = await page.accessibility.snapshot();
-                    return { url, title, accessibilityTree };
+                    return { url, title, snapshot };
                 """,
                 timeout_sec=30
             )
@@ -348,7 +348,7 @@ class ComputerTool:
                     "output": json.dumps({
                         "url": data.get("url"),
                         "title": data.get("title"),
-                        "accessibilityTree": data.get("accessibilityTree")
+                        "snapshot": data.get("snapshot")
                     }, indent=2)
                 }
 

@@ -351,22 +351,22 @@ export class ComputerTool {
   }
 
   /**
-   * Read texts and links using Playwright's accessibility tree.
+   * Read texts and links using Playwright's _snapshotForAI().
    * Per n1 docs this is "implemented as an external VLM call" - we use
-   * Kernel's Playwright Execution API for the accessibility tree and
+   * Kernel's Playwright Execution API for the AI snapshot and
    * Computer Controls API for the screenshot.
    */
   private async handleReadTextsAndLinks(): Promise<ToolResult> {
     try {
-      // Get accessibility tree via Playwright Execution API
+      // Get AI snapshot via Playwright Execution API
       const result = await this.kernel.browsers.playwright.execute(
         this.sessionId,
         {
           code: `
+            const snapshot = await page._snapshotForAI();
             const url = page.url();
             const title = await page.title();
-            const accessibilityTree = await page.accessibility.snapshot();
-            return { url, title, accessibilityTree };
+            return { url, title, snapshot };
           `,
           timeout_sec: 30
         }
@@ -376,15 +376,15 @@ export class ComputerTool {
       const screenshotResult = await this.screenshot();
 
       if (result.success && result.result) {
-        const { url, title, accessibilityTree } = result.result as {
+        const { url, title, snapshot } = result.result as {
           url: string;
           title: string;
-          accessibilityTree: unknown;
+          snapshot: string;
         };
 
         return {
           base64Image: screenshotResult.base64Image,
-          output: JSON.stringify({ url, title, accessibilityTree }, null, 2)
+          output: JSON.stringify({ url, title, snapshot }, null, 2)
         };
       }
 
