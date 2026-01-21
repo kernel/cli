@@ -18,12 +18,11 @@ import (
 )
 
 const (
-	defaultLocalhostURL = "http://localhost:8000"
-	defaultDirMode      = 0755
-	defaultFileMode     = 0644
-	// Current: v0.6.0 release (e3d76846b64be03ae00e2b9e53b697beab81541d) - Dec 19, 2025
-	webBotAuthCommit      = "e3d76846b64be03ae00e2b9e53b697beab81541d"
-	webBotAuthDownloadURL = "https://github.com/cloudflare/web-bot-auth/archive/" + webBotAuthCommit + ".zip"
+	defaultLocalhostURL   = "http://localhost:8000"
+	defaultDirMode        = 0755
+	defaultFileMode       = 0644
+	webBotAuthCommit      = "3f437a1fb17dcfd31a33b268f2f9447a83122057"
+	webBotAuthDownloadURL = "https://github.com/kernel/web-bot-auth/archive/" + webBotAuthCommit + ".zip"
 	downloadTimeout       = 5 * time.Minute
 	// defaultWebBotAuthKey is the RFC9421 test key that works with Cloudflare's test site
 	// https://developers.cloudflare.com/bots/reference/bot-verification/web-bot-auth/
@@ -31,11 +30,12 @@ const (
 )
 
 type ExtensionsBuildWebBotAuthInput struct {
-	Output        string
-	HostURL       string
-	KeyPath       string // Path to user's JWK or PEM file (optional, defaults to RFC9421 test key)
-	ExtensionName string // Name for the extension paths (defaults to "web-bot-auth")
-	AutoUpload    bool   // Whether the extension will be automatically uploaded after building
+	Output            string
+	HostURL           string
+	KeyPath           string // Path to user's JWK or PEM file (optional, defaults to RFC9421 test key)
+	ExtensionName     string // Name for the extension paths (defaults to "web-bot-auth")
+	AutoUpload        bool   // Whether the extension will be automatically uploaded after building
+	SignatureAgentURL string // URL of the signature agent
 }
 
 // BuildWebBotAuthOutput contains the result of building the extension
@@ -100,7 +100,7 @@ func BuildWebBotAuth(ctx context.Context, in ExtensionsBuildWebBotAuthInput) (*B
 	}
 
 	// Build extension
-	extensionID, err := buildWebBotAuthExtension(ctx, browserExtDir, in.HostURL, keyData, in.ExtensionName)
+	extensionID, err := buildWebBotAuthExtension(ctx, browserExtDir, in.HostURL, keyData, in.ExtensionName, in.SignatureAgentURL)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +219,7 @@ func downloadAndExtractWebBotAuth(ctx context.Context) (browserExtDir string, cl
 
 // buildWebBotAuthExtension modifies templates, builds the extension, and returns the extension ID
 // extensionName is used for URL paths (e.g., "web-bot-auth") instead of the Chrome extension ID
-func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, keyData, extensionName string) (string, error) {
+func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, keyData, extensionName, signatureAgentURL string) (string, error) {
 	// Normalize hostURL by removing trailing slashes to prevent double slashes in URLs
 	hostURL = strings.TrimRight(hostURL, "/")
 
@@ -227,11 +227,18 @@ func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, keyDa
 	pterm.Info.Println("Validating key...")
 	var pemData []byte
 	var err error
+	// JWK data is used for keyid signing in background.ts
+	var jwkData string
 
 	if util.IsPEMKey(keyData) {
 		// Key is already in PEM format, validate it
 		if err := util.ValidatePEMKey(keyData); err != nil {
 			return "", fmt.Errorf("failed to validate PEM key: %w", err)
+		}
+
+		jwkData, err = util.ConvertPEMToJWK(keyData)
+		if err != nil {
+			return "", fmt.Errorf("failed to convert PEM to JWK: %w", err)
 		}
 		pemData = []byte(keyData)
 	} else {
@@ -240,6 +247,7 @@ func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, keyDa
 		if err != nil {
 			return "", fmt.Errorf("failed to convert JWK to PEM: %w", err)
 		}
+		jwkData = keyData
 	}
 
 	privateKeyPath := filepath.Join(browserExtDir, "private_key.pem")
@@ -247,6 +255,14 @@ func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, keyDa
 		return "", fmt.Errorf("failed to write private key: %w", err)
 	}
 	pterm.Success.Println("Private key written successfully")
+
+	// Inject the JWK into background.ts (replacing the hardcoded test key)
+	pterm.Info.Println("Injecting custom JWK into background.ts...")
+	backgroundTsPath := filepath.Join(browserExtDir, "src", "background.ts")
+	if err := injectJWKIntoBackgroundTs(backgroundTsPath, jwkData); err != nil {
+		return "", fmt.Errorf("failed to inject JWK: %w", err)
+	}
+	pterm.Success.Println("Custom JWK injected successfully")
 
 	// Modify template files
 	pterm.Info.Println("Modifying templates with host URL...")
@@ -293,6 +309,7 @@ func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, keyDa
 	pterm.Info.Println("Building extension...")
 	npmBuild := exec.CommandContext(ctx, "npm", "run", "build:chrome")
 	npmBuild.Dir = browserExtDir
+	npmBuild.Env = append(os.Environ(), "SIGNATURE_AGENT_URL="+signatureAgentURL)
 	npmBuild.Stdout = os.Stdout
 	npmBuild.Stderr = os.Stderr
 	if err := npmBuild.Run(); err != nil {
@@ -303,6 +320,7 @@ func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, keyDa
 	pterm.Info.Println("Bundling extension...")
 	npmBundle := exec.CommandContext(ctx, "npm", "run", "bundle:chrome")
 	npmBundle.Dir = browserExtDir
+	npmBundle.Env = append(os.Environ(), "SIGNATURE_AGENT_URL="+signatureAgentURL)
 	var bundleOutput bytes.Buffer
 	npmBundle.Stdout = io.MultiWriter(os.Stdout, &bundleOutput)
 	npmBundle.Stderr = os.Stderr
@@ -345,6 +363,34 @@ func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, keyDa
 	}
 
 	return extensionID, nil
+}
+
+// injectJWKIntoBackgroundTs replaces the hardcoded test key import with the custom JWK
+func injectJWKIntoBackgroundTs(backgroundTsPath, jwkData string) error {
+	content, err := os.ReadFile(backgroundTsPath)
+	if err != nil {
+		return fmt.Errorf("failed to read background.ts: %w", err)
+	}
+
+	contentStr := string(content)
+
+	// Replace the import line with an inline constant
+	// Find: import jwk from "../../rfc9421-keys/ed25519.json" assert { type: "json" };
+	// Replace with: const jwk = {your-jwk-here};
+	searchPattern := `import jwk from "../../rfc9421-keys/ed25519.json" assert { type: "json" };`
+	replacement := fmt.Sprintf("const jwk = %s;", jwkData)
+
+	if !strings.Contains(contentStr, searchPattern) {
+		return fmt.Errorf("could not find JWK import statement in background.ts")
+	}
+
+	contentStr = strings.Replace(contentStr, searchPattern, replacement, 1)
+
+	if err := os.WriteFile(backgroundTsPath, []byte(contentStr), 0644); err != nil {
+		return fmt.Errorf("failed to write modified background.ts: %w", err)
+	}
+
+	return nil
 }
 
 // copyExtensionArtifacts copies built extension files to the output directory

@@ -11,71 +11,88 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func (p ProxyCmd) Get(ctx context.Context, in ProxyGetInput) error {
+func (p ProxyCmd) Check(ctx context.Context, in ProxyCheckInput) error {
 	if in.Output != "" && in.Output != "json" {
 		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
-	item, err := p.proxies.Get(ctx, in.ID)
+	if in.Output != "json" {
+		pterm.Info.Printf("Running health check on proxy %s...\n", in.ID)
+	}
+
+	proxy, err := p.proxies.Check(ctx, in.ID)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
 	if in.Output == "json" {
-		return util.PrintPrettyJSON(item)
+		return util.PrintPrettyJSON(proxy)
 	}
 
-	// Display proxy details
+	// Display proxy details after check
 	rows := pterm.TableData{{"Property", "Value"}}
 
-	rows = append(rows, []string{"ID", item.ID})
+	rows = append(rows, []string{"ID", proxy.ID})
 
-	name := item.Name
+	name := proxy.Name
 	if name == "" {
 		name = "-"
 	}
 	rows = append(rows, []string{"Name", name})
-	rows = append(rows, []string{"Type", string(item.Type)})
+	rows = append(rows, []string{"Type", string(proxy.Type)})
 
 	// Display protocol (default to https if not set)
-	protocol := string(item.Protocol)
+	protocol := string(proxy.Protocol)
 	if protocol == "" {
 		protocol = "https"
 	}
 	rows = append(rows, []string{"Protocol", protocol})
 
+	// Display IP address if available
+	if proxy.IPAddress != "" {
+		rows = append(rows, []string{"IP Address", proxy.IPAddress})
+	}
+
 	// Display type-specific config details
-	rows = append(rows, getProxyConfigRows(item)...)
+	rows = append(rows, getProxyCheckConfigRows(proxy)...)
 
 	// Display status with color
-	status := string(item.Status)
+	status := string(proxy.Status)
 	if status == "" {
 		status = "-"
-	} else if status == "available" {
+	} else if proxy.Status == kernel.ProxyCheckResponseStatusAvailable {
 		status = pterm.Green(status)
-	} else if status == "unavailable" {
+	} else if proxy.Status == kernel.ProxyCheckResponseStatusUnavailable {
 		status = pterm.Red(status)
 	}
 	rows = append(rows, []string{"Status", status})
 
 	// Display last checked timestamp
-	lastChecked := util.FormatLocal(item.LastChecked)
+	lastChecked := util.FormatLocal(proxy.LastChecked)
 	rows = append(rows, []string{"Last Checked", lastChecked})
 
 	table.PrintTableNoPad(rows, true)
+
+	// Print a summary message
+	if proxy.Status == kernel.ProxyCheckResponseStatusAvailable {
+		pterm.Success.Println("Proxy health check passed")
+	} else {
+		pterm.Warning.Println("Proxy health check failed - proxy is unavailable")
+	}
+
 	return nil
 }
 
-func getProxyConfigRows(proxy *kernel.ProxyGetResponse) [][]string {
+func getProxyCheckConfigRows(proxy *kernel.ProxyCheckResponse) [][]string {
 	var rows [][]string
 	config := &proxy.Config
 
 	switch proxy.Type {
-	case kernel.ProxyGetResponseTypeDatacenter, kernel.ProxyGetResponseTypeIsp:
+	case kernel.ProxyCheckResponseTypeDatacenter, kernel.ProxyCheckResponseTypeIsp:
 		if config.Country != "" {
 			rows = append(rows, []string{"Country", config.Country})
 		}
-	case kernel.ProxyGetResponseTypeResidential:
+	case kernel.ProxyCheckResponseTypeResidential:
 		if config.Country != "" {
 			rows = append(rows, []string{"Country", config.Country})
 		}
@@ -94,7 +111,7 @@ func getProxyConfigRows(proxy *kernel.ProxyGetResponse) [][]string {
 		if config.Os != "" {
 			rows = append(rows, []string{"OS", config.Os})
 		}
-	case kernel.ProxyGetResponseTypeMobile:
+	case kernel.ProxyCheckResponseTypeMobile:
 		if config.Country != "" {
 			rows = append(rows, []string{"Country", config.Country})
 		}
@@ -113,7 +130,7 @@ func getProxyConfigRows(proxy *kernel.ProxyGetResponse) [][]string {
 		if config.Carrier != "" {
 			rows = append(rows, []string{"Carrier", config.Carrier})
 		}
-	case kernel.ProxyGetResponseTypeCustom:
+	case kernel.ProxyCheckResponseTypeCustom:
 		if config.Host != "" {
 			rows = append(rows, []string{"Host", config.Host})
 		}
@@ -133,10 +150,10 @@ func getProxyConfigRows(proxy *kernel.ProxyGetResponse) [][]string {
 	return rows
 }
 
-func runProxiesGet(cmd *cobra.Command, args []string) error {
+func runProxiesCheck(cmd *cobra.Command, args []string) error {
 	client := util.GetKernelClient(cmd)
 	output, _ := cmd.Flags().GetString("output")
 	svc := client.Proxies
 	p := ProxyCmd{proxies: &svc}
-	return p.Get(cmd.Context(), ProxyGetInput{ID: args[0], Output: output})
+	return p.Check(cmd.Context(), ProxyCheckInput{ID: args[0], Output: output})
 }

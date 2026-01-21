@@ -86,3 +86,50 @@ func ConvertJWKToPEM(jwkJSON string) ([]byte, error) {
 
 	return pem.EncodeToMemory(pemBlock), nil
 }
+
+// ConvertPEMToJWK converts an Ed25519 PEM private key to JWK format
+func ConvertPEMToJWK(pemData string) (string, error) {
+	// Decode PEM block
+	block, _ := pem.Decode([]byte(pemData))
+	if block == nil {
+		return "", fmt.Errorf("failed to decode PEM block")
+	}
+
+	if block.Type != "PRIVATE KEY" {
+		return "", fmt.Errorf("invalid PEM type: expected PRIVATE KEY, got %s", block.Type)
+	}
+
+	// Parse PKCS#8 private key
+	privateKeyInterface, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse PKCS#8 private key: %w", err)
+	}
+
+	// Ensure it's an Ed25519 key
+	privateKey, ok := privateKeyInterface.(ed25519.PrivateKey)
+	if !ok {
+		return "", fmt.Errorf("invalid key type: expected Ed25519 private key, got %T", privateKeyInterface)
+	}
+
+	// Extract seed (first 32 bytes of Ed25519 private key)
+	seed := privateKey.Seed()
+
+	// Extract public key (last 32 bytes of Ed25519 private key)
+	publicKey := privateKey.Public().(ed25519.PublicKey)
+
+	// Encode to base64url (without padding)
+	jwk := jwkKey{
+		Kty: "OKP",
+		Crv: "Ed25519",
+		D:   base64.RawURLEncoding.EncodeToString(seed),
+		X:   base64.RawURLEncoding.EncodeToString(publicKey),
+	}
+
+	// Marshal to JSON
+	jwkJSON, err := json.Marshal(jwk)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal JWK: %w", err)
+	}
+
+	return string(jwkJSON), nil
+}

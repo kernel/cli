@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -44,16 +43,11 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 	}
 
 	if in.Output == "json" {
-		if pools == nil {
+		if pools == nil || len(*pools) == 0 {
 			fmt.Println("[]")
 			return nil
 		}
-		bs, err := json.MarshalIndent(*pools, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSONSlice(*pools)
 	}
 
 	if pools == nil || len(*pools) == 0 {
@@ -155,12 +149,7 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 	}
 
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(pool, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(pool)
 	}
 
 	if pool.Name != "" {
@@ -187,12 +176,7 @@ func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error
 	}
 
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(pool, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(pool)
 	}
 
 	cfg := pool.BrowserPoolConfig
@@ -301,12 +285,7 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 	}
 
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(pool, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(pool)
 	}
 
 	if pool.Name != "" {
@@ -364,12 +343,7 @@ func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInpu
 	}
 
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(resp, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(resp)
 	}
 
 	tableData := pterm.TableData{

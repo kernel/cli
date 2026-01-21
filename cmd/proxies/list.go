@@ -2,7 +2,6 @@ package proxies
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -32,12 +31,7 @@ func (p ProxyCmd) List(ctx context.Context, in ProxyListInput) error {
 			fmt.Println("[]")
 			return nil
 		}
-		bs, err := json.MarshalIndent(*items, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSONSlice(*items)
 	}
 
 	if items == nil || len(*items) == 0 {

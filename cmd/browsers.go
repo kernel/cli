@@ -32,6 +32,7 @@ type BrowsersService interface {
 	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.BrowserGetResponse, err error)
 	List(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.BrowserListResponse], err error)
 	New(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (res *kernel.BrowserNewResponse, err error)
+	Update(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (res *kernel.BrowserUpdateResponse, err error)
 	Delete(ctx context.Context, body kernel.BrowserDeleteParams, opts ...option.RequestOption) (err error)
 	DeleteByID(ctx context.Context, id string, opts ...option.RequestOption) (err error)
 	LoadExtensions(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) (err error)
@@ -167,8 +168,7 @@ type BrowsersCreateInput struct {
 }
 
 type BrowsersDeleteInput struct {
-	Identifier  string
-	SkipConfirm bool
+	Identifier string
 }
 
 type BrowsersViewInput struct {
@@ -178,6 +178,13 @@ type BrowsersViewInput struct {
 
 type BrowsersGetInput struct {
 	Identifier string
+	Output     string
+}
+
+type BrowsersUpdateInput struct {
+	Identifier string
+	ProxyID    string
+	ClearProxy bool
 	Output     string
 }
 
@@ -226,16 +233,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	}
 
 	if in.Output == "json" {
-		if len(browsers) == 0 {
-			fmt.Println("[]")
-			return nil
-		}
-		bs, err := json.MarshalIndent(browsers, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSONSlice(browsers)
 	}
 
 	if len(browsers) == 0 {
@@ -381,12 +379,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(browser, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(browser)
 	}
 
 	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.PoolID, browser.Persistence, browser.Profile)
@@ -425,39 +418,7 @@ func buildBrowserTableData(sessionID, cdpURL, liveViewURL, poolID string, persis
 }
 
 func (b BrowsersCmd) Delete(ctx context.Context, in BrowsersDeleteInput) error {
-	if !in.SkipConfirm {
-		found, err := b.browsers.Get(ctx, in.Identifier)
-		if err != nil {
-			return util.CleanedUpSdkError{Err: err}
-		}
-
-		confirmMsg := fmt.Sprintf("Are you sure you want to delete browser \"%s\"?", in.Identifier)
-		pterm.DefaultInteractiveConfirm.DefaultText = confirmMsg
-		result, _ := pterm.DefaultInteractiveConfirm.Show()
-		if !result {
-			pterm.Info.Println("Deletion cancelled")
-			return nil
-		}
-
-		if found.Persistence.ID == in.Identifier {
-			err = b.browsers.Delete(ctx, kernel.BrowserDeleteParams{PersistentID: in.Identifier})
-			if err != nil && !util.IsNotFound(err) {
-				return util.CleanedUpSdkError{Err: err}
-			}
-			pterm.Success.Printf("Successfully deleted browser: %s\n", in.Identifier)
-			return nil
-		}
-
-		pterm.Info.Printf("Deleting browser: %s\n", in.Identifier)
-		err = b.browsers.DeleteByID(ctx, in.Identifier)
-		if err != nil && !util.IsNotFound(err) {
-			return util.CleanedUpSdkError{Err: err}
-		}
-		pterm.Success.Printf("Successfully deleted browser: %s\n", in.Identifier)
-		return nil
-	}
-
-	// Skip confirmation: try both deletion modes without listing first
+	// Try both deletion modes without confirmation
 	// Treat not found as a success (idempotent delete)
 	var nonNotFoundErrors []error
 
@@ -495,9 +456,13 @@ func (b BrowsersCmd) View(ctx context.Context, in BrowsersViewInput) error {
 	}
 
 	if in.Output == "json" {
-		result := map[string]string{"liveViewUrl": browser.BrowserLiveViewURL}
-		bs, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Println(string(bs))
+		// View command returns a custom response, not the full browser object
+		// Use json.Marshal to ensure proper JSON escaping of the URL
+		urlBytes, err := json.Marshal(browser.BrowserLiveViewURL)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("{\n  \"liveViewUrl\": %s\n}\n", urlBytes)
 		return nil
 	}
 
@@ -524,12 +489,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		return util.CleanedUpSdkError{Err: err}
 	}
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(browser, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(browser)
 	}
 
 	// Build table starting with common browser fields
@@ -563,6 +523,54 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	}
 
 	PrintTableNoPad(tableData, true)
+	return nil
+}
+
+func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
+	// Validate that at least one update option is provided
+	if in.ProxyID == "" && !in.ClearProxy {
+		return fmt.Errorf("must specify --proxy-id or --clear-proxy")
+	}
+
+	// Cannot specify both --proxy-id and --clear-proxy
+	if in.ProxyID != "" && in.ClearProxy {
+		return fmt.Errorf("cannot specify both --proxy-id and --clear-proxy")
+	}
+
+	params := kernel.BrowserUpdateParams{}
+	if in.ClearProxy {
+		// Set to empty string to remove proxy
+		params.ProxyID = kernel.Opt("")
+	} else if in.ProxyID != "" {
+		params.ProxyID = kernel.Opt(in.ProxyID)
+	}
+
+	if in.Output != "json" {
+		if in.ClearProxy {
+			pterm.Info.Printf("Removing proxy from browser %s...\n", in.Identifier)
+		} else {
+			pterm.Info.Printf("Updating browser %s with proxy %s...\n", in.Identifier, in.ProxyID)
+		}
+	}
+
+	browser, err := b.browsers.Update(ctx, in.Identifier, params)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(browser)
+	}
+
+	if in.ClearProxy {
+		pterm.Success.Printf("Removed proxy from browser %s\n", browser.SessionID)
+	} else {
+		pterm.Success.Printf("Updated browser %s with proxy %s\n", browser.SessionID, browser.ProxyID)
+	}
 	return nil
 }
 
@@ -936,12 +944,7 @@ func (b BrowsersCmd) ReplaysList(ctx context.Context, in BrowsersReplaysListInpu
 			fmt.Println("[]")
 			return nil
 		}
-		bs, err := json.MarshalIndent(*items, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSONSlice(*items)
 	}
 
 	if items == nil || len(*items) == 0 {
@@ -978,12 +981,7 @@ func (b BrowsersCmd) ReplaysStart(ctx context.Context, in BrowsersReplaysStartIn
 	}
 
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(res, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(res)
 	}
 
 	rows := pterm.TableData{{"Property", "Value"}, {"Replay ID", res.ReplayID}, {"View URL", res.ReplayViewURL}, {"Started At", util.FormatLocal(res.StartedAt)}}
@@ -1162,12 +1160,7 @@ func (b BrowsersCmd) ProcessExec(ctx context.Context, in BrowsersProcessExecInpu
 	}
 
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(res, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(res)
 	}
 
 	rows := pterm.TableData{{"Property", "Value"}, {"Exit Code", fmt.Sprintf("%d", res.ExitCode)}, {"Duration (ms)", fmt.Sprintf("%d", res.DurationMs)}}
@@ -1234,12 +1227,7 @@ func (b BrowsersCmd) ProcessSpawn(ctx context.Context, in BrowsersProcessSpawnIn
 	}
 
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(res, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(res)
 	}
 
 	rows := pterm.TableData{{"Property", "Value"}, {"Process ID", res.ProcessID}, {"PID", fmt.Sprintf("%d", res.Pid)}, {"Started At", util.FormatLocal(res.StartedAt)}}
@@ -1522,12 +1510,7 @@ func (b BrowsersCmd) FSFileInfo(ctx context.Context, in BrowsersFSFileInfoInput)
 	}
 
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(res, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(res)
 	}
 
 	rows := pterm.TableData{{"Property", "Value"}, {"Path", res.Path}, {"Name", res.Name}, {"Mode", res.Mode}, {"IsDir", fmt.Sprintf("%t", res.IsDir)}, {"SizeBytes", fmt.Sprintf("%d", res.SizeBytes)}, {"ModTime", util.FormatLocal(res.ModTime)}}
@@ -1558,12 +1541,7 @@ func (b BrowsersCmd) FSListFiles(ctx context.Context, in BrowsersFSListFilesInpu
 			fmt.Println("[]")
 			return nil
 		}
-		bs, err := json.MarshalIndent(*res, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSONSlice(*res)
 	}
 
 	if res == nil || len(*res) == 0 {
@@ -1892,6 +1870,22 @@ var browsersGetCmd = &cobra.Command{
 	RunE:  runBrowsersGet,
 }
 
+var browsersUpdateCmd = &cobra.Command{
+	Use:   "update <id>",
+	Short: "Update a browser session",
+	Long:  "Update a running browser session. Currently supports changing or removing the proxy.",
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return fmt.Errorf("missing required argument: browser ID\n\nUsage: kernel browsers update <id> [flags]")
+		}
+		if len(args) > 1 {
+			return fmt.Errorf("expected 1 argument (browser ID), got %d", len(args))
+		}
+		return nil
+	},
+	RunE: runBrowsersUpdate,
+}
+
 func init() {
 	// list flags
 	browsersListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
@@ -1905,11 +1899,17 @@ func init() {
 	// view flags
 	browsersViewCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 
+	// update flags
+	browsersUpdateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	browsersUpdateCmd.Flags().String("proxy-id", "", "ID of the proxy to use for the browser session")
+	browsersUpdateCmd.Flags().Bool("clear-proxy", false, "Remove the proxy from the browser session")
+
 	browsersCmd.AddCommand(browsersListCmd)
 	browsersCmd.AddCommand(browsersCreateCmd)
 	browsersCmd.AddCommand(browsersDeleteCmd)
 	browsersCmd.AddCommand(browsersViewCmd)
 	browsersCmd.AddCommand(browsersGetCmd)
+	browsersCmd.AddCommand(browsersUpdateCmd)
 
 	// logs
 	logsRoot := &cobra.Command{Use: "logs", Short: "Browser logs operations"}
@@ -2126,8 +2126,6 @@ func init() {
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
 
-	// Add flags for delete command
-	browsersDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 
 	// no flags for view; it takes a single positional argument
 }
@@ -2241,12 +2239,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		if output == "json" {
-			bs, err := json.MarshalIndent(resp, "", "  ")
-			if err != nil {
-				return err
-			}
-			fmt.Println(string(bs))
-			return nil
+			return util.PrintPrettyJSON(resp)
 		}
 		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.PoolID, resp.Persistence, resp.Profile)
 		return nil
@@ -2291,13 +2284,12 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 
 func runBrowsersDelete(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
-	skipConfirm, _ := cmd.Flags().GetBool("yes")
 
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
 	// Iterate all provided identifiers
 	for _, identifier := range args {
-		if err := b.Delete(cmd.Context(), BrowsersDeleteInput{Identifier: identifier, SkipConfirm: skipConfirm}); err != nil {
+		if err := b.Delete(cmd.Context(), BrowsersDeleteInput{Identifier: identifier}); err != nil {
 			return err
 		}
 	}
@@ -2324,6 +2316,22 @@ func runBrowsersGet(cmd *cobra.Command, args []string) error {
 	b := BrowsersCmd{browsers: &svc}
 	return b.Get(cmd.Context(), BrowsersGetInput{
 		Identifier: args[0],
+		Output:     out,
+	})
+}
+
+func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	out, _ := cmd.Flags().GetString("output")
+	proxyID, _ := cmd.Flags().GetString("proxy-id")
+	clearProxy, _ := cmd.Flags().GetBool("clear-proxy")
+
+	svc := client.Browsers
+	b := BrowsersCmd{browsers: &svc}
+	return b.Update(cmd.Context(), BrowsersUpdateInput{
+		Identifier: args[0],
+		ProxyID:    proxyID,
+		ClearProxy: clearProxy,
 		Output:     out,
 	})
 }

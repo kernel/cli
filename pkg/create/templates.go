@@ -178,7 +178,7 @@ var Commands = map[string]map[string]DeployConfig{
 		TemplateAnthropicComputerUse: {
 			EntryPoint:    "index.ts",
 			NeedsEnvFile:  true,
-			InvokeCommand: `kernel invoke ts-anthropic-cua cua-task --payload '{"query": "Return the first url of a search result for NYC restaurant reviews Pete Wells"}'`,
+			InvokeCommand: `kernel invoke ts-anthropic-cua cua-task --payload '{"query": "Navigate to http://magnitasks.com and click on Tasks in the sidebar"}'`,
 		},
 		TemplateMagnitude: {
 			EntryPoint:    "index.ts",
@@ -220,7 +220,7 @@ var Commands = map[string]map[string]DeployConfig{
 		TemplateAnthropicComputerUse: {
 			EntryPoint:    "main.py",
 			NeedsEnvFile:  true,
-			InvokeCommand: `kernel invoke python-anthropic-cua cua-task --payload '{"query": "Return the first url of a search result for NYC restaurant reviews Pete Wells"}'`,
+			InvokeCommand: `kernel invoke python-anthropic-cua cua-task --payload '{"query": "Navigate to http://magnitasks.com and click on Tasks in the sidebar"}'`,
 		},
 		TemplateOpenAIComputerUse: {
 			EntryPoint:    "main.py",

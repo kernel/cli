@@ -57,6 +57,7 @@ type FakeBrowsersService struct {
 	GetFunc            func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error)
 	ListFunc           func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error)
 	NewFunc            func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error)
+	UpdateFunc         func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error)
 	DeleteFunc         func(ctx context.Context, body kernel.BrowserDeleteParams, opts ...option.RequestOption) error
 	DeleteByIDFunc     func(ctx context.Context, id string, opts ...option.RequestOption) error
 	LoadExtensionsFunc func(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) error
@@ -81,6 +82,13 @@ func (f *FakeBrowsersService) New(ctx context.Context, body kernel.BrowserNewPar
 		return f.NewFunc(ctx, body, opts...)
 	}
 	return &kernel.BrowserNewResponse{}, nil
+}
+
+func (f *FakeBrowsersService) Update(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+	if f.UpdateFunc != nil {
+		return f.UpdateFunc(ctx, id, body, opts...)
+	}
+	return &kernel.BrowserUpdateResponse{}, nil
 }
 
 func (f *FakeBrowsersService) Delete(ctx context.Context, body kernel.BrowserDeleteParams, opts ...option.RequestOption) error {
@@ -235,7 +243,7 @@ func TestBrowsersCreate_PrintsErrorOnFailure(t *testing.T) {
 	assert.Contains(t, err.Error(), "create failed")
 }
 
-func TestBrowsersDelete_SkipConfirm_Success(t *testing.T) {
+func TestBrowsersDelete_Success(t *testing.T) {
 	setupStdoutCapture(t)
 
 	fake := &FakeBrowsersService{
@@ -247,13 +255,13 @@ func TestBrowsersDelete_SkipConfirm_Success(t *testing.T) {
 		},
 	}
 	b := BrowsersCmd{browsers: fake}
-	_ = b.Delete(context.Background(), BrowsersDeleteInput{Identifier: "any", SkipConfirm: true})
+	_ = b.Delete(context.Background(), BrowsersDeleteInput{Identifier: "any"})
 
 	out := outBuf.String()
 	assert.Contains(t, out, "Successfully deleted (or already absent) browser: any")
 }
 
-func TestBrowsersDelete_SkipConfirm_Failure(t *testing.T) {
+func TestBrowsersDelete_Failure(t *testing.T) {
 	setupStdoutCapture(t)
 
 	fake := &FakeBrowsersService{
@@ -265,23 +273,13 @@ func TestBrowsersDelete_SkipConfirm_Failure(t *testing.T) {
 		},
 	}
 	b := BrowsersCmd{browsers: fake}
-	err := b.Delete(context.Background(), BrowsersDeleteInput{Identifier: "any", SkipConfirm: true})
+	err := b.Delete(context.Background(), BrowsersDeleteInput{Identifier: "any"})
 
 	assert.Error(t, err)
 	errMsg := err.Error()
 	assert.True(t, strings.Contains(errMsg, "right failed") || strings.Contains(errMsg, "left failed"), "expected error message to contain either 'right failed' or 'left failed', got: %s", errMsg)
 }
 
-func TestBrowsersDelete_WithConfirm_NotFound(t *testing.T) {
-	setupStdoutCapture(t)
-
-	fake := &FakeBrowsersService{}
-	b := BrowsersCmd{browsers: fake}
-	err := b.Delete(context.Background(), BrowsersDeleteInput{Identifier: "missing", SkipConfirm: false})
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
-}
 
 func TestBrowsersView_ByID_PrintsURL(t *testing.T) {
 	// Capture both pterm output and raw stdout
@@ -407,10 +405,13 @@ func TestBrowsersGet_JSONOutput(t *testing.T) {
 
 	fake := &FakeBrowsersService{
 		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
-			return &kernel.BrowserGetResponse{
-				SessionID: "sess-json",
-				CdpWsURL:  "ws://cdp",
-			}, nil
+			// Unmarshal JSON to populate RawJSON() properly
+			jsonData := `{"session_id": "sess-json", "cdp_ws_url": "ws://cdp", "created_at": "2024-01-01T00:00:00Z", "headless": false, "stealth": false, "timeout_seconds": 60}`
+			var resp kernel.BrowserGetResponse
+			if err := json.Unmarshal([]byte(jsonData), &resp); err != nil {
+				t.Fatalf("failed to unmarshal test response: %v", err)
+			}
+			return &resp, nil
 		},
 	}
 	b := BrowsersCmd{browsers: fake}

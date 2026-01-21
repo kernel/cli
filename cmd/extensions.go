@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -77,12 +76,7 @@ func (e ExtensionsCmd) List(ctx context.Context, in ExtensionsListInput) error {
 			fmt.Println("[]")
 			return nil
 		}
-		bs, err := json.MarshalIndent(*items, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSONSlice(*items)
 	}
 
 	if items == nil || len(*items) == 0 {
@@ -326,12 +320,7 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 	}
 
 	if in.Output == "json" {
-		bs, err := json.MarshalIndent(item, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(bs))
-		return nil
+		return util.PrintPrettyJSON(item)
 	}
 
 	name := item.Name
@@ -435,7 +424,7 @@ var extensionsBuildWebBotAuthCmd = &cobra.Command{
 		url, _ := cmd.Flags().GetString("url")
 		keyPath, _ := cmd.Flags().GetString("key")
 		uploadName, _ := cmd.Flags().GetString("upload")
-
+		signatureAgentURL, _ := cmd.Flags().GetString("signature-agent")
 		// Use upload name for extension name, or default to "web-bot-auth"
 		extensionName := "web-bot-auth"
 		if uploadName != "" {
@@ -444,11 +433,12 @@ var extensionsBuildWebBotAuthCmd = &cobra.Command{
 
 		// Build the extension
 		result, err := extensions.BuildWebBotAuth(cmd.Context(), extensions.ExtensionsBuildWebBotAuthInput{
-			Output:        output,
-			HostURL:       url,
-			KeyPath:       keyPath,
-			ExtensionName: extensionName,
-			AutoUpload:    uploadName != "",
+			Output:            output,
+			HostURL:           url,
+			KeyPath:           keyPath,
+			ExtensionName:     extensionName,
+			AutoUpload:        uploadName != "",
+			SignatureAgentURL: signatureAgentURL,
 		})
 		if err != nil {
 			return err
@@ -489,4 +479,5 @@ func init() {
 	extensionsBuildWebBotAuthCmd.Flags().String("url", "http://127.0.0.1:10001", "Base URL for update.xml and policy templates")
 	extensionsBuildWebBotAuthCmd.Flags().String("key", "", "Path to Ed25519 private key file (JWK or PEM format)")
 	extensionsBuildWebBotAuthCmd.Flags().String("upload", "", "Upload extension to Kernel with specified name (e.g., --upload web-bot-auth)")
+	extensionsBuildWebBotAuthCmd.Flags().String("signature-agent", "", "Base URL of the signature agent (e.g., https://agent.example.com). Verifiers will look up /.well-known/http-message-signatures-directory at this URL.")
 }

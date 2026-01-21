@@ -88,7 +88,6 @@ func runAuth(cmd *cobra.Command, args []string) error {
 			} else {
 				pterm.Info.Printf("API Key: %s\n", strings.Repeat("*", len(apiKey)))
 			}
-			pterm.Warning.Println("Consider running 'kernel login' to use OAuth authentication")
 			return nil
 		}
 

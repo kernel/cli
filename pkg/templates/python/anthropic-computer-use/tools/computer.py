@@ -1,53 +1,42 @@
 """
+Computer tool using Kernel's Computer Controls API.
 Modified from https://github.com/anthropics/anthropic-quickstarts/blob/main/computer-use-demo/computer_use_demo/tools/computer.py
-Replaces xdotool and gnome-screenshot with Playwright.
+Replaces Playwright with Kernel Computer Controls API.
 """
 
 import asyncio
 import base64
-import os
-from enum import StrEnum
 from typing import Literal, TypedDict, cast, get_args
 
-from playwright.async_api import Page
-
+from kernel import Kernel
 from anthropic.types.beta import BetaToolComputerUse20241022Param, BetaToolUnionParam
 
 from .base import BaseAnthropicTool, ToolError, ToolResult
 
 TYPING_DELAY_MS = 12
-TYPING_GROUP_SIZE = 50
 
-# Map alternative names to standard Playwright modifier keys
-MODIFIER_KEY_MAP = {
-    'ctrl': 'Control',
-    'alt': 'Alt',
-    'cmd': 'Meta',
-    'command': 'Meta',
-    'win': 'Meta',
-}
-
-# Essential key mappings for Playwright compatibility
+# Key mappings for Kernel Computer Controls API
+# Map common key names to xdotool-compatible format that Kernel uses
 KEY_MAP = {
-    'return': 'Enter',
-    'space': ' ',
-    'left': 'ArrowLeft',
-    'right': 'ArrowRight',
-    'up': 'ArrowUp',
-    'down': 'ArrowDown',
+    'return': 'Return',
+    'enter': 'Return',
+    'space': 'space',
+    'left': 'Left',
+    'right': 'Right',
+    'up': 'Up',
+    'down': 'Down',
     'home': 'Home',
     'end': 'End',
-    'pageup': 'PageUp',
-    'page_up': 'PageUp',
-    'pagedown': 'PageDown',
-    'page_down': 'PageDown',
+    'pageup': 'Page_Up',
+    'page_up': 'Page_Up',
+    'pagedown': 'Page_Down',
+    'page_down': 'Page_Down',
     'delete': 'Delete',
-    'backspace': 'Backspace',
+    'backspace': 'BackSpace',
     'tab': 'Tab',
     'esc': 'Escape',
     'escape': 'Escape',
     'insert': 'Insert',
-    'super_l': 'Meta',
     'f1': 'F1',
     'f2': 'F2',
     'f3': 'F3',
@@ -60,9 +49,21 @@ KEY_MAP = {
     'f10': 'F10',
     'f11': 'F11',
     'f12': 'F12',
-    'minus': '-',
-    'equal': '=',
-    'plus': '+',
+    'minus': 'minus',
+    'equal': 'equal',
+    'plus': 'plus',
+}
+
+# Modifier key mappings
+MODIFIER_KEY_MAP = {
+    'ctrl': 'ctrl',
+    'control': 'ctrl',
+    'alt': 'alt',
+    'cmd': 'super',
+    'command': 'super',
+    'win': 'super',
+    'meta': 'super',
+    'shift': 'shift',
 }
 
 Action_20241022 = Literal[
@@ -92,33 +93,30 @@ Action_20250124 = (
 
 ScrollDirection = Literal["up", "down", "left", "right"]
 
-# Map Playwright mouse buttons to our actions
-MOUSE_BUTTONS = {
-    "left_click": "left",
-    "right_click": "right",
-    "middle_click": "middle",
-}
 
 class ComputerToolOptions(TypedDict):
     display_height_px: int
     display_width_px: int
     display_number: int | None
 
-def chunks(s: str, chunk_size: int) -> list[str]:
-    return [s[i : i + chunk_size] for i in range(0, len(s), chunk_size)]
 
 class BaseComputerTool:
     """
-    A tool that allows the agent to interact with the screen, keyboard, and mouse using Playwright.
+    A tool that allows the agent to interact with the screen, keyboard, and mouse using Kernel's Computer Controls API.
     The tool parameters are defined by Anthropic and are not editable.
     """
 
     name: Literal["computer"] = "computer"
-    width: int = 1280
-    height: int = 720
+    width: int = 1024
+    height: int = 768
     display_num: int | None = None
-    page: Page | None = None
-
+    
+    # Kernel client and session
+    kernel: Kernel | None = None
+    session_id: str | None = None
+    
+    # Track last mouse position for drag operations
+    _last_mouse_position: tuple[int, int] = (0, 0)
     _screenshot_delay = 2.0
 
     @property
@@ -129,9 +127,10 @@ class BaseComputerTool:
             "display_number": self.display_num,
         }
 
-    def __init__(self, page: Page | None = None):
+    def __init__(self, kernel: Kernel | None = None, session_id: str | None = None):
         super().__init__()
-        self.page = page
+        self.kernel = kernel
+        self.session_id = session_id
 
     def validate_coordinates(self, coordinate: tuple[int, int] | list[int] | None = None) -> tuple[int, int] | None:
         """Validate that coordinates are non-negative integers and convert lists to tuples if needed."""
@@ -152,23 +151,30 @@ class BaseComputerTool:
         return coordinate
 
     def map_key(self, key: str) -> str:
-        """Map a key to its Playwright equivalent."""
+        """Map a key to its Kernel/xdotool equivalent."""
+        key_lower = key.lower().strip()
+        
         # Handle modifier keys
-        if key.lower() in MODIFIER_KEY_MAP:
-            return MODIFIER_KEY_MAP[key.lower()]
+        if key_lower in MODIFIER_KEY_MAP:
+            return MODIFIER_KEY_MAP[key_lower]
         
         # Handle special keys
-        if key.lower() in KEY_MAP:
-            return KEY_MAP[key.lower()]
+        if key_lower in KEY_MAP:
+            return KEY_MAP[key_lower]
         
         # Handle key combinations (e.g. "ctrl+a")
         if '+' in key:
             parts = key.split('+')
-            if len(parts) == 2:
-                modifier, main_key = parts
-                mapped_modifier = MODIFIER_KEY_MAP.get(modifier.lower(), modifier)
-                mapped_key = KEY_MAP.get(main_key.lower(), main_key)
-                return f"{mapped_modifier}+{mapped_key}"
+            mapped_parts = []
+            for part in parts:
+                part = part.strip().lower()
+                if part in MODIFIER_KEY_MAP:
+                    mapped_parts.append(MODIFIER_KEY_MAP[part])
+                elif part in KEY_MAP:
+                    mapped_parts.append(KEY_MAP[part])
+                else:
+                    mapped_parts.append(part)
+            return '+'.join(mapped_parts)
         
         # Return the key as is if no mapping exists
         return key
@@ -181,8 +187,8 @@ class BaseComputerTool:
         coordinate: tuple[int, int] | list[int] | None = None,
         **kwargs,
     ):
-        if not self.page:
-            raise ToolError("Playwright page not initialized")
+        if not self.kernel or not self.session_id:
+            raise ToolError("Kernel client or session not initialized")
 
         if action in ("mouse_move", "left_click_drag"):
             if coordinate is None:
@@ -194,12 +200,25 @@ class BaseComputerTool:
             x, y = coordinate
 
             if action == "mouse_move":
-                await self.page.mouse.move(x, y)
+                self.kernel.browsers.computer.move_mouse(
+                    id=self.session_id,
+                    x=x,
+                    y=y,
+                )
+                self._last_mouse_position = (x, y)
                 return await self.screenshot()
             elif action == "left_click_drag":
-                await self.page.mouse.down(button="left")
-                await self.page.mouse.move(x, y)
-                await self.page.mouse.up(button="left")
+                start_coord = kwargs.get("start_coordinate")
+                start_x, start_y = self.validate_coordinates(start_coord) if start_coord else self._last_mouse_position
+                
+                print(f"Dragging from ({start_x}, {start_y}) to ({x}, {y})")
+                
+                self.kernel.browsers.computer.drag_mouse(
+                    id=self.session_id,
+                    path=[[start_x, start_y], [x, y]],
+                    button="left",
+                )
+                self._last_mouse_position = (x, y)
                 return await self.screenshot()
 
         if action in ("key", "type"):
@@ -208,22 +227,22 @@ class BaseComputerTool:
             if coordinate is not None:
                 raise ToolError(f"coordinate is not accepted for {action}")
             if not isinstance(text, str):
-                raise ToolError(output=f"{text} must be a string")
+                raise ToolError(f"{text} must be a string")
 
             if action == "key":
                 mapped_key = self.map_key(text)
-                await self.page.keyboard.press(mapped_key)
+                self.kernel.browsers.computer.press_key(
+                    id=self.session_id,
+                    keys=[mapped_key],
+                )
                 return await self.screenshot()
             elif action == "type":
-                results: list[ToolResult] = []
-                for chunk in chunks(text, TYPING_GROUP_SIZE):
-                    await self.page.keyboard.type(chunk, delay=TYPING_DELAY_MS)
-                    results.append(await self.screenshot())
-                return ToolResult(
-                    output="".join(result.output or "" for result in results),
-                    error="".join(result.error or "" for result in results),
-                    base64_image=results[-1].base64_image if results else None,
+                self.kernel.browsers.computer.type_text(
+                    id=self.session_id,
+                    text=text,
+                    delay=TYPING_DELAY_MS,
                 )
+                return await self.screenshot()
 
         if action in (
             "left_click",
@@ -239,39 +258,61 @@ class BaseComputerTool:
             if action == "screenshot":
                 return await self.screenshot()
             elif action == "cursor_position":
-                # Playwright doesn't provide a direct way to get cursor position
-                # We'll return a placeholder since this isn't critical functionality
-                return ToolResult(output="Cursor position not available in Playwright")
+                # Kernel Computer Controls API doesn't track cursor position
+                raise ToolError("Cursor position is not available with Kernel Computer Controls API")
             else:
                 if coordinate is not None:
                     coordinate = self.validate_coordinates(coordinate)
                     x, y = coordinate
-                    await self.page.mouse.move(x, y)
-                
-                if action == "double_click":
-                    await self.page.mouse.dblclick(x, y)
                 else:
-                    await self.page.mouse.click(x, y, button=MOUSE_BUTTONS[action])
+                    x, y = self._last_mouse_position
+                
+                button = "left"
+                if action == "right_click":
+                    button = "right"
+                elif action == "middle_click":
+                    button = "middle"
+                
+                num_clicks = 1
+                if action == "double_click":
+                    num_clicks = 2
+                
+                self.kernel.browsers.computer.click_mouse(
+                    id=self.session_id,
+                    x=x,
+                    y=y,
+                    button=button,
+                    num_clicks=num_clicks,
+                )
+                self._last_mouse_position = (x, y)
                 return await self.screenshot()
 
         raise ToolError(f"Invalid action: {action}")
 
     async def screenshot(self):
-        """Take a screenshot using Playwright and return the base64 encoded image."""
-        if not self.page:
-            raise ToolError("Playwright page not initialized")
+        """Take a screenshot using Kernel Computer Controls API and return the base64 encoded image."""
+        if not self.kernel or not self.session_id:
+            raise ToolError("Kernel client or session not initialized")
 
-        # Take screenshot using Playwright and get the buffer directly
-        screenshot_bytes = await self.page.screenshot(type="png")
+        print("Starting screenshot...")
+        await asyncio.sleep(self._screenshot_delay)
+        
+        response = self.kernel.browsers.computer.capture_screenshot(id=self.session_id)
+        screenshot_bytes = response.read()
+        
+        print(f"Screenshot taken, size: {len(screenshot_bytes)} bytes")
+        
         return ToolResult(
             base64_image=base64.b64encode(screenshot_bytes).decode()
         )
+
 
 class ComputerTool20241022(BaseComputerTool, BaseAnthropicTool):
     api_type: Literal["computer_20241022"] = "computer_20241022"
 
     def to_params(self) -> BetaToolComputerUse20241022Param:
         return {"name": self.name, "type": self.api_type, **self.options}
+
 
 class ComputerTool20250124(BaseComputerTool, BaseAnthropicTool):
     api_type: Literal["computer_20250124"] = "computer_20250124"
@@ -294,22 +335,29 @@ class ComputerTool20250124(BaseComputerTool, BaseAnthropicTool):
         key: str | None = None,
         **kwargs,
     ):
-        if not self.page:
-            raise ToolError("Playwright page not initialized")
+        if not self.kernel or not self.session_id:
+            raise ToolError("Kernel client or session not initialized")
 
         if action in ("left_mouse_down", "left_mouse_up"):
             if coordinate is not None:
-                raise ToolError(f"coordinate is not accepted for {action=}.")
-            if action == "left_mouse_down":
-                await self.page.mouse.down(button="left")
+                coordinate = self.validate_coordinates(coordinate)
+                x, y = coordinate
             else:
-                await self.page.mouse.up(button="left")
+                x, y = self._last_mouse_position
+                
+            click_type = "down" if action == "left_mouse_down" else "up"
+            self.kernel.browsers.computer.click_mouse(
+                id=self.session_id,
+                x=x,
+                y=y,
+                button="left",
+                click_type=click_type,
+            )
+            self._last_mouse_position = (x, y)
             return await self.screenshot()
 
         if action == "scroll":
-            if scroll_direction is None or scroll_direction not in get_args(
-                ScrollDirection
-            ):
+            if scroll_direction is None or scroll_direction not in get_args(ScrollDirection):
                 raise ToolError(
                     f"{scroll_direction=} must be 'up', 'down', 'left', or 'right'"
                 )
@@ -319,31 +367,32 @@ class ComputerTool20250124(BaseComputerTool, BaseAnthropicTool):
             if coordinate is not None:
                 coordinate = self.validate_coordinates(coordinate)
                 x, y = coordinate
-                await self.page.mouse.move(x, y)
+            else:
+                x, y = self._last_mouse_position
 
-            # Map scroll directions to Playwright's wheel events
-            page_dimensions = await self.page.evaluate(
-                "() => Promise.resolve({ h: window.innerHeight, w: window.innerWidth })"
-            )
-            page_partitions = 25
-            scroll_factor = scroll_amount / page_partitions
-            page_width = page_dimensions['w']
-            page_height = page_dimensions['h']
-
+            # Each scroll_amount unit = 1 scroll wheel click ≈ 120 pixels (matches Anthropic's xdotool behavior)
+            scroll_factor = scroll_amount * 120
+            
             delta_x = 0
             delta_y = 0
             if scroll_direction == "up":
-                delta_y = -scroll_factor * page_height
+                delta_y = -scroll_factor
             elif scroll_direction == "down":
-                delta_y = scroll_factor * page_height
+                delta_y = scroll_factor
             elif scroll_direction == "left":
-                delta_x = -scroll_factor * page_width
+                delta_x = -scroll_factor
             elif scroll_direction == "right":
-                delta_x = scroll_factor * page_width
+                delta_x = scroll_factor
 
-            print(f"Scrolling {abs(delta_x) if delta_x != 0 else abs(delta_y):.02f} pixels {scroll_direction}")
+            print(f"Scrolling {abs(delta_x) if delta_x != 0 else abs(delta_y)} pixels {scroll_direction}")
 
-            await self.page.mouse.wheel(delta_x=delta_x, delta_y=delta_y)
+            self.kernel.browsers.computer.scroll(
+                id=self.session_id,
+                x=x,
+                y=y,
+                delta_x=delta_x,
+                delta_y=delta_y,
+            )
             return await self.screenshot()
 
         if action in ("hold_key", "wait"):
@@ -358,9 +407,11 @@ class ComputerTool20250124(BaseComputerTool, BaseAnthropicTool):
                 if text is None:
                     raise ToolError(f"text is required for {action}")
                 mapped_key = self.map_key(text)
-                await self.page.keyboard.down(mapped_key)
-                await asyncio.sleep(duration)
-                await self.page.keyboard.up(mapped_key)
+                self.kernel.browsers.computer.press_key(
+                    id=self.session_id,
+                    keys=[mapped_key],
+                    duration=int(duration * 1000),  # Convert to milliseconds
+                )
                 return await self.screenshot()
 
             if action == "wait":
@@ -380,23 +431,45 @@ class ComputerTool20250124(BaseComputerTool, BaseAnthropicTool):
             if coordinate is not None:
                 coordinate = self.validate_coordinates(coordinate)
                 x, y = coordinate
-                await self.page.mouse.move(x, y)
+            else:
+                x, y = self._last_mouse_position
+
+            button = "left"
+            if action == "right_click":
+                button = "right"
+            elif action == "middle_click":
+                button = "middle"
+            
+            num_clicks = 1
+            if action == "double_click":
+                num_clicks = 2
+            elif action == "triple_click":
+                num_clicks = 3
 
             if key:
                 mapped_key = self.map_key(key)
-                await self.page.keyboard.down(mapped_key)
+                self.kernel.browsers.computer.press_key(
+                    id=self.session_id,
+                    keys=[mapped_key],
+                    click_type="down",
+                )
 
-            if action == "triple_click":
-                # Playwright doesn't have triple click, so we'll simulate it
-                await self.page.mouse.click(x, y, click_count=3)
-            elif action == "double_click":
-                await self.page.mouse.dblclick(x, y)
-            else:
-                await self.page.mouse.click(x, y, button=MOUSE_BUTTONS[action])
+            self.kernel.browsers.computer.click_mouse(
+                id=self.session_id,
+                x=x,
+                y=y,
+                button=button,
+                num_clicks=num_clicks,
+            )
 
             if key:
-                await self.page.keyboard.up(mapped_key)
+                self.kernel.browsers.computer.press_key(
+                    id=self.session_id,
+                    keys=[mapped_key],
+                    click_type="up",
+                )
 
+            self._last_mouse_position = (x, y)
             return await self.screenshot()
 
         return await super().__call__(

@@ -44,8 +44,8 @@ async def bu_task(ctx: kernel.KernelContext, input_data: TaskInput):
         browser = Browser(
             cdp_url=kernel_browser.cdp_ws_url,
             headless=False,
-            window_size={"width": 1024, "height": 786},
-            viewport={"width": 1024, "height": 786},
+            window_size={"width": 1920, "height": 1080},
+            viewport={"width": 1920, "height": 1080},
             device_scale_factor=1.0,
         )
 
