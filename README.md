@@ -427,6 +427,76 @@ Commands with JSON output support:
 - `kernel proxies delete <id>` - Delete a proxy configuration
   - `-y, --yes` - Skip confirmation prompt
 
+### Agent Auth
+
+Automated authentication for web services. The `run` command orchestrates the full auth flow automatically.
+
+- `kernel agents auth run` - Run a complete authentication flow
+  - `--domain <domain>` - Target domain for authentication (required)
+  - `--profile <name>` - Profile name to use/create (required)
+  - `--value <key=value>` - Field name=value pair (repeatable, e.g., `--value username=foo --value password=bar`)
+  - `--credential <name>` - Existing credential name to use
+  - `--save-credential-as <name>` - Save provided credentials under this name
+  - `--totp-secret <secret>` - Base32 TOTP secret for automatic 2FA
+  - `--proxy-id <id>` - Proxy ID to use
+  - `--login-url <url>` - Custom login page URL
+  - `--allowed-domain <domain>` - Additional allowed domains (repeatable)
+  - `--timeout <duration>` - Maximum time to wait for auth completion (default: 5m)
+  - `--open` - Open live view URL in browser when human intervention needed
+  - `--output json`, `-o json` - Output JSONL events
+
+- `kernel agents auth create` - Create an auth agent
+  - `--domain <domain>` - Target domain for authentication (required)
+  - `--profile-name <name>` - Name of the profile to use (required)
+  - `--credential-name <name>` - Optional credential name to link
+  - `--login-url <url>` - Optional login page URL
+  - `--allowed-domain <domain>` - Additional allowed domains (repeatable)
+  - `--proxy-id <id>` - Optional proxy ID to use
+  - `--output json`, `-o json` - Output raw JSON object
+
+- `kernel agents auth list` - List auth agents
+  - `--domain <domain>` - Filter by domain
+  - `--profile-name <name>` - Filter by profile name
+  - `--limit <n>` - Maximum number of results to return
+  - `--offset <n>` - Number of results to skip
+  - `--output json`, `-o json` - Output raw JSON array
+
+- `kernel agents auth get <id>` - Get an auth agent by ID
+  - `--output json`, `-o json` - Output raw JSON object
+
+- `kernel agents auth delete <id>` - Delete an auth agent
+  - `-y, --yes` - Skip confirmation prompt
+
+### Credentials
+
+- `kernel credentials create` - Create a new credential
+  - `--name <name>` - Unique name for the credential (required)
+  - `--domain <domain>` - Target domain (required)
+  - `--value <key=value>` - Field name=value pair (repeatable)
+  - `--sso-provider <provider>` - SSO provider (google, github, microsoft)
+  - `--totp-secret <secret>` - Base32-encoded TOTP secret for 2FA
+  - `--output json`, `-o json` - Output raw JSON object
+
+- `kernel credentials list` - List credentials
+  - `--domain <domain>` - Filter by domain
+  - `--output json`, `-o json` - Output raw JSON array
+
+- `kernel credentials get <id-or-name>` - Get a credential by ID or name
+  - `--output json`, `-o json` - Output raw JSON object
+
+- `kernel credentials update <id-or-name>` - Update a credential
+  - `--name <name>` - New name
+  - `--value <key=value>` - Field values to update (repeatable)
+  - `--sso-provider <provider>` - SSO provider
+  - `--totp-secret <secret>` - TOTP secret
+  - `--output json`, `-o json` - Output raw JSON object
+
+- `kernel credentials delete <id-or-name>` - Delete a credential
+  - `-y, --yes` - Skip confirmation prompt
+
+- `kernel credentials totp-code <id-or-name>` - Get current TOTP code
+  - `--output json`, `-o json` - Output raw JSON object
+
 ## Examples
 
 ### Create a new app
@@ -639,6 +709,35 @@ kernel proxies get prx_123
 
 # Delete a proxy (skip confirmation)
 kernel proxies delete prx_123 --yes
+```
+
+### Agent auth
+
+```bash
+# Run a complete auth flow with inline credentials
+kernel agents auth run --domain github.com --profile my-github \
+  --value username=myuser --value password=mypass
+
+# Auth with TOTP for automatic 2FA handling
+kernel agents auth run --domain github.com --profile my-github \
+  --value username=myuser --value password=mypass \
+  --totp-secret JBSWY3DPEHPK3PXP
+
+# Save credentials for future re-auth
+kernel agents auth run --domain github.com --profile my-github \
+  --value username=myuser --value password=mypass \
+  --save-credential-as github-creds
+
+# Re-use existing saved credential
+kernel agents auth run --domain github.com --profile my-github \
+  --credential github-creds
+
+# Auto-open browser when human intervention is needed
+kernel agents auth run --domain github.com --profile my-github \
+  --credential github-creds --open
+
+# Use the authenticated profile with a browser
+kernel browsers create --profile-name my-github
 ```
 
 ## Getting Help
