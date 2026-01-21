@@ -517,7 +517,8 @@ const (
 
 // generateTOTPCode generates a TOTP code from a base32 secret.
 // Waits for a fresh window if needed to ensure enough time to submit the code.
-func generateTOTPCode(secret string) (string, error) {
+// If quiet is true, suppresses human-readable console output (for JSON mode).
+func generateTOTPCode(secret string, quiet bool) (string, error) {
 	// Check if we have enough time in the current window
 	now := time.Now().Unix()
 	secondsIntoWindow := now % totpPeriod
@@ -525,7 +526,9 @@ func generateTOTPCode(secret string) (string, error) {
 
 	if remaining < minSecondsRemaining {
 		waitTime := remaining + 1 // Wait until just after the new window starts
-		pterm.Info.Printf("TOTP window has only %ds remaining, waiting %ds for fresh window...\n", remaining, waitTime)
+		if !quiet {
+			pterm.Info.Printf("TOTP window has only %ds remaining, waiting %ds for fresh window...\n", remaining, waitTime)
+		}
 		time.Sleep(time.Duration(waitTime) * time.Second)
 	}
 
@@ -813,7 +816,7 @@ func (c AgentAuthRunCmd) Run(ctx context.Context, in AgentAuthRunInput) error {
 							totpPatterns := []string{"totp", "code", "verification", "otp", "2fa", "mfa", "authenticator", "token"}
 							for _, pattern := range totpPatterns {
 								if strings.Contains(fieldLower, pattern) {
-									code, err := generateTOTPCode(in.TotpSecret)
+									code, err := generateTOTPCode(in.TotpSecret, jsonOutput)
 									if err == nil {
 										submitValues[fieldName] = code
 										matched = true
@@ -889,7 +892,7 @@ func (c AgentAuthRunCmd) Run(ctx context.Context, in AgentAuthRunInput) error {
 
 				if hasTOTP && in.TotpSecret != "" {
 					// Generate and submit TOTP code
-					code, err := generateTOTPCode(in.TotpSecret)
+					code, err := generateTOTPCode(in.TotpSecret, jsonOutput)
 					if err != nil {
 						return err
 					}
