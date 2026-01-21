@@ -130,8 +130,8 @@ func FetchLatest(ctx context.Context) (tag string, url string, err error) {
 func isOnOldBrewTap() bool {
 	// Find the Homebrew Cellar path
 	cellarPaths := []string{
-		"/opt/homebrew/Cellar/kernel",  // Apple Silicon
-		"/usr/local/Cellar/kernel",     // Intel Mac
+		"/opt/homebrew/Cellar/kernel",              // Apple Silicon
+		"/usr/local/Cellar/kernel",                 // Intel Mac
 		"/home/linuxbrew/.linuxbrew/Cellar/kernel", // Linux
 	}
 
