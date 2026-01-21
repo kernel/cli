@@ -17,7 +17,9 @@ from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from .base import ToolError, ToolResult
 from .computer import N1Action
 
-SCREENSHOT_DELAY_MS = 0.5
+# Delay after actions before taking screenshot (in seconds for asyncio.sleep)
+# Matches TypeScript SCREENSHOT_DELAY_MS = 300 (300ms = 0.3s)
+SCREENSHOT_DELAY_S = 0.3
 
 # Key mappings from n1 output format to Playwright format
 KEY_MAP = {
@@ -140,7 +142,7 @@ class PlaywrightComputerTool:
         coords = self._get_coordinates(action.get("center_coordinates"))
 
         await page.mouse.click(coords["x"], coords["y"])
-        await asyncio.sleep(SCREENSHOT_DELAY_MS)
+        await asyncio.sleep(SCREENSHOT_DELAY_S)
         return await self.screenshot()
 
     async def _handle_scroll(self, action: N1Action) -> ToolResult:
@@ -172,7 +174,7 @@ class PlaywrightComputerTool:
             delta_x = scroll_delta
 
         await page.mouse.wheel(delta_x, delta_y)
-        await asyncio.sleep(SCREENSHOT_DELAY_MS)
+        await asyncio.sleep(SCREENSHOT_DELAY_S)
         return await self.screenshot()
 
     async def _handle_type(self, action: N1Action) -> ToolResult:
@@ -196,7 +198,7 @@ class PlaywrightComputerTool:
             await asyncio.sleep(0.1)
             await page.keyboard.press("Enter")
 
-        await asyncio.sleep(SCREENSHOT_DELAY_MS)
+        await asyncio.sleep(SCREENSHOT_DELAY_S)
         return await self.screenshot()
 
     async def _handle_key_press(self, action: N1Action) -> ToolResult:
@@ -208,7 +210,7 @@ class PlaywrightComputerTool:
         mapped_key = self._map_key_to_playwright(key_comb)
         await page.keyboard.press(mapped_key)
 
-        await asyncio.sleep(SCREENSHOT_DELAY_MS)
+        await asyncio.sleep(SCREENSHOT_DELAY_S)
         return await self.screenshot()
 
     async def _handle_hover(self, action: N1Action) -> ToolResult:
@@ -217,7 +219,7 @@ class PlaywrightComputerTool:
 
         await page.mouse.move(coords["x"], coords["y"])
 
-        await asyncio.sleep(SCREENSHOT_DELAY_MS)
+        await asyncio.sleep(SCREENSHOT_DELAY_S)
         return await self.screenshot()
 
     async def _handle_drag(self, action: N1Action) -> ToolResult:
@@ -227,22 +229,20 @@ class PlaywrightComputerTool:
 
         # Move to start position
         await page.mouse.move(start_coords["x"], start_coords["y"])
-        await asyncio.sleep(0.1)
         
-        # Press mouse button and wait for drag to register
+        # Press mouse button and wait for dragstart event
         await page.mouse.down()
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.05)
         
         # Move gradually to end position using steps for proper drag-and-drop
         # The steps parameter makes Playwright simulate intermediate mouse positions
         # which is required for HTML5 drag-and-drop to work properly
-        await page.mouse.move(end_coords["x"], end_coords["y"], steps=20)
-        await asyncio.sleep(0.1)
+        await page.mouse.move(end_coords["x"], end_coords["y"], steps=12)
         
         # Release mouse button
         await page.mouse.up()
 
-        await asyncio.sleep(SCREENSHOT_DELAY_MS)
+        await asyncio.sleep(0.3)
         return await self.screenshot()
 
     async def _handle_wait(self, action: N1Action) -> ToolResult:

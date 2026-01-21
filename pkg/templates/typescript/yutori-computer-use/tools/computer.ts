@@ -8,8 +8,8 @@ import { Buffer } from 'buffer';
 import type { Kernel } from '@onkernel/sdk';
 
 const TYPING_DELAY_MS = 12;
-const SCREENSHOT_DELAY_MS = 500;
-const ACTION_DELAY_MS = 500;
+const SCREENSHOT_DELAY_MS = 300;
+const ACTION_DELAY_MS = 300;
 
 export interface ToolResult {
   base64Image?: string;

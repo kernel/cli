@@ -13,9 +13,10 @@ from kernel import Kernel
 
 from .base import ToolError, ToolResult
 
-TYPING_DELAY_MS = 12
-SCREENSHOT_DELAY_MS = 0.5
-ACTION_DELAY_MS = 0.5
+TYPING_DELAY_MS = 12  # Typing delay in milliseconds (used by Kernel API)
+# Delays in seconds for asyncio.sleep (matches TypeScript 300ms = 0.3s)
+SCREENSHOT_DELAY_S = 0.3
+ACTION_DELAY_S = 0.3
 
 
 # n1 action types
@@ -135,7 +136,7 @@ class ComputerTool:
             num_clicks=1,
         )
 
-        await asyncio.sleep(SCREENSHOT_DELAY_MS)
+        await asyncio.sleep(SCREENSHOT_DELAY_S)
         return await self.screenshot()
 
     async def _handle_scroll(self, action: N1Action) -> ToolResult:
@@ -169,7 +170,7 @@ class ComputerTool:
             delta_y=delta_y,
         )
 
-        await asyncio.sleep(SCREENSHOT_DELAY_MS)
+        await asyncio.sleep(SCREENSHOT_DELAY_S)
         return await self.screenshot()
 
     async def _handle_type(self, action: N1Action) -> ToolResult:
@@ -205,7 +206,7 @@ class ComputerTool:
                 keys=["Return"],
             )
 
-        await asyncio.sleep(SCREENSHOT_DELAY_MS)
+        await asyncio.sleep(SCREENSHOT_DELAY_S)
         return await self.screenshot()
 
     async def _handle_key_press(self, action: N1Action) -> ToolResult:
@@ -220,7 +221,7 @@ class ComputerTool:
             keys=[mapped_key],
         )
 
-        await asyncio.sleep(SCREENSHOT_DELAY_MS)
+        await asyncio.sleep(SCREENSHOT_DELAY_S)
         return await self.screenshot()
 
     async def _handle_hover(self, action: N1Action) -> ToolResult:
@@ -232,7 +233,7 @@ class ComputerTool:
             y=coords["y"],
         )
 
-        await asyncio.sleep(SCREENSHOT_DELAY_MS)
+        await asyncio.sleep(SCREENSHOT_DELAY_S)
         return await self.screenshot()
 
     async def _handle_drag(self, action: N1Action) -> ToolResult:
@@ -245,7 +246,7 @@ class ComputerTool:
             button="left",
         )
 
-        await asyncio.sleep(SCREENSHOT_DELAY_MS)
+        await asyncio.sleep(SCREENSHOT_DELAY_S)
         return await self.screenshot()
 
     async def _handle_wait(self, action: N1Action) -> ToolResult:
@@ -291,7 +292,7 @@ class ComputerTool:
             self.session_id,
             keys=["ctrl+l"],
         )
-        await asyncio.sleep(ACTION_DELAY_MS)
+        await asyncio.sleep(ACTION_DELAY_S)
 
         # Select all existing text
         self.kernel.browsers.computer.press_key(
@@ -306,7 +307,7 @@ class ComputerTool:
             text=url,
             delay=TYPING_DELAY_MS,
         )
-        await asyncio.sleep(ACTION_DELAY_MS)
+        await asyncio.sleep(ACTION_DELAY_S)
 
         # Press Enter to navigate
         self.kernel.browsers.computer.press_key(

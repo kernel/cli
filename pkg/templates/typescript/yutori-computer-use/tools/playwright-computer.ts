@@ -11,7 +11,7 @@ import { chromium, type Browser, type BrowserContext, type Page } from 'playwrig
 import type { ToolResult, N1Action } from './computer';
 import { ToolError } from './computer';
 
-const SCREENSHOT_DELAY_MS = 500;
+const SCREENSHOT_DELAY_MS = 300;
 
 // Key mappings from n1 output format to Playwright format
 const KEY_MAP: Record<string, string> = {
@@ -260,22 +260,20 @@ export class PlaywrightComputerTool {
 
     // Move to start position
     await this.page.mouse.move(startCoords.x, startCoords.y);
-    await this.sleep(100);
     
-    // Press mouse button and wait for drag to register
+    // Press mouse button and wait for dragstart event
     await this.page.mouse.down();
-    await this.sleep(150);
+    await this.sleep(50);
     
     // Move gradually to end position using steps for proper drag-and-drop
     // The steps parameter makes Playwright simulate intermediate mouse positions
     // which is required for HTML5 drag-and-drop to work properly
-    await this.page.mouse.move(endCoords.x, endCoords.y, { steps: 20 });
-    await this.sleep(100);
+    await this.page.mouse.move(endCoords.x, endCoords.y, { steps: 12 });
     
     // Release mouse button
     await this.page.mouse.up();
 
-    await this.sleep(SCREENSHOT_DELAY_MS);
+    await this.sleep(300);
     return this.screenshot();
   }
 
