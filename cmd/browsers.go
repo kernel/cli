@@ -249,9 +249,6 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	tableData := pterm.TableData{headers}
 
 	for _, browser := range browsers {
-		// log the browser
-		pterm.Info.Println(browser)
-
 		persistentID := "-"
 		if browser.Persistence.ID != "" {
 			persistentID = browser.Persistence.ID
