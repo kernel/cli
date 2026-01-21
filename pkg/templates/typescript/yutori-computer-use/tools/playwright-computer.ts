@@ -318,15 +318,15 @@ export class PlaywrightComputerTool {
   }
 
   /**
-   * Read texts and links using Playwright's _snapshotForAI().
-   * Directly calls the method on the CDP-connected page.
+   * Read texts and links using Playwright's ariaSnapshot() API.
+   * Returns accessibility tree representation of the page content.
    */
   private async handleReadTextsAndLinks(): Promise<ToolResult> {
     this.assertPage();
     try {
-      // Call _snapshotForAI directly on the page
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const snapshot = await (this.page as any)._snapshotForAI();
+      // Use the public ariaSnapshot() API on the body locator
+      // This provides an accessibility tree representation of the page
+      const snapshot = await this.page.locator('body').ariaSnapshot();
       const url = this.page.url();
       const title = await this.page.title();
 

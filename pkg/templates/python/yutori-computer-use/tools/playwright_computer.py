@@ -280,14 +280,14 @@ class PlaywrightComputerTool:
 
     async def _handle_read_texts_and_links(self, action: N1Action) -> ToolResult:
         """
-        Read texts and links using Playwright's _snapshotForAI().
-        Directly calls the method on the CDP-connected page.
+        Read texts and links using Playwright's ariaSnapshot() API.
+        Returns accessibility tree representation of the page content.
         """
         page = self._assert_page()
         try:
-            # Call _snapshotForAI directly on the page
-            # This is an internal Playwright method for AI accessibility
-            snapshot = await page._snapshot_for_ai()  # type: ignore
+            # Use the public aria_snapshot() API on the body locator
+            # This provides an accessibility tree representation of the page
+            snapshot = await page.locator("body").aria_snapshot()
             url = page.url
             title = await page.title()
 
