@@ -48,7 +48,7 @@ type CredentialProvidersUpdateInput struct {
 	Token           string
 	CacheTtlSeconds int64
 	Enabled         BoolFlag
-	Priority        int64
+	Priority        Int64Flag
 	Output          string
 }
 
@@ -200,8 +200,8 @@ func (c CredentialProvidersCmd) Update(ctx context.Context, in CredentialProvide
 	if in.Enabled.Set {
 		params.UpdateCredentialProviderRequest.Enabled = kernel.Opt(in.Enabled.Value)
 	}
-	if in.Priority > 0 {
-		params.UpdateCredentialProviderRequest.Priority = kernel.Opt(in.Priority)
+	if in.Priority.Set {
+		params.UpdateCredentialProviderRequest.Priority = kernel.Opt(in.Priority.Value)
 	}
 
 	if in.Output != "json" {
@@ -436,7 +436,7 @@ func runCredentialProvidersUpdate(cmd *cobra.Command, args []string) error {
 		Token:           token,
 		CacheTtlSeconds: cacheTtl,
 		Enabled:         BoolFlag{Set: cmd.Flags().Changed("enabled"), Value: enabled},
-		Priority:        priority,
+		Priority:        Int64Flag{Set: cmd.Flags().Changed("priority"), Value: priority},
 		Output:          output,
 	})
 }

@@ -108,6 +108,12 @@ type BoolFlag struct {
 	Value bool
 }
 
+// Int64Flag captures whether an int64 flag was set explicitly and its value.
+type Int64Flag struct {
+	Set   bool
+	Value int64
+}
+
 // Regular expression to validate CUID2 identifiers (24 lowercase alphanumeric characters).
 var cuidRegex = regexp.MustCompile(`^[a-z0-9]{24}$`)
 
