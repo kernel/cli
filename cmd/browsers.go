@@ -2259,7 +2259,6 @@ func init() {
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
 
-
 	// no flags for view; it takes a single positional argument
 }
 
