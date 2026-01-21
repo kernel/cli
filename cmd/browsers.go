@@ -1347,7 +1347,7 @@ func (b BrowsersCmd) ProcessResize(ctx context.Context, in BrowsersProcessResize
 		pterm.Error.Println("process service not available")
 		return nil
 	}
-	br, err := b.browsers.Get(ctx, in.Identifier)
+	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -1370,7 +1370,7 @@ func (b BrowsersCmd) FSWatchStart(ctx context.Context, in BrowsersFSWatchStartIn
 		pterm.Error.Println("fs watch service not available")
 		return nil
 	}
-	br, err := b.browsers.Get(ctx, in.Identifier)
+	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -1396,7 +1396,7 @@ func (b BrowsersCmd) FSWatchStop(ctx context.Context, in BrowsersFSWatchStopInpu
 		pterm.Error.Println("fs watch service not available")
 		return nil
 	}
-	br, err := b.browsers.Get(ctx, in.Identifier)
+	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -1413,7 +1413,7 @@ func (b BrowsersCmd) FSWatchEvents(ctx context.Context, in BrowsersFSWatchEvents
 		pterm.Error.Println("fs watch service not available")
 		return nil
 	}
-	br, err := b.browsers.Get(ctx, in.Identifier)
+	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
