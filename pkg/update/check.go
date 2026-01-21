@@ -125,6 +125,39 @@ func FetchLatest(ctx context.Context) (tag string, url string, err error) {
 	return "", "", errors.New("no stable releases found")
 }
 
+// isOnOldBrewTap checks if the user has kernel installed from onkernel/tap
+// instead of the current kernel/tap by checking the install receipt.
+func isOnOldBrewTap() bool {
+	// Find the Homebrew Cellar path
+	cellarPaths := []string{
+		"/opt/homebrew/Cellar/kernel",  // Apple Silicon
+		"/usr/local/Cellar/kernel",     // Intel Mac
+		"/home/linuxbrew/.linuxbrew/Cellar/kernel", // Linux
+	}
+
+	for _, cellar := range cellarPaths {
+		entries, err := os.ReadDir(cellar)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			receiptPath := filepath.Join(cellar, entry.Name(), "INSTALL_RECEIPT.json")
+			data, err := os.ReadFile(receiptPath)
+			if err != nil {
+				continue
+			}
+			// Check if installed from onkernel/tap
+			if strings.Contains(string(data), `"tap":"onkernel/tap"`) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // printUpgradeMessage prints a concise upgrade banner.
 func printUpgradeMessage(current, latest, url string) {
 	cur := strings.TrimPrefix(current, "v")
@@ -134,6 +167,18 @@ func printUpgradeMessage(current, latest, url string) {
 	if url != "" {
 		pterm.Info.Printf("Release notes: %s\n", url)
 	}
+
+	method, _ := DetectInstallMethod()
+	if method == InstallMethodBrew && isOnOldBrewTap() {
+		pterm.Println()
+		pterm.Warning.Println("You have kernel installed from the old tap (onkernel/tap).")
+		pterm.Warning.Println("To upgrade, switch to the new tap:")
+		pterm.Println()
+		pterm.Println("  brew uninstall kernel")
+		pterm.Println("  brew install kernel/tap/kernel")
+		return
+	}
+
 	if cmd := SuggestUpgradeCommand(); cmd != "" {
 		pterm.Info.Printf("To upgrade, run: %s\n", cmd)
 	} else {
