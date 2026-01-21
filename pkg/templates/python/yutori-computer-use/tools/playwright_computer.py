@@ -225,9 +225,21 @@ class PlaywrightComputerTool:
         start_coords = self._get_coordinates(action.get("start_coordinates"))
         end_coords = self._get_coordinates(action.get("center_coordinates"))
 
+        # Move to start position
         await page.mouse.move(start_coords["x"], start_coords["y"])
+        await asyncio.sleep(0.1)
+        
+        # Press mouse button and wait for drag to register
         await page.mouse.down()
-        await page.mouse.move(end_coords["x"], end_coords["y"])
+        await asyncio.sleep(0.15)
+        
+        # Move gradually to end position using steps for proper drag-and-drop
+        # The steps parameter makes Playwright simulate intermediate mouse positions
+        # which is required for HTML5 drag-and-drop to work properly
+        await page.mouse.move(end_coords["x"], end_coords["y"], steps=20)
+        await asyncio.sleep(0.1)
+        
+        # Release mouse button
         await page.mouse.up()
 
         await asyncio.sleep(SCREENSHOT_DELAY_MS)

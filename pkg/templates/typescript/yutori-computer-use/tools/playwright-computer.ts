@@ -258,9 +258,21 @@ export class PlaywrightComputerTool {
     const startCoords = this.getCoordinates(action.start_coordinates);
     const endCoords = this.getCoordinates(action.center_coordinates);
 
+    // Move to start position
     await this.page.mouse.move(startCoords.x, startCoords.y);
+    await this.sleep(100);
+    
+    // Press mouse button and wait for drag to register
     await this.page.mouse.down();
-    await this.page.mouse.move(endCoords.x, endCoords.y);
+    await this.sleep(150);
+    
+    // Move gradually to end position using steps for proper drag-and-drop
+    // The steps parameter makes Playwright simulate intermediate mouse positions
+    // which is required for HTML5 drag-and-drop to work properly
+    await this.page.mouse.move(endCoords.x, endCoords.y, { steps: 20 });
+    await this.sleep(100);
+    
+    // Release mouse button
     await this.page.mouse.up();
 
     await this.sleep(SCREENSHOT_DELAY_MS);
