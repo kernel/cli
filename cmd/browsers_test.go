@@ -54,7 +54,7 @@ func setupStdoutCapture(t *testing.T) {
 
 // FakeBrowsersService is a configurable fake implementing BrowsersService.
 type FakeBrowsersService struct {
-	GetFunc            func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error)
+	GetFunc            func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error)
 	ListFunc           func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error)
 	NewFunc            func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error)
 	UpdateFunc         func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error)
@@ -63,9 +63,9 @@ type FakeBrowsersService struct {
 	LoadExtensionsFunc func(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) error
 }
 
-func (f *FakeBrowsersService) Get(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+func (f *FakeBrowsersService) Get(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
 	if f.GetFunc != nil {
-		return f.GetFunc(ctx, id, opts...)
+		return f.GetFunc(ctx, id, query, opts...)
 	}
 	return nil, errors.New("not found")
 }
@@ -292,7 +292,7 @@ func TestBrowsersView_ByID_PrintsURL(t *testing.T) {
 	})
 
 	fake := &FakeBrowsersService{
-		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
 			return &kernel.BrowserGetResponse{
 				SessionID:          "abc",
 				BrowserLiveViewURL: "http://live-url",
@@ -325,7 +325,7 @@ func TestBrowsersView_HeadlessBrowser_ShowsWarning(t *testing.T) {
 	setupStdoutCapture(t)
 
 	fake := &FakeBrowsersService{
-		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
 			return &kernel.BrowserGetResponse{
 				SessionID:          "abc",
 				Headless:           true,
@@ -344,7 +344,7 @@ func TestBrowsersView_PrintsErrorOnGetFailure(t *testing.T) {
 	setupStdoutCapture(t)
 
 	fake := &FakeBrowsersService{
-		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
 			return nil, errors.New("get error")
 		},
 	}
@@ -360,7 +360,7 @@ func TestBrowsersGet_PrintsDetails(t *testing.T) {
 
 	created := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
 	fake := &FakeBrowsersService{
-		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
 			return &kernel.BrowserGetResponse{
 				SessionID:          "sess-123",
 				CdpWsURL:           "ws://cdp-url",
@@ -404,7 +404,7 @@ func TestBrowsersGet_JSONOutput(t *testing.T) {
 	})
 
 	fake := &FakeBrowsersService{
-		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
 			// Unmarshal JSON to populate RawJSON() properly
 			jsonData := `{"session_id": "sess-json", "cdp_ws_url": "ws://cdp", "created_at": "2024-01-01T00:00:00Z", "headless": false, "stealth": false, "timeout_seconds": 60}`
 			var resp kernel.BrowserGetResponse
@@ -442,7 +442,7 @@ func TestBrowsersGet_Error(t *testing.T) {
 	setupStdoutCapture(t)
 
 	fake := &FakeBrowsersService{
-		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
 			return nil, errors.New("get failed")
 		},
 	}
@@ -580,6 +580,7 @@ func (f *FakeFSService) WriteFile(ctx context.Context, id string, contents io.Re
 type FakeProcessService struct {
 	ExecFunc         func(ctx context.Context, id string, body kernel.BrowserProcessExecParams, opts ...option.RequestOption) (*kernel.BrowserProcessExecResponse, error)
 	KillFunc         func(ctx context.Context, processID string, params kernel.BrowserProcessKillParams, opts ...option.RequestOption) (*kernel.BrowserProcessKillResponse, error)
+	ResizeFunc       func(ctx context.Context, processID string, params kernel.BrowserProcessResizeParams, opts ...option.RequestOption) (*kernel.BrowserProcessResizeResponse, error)
 	SpawnFunc        func(ctx context.Context, id string, body kernel.BrowserProcessSpawnParams, opts ...option.RequestOption) (*kernel.BrowserProcessSpawnResponse, error)
 	StatusFunc       func(ctx context.Context, processID string, query kernel.BrowserProcessStatusParams, opts ...option.RequestOption) (*kernel.BrowserProcessStatusResponse, error)
 	StdinFunc        func(ctx context.Context, processID string, params kernel.BrowserProcessStdinParams, opts ...option.RequestOption) (*kernel.BrowserProcessStdinResponse, error)
@@ -597,6 +598,12 @@ func (f *FakeProcessService) Kill(ctx context.Context, processID string, params 
 		return f.KillFunc(ctx, processID, params, opts...)
 	}
 	return &kernel.BrowserProcessKillResponse{Ok: true}, nil
+}
+func (f *FakeProcessService) Resize(ctx context.Context, processID string, params kernel.BrowserProcessResizeParams, opts ...option.RequestOption) (*kernel.BrowserProcessResizeResponse, error) {
+	if f.ResizeFunc != nil {
+		return f.ResizeFunc(ctx, processID, params, opts...)
+	}
+	return &kernel.BrowserProcessResizeResponse{Ok: true}, nil
 }
 func (f *FakeProcessService) Spawn(ctx context.Context, id string, body kernel.BrowserProcessSpawnParams, opts ...option.RequestOption) (*kernel.BrowserProcessSpawnResponse, error) {
 	if f.SpawnFunc != nil {
@@ -730,7 +737,7 @@ func (f *FakeComputerService) SetCursorVisibility(ctx context.Context, id string
 // newFakeBrowsersServiceWithSimpleGet returns a FakeBrowsersService with a GetFunc that returns a browser with SessionID "id".
 func newFakeBrowsersServiceWithSimpleGet() *FakeBrowsersService {
 	return &FakeBrowsersService{
-		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
 			return &kernel.BrowserGetResponse{SessionID: "id"}, nil
 		},
 	}
