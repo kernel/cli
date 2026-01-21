@@ -136,7 +136,7 @@ class ComputerTool:
         )
 
         await asyncio.sleep(SCREENSHOT_DELAY_MS)
-        return self.screenshot()
+        return await self.screenshot()
 
     async def _handle_scroll(self, action: N1Action) -> ToolResult:
         coords = self._get_coordinates(action.get("center_coordinates"))
@@ -170,7 +170,7 @@ class ComputerTool:
         )
 
         await asyncio.sleep(SCREENSHOT_DELAY_MS)
-        return self.screenshot()
+        return await self.screenshot()
 
     async def _handle_type(self, action: N1Action) -> ToolResult:
         text = action.get("text")
@@ -206,7 +206,7 @@ class ComputerTool:
             )
 
         await asyncio.sleep(SCREENSHOT_DELAY_MS)
-        return self.screenshot()
+        return await self.screenshot()
 
     async def _handle_key_press(self, action: N1Action) -> ToolResult:
         key_comb = action.get("key_comb")
@@ -221,7 +221,7 @@ class ComputerTool:
         )
 
         await asyncio.sleep(SCREENSHOT_DELAY_MS)
-        return self.screenshot()
+        return await self.screenshot()
 
     async def _handle_hover(self, action: N1Action) -> ToolResult:
         coords = self._get_coordinates(action.get("center_coordinates"))
@@ -233,7 +233,7 @@ class ComputerTool:
         )
 
         await asyncio.sleep(SCREENSHOT_DELAY_MS)
-        return self.screenshot()
+        return await self.screenshot()
 
     async def _handle_drag(self, action: N1Action) -> ToolResult:
         start_coords = self._get_coordinates(action.get("start_coordinates"))
@@ -246,12 +246,12 @@ class ComputerTool:
         )
 
         await asyncio.sleep(SCREENSHOT_DELAY_MS)
-        return self.screenshot()
+        return await self.screenshot()
 
     async def _handle_wait(self, action: N1Action) -> ToolResult:
         # Default wait of 2 seconds for UI to update
         await asyncio.sleep(2)
-        return self.screenshot()
+        return await self.screenshot()
 
     async def _handle_refresh(self, action: N1Action) -> ToolResult:
         """Refresh the page using keyboard shortcut (F5)."""
@@ -262,7 +262,7 @@ class ComputerTool:
 
         # Wait for page to reload
         await asyncio.sleep(2)
-        return self.screenshot()
+        return await self.screenshot()
 
     async def _handle_go_back(self, action: N1Action) -> ToolResult:
         """Go back using keyboard shortcut (Alt+Left)."""
@@ -273,7 +273,7 @@ class ComputerTool:
 
         # Wait for navigation
         await asyncio.sleep(1.5)
-        return self.screenshot()
+        return await self.screenshot()
 
     async def _handle_goto_url(self, action: N1Action) -> ToolResult:
         """
@@ -316,7 +316,7 @@ class ComputerTool:
 
         # Wait for page to load
         await asyncio.sleep(2)
-        return self.screenshot()
+        return await self.screenshot()
 
     async def _handle_read_texts_and_links(self, action: N1Action) -> ToolResult:
         """
@@ -339,7 +339,7 @@ class ComputerTool:
             )
 
             # Get screenshot via Computer Controls API
-            screenshot_result = self.screenshot()
+            screenshot_result = await self.screenshot()
 
             if result.success and result.result:
                 data = result.result
@@ -357,13 +357,13 @@ class ComputerTool:
             return screenshot_result
         except Exception as e:
             print(f"read_texts_and_links failed: {e}")
-            return self.screenshot()
+            return await self.screenshot()
 
     async def _handle_stop(self, action: N1Action) -> ToolResult:
         """Return the final answer without taking a screenshot."""
         return {"output": action.get("answer", "Task completed")}
 
-    def screenshot(self) -> ToolResult:
+    async def screenshot(self) -> ToolResult:
         """Take a screenshot of the current browser state."""
         try:
             response = self.kernel.browsers.computer.capture_screenshot(
