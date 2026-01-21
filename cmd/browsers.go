@@ -263,8 +263,8 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 
 		// Check for pool_id in ExtraFields (until SDK is updated with PoolID field)
 		poolID := "-"
-		if browser.PoolID != "" {
-			poolID = browser.PoolID
+		if field, ok := browser.JSON.ExtraFields["pool_id"]; ok && field.Valid() {
+			poolID = strings.Trim(field.Raw(), `"`)
 		}
 
 		row := []string{
@@ -379,7 +379,11 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		return util.PrintPrettyJSON(browser)
 	}
 
-	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.PoolID, browser.Persistence, browser.Profile)
+	poolID := ""
+	if field, ok := browser.JSON.ExtraFields["pool_id"]; ok && field.Valid() {
+		poolID = strings.Trim(field.Raw(), `"`)
+	}
+	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, poolID, browser.Persistence, browser.Profile)
 	return nil
 }
 
@@ -490,11 +494,15 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	}
 
 	// Build table starting with common browser fields
+	getPoolID := ""
+	if field, ok := browser.JSON.ExtraFields["pool_id"]; ok && field.Valid() {
+		getPoolID = strings.Trim(field.Raw(), `"`)
+	}
 	tableData := buildBrowserTableData(
 		browser.SessionID,
 		browser.CdpWsURL,
 		browser.BrowserLiveViewURL,
-		browser.PoolID,
+		getPoolID,
 		browser.Persistence,
 		browser.Profile,
 	)
@@ -2238,7 +2246,11 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if output == "json" {
 			return util.PrintPrettyJSON(resp)
 		}
-		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.PoolID, resp.Persistence, resp.Profile)
+		acquirePoolID := ""
+		if field, ok := resp.JSON.ExtraFields["pool_id"]; ok && field.Valid() {
+			acquirePoolID = strings.Trim(field.Raw(), `"`)
+		}
+		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, acquirePoolID, resp.Persistence, resp.Profile)
 		return nil
 	}
 
