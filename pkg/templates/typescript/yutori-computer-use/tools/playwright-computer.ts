@@ -28,10 +28,6 @@ const MODIFIER_MAP: Record<string, string> = {
   'cmd': 'Meta',
 };
 
-/**
- * Computer tool for Yutori n1 actions using Playwright via CDP connection.
- * Provides viewport-only screenshots optimized for n1 model performance.
- */
 export class PlaywrightComputerTool {
   private cdpWsUrl: string;
   private width: number;
@@ -46,10 +42,6 @@ export class PlaywrightComputerTool {
     this.height = height;
   }
 
-  /**
-   * Connect to the browser via CDP WebSocket.
-   * Must be called before executing any actions.
-   */
   async connect(): Promise<void> {
     if (this.browser) {
       return; // Already connected
@@ -77,13 +69,8 @@ export class PlaywrightComputerTool {
     this.page.on('close', this.handlePageClose.bind(this));
   }
 
-  /**
-   * Disconnect from the browser.
-   */
   async disconnect(): Promise<void> {
     if (this.browser) {
-      // Don't close the browser itself - just disconnect the CDP connection
-      // The browser lifecycle is managed by Kernel
       this.browser = null;
       this.context = null;
       this.page = null;
@@ -115,9 +102,6 @@ export class PlaywrightComputerTool {
     }
   }
 
-  /**
-   * Execute an n1 action and return the result.
-   */
   async execute(action: N1Action): Promise<ToolResult> {
     this.assertPage();
     const { action_type } = action;
@@ -171,13 +155,10 @@ export class PlaywrightComputerTool {
       throw new ToolError(`Invalid scroll direction: ${direction}`);
     }
 
-    // Each scroll amount unit ≈ 10-15% of screen, roughly 100 pixels
     const scrollDelta = amount * 100;
 
-    // Move mouse to position first
     await this.page.mouse.move(coords.x, coords.y);
 
-    // Playwright's wheel method takes deltaX and deltaY
     let deltaX = 0;
     let deltaY = 0;
 
@@ -208,7 +189,6 @@ export class PlaywrightComputerTool {
       throw new ToolError('text is required for type action');
     }
 
-    // Clear existing text if requested
     if (action.clear_before_typing) {
       await this.page.keyboard.press('Control+a');
       await this.sleep(100);
@@ -216,10 +196,8 @@ export class PlaywrightComputerTool {
       await this.sleep(100);
     }
 
-    // Type the text
     await this.page.keyboard.type(text);
 
-    // Press Enter if requested
     if (action.press_enter_after) {
       await this.sleep(100);
       await this.page.keyboard.press('Enter');
@@ -258,19 +236,10 @@ export class PlaywrightComputerTool {
     const startCoords = this.getCoordinates(action.start_coordinates);
     const endCoords = this.getCoordinates(action.center_coordinates);
 
-    // Move to start position
     await this.page.mouse.move(startCoords.x, startCoords.y);
-    
-    // Press mouse button and wait for dragstart event
     await this.page.mouse.down();
     await this.sleep(50);
-    
-    // Move gradually to end position using steps for proper drag-and-drop
-    // The steps parameter makes Playwright simulate intermediate mouse positions
-    // which is required for HTML5 drag-and-drop to work properly
     await this.page.mouse.move(endCoords.x, endCoords.y, { steps: 12 });
-    
-    // Release mouse button
     await this.page.mouse.up();
 
     await this.sleep(300);
@@ -278,7 +247,6 @@ export class PlaywrightComputerTool {
   }
 
   private async handleWait(): Promise<ToolResult> {
-    // Default wait of 2 seconds for UI to update
     await this.sleep(2000);
     return this.screenshot();
   }
@@ -286,8 +254,6 @@ export class PlaywrightComputerTool {
   private async handleRefresh(): Promise<ToolResult> {
     this.assertPage();
     await this.page.reload();
-
-    // Wait for page to reload
     await this.sleep(2000);
     return this.screenshot();
   }
@@ -295,8 +261,6 @@ export class PlaywrightComputerTool {
   private async handleGoBack(): Promise<ToolResult> {
     this.assertPage();
     await this.page.goBack();
-
-    // Wait for navigation
     await this.sleep(1500);
     return this.screenshot();
   }
@@ -309,26 +273,17 @@ export class PlaywrightComputerTool {
     }
 
     await this.page.goto(url);
-
-    // Wait for page to load
     await this.sleep(2000);
     return this.screenshot();
   }
 
-  /**
-   * Read texts and links using Playwright's ariaSnapshot() API.
-   * Returns accessibility tree representation of the page content.
-   */
   private async handleReadTextsAndLinks(): Promise<ToolResult> {
     this.assertPage();
     try {
-      // Use the public ariaSnapshot() API on the body locator
-      // This provides an accessibility tree representation of the page
       const snapshot = await this.page.locator('body').ariaSnapshot();
       const url = this.page.url();
       const title = await this.page.title();
 
-      // Get viewport-only screenshot
       const screenshotResult = await this.screenshot();
 
       return {
@@ -348,14 +303,9 @@ export class PlaywrightComputerTool {
     };
   }
 
-  /**
-   * Take a viewport-only screenshot of the current browser state.
-   * This captures only the browser content, not the OS UI or browser chrome.
-   */
   async screenshot(): Promise<ToolResult> {
     this.assertPage();
     try {
-      // fullPage: false captures only the viewport (browser content)
       const buffer = await this.page.screenshot({ fullPage: false });
 
       return {
@@ -366,9 +316,6 @@ export class PlaywrightComputerTool {
     }
   }
 
-  /**
-   * Get the current page URL.
-   */
   getCurrentUrl(): string {
     this.assertPage();
     return this.page.url();
@@ -388,10 +335,6 @@ export class PlaywrightComputerTool {
     return { x, y };
   }
 
-  /**
-   * Map key names to Playwright format.
-   * n1 outputs keys in Playwright format, but some may need adjustment.
-   */
   private mapKeyToPlaywright(key: string): string {
     // Handle modifier combinations (e.g., "ctrl+a" -> "Control+a")
     if (key.includes('+')) {

@@ -32,8 +32,6 @@ class KernelBrowserSession:
     stealth: bool = True
     timeout_seconds: int = 300
 
-    # Viewport dimensions - Yutori n1 recommended: 1280x800, Kernel supports 1200x800
-    # See: https://docs.yutori.com/reference/n1#screenshot-requirements
     viewport_width: int = 1200
     viewport_height: int = 800
 
@@ -50,11 +48,8 @@ class KernelBrowserSession:
     _kernel: Optional[Kernel] = field(default=None, init=False)
 
     async def __aenter__(self) -> "KernelBrowserSession":
-        """Create a Kernel browser session and optionally start recording."""
         self._kernel = Kernel()
 
-        # Create browser with Yutori n1's recommended viewport
-        # See: https://docs.yutori.com/reference/n1#screenshot-requirements
         browser = self._kernel.browsers.create(
             stealth=self.stealth,
             timeout_seconds=self.timeout_seconds,
@@ -83,7 +78,6 @@ class KernelBrowserSession:
         return self
 
     async def _start_replay(self) -> None:
-        """Start recording a replay of the browser session."""
         if not self._kernel or not self.session_id:
             return
 
@@ -93,7 +87,6 @@ class KernelBrowserSession:
         print(f"Replay recording started: {self.replay_id}")
 
     async def _stop_and_get_replay_url(self) -> None:
-        """Stop recording and get the replay URL."""
         if not self._kernel or not self.session_id or not self.replay_id:
             return
 
@@ -132,7 +125,6 @@ class KernelBrowserSession:
             print(f"Replay view URL: {self.replay_view_url}")
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Stop recording and delete the browser session."""
         if self._kernel and self.session_id:
             try:
                 # Stop replay if recording was enabled
@@ -151,7 +143,6 @@ class KernelBrowserSession:
 
     @property
     def kernel(self) -> Kernel:
-        """Get the Kernel client instance."""
         if self._kernel is None:
             raise RuntimeError("Session not initialized. Use async with context.")
         return self._kernel

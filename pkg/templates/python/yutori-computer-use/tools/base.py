@@ -12,8 +12,6 @@ class ToolError(Exception):
 
 
 class ToolResult(TypedDict, total=False):
-    """Result from executing a tool action."""
-
     base64_image: str
     output: str
     error: str

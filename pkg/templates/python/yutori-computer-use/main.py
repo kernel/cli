@@ -86,9 +86,8 @@ async def cua_task(
 
 
 def _extract_last_assistant_message(messages: list) -> str:
-    """Extract the last assistant message text from the conversation."""
     import json
-    
+
     for msg in reversed(messages):
         if msg.get("role") == "assistant":
             content = msg.get("content")

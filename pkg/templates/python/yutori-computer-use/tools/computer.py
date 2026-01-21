@@ -91,8 +91,6 @@ MODIFIER_MAP = {
 
 
 class ComputerTool:
-    """Computer tool for Yutori n1 actions using Kernel browser."""
-
     def __init__(self, kernel: Kernel, session_id: str, width: int = 1200, height: int = 800):
         self.kernel = kernel
         self.session_id = session_id
@@ -100,7 +98,6 @@ class ComputerTool:
         self.height = height
 
     async def execute(self, action: N1Action) -> ToolResult:
-        """Execute an n1 action and return the result."""
         action_type = action.get("action_type")
 
         handlers = {
@@ -147,7 +144,6 @@ class ComputerTool:
         if direction not in ("up", "down", "left", "right"):
             raise ToolError(f"Invalid scroll direction: {direction}")
 
-        # Each scroll amount unit ≈ 10-15% of screen, roughly 100 pixels
         scroll_delta = amount * 100
 
         delta_x = 0
@@ -178,7 +174,6 @@ class ComputerTool:
         if not text:
             raise ToolError("text is required for type action")
 
-        # Clear existing text if requested
         if action.get("clear_before_typing"):
             self.kernel.browsers.computer.press_key(
                 self.session_id,
@@ -191,14 +186,12 @@ class ComputerTool:
             )
             await asyncio.sleep(0.1)
 
-        # Type the text
         self.kernel.browsers.computer.type_text(
             self.session_id,
             text=text,
             delay=TYPING_DELAY_MS,
         )
 
-        # Press Enter if requested
         if action.get("press_enter_after"):
             await asyncio.sleep(0.1)
             self.kernel.browsers.computer.press_key(
@@ -250,58 +243,42 @@ class ComputerTool:
         return await self.screenshot()
 
     async def _handle_wait(self, action: N1Action) -> ToolResult:
-        # Default wait of 2 seconds for UI to update
         await asyncio.sleep(2)
         return await self.screenshot()
 
     async def _handle_refresh(self, action: N1Action) -> ToolResult:
-        """Refresh the page using keyboard shortcut (F5)."""
         self.kernel.browsers.computer.press_key(
             self.session_id,
             keys=["F5"],
         )
-
-        # Wait for page to reload
         await asyncio.sleep(2)
         return await self.screenshot()
 
     async def _handle_go_back(self, action: N1Action) -> ToolResult:
-        """Go back using keyboard shortcut (Alt+Left)."""
         self.kernel.browsers.computer.press_key(
             self.session_id,
             keys=["alt+Left"],
         )
-
-        # Wait for navigation
         await asyncio.sleep(1.5)
         return await self.screenshot()
 
     async def _handle_goto_url(self, action: N1Action) -> ToolResult:
-        """
-        Navigate to URL using keyboard shortcuts:
-        1. Ctrl+L to focus the URL bar
-        2. Type the URL
-        3. Press Enter
-        """
         url = action.get("url")
         if not url:
             raise ToolError("url is required for goto_url action")
 
-        # Focus URL bar with Ctrl+L
         self.kernel.browsers.computer.press_key(
             self.session_id,
             keys=["ctrl+l"],
         )
         await asyncio.sleep(ACTION_DELAY_S)
 
-        # Select all existing text
         self.kernel.browsers.computer.press_key(
             self.session_id,
             keys=["ctrl+a"],
         )
         await asyncio.sleep(0.1)
 
-        # Type the URL
         self.kernel.browsers.computer.type_text(
             self.session_id,
             text=url,
@@ -309,25 +286,15 @@ class ComputerTool:
         )
         await asyncio.sleep(ACTION_DELAY_S)
 
-        # Press Enter to navigate
         self.kernel.browsers.computer.press_key(
             self.session_id,
             keys=["Return"],
         )
-
-        # Wait for page to load
         await asyncio.sleep(2)
         return await self.screenshot()
 
     async def _handle_read_texts_and_links(self, action: N1Action) -> ToolResult:
-        """
-        Read texts and links using Playwright's _snapshotForAI().
-        Per n1 docs this is "implemented as an external VLM call" - we use
-        Kernel's Playwright Execution API for the AI snapshot and
-        Computer Controls API for the screenshot.
-        """
         try:
-            # Get AI snapshot via Playwright Execution API
             result = self.kernel.browsers.playwright.execute(
                 self.session_id,
                 code="""
@@ -339,7 +306,6 @@ class ComputerTool:
                 timeout_sec=30
             )
 
-            # Get screenshot via Computer Controls API
             screenshot_result = await self.screenshot()
 
             if result.success and result.result:
@@ -353,7 +319,6 @@ class ComputerTool:
                     }, indent=2)
                 }
 
-            # Fallback to just screenshot if Playwright execution fails
             print("Playwright execution failed, falling back to screenshot only")
             return screenshot_result
         except Exception as e:
@@ -361,11 +326,9 @@ class ComputerTool:
             return await self.screenshot()
 
     async def _handle_stop(self, action: N1Action) -> ToolResult:
-        """Return the final answer without taking a screenshot."""
         return {"output": action.get("answer", "Task completed")}
 
     async def screenshot(self) -> ToolResult:
-        """Take a screenshot of the current browser state."""
         try:
             response = self.kernel.browsers.computer.capture_screenshot(
                 self.session_id
@@ -379,7 +342,6 @@ class ComputerTool:
     def _get_coordinates(
         self, coords: tuple[int, int] | list[int] | None
     ) -> dict[str, int]:
-        """Convert n1 coordinates to Kernel format."""
         if coords is None or len(coords) != 2:
             # Default to center of screen
             return {"x": self.width // 2, "y": self.height // 2}
@@ -391,7 +353,6 @@ class ComputerTool:
         return {"x": int(x), "y": int(y)}
 
     def _map_key(self, key: str) -> str:
-        """Map key names from Playwright format (n1 output) to xdotool format (Kernel)."""
         # Handle modifier combinations (e.g., "Control+a" -> "ctrl+a")
         if "+" in key:
             parts = key.split("+")

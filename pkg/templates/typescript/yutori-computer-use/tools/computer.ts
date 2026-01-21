@@ -92,9 +92,6 @@ const MODIFIER_MAP: Record<string, string> = {
   'cmd': 'super',
 };
 
-/**
- * Computer tool for Yutori n1 actions using Kernel browser.
- */
 export class ComputerTool {
   private kernel: Kernel;
   private sessionId: string;
@@ -108,9 +105,6 @@ export class ComputerTool {
     this.height = height;
   }
 
-  /**
-   * Execute an n1 action and return the result.
-   */
   async execute(action: N1Action): Promise<ToolResult> {
     const { action_type } = action;
 
@@ -168,7 +162,6 @@ export class ComputerTool {
       throw new ToolError(`Invalid scroll direction: ${direction}`);
     }
 
-    // Each scroll amount unit ≈ 10-15% of screen, roughly 100 pixels
     const scrollDelta = amount * 100;
 
     let delta_x = 0;
@@ -206,7 +199,6 @@ export class ComputerTool {
       throw new ToolError('text is required for type action');
     }
 
-    // Clear existing text if requested
     if (action.clear_before_typing) {
       await this.kernel.browsers.computer.pressKey(this.sessionId, {
         keys: ['ctrl+a'],
@@ -218,13 +210,11 @@ export class ComputerTool {
       await this.sleep(100);
     }
 
-    // Type the text
     await this.kernel.browsers.computer.typeText(this.sessionId, {
       text,
       delay: TYPING_DELAY_MS,
     });
 
-    // Press Enter if requested
     if (action.press_enter_after) {
       await this.sleep(100);
       await this.kernel.browsers.computer.pressKey(this.sessionId, {
@@ -278,84 +268,58 @@ export class ComputerTool {
   }
 
   private async handleWait(): Promise<ToolResult> {
-    // Default wait of 2 seconds for UI to update
     await this.sleep(2000);
     return this.screenshot();
   }
 
-  /**
-   * Refresh the page using keyboard shortcut (Ctrl+R or F5)
-   */
   private async handleRefresh(): Promise<ToolResult> {
     await this.kernel.browsers.computer.pressKey(this.sessionId, {
       keys: ['F5'],
     });
 
-    // Wait for page to reload
     await this.sleep(2000);
     return this.screenshot();
   }
 
-  /**
-   * Go back using keyboard shortcut (Alt+Left)
-   */
   private async handleGoBack(): Promise<ToolResult> {
     await this.kernel.browsers.computer.pressKey(this.sessionId, {
       keys: ['alt+Left'],
     });
 
-    // Wait for navigation
     await this.sleep(1500);
     return this.screenshot();
   }
 
-  /**
-   * Navigate to URL using keyboard shortcuts:
-   * 1. Ctrl+L to focus the URL bar
-   * 2. Type the URL
-   * 3. Press Enter
-   */
   private async handleGotoUrl(action: N1Action): Promise<ToolResult> {
     const url = action.url;
     if (!url) {
       throw new ToolError('url is required for goto_url action');
     }
 
-    // Focus URL bar with Ctrl+L
     await this.kernel.browsers.computer.pressKey(this.sessionId, {
       keys: ['ctrl+l'],
     });
     await this.sleep(ACTION_DELAY_MS);
 
-    // Select all existing text and type the new URL
     await this.kernel.browsers.computer.pressKey(this.sessionId, {
       keys: ['ctrl+a'],
     });
     await this.sleep(100);
 
-    // Type the URL
     await this.kernel.browsers.computer.typeText(this.sessionId, {
       text: url,
       delay: TYPING_DELAY_MS,
     });
     await this.sleep(ACTION_DELAY_MS);
 
-    // Press Enter to navigate
     await this.kernel.browsers.computer.pressKey(this.sessionId, {
       keys: ['Return'],
     });
 
-    // Wait for page to load
     await this.sleep(2000);
     return this.screenshot();
   }
 
-  /**
-   * Read texts and links using Playwright's _snapshotForAI().
-   * Per n1 docs this is "implemented as an external VLM call" - we use
-   * Kernel's Playwright Execution API for the AI snapshot and
-   * Computer Controls API for the screenshot.
-   */
   private async handleReadTextsAndLinks(): Promise<ToolResult> {
     try {
       // Get AI snapshot via Playwright Execution API
@@ -404,9 +368,6 @@ export class ComputerTool {
     };
   }
 
-  /**
-   * Take a screenshot of the current browser state.
-   */
   async screenshot(): Promise<ToolResult> {
     try {
       const response = await this.kernel.browsers.computer.captureScreenshot(this.sessionId);
@@ -436,9 +397,6 @@ export class ComputerTool {
     return { x, y };
   }
 
-  /**
-   * Map key names from Playwright format (n1 output) to xdotool format (Kernel).
-   */
   private mapKey(key: string): string {
     // Handle modifier combinations (e.g., "Control+a" -> "ctrl+a")
     if (key.includes('+')) {

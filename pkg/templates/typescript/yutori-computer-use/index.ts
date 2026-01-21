@@ -79,9 +79,6 @@ app.action<QueryInput, QueryOutput>(
   },
 );
 
-/**
- * Extract the last assistant message text from the conversation.
- */
 function extractLastAssistantMessage(messages: { role: string; content: string | unknown[] }[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];

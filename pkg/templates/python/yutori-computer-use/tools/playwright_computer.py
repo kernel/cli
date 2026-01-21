@@ -38,11 +38,6 @@ MODIFIER_MAP = {
 
 
 class PlaywrightComputerTool:
-    """
-    Computer tool for Yutori n1 actions using Playwright via CDP connection.
-    Provides viewport-only screenshots optimized for n1 model performance.
-    """
-
     def __init__(self, cdp_ws_url: str, width: int = 1200, height: int = 800):
         self.cdp_ws_url = cdp_ws_url
         self.width = width
@@ -53,10 +48,6 @@ class PlaywrightComputerTool:
         self._page: Optional[Page] = None
 
     async def connect(self) -> None:
-        """
-        Connect to the browser via CDP WebSocket.
-        Must be called before executing any actions.
-        """
         if self._browser:
             return  # Already connected
 
@@ -79,9 +70,6 @@ class PlaywrightComputerTool:
         self._page.on("close", self._handle_page_close)
 
     async def disconnect(self) -> None:
-        """Disconnect from the browser."""
-        # Don't close the browser itself - just stop the playwright connection
-        # The browser lifecycle is managed by Kernel
         if self._playwright:
             await self._playwright.stop()
         self._playwright = None
@@ -90,13 +78,11 @@ class PlaywrightComputerTool:
         self._page = None
 
     def _handle_new_page(self, page: Page) -> None:
-        """Handle the creation of a new page."""
         print("New page created")
         self._page = page
         page.on("close", self._handle_page_close)
 
     def _handle_page_close(self, closed_page: Page) -> None:
-        """Handle the closure of a page."""
         print("Page closed")
         if self._page == closed_page and self._context:
             pages = self._context.pages
@@ -107,13 +93,11 @@ class PlaywrightComputerTool:
                 self._page = None
 
     def _assert_page(self) -> Page:
-        """Assert that page is available and return it."""
         if not self._page:
             raise ToolError("Page not available. Did you call connect()?")
         return self._page
 
     async def execute(self, action: N1Action) -> ToolResult:
-        """Execute an n1 action and return the result."""
         action_type = action.get("action_type")
 
         handlers = {
@@ -154,13 +138,10 @@ class PlaywrightComputerTool:
         if direction not in ("up", "down", "left", "right"):
             raise ToolError(f"Invalid scroll direction: {direction}")
 
-        # Each scroll amount unit ≈ 10-15% of screen, roughly 100 pixels
         scroll_delta = amount * 100
 
-        # Move mouse to position first
         await page.mouse.move(coords["x"], coords["y"])
 
-        # Playwright's wheel method takes delta_x and delta_y
         delta_x = 0
         delta_y = 0
 
@@ -183,17 +164,14 @@ class PlaywrightComputerTool:
         if not text:
             raise ToolError("text is required for type action")
 
-        # Clear existing text if requested
         if action.get("clear_before_typing"):
             await page.keyboard.press("Control+a")
             await asyncio.sleep(0.1)
             await page.keyboard.press("Backspace")
             await asyncio.sleep(0.1)
 
-        # Type the text
         await page.keyboard.type(text)
 
-        # Press Enter if requested
         if action.get("press_enter_after"):
             await asyncio.sleep(0.1)
             await page.keyboard.press("Enter")
@@ -227,42 +205,28 @@ class PlaywrightComputerTool:
         start_coords = self._get_coordinates(action.get("start_coordinates"))
         end_coords = self._get_coordinates(action.get("center_coordinates"))
 
-        # Move to start position
         await page.mouse.move(start_coords["x"], start_coords["y"])
-        
-        # Press mouse button and wait for dragstart event
         await page.mouse.down()
         await asyncio.sleep(0.05)
-        
-        # Move gradually to end position using steps for proper drag-and-drop
-        # The steps parameter makes Playwright simulate intermediate mouse positions
-        # which is required for HTML5 drag-and-drop to work properly
         await page.mouse.move(end_coords["x"], end_coords["y"], steps=12)
-        
-        # Release mouse button
         await page.mouse.up()
 
         await asyncio.sleep(0.3)
         return await self.screenshot()
 
     async def _handle_wait(self, action: N1Action) -> ToolResult:
-        # Default wait of 2 seconds for UI to update
         await asyncio.sleep(2)
         return await self.screenshot()
 
     async def _handle_refresh(self, action: N1Action) -> ToolResult:
         page = self._assert_page()
         await page.reload()
-
-        # Wait for page to reload
         await asyncio.sleep(2)
         return await self.screenshot()
 
     async def _handle_go_back(self, action: N1Action) -> ToolResult:
         page = self._assert_page()
         await page.go_back()
-
-        # Wait for navigation
         await asyncio.sleep(1.5)
         return await self.screenshot()
 
@@ -273,25 +237,16 @@ class PlaywrightComputerTool:
             raise ToolError("url is required for goto_url action")
 
         await page.goto(url)
-
-        # Wait for page to load
         await asyncio.sleep(2)
         return await self.screenshot()
 
     async def _handle_read_texts_and_links(self, action: N1Action) -> ToolResult:
-        """
-        Read texts and links using Playwright's ariaSnapshot() API.
-        Returns accessibility tree representation of the page content.
-        """
         page = self._assert_page()
         try:
-            # Use the public aria_snapshot() API on the body locator
-            # This provides an accessibility tree representation of the page
             snapshot = await page.locator("body").aria_snapshot()
             url = page.url
             title = await page.title()
 
-            # Get viewport-only screenshot
             screenshot_result = await self.screenshot()
 
             return {
@@ -303,17 +258,11 @@ class PlaywrightComputerTool:
             return await self.screenshot()
 
     async def _handle_stop(self, action: N1Action) -> ToolResult:
-        """Return the final answer without taking a screenshot."""
         return {"output": action.get("answer", "Task completed")}
 
     async def screenshot(self) -> ToolResult:
-        """
-        Take a viewport-only screenshot of the current browser state.
-        This captures only the browser content, not the OS UI or browser chrome.
-        """
         page = self._assert_page()
         try:
-            # full_page=False captures only the viewport (browser content)
             buffer = await page.screenshot(full_page=False)
             base64_image = base64.b64encode(buffer).decode("utf-8")
             return {"base64_image": base64_image}
@@ -321,14 +270,12 @@ class PlaywrightComputerTool:
             raise ToolError(f"Failed to take screenshot: {e}")
 
     def get_current_url(self) -> str:
-        """Get the current page URL."""
         page = self._assert_page()
         return page.url
 
     def _get_coordinates(
         self, coords: tuple[int, int] | list[int] | None
     ) -> dict[str, int]:
-        """Convert n1 coordinates to dict format."""
         if coords is None or len(coords) != 2:
             # Default to center of viewport
             return {"x": self.width // 2, "y": self.height // 2}
@@ -340,10 +287,6 @@ class PlaywrightComputerTool:
         return {"x": int(x), "y": int(y)}
 
     def _map_key_to_playwright(self, key: str) -> str:
-        """
-        Map key names to Playwright format.
-        n1 outputs keys in Playwright format, but some may need adjustment.
-        """
         # Handle modifier combinations (e.g., "ctrl+a" -> "Control+a")
         if "+" in key:
             parts = key.split("+")

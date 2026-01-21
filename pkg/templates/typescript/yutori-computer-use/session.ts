@@ -37,8 +37,6 @@ const DEFAULT_OPTIONS: Required<SessionOptions> = {
   timeoutSeconds: 300,
   recordReplay: false,
   replayGracePeriod: 5.0,
-  // Yutori n1 recommended viewport: 1280x800, but Kernel supports 1200x800
-  // See: https://docs.yutori.com/reference/n1#screenshot-requirements
   viewportWidth: 1200,
   viewportHeight: 800,
 };
@@ -112,12 +110,7 @@ export class KernelBrowserSession {
     };
   }
 
-  /**
-   * Create a Kernel browser session and optionally start recording.
-   */
   async start(): Promise<SessionInfo> {
-    // Create browser with Yutori n1's recommended viewport
-    // See: https://docs.yutori.com/reference/n1#screenshot-requirements
     const browser = await this.kernel.browsers.create({
       stealth: this.options.stealth,
       timeout_seconds: this.options.timeoutSeconds,
@@ -148,9 +141,6 @@ export class KernelBrowserSession {
     return this.info;
   }
 
-  /**
-   * Start recording a replay of the browser session.
-   */
   private async startReplay(): Promise<void> {
     if (!this._sessionId) {
       return;
@@ -162,9 +152,6 @@ export class KernelBrowserSession {
     console.log(`Replay recording started: ${this._replayId}`);
   }
 
-  /**
-   * Stop recording and get the replay URL.
-   */
   private async stopReplay(): Promise<void> {
     if (!this._sessionId || !this._replayId) {
       return;
@@ -210,9 +197,6 @@ export class KernelBrowserSession {
     }
   }
 
-  /**
-   * Stop recording, and delete the browser session.
-   */
   async stop(): Promise<SessionInfo> {
     const info = this.info;
 
@@ -229,7 +213,6 @@ export class KernelBrowserSession {
           info.replayViewUrl = this._replayViewUrl || undefined;
         }
       } finally {
-        // Always clean up the browser session, even if replay stopping fails
         console.log(`Destroying browser session: ${this._sessionId}`);
         await this.kernel.browsers.deleteByID(this._sessionId);
         console.log('Browser session destroyed.');

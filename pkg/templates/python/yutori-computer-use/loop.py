@@ -29,8 +29,6 @@ BrowserMode = Literal["computer_use", "playwright"]
 
 
 class N1ComputerToolProtocol(Protocol):
-    """Protocol for tools that can execute n1 actions."""
-
     async def execute(self, action: N1Action) -> ToolResult:
         ...
 
@@ -51,36 +49,16 @@ async def sampling_loop(
     cdp_ws_url: Optional[str] = None,
     max_tokens: int = 4096,
     max_iterations: int = 50,
-    # Default viewport matches Yutori's recommended 1280x800 (WXGA 16:10)
     viewport_width: int = 1280,
     viewport_height: int = 800,
     mode: BrowserMode = "computer_use",
 ) -> dict[str, Any]:
-    """
-    Run the n1 sampling loop until the model returns a stop action or max iterations.
-
-    Args:
-        model: The n1 model to use
-        task: The user's task/query
-        api_key: Yutori API key
-        kernel: Kernel client instance
-        session_id: Browser session ID
-        cdp_ws_url: CDP WebSocket URL for playwright mode
-        max_tokens: Maximum tokens per response
-        max_iterations: Maximum loop iterations
-        viewport_width: Browser viewport width for coordinate scaling
-        viewport_height: Browser viewport height for coordinate scaling
-        mode: Browser interaction mode ('computer_use' or 'playwright')
-
-    Returns:
-        Dict with 'messages' (conversation history) and 'final_answer' (if stopped)
-    """
+    """Run the n1 sampling loop until the model returns a stop action or max iterations."""
     client = OpenAI(
         api_key=api_key,
         base_url="https://api.yutori.com/v1",
     )
 
-    # Create the appropriate tool based on mode
     computer_tool: N1ComputerToolProtocol
     playwright_tool: Optional[PlaywrightComputerTool] = None
 
@@ -99,12 +77,8 @@ async def sampling_loop(
         print("Using computer_use mode (Computer Controls API)")
 
     try:
-        # Take initial screenshot
         initial_screenshot = await computer_tool.screenshot()
 
-        # Build conversation per n1 format:
-        # 1. User message with task
-        # 2. Observation message with screenshot
         conversation_messages: list[dict[str, Any]] = [
             {
                 "role": "user",
@@ -112,7 +86,6 @@ async def sampling_loop(
             }
         ]
 
-        # Add initial screenshot as observation (n1's required format)
         if initial_screenshot.get("base64_image"):
             conversation_messages.append({
                 "role": "observation",
@@ -133,7 +106,6 @@ async def sampling_loop(
             iteration += 1
             print(f"\n=== Iteration {iteration} ===")
 
-            # Call the n1 API (no system prompt - n1 uses its own)
             try:
                 response = client.chat.completions.create(
                     model=model,
@@ -156,34 +128,27 @@ async def sampling_loop(
             response_content = assistant_message.content or ""
             print("Assistant response:", response_content)
 
-            # Add assistant message to conversation
             conversation_messages.append({
                 "role": "assistant",
                 "content": response_content,
             })
 
-            # Parse the action(s) from the response
-            # n1 returns JSON with "thoughts" and "actions" array
             parsed = _parse_n1_response(response_content)
 
             if not parsed or not parsed.get("actions"):
                 print("No actions found in response, ending loop")
                 break
 
-            # Execute each action in the actions array
             for action in parsed["actions"]:
                 print(f"Executing action: {action.get('action_type')}", action)
 
-                # Check for stop action
                 if action.get("action_type") == "stop":
                     final_answer = action.get("answer")
                     print(f"Stop action received, final answer: {final_answer}")
                     return {"messages": conversation_messages, "final_answer": final_answer}
 
-                # Scale coordinates from n1's 1000x1000 space to actual viewport
                 scaled_action = _scale_coordinates(action, viewport_width, viewport_height)
 
-                # Execute the action
                 result: ToolResult
                 try:
                     result = await computer_tool.execute(scaled_action)
@@ -191,18 +156,15 @@ async def sampling_loop(
                     print(f"Action failed: {e}")
                     result = {"error": str(e)}
 
-                # After action, add observation with screenshot and optional text output
                 if result.get("base64_image") or result.get("output"):
                     observation_content = []
 
-                    # Add text output first (e.g., from read_texts_and_links)
                     if result.get("output"):
                         observation_content.append({
                             "type": "text",
                             "text": result["output"],
                         })
 
-                    # Add screenshot
                     if result.get("base64_image"):
                         observation_content.append({
                             "type": "image_url",
@@ -216,7 +178,6 @@ async def sampling_loop(
                         "content": observation_content,
                     })
                 elif result.get("error"):
-                    # If there was an error, add it as text observation
                     conversation_messages.append({
                         "role": "observation",
                         "content": [{"type": "text", "text": f"Action failed: {result['error']}"}],
@@ -230,15 +191,11 @@ async def sampling_loop(
             "final_answer": final_answer,
         }
     finally:
-        # Clean up playwright connection if used
         if playwright_tool:
             await playwright_tool.disconnect()
 
 
 def _parse_n1_response(content: str) -> Optional[dict[str, Any]]:
-    """
-    Parse n1's response format: { "thoughts": "...", "actions": [...] }
-    """
     try:
         # The response should be JSON
         return json.loads(content)
@@ -254,10 +211,6 @@ def _parse_n1_response(content: str) -> Optional[dict[str, Any]]:
 
 
 def _scale_coordinates(action: N1Action, viewport_width: int, viewport_height: int) -> N1Action:
-    """
-    Scale coordinates from n1's 1000x1000 space to actual viewport dimensions.
-    Per docs: "n1-preview-2025-11 outputs relative coordinates in 1000×1000"
-    """
     scaled = dict(action)
 
     if "center_coordinates" in scaled and scaled["center_coordinates"]:

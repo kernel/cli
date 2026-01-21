@@ -22,7 +22,6 @@ import { PlaywrightComputerTool } from './tools/playwright-computer';
 /** Mode for browser interaction */
 export type BrowserMode = 'computer_use' | 'playwright';
 
-/** Interface for tool that can execute n1 actions */
 interface N1ComputerTool {
   execute(action: N1Action): Promise<ToolResult>;
   screenshot(): Promise<ToolResult>;
@@ -72,9 +71,6 @@ interface SamplingLoopResult {
   finalAnswer?: string;
 }
 
-/**
- * Run the n1 sampling loop until the model returns a stop action or max iterations.
- */
 export async function samplingLoop({
   model = 'n1-preview-2025-11',
   task,
@@ -94,7 +90,6 @@ export async function samplingLoop({
     baseURL: 'https://api.yutori.com/v1',
   });
 
-  // Create the appropriate tool based on mode
   let computerTool: N1ComputerTool;
   let playwrightTool: PlaywrightComputerTool | null = null;
 
@@ -115,12 +110,8 @@ export async function samplingLoop({
   }
 
   try {
-    // Take initial screenshot
     const initialScreenshot = await computerTool.screenshot();
 
-    // Build conversation per n1 format:
-    // 1. User message with task
-    // 2. Observation message with screenshot
     const conversationMessages: Message[] = [
       {
         role: 'user',
@@ -128,7 +119,6 @@ export async function samplingLoop({
       },
     ];
 
-    // Add initial screenshot as observation (n1's required format)
     if (initialScreenshot.base64Image) {
       conversationMessages.push({
         role: 'observation',
@@ -150,7 +140,6 @@ export async function samplingLoop({
       iteration++;
       console.log(`\n=== Iteration ${iteration} ===`);
 
-      // Call the n1 API (no system prompt - n1 uses its own)
       let response;
       try {
         response = await client.chat.completions.create({
@@ -177,14 +166,11 @@ export async function samplingLoop({
       const responseContent = assistantMessage.content || '';
       console.log('Assistant response:', responseContent);
 
-      // Add assistant message to conversation
       conversationMessages.push({
         role: 'assistant',
         content: responseContent,
       });
 
-      // Parse the action(s) from the response
-      // n1 returns JSON with "thoughts" and "actions" array
       const parsed = parseN1Response(responseContent);
 
       if (!parsed || !parsed.actions || parsed.actions.length === 0) {
@@ -192,21 +178,17 @@ export async function samplingLoop({
         break;
       }
 
-      // Execute each action in the actions array
       for (const action of parsed.actions) {
         console.log('Executing action:', action.action_type, action);
 
-        // Check for stop action
         if (action.action_type === 'stop') {
           finalAnswer = action.answer;
           console.log('Stop action received, final answer:', finalAnswer);
           return { messages: conversationMessages, finalAnswer };
         }
 
-        // Scale coordinates from n1's 1000x1000 space to actual viewport
         const scaledAction = scaleCoordinates(action, viewportWidth, viewportHeight);
 
-        // Execute the action
         let result: ToolResult;
         try {
           result = await computerTool.execute(scaledAction);
@@ -217,11 +199,9 @@ export async function samplingLoop({
           };
         }
 
-        // After action, add observation with screenshot and optional text output
         if (result.base64Image || result.output) {
           const observationContent: MessageContent[] = [];
 
-          // Add text output first (e.g., from read_texts_and_links)
           if (result.output) {
             observationContent.push({
               type: 'text',
@@ -229,7 +209,6 @@ export async function samplingLoop({
             });
           }
 
-          // Add screenshot
           if (result.base64Image) {
             observationContent.push({
               type: 'image_url',
@@ -244,7 +223,6 @@ export async function samplingLoop({
             content: observationContent,
           });
         } else if (result.error) {
-          // If there was an error, add it as text observation
           conversationMessages.push({
             role: 'observation',
             content: [{ type: 'text', text: `Action failed: ${result.error}` }],
@@ -262,16 +240,12 @@ export async function samplingLoop({
       finalAnswer,
     };
   } finally {
-    // Clean up playwright connection if used
     if (playwrightTool) {
       await playwrightTool.disconnect();
     }
   }
 }
 
-/**
- * Parse n1's response format: { "thoughts": "...", "actions": [...] }
- */
 function parseN1Response(content: string): { thoughts?: string; actions?: N1Action[] } | null {
   try {
     // The response should be JSON
@@ -291,10 +265,6 @@ function parseN1Response(content: string): { thoughts?: string; actions?: N1Acti
   }
 }
 
-/**
- * Scale coordinates from n1's 1000x1000 space to actual viewport dimensions.
- * Per docs: "n1-preview-2025-11 outputs relative coordinates in 1000×1000"
- */
 function scaleCoordinates(action: N1Action, viewportWidth: number, viewportHeight: number): N1Action {
   const scaled = { ...action };
 
