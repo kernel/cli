@@ -1,0 +1,26 @@
+{
+  "name": "ts-qa-agent",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "ui": "tsx ui/server.js",
+    "dev": "tsx --watch ui/server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.1",
+    "@google/generative-ai": "^0.21.0",
+    "@onkernel/sdk": "^0.23.0",
+    "dotenv": "^17.2.3",
+    "express": "^4.22.1",
+    "openai": "^4.73.0",
+    "playwright-core": "^1.49.1",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.25",
+    "@types/node": "^22.15.17",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

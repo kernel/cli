@@ -18,6 +18,7 @@ const (
 	TemplateStagehand            = "stagehand"
 	TemplateOpenAGIComputerUse   = "openagi-computer-use"
 	TemplateClaudeAgentSDK       = "claude-agent-sdk"
+	TemplateQaAgent              = "qa-agent"
 )
 
 type TemplateInfo struct {
@@ -83,6 +84,11 @@ var Templates = map[string]TemplateInfo{
 		Name:        "Claude Agent SDK",
 		Description: "Implements a Claude Agent SDK browser automation agent",
 		Languages:   []string{LanguageTypeScript, LanguagePython},
+	},
+	TemplateQaAgent: {
+		Name:        "QA Agent",
+		Description: "Visual QA testing agent using AI vision models",
+		Languages:   []string{LanguageTypeScript},
 	},
 }
 
@@ -199,6 +205,11 @@ var Commands = map[string]map[string]DeployConfig{
 			EntryPoint:    "index.ts",
 			NeedsEnvFile:  true,
 			InvokeCommand: `kernel invoke ts-claude-agent-sdk agent-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'`,
+		},
+		TemplateQaAgent: {
+			EntryPoint:    "index.ts",
+			NeedsEnvFile:  true,
+			InvokeCommand: `kernel invoke ts-qa-agent qa-test --payload '{"url": "https://cash.app", "model": "claude"}'`,
 		},
 	},
 	LanguagePython: {
