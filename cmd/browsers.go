@@ -571,13 +571,14 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 
 	// Handle profile changes
 	if hasProfileChange {
-		params.Profile = shared.BrowserProfileParam{
-			SaveChanges: kernel.Opt(in.ProfileSaveChanges.Value),
-		}
+		params.Profile = shared.BrowserProfileParam{}
 		if in.ProfileID != "" {
 			params.Profile.ID = kernel.Opt(in.ProfileID)
 		} else if in.ProfileName != "" {
 			params.Profile.Name = kernel.Opt(in.ProfileName)
+		}
+		if in.ProfileSaveChanges.Set {
+			params.Profile.SaveChanges = kernel.Opt(in.ProfileSaveChanges.Value)
 		}
 	}
 
