@@ -550,6 +550,11 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	hasProfileChange := in.ProfileID != "" || in.ProfileName != ""
 	hasViewportChange := in.Viewport != ""
 
+	// Validate --save-changes is only used with a profile
+	if in.ProfileSaveChanges.Set && !hasProfileChange {
+		return fmt.Errorf("--save-changes requires --profile-id or --profile-name")
+	}
+
 	// Validate that at least one update option is provided
 	if !hasProxyChange && !hasProfileChange && !hasViewportChange {
 		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --profile-id, --profile-name, or --viewport")
