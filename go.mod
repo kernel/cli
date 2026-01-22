@@ -9,8 +9,9 @@ require (
 	github.com/charmbracelet/lipgloss/v2 v2.0.0-beta.1
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/joho/godotenv v1.5.1
-	github.com/kernel/kernel-go-sdk v0.26.0
+	github.com/kernel/kernel-go-sdk v0.27.1-0.20260121054822-cee2050be3f8
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
+	github.com/pquerna/otp v1.5.0
 	github.com/pterm/pterm v0.12.80
 	github.com/samber/lo v1.51.0
 	github.com/spf13/cobra v1.9.1
@@ -25,6 +26,7 @@ require (
 	atomicgo.dev/cursor v0.2.0 // indirect
 	atomicgo.dev/keyboard v0.2.9 // indirect
 	atomicgo.dev/schedule v0.1.0 // indirect
+	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
 	github.com/charmbracelet/colorprofile v0.3.0 // indirect
 	github.com/charmbracelet/x/ansi v0.8.0 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.13 // indirect
