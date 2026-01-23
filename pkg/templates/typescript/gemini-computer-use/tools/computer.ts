@@ -187,7 +187,7 @@ export class ComputerTool {
           const y = this.denormalizeY(args.y);
 
           // Denormalize magnitude if provided
-          let magnitude = args.magnitude || 800;
+          let magnitude = args.magnitude ?? 800;
           if (args.direction === 'up' || args.direction === 'down') {
             magnitude = this.denormalizeY(magnitude);
           } else {
