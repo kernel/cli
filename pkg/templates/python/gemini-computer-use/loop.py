@@ -235,7 +235,6 @@ async def sampling_loop(
 
 
 def _extract_text(content: Content) -> str:
-    """Extract text from a Gemini content response."""
     if not content.parts:
         return ""
 
@@ -247,7 +246,6 @@ def _extract_text(content: Content) -> str:
 
 
 def _extract_function_calls(content: Content) -> List[types.FunctionCall]:
-    """Extract function calls from a Gemini content response."""
     if not content.parts:
         return []
 
@@ -259,12 +257,10 @@ def _extract_function_calls(content: Content) -> List[types.FunctionCall]:
 
 
 def _is_predefined_function(name: str) -> bool:
-    """Check if a function name is a predefined computer use function."""
     return name in [a.value for a in PREDEFINED_COMPUTER_USE_FUNCTIONS]
 
 
 def _prune_old_screenshots(contents: List[Content]) -> None:
-    """Prune old screenshots from conversation history to manage context size."""
     turns_with_screenshots = 0
 
     # Iterate in reverse to find recent turns with screenshots

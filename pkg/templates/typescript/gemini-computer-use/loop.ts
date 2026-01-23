@@ -213,9 +213,6 @@ export async function samplingLoop({
   };
 }
 
-/**
- * Extract text from a Gemini content response.
- */
 function extractText(content: Content): string {
   if (!content.parts) return '';
 
@@ -228,9 +225,6 @@ function extractText(content: Content): string {
   return texts.join(' ');
 }
 
-/**
- * Extract function calls from a Gemini content response.
- */
 function extractFunctionCalls(content: Content): FunctionCall[] {
   if (!content.parts) return [];
 
@@ -243,16 +237,10 @@ function extractFunctionCalls(content: Content): FunctionCall[] {
   return calls;
 }
 
-/**
- * Check if a function name is a predefined computer use function.
- */
 function isPredefinedFunction(name: string): boolean {
   return PREDEFINED_COMPUTER_USE_FUNCTIONS.includes(name as typeof PREDEFINED_COMPUTER_USE_FUNCTIONS[number]);
 }
 
-/**
- * Prune old screenshots from conversation history to manage context size.
- */
 function pruneOldScreenshots(contents: Content[]): void {
   let turnsWithScreenshots = 0;
 

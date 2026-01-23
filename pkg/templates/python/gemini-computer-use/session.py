@@ -15,20 +15,6 @@ from kernel import Kernel
 
 @dataclass
 class KernelBrowserSession:
-    """
-    Manages Kernel browser lifecycle as an async context manager.
-
-    Creates a browser session on entry and cleans it up on exit.
-    Optionally records a video replay of the entire session.
-    Provides session_id to computer tools.
-
-    Usage:
-        async with KernelBrowserSession(record_replay=True) as session:
-            # Use session.session_id and session.kernel for operations
-            pass
-        # Browser is automatically cleaned up, replay URL available in session.replay_view_url
-    """
-
     stealth: bool = True
     timeout_seconds: int = 300
 
@@ -44,7 +30,6 @@ class KernelBrowserSession:
     _kernel: Optional[Kernel] = field(default=None, init=False)
 
     async def __aenter__(self) -> "KernelBrowserSession":
-        """Create a Kernel browser session and optionally start recording."""
         self._kernel = Kernel()
 
         # Create browser with specified settings
@@ -75,7 +60,6 @@ class KernelBrowserSession:
         return self
 
     async def _start_replay(self) -> None:
-        """Start recording a replay of the browser session."""
         if not self._kernel or not self.session_id:
             return
 
@@ -85,7 +69,6 @@ class KernelBrowserSession:
         print(f"Replay recording started: {self.replay_id}")
 
     async def _stop_and_get_replay_url(self) -> None:
-        """Stop recording and get the replay URL."""
         if not self._kernel or not self.session_id or not self.replay_id:
             return
 
@@ -124,7 +107,6 @@ class KernelBrowserSession:
             print(f"Replay view URL: {self.replay_view_url}")
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Stop recording and delete the browser session."""
         if self._kernel and self.session_id:
             try:
                 # Stop replay if recording was enabled
@@ -143,7 +125,6 @@ class KernelBrowserSession:
 
     @property
     def kernel(self) -> Kernel:
-        """Get the Kernel client instance."""
         if self._kernel is None:
             raise RuntimeError("Session not initialized. Use async with context.")
         return self._kernel

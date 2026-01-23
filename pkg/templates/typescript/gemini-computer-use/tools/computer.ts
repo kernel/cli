@@ -32,23 +32,14 @@ export class ComputerTool {
     this.screenSize = screenSize;
   }
 
-  /**
-   * Denormalize X coordinate from Gemini's 0-1000 scale to actual pixels.
-   */
   private denormalizeX(x: number): number {
     return Math.round((x / COORDINATE_SCALE) * this.screenSize.width);
   }
 
-  /**
-   * Denormalize Y coordinate from Gemini's 0-1000 scale to actual pixels.
-   */
   private denormalizeY(y: number): number {
     return Math.round((y / COORDINATE_SCALE) * this.screenSize.height);
   }
 
-  /**
-   * Take a screenshot and return it as base64.
-   */
   async screenshot(): Promise<ToolResult> {
     try {
       await this.sleep(SCREENSHOT_DELAY_MS);
@@ -77,9 +68,6 @@ export class ComputerTool {
     }
   }
 
-  /**
-   * Execute a Gemini action and return the result with a screenshot.
-   */
   async executeAction(actionName: string, args: GeminiFunctionArgs): Promise<ToolResult> {
     // Check if this is a known computer use function
     if (!PREDEFINED_COMPUTER_USE_FUNCTIONS.includes(actionName as GeminiAction)) {

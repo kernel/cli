@@ -3,9 +3,6 @@
  * Based on Google's computer-use-preview reference implementation.
  */
 
-/**
- * Gemini predefined computer use actions.
- */
 export enum GeminiAction {
   OPEN_WEB_BROWSER = 'open_web_browser',
   CLICK_AT = 'click_at',
@@ -22,9 +19,6 @@ export enum GeminiAction {
   DRAG_AND_DROP = 'drag_and_drop',
 }
 
-/**
- * All predefined Gemini computer use function names.
- */
 export const PREDEFINED_COMPUTER_USE_FUNCTIONS = [
   GeminiAction.OPEN_WEB_BROWSER,
   GeminiAction.CLICK_AT,
@@ -41,14 +35,8 @@ export const PREDEFINED_COMPUTER_USE_FUNCTIONS = [
   GeminiAction.DRAG_AND_DROP,
 ] as const;
 
-/**
- * Scroll direction options.
- */
 export type ScrollDirection = 'up' | 'down' | 'left' | 'right';
 
-/**
- * Arguments for Gemini function calls.
- */
 export interface GeminiFunctionArgs {
   // click_at, hover_at, scroll_at
   x?: number;
@@ -80,9 +68,6 @@ export interface GeminiFunctionArgs {
   };
 }
 
-/**
- * Result from executing a computer action.
- */
 export interface ToolResult {
   /** Base64-encoded screenshot image */
   base64Image?: string;
@@ -92,24 +77,15 @@ export interface ToolResult {
   error?: string;
 }
 
-/**
- * Screen dimensions for coordinate denormalization.
- */
 export interface ScreenSize {
   width: number;
   height: number;
 }
 
-/**
- * Default screen size (matching Kernel browser viewport).
- */
 export const DEFAULT_SCREEN_SIZE: ScreenSize = {
   width: 1024,
   height: 768,
 };
 
-/**
- * Gemini uses normalized coordinates (0-1000).
- * This constant defines the normalization scale.
- */
+// Gemini uses normalized coordinates (0-1000)
 export const COORDINATE_SCALE = 1000;

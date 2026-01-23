@@ -8,13 +8,9 @@
 import type { Kernel } from '@onkernel/sdk';
 
 export interface SessionOptions {
-  /** Enable stealth mode to avoid bot detection */
   stealth?: boolean;
-  /** Browser session timeout in seconds */
   timeoutSeconds?: number;
-  /** Enable replay recording (requires paid plan) */
   recordReplay?: boolean;
-  /** Grace period in seconds before stopping replay */
   replayGracePeriod?: number;
 }
 
@@ -32,20 +28,6 @@ const DEFAULT_OPTIONS: Required<SessionOptions> = {
   replayGracePeriod: 5.0,
 };
 
-/**
- * Manages Kernel browser lifecycle with optional replay recording.
- * 
- * Usage:
- * ```typescript
- * const session = new KernelBrowserSession(kernel, options);
- * await session.start();
- * try {
- *   // Use session.sessionId for computer controls
- * } finally {
- *   await session.stop();
- * }
- * ```
- */
 export class KernelBrowserSession {
   private kernel: Kernel;
   private options: Required<SessionOptions>;
@@ -85,9 +67,6 @@ export class KernelBrowserSession {
     };
   }
 
-  /**
-   * Create a Kernel browser session and optionally start recording.
-   */
   async start(): Promise<SessionInfo> {
     // Create browser with specified settings
     const browser = await this.kernel.browsers.create({
@@ -119,9 +98,6 @@ export class KernelBrowserSession {
     return this.info;
   }
 
-  /**
-   * Start recording a replay of the browser session.
-   */
   private async startReplay(): Promise<void> {
     if (!this._sessionId) {
       return;
@@ -133,9 +109,6 @@ export class KernelBrowserSession {
     console.log(`Replay recording started: ${this._replayId}`);
   }
 
-  /**
-   * Stop recording and get the replay URL.
-   */
   private async stopReplay(): Promise<void> {
     if (!this._sessionId || !this._replayId) {
       return;
@@ -181,9 +154,6 @@ export class KernelBrowserSession {
     }
   }
 
-  /**
-   * Stop recording, and delete the browser session.
-   */
   async stop(): Promise<SessionInfo> {
     const info = this.info;
 

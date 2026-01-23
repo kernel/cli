@@ -9,8 +9,6 @@ from typing import Literal, Optional, TypedDict
 
 
 class GeminiAction(StrEnum):
-    """Gemini predefined computer use actions."""
-    
     OPEN_WEB_BROWSER = "open_web_browser"
     CLICK_AT = "click_at"
     HOVER_AT = "hover_at"
@@ -49,15 +47,11 @@ ScrollDirection = Literal["up", "down", "left", "right"]
 
 
 class SafetyDecision(TypedDict, total=False):
-    """Safety decision from Gemini."""
-    
     decision: str
     explanation: str
 
 
 class GeminiFunctionArgs(TypedDict, total=False):
-    """Arguments for Gemini function calls."""
-    
     # click_at, hover_at, scroll_at
     x: int
     y: int
@@ -87,22 +81,14 @@ class GeminiFunctionArgs(TypedDict, total=False):
 
 @dataclass
 class ToolResult:
-    """Result from executing a computer action."""
-    
-    # Base64-encoded screenshot image
     base64_image: Optional[str] = None
-    # Screenshot as raw bytes
     screenshot: Optional[bytes] = None
-    # Current URL of the browser
     url: Optional[str] = None
-    # Error message if the action failed
     error: Optional[str] = None
 
 
 @dataclass
 class ScreenSize:
-    """Screen dimensions for coordinate denormalization."""
-    
     width: int
     height: int
 

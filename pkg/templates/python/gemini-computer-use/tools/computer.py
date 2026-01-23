@@ -24,8 +24,6 @@ SCREENSHOT_DELAY_SECS = 0.5
 
 
 class ComputerTool:
-    """Computer tool that maps Gemini actions to Kernel's Computer Controls API."""
-
     def __init__(
         self,
         kernel: Kernel,
@@ -37,15 +35,12 @@ class ComputerTool:
         self.screen_size = screen_size
 
     def denormalize_x(self, x: int) -> int:
-        """Denormalize X coordinate from Gemini's 0-1000 scale to actual pixels."""
         return int((x / COORDINATE_SCALE) * self.screen_size.width)
 
     def denormalize_y(self, y: int) -> int:
-        """Denormalize Y coordinate from Gemini's 0-1000 scale to actual pixels."""
         return int((y / COORDINATE_SCALE) * self.screen_size.height)
 
     async def screenshot(self) -> ToolResult:
-        """Take a screenshot and return it as base64."""
         try:
             await asyncio.sleep(SCREENSHOT_DELAY_SECS)
             response = self.kernel.browsers.computer.capture_screenshot(self.session_id)
@@ -70,7 +65,6 @@ class ComputerTool:
     async def execute_action(
         self, action_name: str, args: GeminiFunctionArgs
     ) -> ToolResult:
-        """Execute a Gemini action and return the result with a screenshot."""
         # Check if this is a known computer use function
         if action_name not in [a.value for a in PREDEFINED_COMPUTER_USE_FUNCTIONS]:
             return ToolResult(error=f"Unknown action: {action_name}")
