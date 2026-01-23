@@ -14,7 +14,15 @@ import { ComputerTool } from './tools/computer';
 import { PREDEFINED_COMPUTER_USE_FUNCTIONS, type GeminiFunctionArgs } from './tools/types/gemini';
 
 // System prompt for browser-based computer use
-const SYSTEM_PROMPT = `You are a helpful assistant that can use a web browser.
+function getSystemPrompt(): string {
+  const currentDate = new Date().toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+  
+  return `You are a helpful assistant that can use a web browser.
 You are operating a Chrome browser through computer use tools.
 The browser is already open and ready for use.
 
@@ -22,7 +30,8 @@ When you need to navigate to a page, use the navigate action with a full URL.
 When you need to interact with elements, use click_at, type_text_at, etc.
 After each action, carefully evaluate the screenshot to determine your next step.
 
-Current date: ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.`;
+Current date: ${currentDate}.`;
+}
 
 // Maximum number of recent turns to keep screenshots for (to manage context)
 const MAX_RECENT_TURN_WITH_SCREENSHOTS = 3;
@@ -66,9 +75,10 @@ export async function samplingLoop({
     },
   ];
 
+  const basePrompt = getSystemPrompt();
   const systemPrompt = systemPromptSuffix
-    ? `${SYSTEM_PROMPT}\n\n${systemPromptSuffix}`
-    : SYSTEM_PROMPT;
+    ? `${basePrompt}\n\n${systemPromptSuffix}`
+    : basePrompt;
 
   let iteration = 0;
   let finalResponse = '';

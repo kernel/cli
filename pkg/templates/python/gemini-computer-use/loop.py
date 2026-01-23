@@ -21,7 +21,10 @@ from tools import ComputerTool, PREDEFINED_COMPUTER_USE_FUNCTIONS
 
 
 # System prompt for browser-based computer use
-SYSTEM_PROMPT = f"""You are a helpful assistant that can use a web browser.
+def get_system_prompt() -> str:
+    """Generate system prompt with current date."""
+    current_date = datetime.now().strftime("%A, %B %d, %Y")
+    return f"""You are a helpful assistant that can use a web browser.
 You are operating a Chrome browser through computer use tools.
 The browser is already open and ready for use.
 
@@ -29,7 +32,7 @@ When you need to navigate to a page, use the navigate action with a full URL.
 When you need to interact with elements, use click_at, type_text_at, etc.
 After each action, carefully evaluate the screenshot to determine your next step.
 
-Current date: {datetime.now().strftime("%A, %B %d, %Y")}."""
+Current date: {current_date}."""
 
 # Maximum number of recent turns to keep screenshots for (to manage context)
 MAX_RECENT_TURN_WITH_SCREENSHOTS = 3
@@ -78,10 +81,11 @@ async def sampling_loop(
         )
     ]
 
+    base_prompt = get_system_prompt()
     system_prompt = (
-        f"{SYSTEM_PROMPT}\n\n{system_prompt_suffix}"
+        f"{base_prompt}\n\n{system_prompt_suffix}"
         if system_prompt_suffix
-        else SYSTEM_PROMPT
+        else base_prompt
     )
 
     # Generate content config
