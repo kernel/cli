@@ -73,9 +73,8 @@ export class KernelBrowserSession {
       stealth: this.options.stealth,
       timeout_seconds: this.options.timeoutSeconds,
       viewport: {
-        width: 1024,
-        height: 768,
-        refresh_rate: 60,
+        width: 1200,
+        height: 800,
       },
     });
 
@@ -155,9 +154,16 @@ export class KernelBrowserSession {
   }
 
   async stop(): Promise<SessionInfo> {
-    const info = this.info;
+    // Build info object directly to avoid throwing if session wasn't started
+    const currentSessionId = this._sessionId;
+    const info: SessionInfo = {
+      sessionId: currentSessionId || '',
+      liveViewUrl: this._liveViewUrl || '',
+      replayId: this._replayId || undefined,
+      replayViewUrl: this._replayViewUrl || undefined,
+    };
 
-    if (this._sessionId) {
+    if (currentSessionId) {
       try {
         // Stop replay if recording was enabled
         if (this.options.recordReplay && this._replayId) {
@@ -171,8 +177,8 @@ export class KernelBrowserSession {
         }
       } finally {
         // Always clean up the browser session, even if replay stopping fails
-        console.log(`Destroying browser session: ${this._sessionId}`);
-        await this.kernel.browsers.deleteByID(this._sessionId);
+        console.log(`Destroying browser session: ${currentSessionId}`);
+        await this.kernel.browsers.deleteByID(currentSessionId);
         console.log('Browser session destroyed.');
       }
     }
