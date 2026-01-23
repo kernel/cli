@@ -62,8 +62,8 @@ fi
 
 # Remove any existing replace directive for the SDK (ignore error if it doesn't exist)
 # Then add the new replace directive pointing at the desired commit
-go mod edit -dropreplace=github.com/onkernel/kernel-go-sdk 2>/dev/null || true
-go mod edit -replace=github.com/onkernel/kernel-go-sdk=github.com/stainless-sdks/kernel-go@"$gomod_version"
+go mod edit -dropreplace=github.com/kernel/kernel-go-sdk 2>/dev/null || true
+go mod edit -replace=github.com/kernel/kernel-go-sdk=github.com/stainless-sdks/kernel-go@"$gomod_version"
 go mod tidy
 
 echo "go.mod updated to use github.com/stainless-sdks/kernel-go @ $gomod_version"
