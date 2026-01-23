@@ -2,13 +2,11 @@
 
 This is a Kernel application that implements a prompt loop using Google's Gemini Computer Use model with Kernel's Computer Controls API.
 
-It follows the [Google Computer Use Preview Reference](https://github.com/google-gemini/computer-use-preview) but uses Kernel's Computer Controls API for browser automation.
-
 ## Setup
 
 1. Get your API keys:
    - **Kernel**: [dashboard.onkernel.com](https://dashboard.onkernel.com)
-   - **Google AI**: [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+   - **Google AI**: [aistudio.google.com/api-keys](https://aistudio.google.com/api-keys)
 
 2. Deploy the app:
 ```bash
@@ -56,4 +54,4 @@ The Gemini model can execute the following browser actions:
 ## Resources
 
 - [Google Gemini Computer Use Documentation](https://ai.google.dev/gemini-api/docs/computer-use)
-- [Kernel Documentation](https://www.kernel.sh/docs/quickstart)
+- [Kernel Computer Controls](https://www.kernel.sh/docs/browsers/computer-controls)
