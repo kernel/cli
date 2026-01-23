@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from kernel import Kernel
+from tools import DEFAULT_SCREEN_SIZE
 
 
 @dataclass
@@ -37,8 +38,8 @@ class KernelBrowserSession:
             stealth=self.stealth,
             timeout_seconds=self.timeout_seconds,
             viewport={
-                "width": 1200,
-                "height": 800,
+                "width": DEFAULT_SCREEN_SIZE.width,
+                "height": DEFAULT_SCREEN_SIZE.height,
             },
         )
 

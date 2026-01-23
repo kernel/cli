@@ -6,6 +6,7 @@
  */
 
 import type { Kernel } from '@onkernel/sdk';
+import { DEFAULT_SCREEN_SIZE } from './tools/types/gemini';
 
 export interface SessionOptions {
   stealth?: boolean;
@@ -73,8 +74,8 @@ export class KernelBrowserSession {
       stealth: this.options.stealth,
       timeout_seconds: this.options.timeoutSeconds,
       viewport: {
-        width: 1200,
-        height: 800,
+        width: DEFAULT_SCREEN_SIZE.width,
+        height: DEFAULT_SCREEN_SIZE.height,
       },
     });
 
