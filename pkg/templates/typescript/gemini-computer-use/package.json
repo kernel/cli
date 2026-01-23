@@ -4,9 +4,8 @@
   "type": "module",
   "private": true,
   "dependencies": {
-    "@browserbasehq/stagehand": "^3.0.6",
-    "@onkernel/sdk": "^0.23.0",
-    "zod": "^4.2.0"
+    "@google/genai": "^1.0.0",
+    "@onkernel/sdk": "^0.23.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.17",

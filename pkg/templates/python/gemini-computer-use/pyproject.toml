@@ -1,0 +1,13 @@
+[project]
+name = "python-gemini-cua"
+version = "0.1.0"
+description = "Gemini Computer Use template for Kernel"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "google-genai>=1.0.0",
+    "kernel>=0.5.0",
+]
+
+[tool.uv]
+dev-dependencies = []
