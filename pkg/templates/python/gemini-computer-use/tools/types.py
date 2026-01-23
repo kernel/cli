@@ -82,7 +82,6 @@ class GeminiFunctionArgs(TypedDict, total=False):
 @dataclass
 class ToolResult:
     base64_image: Optional[str] = None
-    screenshot: Optional[bytes] = None
     url: Optional[str] = None
     error: Optional[str] = None
 

@@ -56,7 +56,6 @@ class ComputerTool:
 
             return ToolResult(
                 base64_image=base64.b64encode(screenshot_bytes).decode("utf-8"),
-                screenshot=screenshot_bytes,
                 url=url,
             )
         except Exception as e:
