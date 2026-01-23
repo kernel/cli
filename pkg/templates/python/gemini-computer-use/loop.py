@@ -190,12 +190,12 @@ async def sampling_loop(
 
                     # Include screenshot for predefined functions
                     parts = None
-                    if result.screenshot and _is_predefined_function(fc.name):
+                    if result.base64_image and _is_predefined_function(fc.name):
                         parts = [
                             types.FunctionResponsePart(
                                 inline_data=types.FunctionResponseBlob(
                                     mime_type="image/png",
-                                    data=result.screenshot,
+                                    data=result.base64_image,
                                 )
                             )
                         ]
