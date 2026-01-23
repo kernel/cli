@@ -59,6 +59,7 @@ Here are all valid language + template combinations:
 | typescript | gemini-computer-use    | ts-gemini-cua     | ts-gemini-cua         | Yes            | GOOGLE_API_KEY                 |
 | typescript | claude-agent-sdk       | ts-claude-agent-sdk | ts-claude-agent-sdk | Yes            | ANTHROPIC_API_KEY              |
 | python     | sample-app             | py-sample-app     | python-basic          | No             | -                              |
+| python     | gemini-computer-use    | py-gemini-cua     | python-gemini-cua     | Yes            | GOOGLE_API_KEY                 |
 | python     | captcha-solver         | py-captcha-solver | python-captcha-solver | No             | -                              |
 | python     | browser-use            | py-browser-use    | python-bu             | Yes            | OPENAI_API_KEY                 |
 | python     | anthropic-computer-use | py-anthropic-cua  | python-anthropic-cua  | Yes            | ANTHROPIC_API_KEY              |
@@ -89,6 +90,7 @@ Run each of these (they are non-interactive when all flags are provided):
 ../bin/kernel create -n py-openai-cua -l python -t openai-computer-use
 ../bin/kernel create -n py-openagi-cua -l python -t openagi-computer-use
 ../bin/kernel create -n py-claude-agent-sdk -l python -t claude-agent-sdk
+../bin/kernel create -n py-gemini-cua -l python -t gemini-computer-use
 ```
 
 ## Step 5: Deploy Each Template
@@ -221,6 +223,15 @@ echo "ANTHROPIC_API_KEY=<value from human>" > .env
 cd ..
 ```
 
+**py-gemini-cua** (needs GOOGLE_API_KEY):
+
+```bash
+cd py-gemini-cua
+echo "GOOGLE_API_KEY=<value from human>" > .env
+../bin/kernel deploy main.py --env-file .env
+cd ..
+```
+
 ## Step 6: Provide Invoke Commands
 
 Once all deployments are complete, present the human with these invoke commands to test manually:
@@ -233,7 +244,7 @@ kernel invoke ts-stagehand teamsize-task --payload '{"company": "Kernel"}'
 kernel invoke ts-anthropic-cua cua-task --payload '{"query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and move the 5 items in the To Do and In Progress items to the Done section of the Kanban board. You are done successfully when the items are moved.", "record_replay": true}'
 kernel invoke ts-magnitude mag-url-extract --payload '{"url": "https://en.wikipedia.org/wiki/Special:Random"}'
 kernel invoke ts-openai-cua cua-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 5 articles"}'
-kernel invoke ts-gemini-cua gemini-cua-task --payload '{"startingUrl": "https://www.magnitasks.com/", "instruction": "Click the Tasks option in the left-side bar, and move the 5 items in the To Do and In Progress items to the Done section of the Kanban board? You are done successfully when the items are moved."}'
+kernel invoke ts-gemini-cua cua-task --payload '{"query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and move the 5 items in the To Do and In Progress items to the Done section of the Kanban board. You are done successfully when the items are moved.", "record_replay": true}'
 kernel invoke ts-claude-agent-sdk agent-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'
 
 # Python apps
@@ -244,11 +255,12 @@ kernel invoke python-anthropic-cua cua-task --payload '{"query": "Go to http://m
 kernel invoke python-openai-cua cua-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 5 articles"}'
 kernel invoke python-openagi-cua openagi-default-task -p '{"instruction": "Navigate to https://agiopen.org and click the What is Computer Use? button"}'
 kernel invoke py-claude-agent-sdk agent-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'
+kernel invoke python-gemini-cua cua-task --payload '{"query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and move the 5 items in the To Do and In Progress items to the Done section of the Kanban board. You are done successfully when the items are moved.", "record_replay": true}'
 ```
 
 ## Step 7: Automated Runtime Testing (Optional)
 
-**STOP and ask the human:** "Would you like me to automatically invoke all 15 templates and report back on their runtime status?"
+**STOP and ask the human:** "Would you like me to automatically invoke all 16 templates and report back on their runtime status?"
 
 If the human agrees, invoke each template use the Kernel CLI and collect results. Present findings in this format:
 
@@ -275,6 +287,7 @@ If the human agrees, invoke each template use the Kernel CLI and collect results
 | py-openai-cua     | python-openai-cua     |         |       |
 | py-openagi-cua    | python-openagi-cua    |         |       |
 | py-claude-agent-sdk | py-claude-agent-sdk |         |       |
+| py-gemini-cua     | python-gemini-cua     |         |       |
 
 Status values:
 - **SUCCESS**: App started and returned a result
@@ -287,9 +300,9 @@ Notes should include brief error messages for failures or confirmation of succes
 - [ ] Built CLI with `make build`
 - [ ] Created QA directory
 - [ ] Got KERNEL_API_KEY from human
-- [ ] Created all 15 template variations
+- [ ] Created all 16 template variations
 - [ ] Got required API keys from human (OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, OAGI_API_KEY)
-- [ ] Deployed all 15 apps
+- [ ] Deployed all 16 apps
 - [ ] Provided invoke commands to human for manual testing
 - [ ] (Optional) Ran automated runtime testing and reviewed results
 
