@@ -39,11 +39,13 @@ The Gemini model can execute the following browser actions:
 
 | Action | Description |
 |--------|-------------|
+| `open_web_browser` | Returns a screenshot (browser is already running) |
 | `click_at` | Click at coordinates (x, y) |
 | `hover_at` | Move mouse to coordinates (x, y) |
 | `type_text_at` | Click and type text at coordinates |
 | `scroll_document` | Scroll the page (up/down/left/right) |
 | `scroll_at` | Scroll at specific coordinates |
+| `search` | Focus the browser URL bar |
 | `navigate` | Navigate to a URL |
 | `go_back` | Go back in browser history |
 | `go_forward` | Go forward in browser history |
