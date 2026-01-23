@@ -93,16 +93,6 @@ export interface ToolResult {
 }
 
 /**
- * Environment state returned from computer actions.
- */
-export interface EnvState {
-  /** Current URL of the browser */
-  url: string;
-  /** Screenshot as bytes */
-  screenshot: Uint8Array;
-}
-
-/**
  * Screen dimensions for coordinate denormalization.
  */
 export interface ScreenSize {

@@ -5,7 +5,7 @@ Based on Google's computer-use-preview reference implementation.
 
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from google import genai
 from google.genai import types
@@ -17,7 +17,7 @@ from google.genai.types import (
 )
 from kernel import Kernel
 
-from tools import ComputerTool, PREDEFINED_COMPUTER_USE_FUNCTIONS, GeminiAction
+from tools import ComputerTool, PREDEFINED_COMPUTER_USE_FUNCTIONS
 
 
 # System prompt for browser-based computer use

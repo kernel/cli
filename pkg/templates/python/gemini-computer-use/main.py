@@ -18,7 +18,10 @@ class QueryOutput(TypedDict):
 
 api_key = os.getenv("GOOGLE_API_KEY")
 if not api_key:
-    raise ValueError("GOOGLE_API_KEY is not set")
+    raise ValueError(
+        "GOOGLE_API_KEY is not set. "
+        "Set it via environment variable or deploy with: kernel deploy main.py --env-file .env"
+    )
 
 app = kernel.App("python-gemini-cua")
 
@@ -43,7 +46,7 @@ async def cua_task(
             - replay_url: URL to view the replay (if recording was enabled)
     """
     if not payload or not payload.get("query"):
-        raise ValueError("Query is required")
+        raise ValueError('Query is required. Payload must include: {"query": "your task description"}')
 
     record_replay = payload.get("record_replay", False)
 

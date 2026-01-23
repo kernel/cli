@@ -3,9 +3,9 @@
 from .computer import ComputerTool
 from .types import (
     GeminiAction,
+    GeminiFunctionArgs,
     PREDEFINED_COMPUTER_USE_FUNCTIONS,
     ToolResult,
-    EnvState,
     ScreenSize,
     DEFAULT_SCREEN_SIZE,
     COORDINATE_SCALE,
@@ -14,9 +14,9 @@ from .types import (
 __all__ = [
     "ComputerTool",
     "GeminiAction",
+    "GeminiFunctionArgs",
     "PREDEFINED_COMPUTER_USE_FUNCTIONS",
     "ToolResult",
-    "EnvState",
     "ScreenSize",
     "DEFAULT_SCREEN_SIZE",
     "COORDINATE_SCALE",

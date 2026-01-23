@@ -100,16 +100,6 @@ class ToolResult:
 
 
 @dataclass
-class EnvState:
-    """Environment state returned from computer actions."""
-    
-    # Current URL of the browser
-    url: str
-    # Screenshot as bytes
-    screenshot: bytes
-
-
-@dataclass
 class ScreenSize:
     """Screen dimensions for coordinate denormalization."""
     

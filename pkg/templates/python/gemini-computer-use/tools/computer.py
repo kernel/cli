@@ -5,23 +5,22 @@ Based on Google's computer-use-preview reference implementation.
 
 import asyncio
 import base64
-from typing import Any, Dict
 
 from kernel import Kernel
 
 from .types import (
     GeminiAction,
+    GeminiFunctionArgs,
     PREDEFINED_COMPUTER_USE_FUNCTIONS,
     DEFAULT_SCREEN_SIZE,
     COORDINATE_SCALE,
-    GeminiFunctionArgs,
     ToolResult,
     ScreenSize,
 )
 
 
 TYPING_DELAY_MS = 12
-SCREENSHOT_DELAY_MS = 0.5
+SCREENSHOT_DELAY_SECS = 0.5
 
 
 class ComputerTool:
@@ -48,7 +47,7 @@ class ComputerTool:
     async def screenshot(self) -> ToolResult:
         """Take a screenshot and return it as base64."""
         try:
-            await asyncio.sleep(SCREENSHOT_DELAY_MS)
+            await asyncio.sleep(SCREENSHOT_DELAY_SECS)
             response = self.kernel.browsers.computer.capture_screenshot(self.session_id)
             screenshot_bytes = response.read()
 
@@ -69,7 +68,7 @@ class ComputerTool:
             return ToolResult(error=f"Failed to take screenshot: {e}")
 
     async def execute_action(
-        self, action_name: str, args: Dict[str, Any]
+        self, action_name: str, args: GeminiFunctionArgs
     ) -> ToolResult:
         """Execute a Gemini action and return the result with a screenshot."""
         # Check if this is a known computer use function
@@ -276,7 +275,7 @@ class ComputerTool:
                 return ToolResult(error=f"Unhandled action: {action_name}")
 
             # Wait a moment for the action to complete, then take a screenshot
-            await asyncio.sleep(SCREENSHOT_DELAY_MS)
+            await asyncio.sleep(SCREENSHOT_DELAY_SECS)
             return await self.screenshot()
 
         except Exception as e:

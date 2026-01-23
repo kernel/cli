@@ -23,14 +23,17 @@ interface QueryOutput {
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 
 if (!GOOGLE_API_KEY) {
-  throw new Error('GOOGLE_API_KEY is not set');
+  throw new Error(
+    'GOOGLE_API_KEY is not set. ' +
+    'Set it via environment variable or deploy with: kernel deploy index.ts --env-file .env'
+  );
 }
 
 app.action<QueryInput, QueryOutput>(
   'cua-task',
   async (ctx: KernelContext, payload?: QueryInput): Promise<QueryOutput> => {
     if (!payload?.query) {
-      throw new Error('Query is required');
+      throw new Error('Query is required. Payload must include: { "query": "your task description" }');
     }
 
     // Create browser session with optional replay recording
