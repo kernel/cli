@@ -37,9 +37,8 @@ class KernelBrowserSession:
             stealth=self.stealth,
             timeout_seconds=self.timeout_seconds,
             viewport={
-                "width": 1024,
-                "height": 768,
-                "refresh_rate": 60,
+                "width": 1200,
+                "height": 800,
             },
         )
 
