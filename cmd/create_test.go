@@ -440,12 +440,6 @@ func TestCreateCommand_InvalidLanguageTemplateCombinations(t *testing.T) {
 			errContains: "template not found: python/magnitude",
 		},
 		{
-			name:        "gemini-computer-use not available for python",
-			language:    create.LanguagePython,
-			template:    create.TemplateGeminiComputerUse,
-			errContains: "template not found: python/gemini-computer-use",
-		},
-		{
 			name:        "invalid language",
 			language:    "ruby",
 			template:    create.TemplateSampleApp,
@@ -558,7 +552,6 @@ func TestCreateCommand_TemplateNotAvailableForLanguage(t *testing.T) {
 		create.TemplateBrowserUse: {create.LanguageTypeScript},
 		create.TemplateStagehand:  {create.LanguagePython},
 		create.TemplateMagnitude:  {create.LanguagePython},
-		create.TemplateGeminiComputerUse: {create.LanguagePython},
 	}
 
 	for template, unavailableLanguages := range unavailableCombinations {
