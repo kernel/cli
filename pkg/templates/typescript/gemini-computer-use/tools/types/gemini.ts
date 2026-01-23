@@ -83,8 +83,8 @@ export interface ScreenSize {
 }
 
 export const DEFAULT_SCREEN_SIZE: ScreenSize = {
-  width: 1024,
-  height: 768,
+  width: 1200,
+  height: 800,
 };
 
 // Gemini uses normalized coordinates (0-1000)

@@ -94,7 +94,7 @@ class ScreenSize:
 
 
 # Default screen size (matching Kernel browser viewport)
-DEFAULT_SCREEN_SIZE = ScreenSize(width=1024, height=768)
+DEFAULT_SCREEN_SIZE = ScreenSize(width=1200, height=800)
 
 # Gemini uses normalized coordinates (0-1000)
 COORDINATE_SCALE = 1000
