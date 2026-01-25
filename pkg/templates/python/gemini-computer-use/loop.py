@@ -3,7 +3,6 @@ Gemini Computer Use sampling loop.
 Based on Google's computer-use-preview reference implementation.
 """
 
-import os
 from datetime import datetime
 from typing import Any, Dict, List
 
@@ -64,12 +63,7 @@ async def sampling_loop(
         Dict with 'final_response', 'iterations', and 'error'
     """
     # Initialize the Gemini client
-    client = genai.Client(
-        api_key=api_key,
-        vertexai=os.environ.get("USE_VERTEXAI", "0").lower() in ["true", "1"],
-        project=os.environ.get("VERTEXAI_PROJECT"),
-        location=os.environ.get("VERTEXAI_LOCATION"),
-    )
+    client = genai.Client(api_key=api_key)
 
     computer_tool = ComputerTool(kernel, session_id)
 
