@@ -185,8 +185,8 @@ async function samplingLoop({
       (system as BetaTextBlock).cache_control = { type: 'ephemeral' };
     }
 
-    if (onlyNMostRecentImages) {
-      maybeFilterToNMostRecentImages(messages, onlyNMostRecentImages, imageTruncationThreshold);
+    if (imageTruncationThreshold) {
+      maybeFilterToNMostRecentImages(messages, imageTruncationThreshold, imageTruncationThreshold);
     }
 
     const extraBody: ExtraBodyConfig = {};
