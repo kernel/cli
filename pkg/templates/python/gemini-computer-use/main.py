@@ -14,6 +14,7 @@ class QueryInput(TypedDict):
 class QueryOutput(TypedDict):
     result: str
     replay_url: Optional[str]
+    error: Optional[str]
 
 
 api_key = os.getenv("GOOGLE_API_KEY")
@@ -69,4 +70,5 @@ async def cua_task(
     return {
         "result": final_response,
         "replay_url": session.replay_view_url,
+        "error": result.get("error"),
     }

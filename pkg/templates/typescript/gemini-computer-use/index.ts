@@ -14,6 +14,7 @@ interface QueryInput {
 interface QueryOutput {
   result: string;
   replay_url?: string;
+  error?: string;
 }
 
 // API Key for Gemini
@@ -61,6 +62,7 @@ app.action<QueryInput, QueryOutput>(
       return {
         result: result.finalResponse,
         replay_url: sessionInfo.replayViewUrl,
+        error: result.error,
       };
     } catch (error) {
       console.error('Error in sampling loop:', error);

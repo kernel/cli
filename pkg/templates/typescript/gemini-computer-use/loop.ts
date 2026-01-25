@@ -49,6 +49,7 @@ interface SamplingLoopOptions {
 interface SamplingLoopResult {
   finalResponse: string;
   iterations: number;
+  error?: string;
 }
 
 /**
@@ -82,6 +83,7 @@ export async function samplingLoop({
 
   let iteration = 0;
   let finalResponse = '';
+  let error: string | undefined;
 
   while (iteration < maxIterations) {
     iteration++;
@@ -207,7 +209,8 @@ export async function samplingLoop({
       // Manage screenshot history to avoid context overflow
       pruneOldScreenshots(contents);
 
-    } catch (error) {
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
       console.error('Error in sampling loop:', error);
       break;
     }
@@ -220,6 +223,7 @@ export async function samplingLoop({
   return {
     finalResponse,
     iterations: iteration,
+    error,
   };
 }
 

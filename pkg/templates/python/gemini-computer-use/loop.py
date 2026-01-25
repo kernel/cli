@@ -61,7 +61,7 @@ async def sampling_loop(
         system_prompt_suffix: Additional system prompt text
 
     Returns:
-        Dict with 'final_response' and 'iterations'
+        Dict with 'final_response', 'iterations', and 'error'
     """
     # Initialize the Gemini client
     client = genai.Client(
@@ -107,6 +107,7 @@ async def sampling_loop(
 
     iteration = 0
     final_response = ""
+    error = None
 
     while iteration < max_iterations:
         iteration += 1
@@ -226,7 +227,8 @@ async def sampling_loop(
             _prune_old_screenshots(contents)
 
         except Exception as e:
-            print(f"Error in sampling loop: {e}")
+            error = str(e)
+            print(f"Error in sampling loop: {error}")
             break
 
     if iteration >= max_iterations:
@@ -235,6 +237,7 @@ async def sampling_loop(
     return {
         "final_response": final_response,
         "iterations": iteration,
+        "error": error,
     }
 
 
