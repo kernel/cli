@@ -1,0 +1,16 @@
+{
+  "name": "ts-multi-provider-cua",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
+    "@google/genai": "^1.0.0",
+    "@onkernel/sdk": "^0.24.0",
+    "luxon": "^3.7.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.17",
+    "typescript": "^5.9.3"
+  }
+}

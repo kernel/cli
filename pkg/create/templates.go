@@ -8,17 +8,18 @@ import (
 
 // Template key constants
 const (
-	TemplateSampleApp            = "sample-app"
-	TemplateCaptchaSolver        = "captcha-solver"
-	TemplateAnthropicComputerUse = "anthropic-computer-use"
-	TemplateOpenAIComputerUse    = "openai-computer-use"
-	TemplateMagnitude            = "magnitude"
-	TemplateGeminiComputerUse    = "gemini-computer-use"
-	TemplateBrowserUse           = "browser-use"
-	TemplateStagehand            = "stagehand"
-	TemplateOpenAGIComputerUse   = "openagi-computer-use"
-	TemplateClaudeAgentSDK       = "claude-agent-sdk"
-	TemplateYutoriComputerUse    = "yutori-computer-use"
+	TemplateSampleApp                  = "sample-app"
+	TemplateCaptchaSolver              = "captcha-solver"
+	TemplateAnthropicComputerUse       = "anthropic-computer-use"
+	TemplateOpenAIComputerUse          = "openai-computer-use"
+	TemplateMagnitude                  = "magnitude"
+	TemplateGeminiComputerUse          = "gemini-computer-use"
+	TemplateBrowserUse                 = "browser-use"
+	TemplateStagehand                  = "stagehand"
+	TemplateOpenAGIComputerUse         = "openagi-computer-use"
+	TemplateClaudeAgentSDK             = "claude-agent-sdk"
+	TemplateYutoriComputerUse          = "yutori-computer-use"
+	TemplateMultiProviderComputerUse   = "multi-provider-computer-use"
 )
 
 type TemplateInfo struct {
@@ -89,6 +90,11 @@ var Templates = map[string]TemplateInfo{
 		Name:        "Yutori n1 Computer Use",
 		Description: "Implements a Yutori n1 computer use agent",
 		Languages:   []string{LanguageTypeScript, LanguagePython},
+	},
+	TemplateMultiProviderComputerUse: {
+		Name:        "Multi-Provider Computer Use",
+		Description: "Computer use agent with multiple provider support (Anthropic, Gemini)",
+		Languages:   []string{LanguageTypeScript},
 	},
 }
 
@@ -212,6 +218,11 @@ var Commands = map[string]map[string]DeployConfig{
 			EntryPoint:    "index.ts",
 			NeedsEnvFile:  true,
 			InvokeCommand: `kernel invoke ts-yutori-cua cua-task --payload '{"query": "Navigate to https://example.com and describe the page"}'`,
+		},
+		TemplateMultiProviderComputerUse: {
+			EntryPoint:    "index.ts",
+			NeedsEnvFile:  true,
+			InvokeCommand: `kernel invoke ts-multi-provider-cua cua-task --payload '{"provider": "anthropic", "query": "Navigate to https://example.com and describe the page"}'`,
 		},
 	},
 	LanguagePython: {
