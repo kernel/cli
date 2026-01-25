@@ -24,22 +24,8 @@ class GeminiAction(StrEnum):
     DRAG_AND_DROP = "drag_and_drop"
 
 
-# All predefined Gemini computer use function names
-PREDEFINED_COMPUTER_USE_FUNCTIONS = [
-    GeminiAction.OPEN_WEB_BROWSER,
-    GeminiAction.CLICK_AT,
-    GeminiAction.HOVER_AT,
-    GeminiAction.TYPE_TEXT_AT,
-    GeminiAction.SCROLL_DOCUMENT,
-    GeminiAction.SCROLL_AT,
-    GeminiAction.WAIT_5_SECONDS,
-    GeminiAction.GO_BACK,
-    GeminiAction.GO_FORWARD,
-    GeminiAction.SEARCH,
-    GeminiAction.NAVIGATE,
-    GeminiAction.KEY_COMBINATION,
-    GeminiAction.DRAG_AND_DROP,
-]
+# Derive from enum to prevent drift when adding new actions
+PREDEFINED_COMPUTER_USE_FUNCTIONS = list(GeminiAction)
 
 
 # Scroll direction type

@@ -19,21 +19,8 @@ export enum GeminiAction {
   DRAG_AND_DROP = 'drag_and_drop',
 }
 
-export const PREDEFINED_COMPUTER_USE_FUNCTIONS = [
-  GeminiAction.OPEN_WEB_BROWSER,
-  GeminiAction.CLICK_AT,
-  GeminiAction.HOVER_AT,
-  GeminiAction.TYPE_TEXT_AT,
-  GeminiAction.SCROLL_DOCUMENT,
-  GeminiAction.SCROLL_AT,
-  GeminiAction.WAIT_5_SECONDS,
-  GeminiAction.GO_BACK,
-  GeminiAction.GO_FORWARD,
-  GeminiAction.SEARCH,
-  GeminiAction.NAVIGATE,
-  GeminiAction.KEY_COMBINATION,
-  GeminiAction.DRAG_AND_DROP,
-] as const;
+// Derive from enum to prevent drift when adding new actions
+export const PREDEFINED_COMPUTER_USE_FUNCTIONS = Object.values(GeminiAction);
 
 export type ScrollDirection = 'up' | 'down' | 'left' | 'right';
 
