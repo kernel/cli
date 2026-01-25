@@ -58,6 +58,10 @@ Here are all valid language + template combinations:
 | typescript | openai-computer-use    | ts-openai-cua     | ts-openai-cua         | Yes            | OPENAI_API_KEY                 |
 | typescript | gemini-computer-use    | ts-gemini-cua     | ts-gemini-cua         | Yes            | GOOGLE_API_KEY                 |
 | typescript | claude-agent-sdk       | ts-claude-agent-sdk | ts-claude-agent-sdk | Yes            | ANTHROPIC_API_KEY              |
+| typescript | yutori-computer-use    | ts-yutori-cua     | ts-yutori-cua         | Yes            | YUTORI_API_KEY                 |
+
+> **Note:** The `yutori-computer-use` template supports two modes: `computer_use` (default, full VM screenshots) and `playwright` (viewport-only screenshots via CDP). Both modes should be tested.
+
 | python     | sample-app             | py-sample-app     | python-basic          | No             | -                              |
 | python     | gemini-computer-use    | py-gemini-cua     | python-gemini-cua     | Yes            | GOOGLE_API_KEY                 |
 | python     | captcha-solver         | py-captcha-solver | python-captcha-solver | No             | -                              |
@@ -66,6 +70,11 @@ Here are all valid language + template combinations:
 | python     | openai-computer-use    | py-openai-cua     | python-openai-cua     | Yes            | OPENAI_API_KEY                 |
 | python     | openagi-computer-use   | py-openagi-cua    | python-openagi-cua    | Yes            | OAGI_API_KEY                   |
 | python     | claude-agent-sdk       | py-claude-agent-sdk | py-claude-agent-sdk | Yes            | ANTHROPIC_API_KEY              |
+| python     | yutori-computer-use    | py-yutori-cua     | python-yutori-cua     | Yes            | YUTORI_API_KEY                 |
+
+> **Yutori Modes:**
+> - `computer_use` (default): Uses Kernel's Computer Controls API with full VM screenshots
+> - `playwright`: Uses Playwright via CDP WebSocket for viewport-only screenshots (optimized for n1 model)
 
 ### Create Commands
 
@@ -81,6 +90,7 @@ Run each of these (they are non-interactive when all flags are provided):
 ../bin/kernel create -n ts-openai-cua -l typescript -t openai-computer-use
 ../bin/kernel create -n ts-gemini-cua -l typescript -t gemini-computer-use
 ../bin/kernel create -n ts-claude-agent-sdk -l typescript -t claude-agent-sdk
+../bin/kernel create -n ts-yutori-cua -l typescript -t yutori-computer-use
 
 # Python templates
 ../bin/kernel create -n py-sample-app -l python -t sample-app
@@ -91,6 +101,7 @@ Run each of these (they are non-interactive when all flags are provided):
 ../bin/kernel create -n py-openagi-cua -l python -t openagi-computer-use
 ../bin/kernel create -n py-claude-agent-sdk -l python -t claude-agent-sdk
 ../bin/kernel create -n py-gemini-cua -l python -t gemini-computer-use
+../bin/kernel create -n py-yutori-cua -l python -t yutori-computer-use
 ```
 
 ## Step 5: Deploy Each Template
@@ -178,6 +189,15 @@ echo "ANTHROPIC_API_KEY=<value from human>" > .env
 cd ..
 ```
 
+**ts-yutori-cua** (needs YUTORI_API_KEY):
+
+```bash
+cd ts-yutori-cua
+echo "YUTORI_API_KEY=<value from human>" > .env
+../bin/kernel deploy index.ts --env-file .env
+cd ..
+```
+
 **py-browser-use** (needs OPENAI_API_KEY):
 
 ```bash
@@ -232,6 +252,15 @@ echo "GOOGLE_API_KEY=<value from human>" > .env
 cd ..
 ```
 
+**py-yutori-cua** (needs YUTORI_API_KEY):
+
+```bash
+cd py-yutori-cua
+echo "YUTORI_API_KEY=<value from human>" > .env
+../bin/kernel deploy main.py --env-file .env
+cd ..
+```
+
 ## Step 6: Provide Invoke Commands
 
 Once all deployments are complete, present the human with these invoke commands to test manually:
@@ -246,6 +275,8 @@ kernel invoke ts-magnitude mag-url-extract --payload '{"url": "https://en.wikipe
 kernel invoke ts-openai-cua cua-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 5 articles"}'
 kernel invoke ts-gemini-cua cua-task --payload '{"query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and move the 5 items in the To Do and In Progress items to the Done section of the Kanban board. You are done successfully when the items are moved.", "record_replay": true}'
 kernel invoke ts-claude-agent-sdk agent-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'
+kernel invoke ts-yutori-cua cua-task --payload '{"query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items.", "record_replay": true, "mode": "computer_use"}'
+kernel invoke ts-yutori-cua cua-task --payload '{"query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items.", "record_replay": true, "mode": "playwright"}'
 
 # Python apps
 kernel invoke python-basic get-page-title --payload '{"url": "https://www.google.com"}'
@@ -256,11 +287,13 @@ kernel invoke python-openai-cua cua-task --payload '{"task": "Go to https://news
 kernel invoke python-openagi-cua openagi-default-task -p '{"instruction": "Navigate to https://agiopen.org and click the What is Computer Use? button"}'
 kernel invoke py-claude-agent-sdk agent-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'
 kernel invoke python-gemini-cua cua-task --payload '{"query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and move the 5 items in the To Do and In Progress items to the Done section of the Kanban board. You are done successfully when the items are moved.", "record_replay": true}'
+kernel invoke python-yutori-cua cua-task --payload '{"query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items.", "record_replay": true, "mode": "computer_use"}'
+kernel invoke python-yutori-cua cua-task --payload '{"query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items.", "record_replay": true, "mode": "playwright"}'
 ```
 
 ## Step 7: Automated Runtime Testing (Optional)
 
-**STOP and ask the human:** "Would you like me to automatically invoke all 16 templates and report back on their runtime status?"
+**STOP and ask the human:** "Would you like me to automatically invoke all 21 test cases and report back on their runtime status?"
 
 If the human agrees, invoke each template use the Kernel CLI and collect results. Present findings in this format:
 
@@ -280,6 +313,8 @@ If the human agrees, invoke each template use the Kernel CLI and collect results
 | ts-openai-cua     | ts-openai-cua         |         |       |
 | ts-gemini-cua     | ts-gemini-cua         |         |       |
 | ts-claude-agent-sdk | ts-claude-agent-sdk |         |       |
+| ts-yutori-cua     | ts-yutori-cua         |         | mode: computer_use |
+| ts-yutori-cua     | ts-yutori-cua         |         | mode: playwright |
 | py-sample-app     | python-basic          |         |       |
 | py-captcha-solver | python-captcha-solver |         |       |
 | py-browser-use    | python-bu             |         |       |
@@ -288,6 +323,8 @@ If the human agrees, invoke each template use the Kernel CLI and collect results
 | py-openagi-cua    | python-openagi-cua    |         |       |
 | py-claude-agent-sdk | py-claude-agent-sdk |         |       |
 | py-gemini-cua     | python-gemini-cua     |         |       |
+| py-yutori-cua     | python-yutori-cua     |         | mode: computer_use |
+| py-yutori-cua     | python-yutori-cua     |         | mode: playwright |
 
 Status values:
 - **SUCCESS**: App started and returned a result
@@ -300,9 +337,9 @@ Notes should include brief error messages for failures or confirmation of succes
 - [ ] Built CLI with `make build`
 - [ ] Created QA directory
 - [ ] Got KERNEL_API_KEY from human
-- [ ] Created all 16 template variations
-- [ ] Got required API keys from human (OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, OAGI_API_KEY)
-- [ ] Deployed all 16 apps
+- [ ] Created all 18 template variations
+- [ ] Got required API keys from human (OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, OAGI_API_KEY, YUTORI_API_KEY)
+- [ ] Deployed all 18 apps
 - [ ] Provided invoke commands to human for manual testing
 - [ ] (Optional) Ran automated runtime testing and reviewed results
 

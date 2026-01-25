@@ -1,0 +1,15 @@
+{
+  "name": "ts-yutori-cua",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@onkernel/sdk": "^0.24.0",
+    "openai": "^4.77.0",
+    "playwright-core": "^1.52.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.17",
+    "typescript": "^5.9.3"
+  }
+}
