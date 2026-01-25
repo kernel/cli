@@ -94,6 +94,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         sessionId: session.sessionId,
       });
       console.log('Result:', result.finalResponse);
+      if (result.error) {
+        console.error('Error:', result.error);
+      }
     } finally {
       await session.stop();
     }

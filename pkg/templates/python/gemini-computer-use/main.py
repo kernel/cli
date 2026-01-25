@@ -72,3 +72,38 @@ async def cua_task(
         "replay_url": session.replay_view_url,
         "error": result.get("error"),
     }
+
+
+# Run locally if executed directly (not imported as a module)
+# Execute via: uv run main.py
+if __name__ == "__main__":
+    import asyncio
+
+    async def main():
+        test_query = "Navigate to https://www.google.com and describe what you see"
+
+        print(f"Running local test with query: {test_query}")
+
+        async with KernelBrowserSession(
+            stealth=True,
+            record_replay=False,
+        ) as session:
+            print("Kernel browser live view url:", session.live_view_url)
+
+            try:
+                result = await sampling_loop(
+                    model="gemini-2.5-computer-use-preview-10-2025",
+                    query=test_query,
+                    api_key=str(api_key),
+                    kernel=session.kernel,
+                    session_id=session.session_id,
+                )
+
+                print("Result:", result.get("final_response", ""))
+                if result.get("error"):
+                    print("Error:", result.get("error"))
+            except Exception as e:
+                print(f"Local execution failed: {e}")
+                raise
+
+    asyncio.run(main())
