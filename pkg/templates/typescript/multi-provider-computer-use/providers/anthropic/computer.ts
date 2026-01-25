@@ -248,7 +248,9 @@ export class ComputerTool implements BaseAnthropicTool {
         base64Image: buffer.toString('base64'),
       };
     } catch (error) {
-      throw new ToolError(`Failed to take screenshot: ${error}`);
+      return {
+        error: `Failed to take screenshot: ${error}`,
+      };
     }
   }
 
