@@ -3,13 +3,16 @@ import 'dotenv/config';
 import type { ResponseItem, ResponseOutputMessage } from 'openai/resources/responses/responses';
 import { Agent } from './lib/agent';
 import computers from './lib/computers';
+import { KernelBrowserSession } from './lib/session';
 
 interface CuaInput {
   task: string;
+  record_replay?: boolean;
 }
 interface CuaOutput {
   elapsed: number;
   answer: string | null;
+  replay_url?: string;
   logs?: ResponseItem[];
 }
 
@@ -21,16 +24,21 @@ if (!process.env.OPENAI_API_KEY) {
 }
 
 /**
- * Example app that run an agent using openai CUA
+ * Example app that runs an agent using OpenAI CUA with Kernel Computer Controls API.
+ *
+ * This uses OS-level input emulation (mouse, keyboard) instead of CDP/Playwright,
+ * which reduces bot detection signals.
+ *
  * Args:
  *     ctx: Kernel context containing invocation information
- *     payload: An object with a `task` property
+ *     payload: An object with a `task` property and optional `record_replay` flag
  * Returns:
- *     An answer to the task, elapsed time and optionally the messages stack
+ *     An answer to the task, elapsed time, optional replay URL, and optionally the messages stack
+ *
  * Invoke this via CLI:
  *  kernel login  # or: export KERNEL_API_KEY=<your_api_key>
  *  kernel deploy index.ts -e OPENAI_API_KEY=XXXXX --force
- *  kernel invoke ts-openai-cua cua-task -p "{\"task\":\"current market price range for a used dreamcast\"}"
+ *  kernel invoke ts-openai-cua cua-task -p '{"task":"current market price range for a used dreamcast"}'
  */
 
 app.action<CuaInput, CuaOutput>(
@@ -39,11 +47,21 @@ app.action<CuaInput, CuaOutput>(
     const start = Date.now();
     if (!payload?.task) throw new Error('task is required');
 
-    const kb = await kernel.browsers.create({ invocation_id: ctx.invocation_id });
-    console.log('> Kernel browser live view url:', kb.browser_live_view_url);
+    const session = new KernelBrowserSession(kernel, {
+      stealth: true,
+      recordReplay: payload.record_replay ?? false,
+      invocationId: ctx.invocation_id,
+    });
+
+    await session.start();
+    console.log('> Kernel browser live view url:', session.liveViewUrl);
 
     try {
-      const { computer } = await computers.create({ type: 'kernel', cdp_ws_url: kb.cdp_ws_url });
+      const { computer } = await computers.create({
+        type: 'kernel-computer',
+        kernel,
+        sessionId: session.sessionId,
+      });
 
       // Navigate to DuckDuckGo as starting page (less likely to trigger captchas than Google)
       await computer.goto('https://duckduckgo.com');
@@ -92,21 +110,22 @@ app.action<CuaInput, CuaOutput>(
       const lastContentIndex = assistant?.content?.length ? assistant.content.length - 1 : -1;
       const lastContent = lastContentIndex >= 0 ? assistant?.content?.[lastContentIndex] : null;
       const answer = lastContent && 'text' in lastContent ? lastContent.text : null;
+      const sessionInfo = await session.stop();
 
       return {
         // logs, // optionally, get the full agent run messages logs
         elapsed,
         answer,
+        replay_url: sessionInfo.replayViewUrl,
       };
     } catch (error) {
       const elapsed = parseFloat(((Date.now() - start) / 1000).toFixed(2));
       console.error('Error in cua-task:', error);
+      await session.stop();
       return {
         elapsed,
         answer: null,
       };
-    } finally {
-      await kernel.browsers.deleteByID(kb.session_id);
     }
   },
 );

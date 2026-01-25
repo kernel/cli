@@ -11,17 +11,20 @@ import {
 
 import * as utils from './utils';
 import toolset from './toolset';
+import type { KernelComputer } from './kernel-computer';
 import type { BasePlaywrightComputer } from './playwright/base';
 import type { LocalPlaywrightComputer } from './playwright/local';
 import type { KernelPlaywrightComputer } from './playwright/kernel';
 
+type Computer =
+  | KernelComputer
+  | BasePlaywrightComputer
+  | LocalPlaywrightComputer
+  | KernelPlaywrightComputer;
+
 export class Agent {
   private model: string;
-  private computer:
-    | BasePlaywrightComputer
-    | LocalPlaywrightComputer
-    | KernelPlaywrightComputer
-    | undefined;
+  private computer: Computer | undefined;
   private tools: ComputerTool[];
   private print_steps = true;
   private debug = false;
@@ -30,11 +33,7 @@ export class Agent {
 
   constructor(opts: {
     model?: string;
-    computer?:
-      | BasePlaywrightComputer
-      | LocalPlaywrightComputer
-      | KernelPlaywrightComputer
-      | undefined;
+    computer?: Computer | undefined;
     tools?: ComputerTool[];
     acknowledge_safety_check_callback?: (msg: string) => boolean;
   }) {

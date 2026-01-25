@@ -261,7 +261,7 @@ kernel invoke ts-captcha-solver test-captcha-solver
 kernel invoke ts-stagehand teamsize-task --payload '{"company": "Kernel"}'
 kernel invoke ts-anthropic-cua cua-task --payload '{"query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and move the 5 items in the To Do and In Progress items to the Done section of the Kanban board. You are done successfully when the items are moved.", "record_replay": true}'
 kernel invoke ts-magnitude mag-url-extract --payload '{"url": "https://en.wikipedia.org/wiki/Special:Random"}'
-kernel invoke ts-openai-cua cua-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 5 articles"}'
+kernel invoke ts-openai-cua cua-task --payload '{"task": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and move the 5 items in the To Do and In Progress items to the Done section of the Kanban board. You are done successfully when the items are moved.", "record_replay": true}'
 kernel invoke ts-gemini-cua gemini-cua-task --payload '{"startingUrl": "https://www.magnitasks.com/", "instruction": "Click the Tasks option in the left-side bar, and move the 5 items in the To Do and In Progress items to the Done section of the Kanban board? You are done successfully when the items are moved."}'
 kernel invoke ts-claude-agent-sdk agent-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'
 kernel invoke ts-yutori-cua cua-task --payload '{"query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items.", "record_replay": true, "mode": "computer_use"}'
@@ -272,7 +272,7 @@ kernel invoke python-basic get-page-title --payload '{"url": "https://www.google
 kernel invoke python-captcha-solver test-captcha-solver
 kernel invoke python-bu bu-task --payload '{"task": "Compare the price of gpt-4o and DeepSeek-V3"}'
 kernel invoke python-anthropic-cua cua-task --payload '{"query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and move the 5 items in the To Do and In Progress items to the Done section of the Kanban board. You are done successfully when the items are moved.", "record_replay": true}'
-kernel invoke python-openai-cua cua-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 5 articles"}'
+kernel invoke python-openai-cua cua-task --payload '{"task": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and move the 5 items in the To Do and In Progress items to the Done section of the Kanban board. You are done successfully when the items are moved.", "record_replay": true}'
 kernel invoke python-openagi-cua openagi-default-task -p '{"instruction": "Navigate to https://agiopen.org and click the What is Computer Use? button"}'
 kernel invoke py-claude-agent-sdk agent-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'
 kernel invoke python-yutori-cua cua-task --payload '{"query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items.", "record_replay": true, "mode": "computer_use"}'
