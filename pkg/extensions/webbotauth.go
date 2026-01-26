@@ -286,6 +286,14 @@ func buildWebBotAuthExtension(ctx context.Context, browserExtDir, hostURL, keyDa
 	extractedDir := filepath.Dir(filepath.Dir(browserExtDir))
 
 	// Install dependencies
+	// Clean up package-lock.json and node_modules first to avoid npm optional dependency bug
+	// See: https://github.com/npm/cli/issues/4828
+	pterm.Info.Println("Cleaning up any existing npm artifacts...")
+	packageLockPath := filepath.Join(extractedDir, "package-lock.json")
+	nodeModulesPath := filepath.Join(extractedDir, "node_modules")
+	_ = os.Remove(packageLockPath)
+	_ = os.RemoveAll(nodeModulesPath)
+
 	pterm.Info.Println("Installing dependencies (this may take a minute)...")
 	npmInstall := exec.CommandContext(ctx, "npm", "install")
 	npmInstall.Dir = extractedDir
