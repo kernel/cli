@@ -1,4 +1,4 @@
-# Kernel TypeScript Sample App - Gemini Computer Use
+# Kernel Python Sample App - Gemini Computer Use
 
 This is a Kernel application that implements a prompt loop using Google's Gemini Computer Use model with Kernel's Computer Controls API.
 
@@ -12,13 +12,13 @@ This is a Kernel application that implements a prompt loop using Google's Gemini
 ```bash
 kernel login
 cp .env.example .env  # Add your GOOGLE_API_KEY
-kernel deploy index.ts --env-file .env
+kernel deploy main.py --env-file .env
 ```
 
 ## Usage
 
 ```bash
-kernel invoke ts-gemini-cua cua-task --payload '{"query": "Navigate to https://example.com and describe the page"}'
+kernel invoke python-gemini-cua cua-task --payload '{"query": "Navigate to https://example.com and describe the page"}'
 ```
 
 ## Recording Replays
@@ -28,7 +28,7 @@ kernel invoke ts-gemini-cua cua-task --payload '{"query": "Navigate to https://e
 Add `"record_replay": true` to your payload to capture a video of the browser session:
 
 ```bash
-kernel invoke ts-gemini-cua cua-task --payload '{"query": "Navigate to https://example.com", "record_replay": true}'
+kernel invoke python-gemini-cua cua-task --payload '{"query": "Navigate to https://example.com", "record_replay": true}'
 ```
 
 When enabled, the response will include a `replay_url` field with a link to view the recorded session.
