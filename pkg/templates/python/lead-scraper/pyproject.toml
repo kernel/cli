@@ -1,11 +1,14 @@
 [project]
 name = "lead-scraper"
 version = "0.1.0"
-description = "Google Maps Lead Scraper - A Kernel template for scraping local business leads"
-readme = "README.md"
+description = "Generic Lead Scraper - Extract leads from any website"
 requires-python = ">=3.11"
 dependencies = [
-    "browser-use>=0.11.1",
-    "kernel>=0.23.0",
+    "kernel>=0.25.0",
+    "browser-use>=0.11.3",
     "pydantic>=2.12.5",
+    "openai>=2.15.0",
 ]
+
+[tool.setuptools]
+packages = ["."]

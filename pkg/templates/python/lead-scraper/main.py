@@ -1,23 +1,33 @@
 """
-Google Maps Lead Scraper - Kernel Template
+Generic Lead Scraper - Kernel Template
 
-This template demonstrates how to build a lead scraper using browser-use
-to extract local business data from Google Maps.
+This template demonstrates how to build a flexible lead scraper using browser-use.
+Pass in any website URL and describe what data to extract - the agent will
+navigate the site and return leads as a downloadable CSV.
 
 Usage:
     kernel deploy main.py -e OPENAI_API_KEY=$OPENAI_API_KEY
-    kernel invoke lead-scraper scrape-leads --data '{"query": "restaurants", "location": "Austin, TX"}'
+    kernel invoke lead-scraper scrape-leads --data '{
+        "url": "https://example.com/directory",
+        "instructions": "Find all company listings. For each, extract: company name, email, phone, website.",
+        "max_results": 10
+    }'
 """
 
+import csv
+import io
 import json
 
 import kernel
 from browser_use import Agent, Browser
 from browser_use.llm import ChatOpenAI
 from kernel import Kernel
-from formaters import parse_leads_from_result
 
-from models import BusinessLead, ScrapeInput, ScrapeOutput
+from models import ScrapeInput, ScrapeOutput
+
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
 
 # Initialize Kernel client and app
 client = Kernel()
@@ -25,90 +35,139 @@ app = kernel.App("lead-scraper")
 
 # LLM for the browser-use agent
 # API key is set via: kernel deploy main.py -e OPENAI_API_KEY=XXX
-llm = ChatOpenAI(model="gpt-4.1")
+llm = ChatOpenAI(model="gpt-4o")
+
 
 # ============================================================================
-# SCRAPER PROMPT
-# Customize this prompt to change what data the agent extracts
+# SCRAPER PROMPT TEMPLATE
 # ============================================================================
 SCRAPER_PROMPT = """
-You are a lead generation assistant. Scrape business information from Google Maps.
+You are a lead generation scraper agent. Your job is to extract lead data from a website by navigating and reading what is on the page.
 
-**Instructions:**
-1. Navigate to https://www.google.com/maps
-2. Search for: "{query} in {location}"
-3. Wait for results to load
-4. For each of the max {max_results} businesses in the list:
-   a. Click on the listing to open its detail view
-   b. SCROLL DOWN in the detail panel to see all info (phone/website are often below)
-   c. Extract: name, address, rating, review count, category, phone number, website
-   d. Click back or the X to close the detail view and return to the list
-5. After collecting data for max {max_results} businesses, return the JSON
+Target Website:
+{url}
 
-**What to extract:**
-- Business name (REQUIRED)
-- Address (REQUIRED)  
-- Star rating (REQUIRED)
-- Review count (optional)
-- Category (optional)
-- Phone number (scroll down in detail view to find it, null if not shown)
-- Website URL (scroll down in detail view to find it, null if not shown)
+User Instructions:
+{instructions}
 
-**Important:**
-- SCROLL DOWN inside each business detail panel to find phone/website
-- Use null for any field that isn't available
-- Task is SUCCESSFUL when you return at least 1 complete business
+Max leads:
+{max_results}
 
-**CRITICAL - Output Format:**
-You MUST return ONLY a valid JSON array. No markdown, no explanations, no numbered lists.
-Return EXACTLY this format:
-[
-  {{"name": "Business Name", "address": "123 Main St", "rating": 4.5, "review_count": 100, "category": "Restaurant", "phone": "+1 555-1234", "website": "https://example.com"}}
-]
+====================
+CORE RULES (MUST FOLLOW)
+====================
+
+1) Progressive enrichment (DO NOT DELETE DATA)
+- You will often discover some fields on the list page and different fields on the detail page.
+- If you already have a value for a field for a lead, KEEP IT.
+- Only change an existing value if you find a *more specific or more authoritative* value on the site.
+
+2) Null is NOT a default
+- Do NOT set fields to null just because you didn't see them on the current page.
+- Use null ONLY when the website explicitly indicates the value is unavailable, e.g. "Email: Not provided", "N/A", "—", "None".
+- If you simply cannot find a field, OMIT the key (preferred), or keep the previous value if it already exists.
+
+3) No negative assumptions
+- Never say "not provided" unless you actually see an explicit "not provided / N/A" indicator on the site.
+- If the page text extraction might be incomplete, search visually and also scan for patterns (see Extraction Tactics).
+
+4) Output must be machine-usable
+- Return ONLY a valid JSON array.
+- No markdown, no commentary, no extra text.
+
+====================
+EXTRACTION TACTICS (USE THESE BEFORE GIVING UP)
+====================
+
+For each lead, try in this order:
+A) Look for labeled rows like:
+   "Email:", "Phone:", "Address:", "Company:", "County:", "Website:"
+   Extract the text EXACTLY as shown next to the label.
+
+B) Scan for patterns on the page:
+   - Emails: anything containing "@", "mailto:"
+   - Phones: "tel:", numbers with separators, +1, ( ), etc.
+   - Websites: "http", "www", or obvious domain names
+
+C) Check links that often hide data:
+   - mailto: links for email
+   - tel: links for phone
+   - profile/firm website links
+
+D) If the site has multiple sections/tabs (e.g., “Contact”, “Details”), click them.
+
+====================
+LEAD LOOP
+====================
+
+1) Navigate to the URL and follow user instructions to find leads.
+2) Build leads from the list view (even partial leads are OK).
+3) For each lead, open the detail page if needed and enrich the lead fields.
+4) Go back to the list and continue until you reach {max_results} or there are no more leads.
+
+====================
+OUTPUT SHAPE
+====================
+
+- Each lead should be a JSON object.
+- Include keys you actually extracted. Prefer these keys when present:
+  name, email, phone, company, address, city, state, county, website, profile_url
+- If you want to reduce future mistakes, you MAY include:
+  "_evidence": {{ "email": "Email: xyz@...", "phone": "Phone: 555..." }}
+  Keep evidence short (snippets, not paragraphs).
+
+====================
+ABSOLUTE REQUIREMENT
+====================
+
+Return ONLY the JSON array of leads.
 """
+
+# ============================================================================
+# LLM SYSTEM PROMPT TEMPLATE
+# ============================================================================
+LLM_SYSTEM = """
+DATA INTEGRITY (HIGHEST PRIORITY):
+- Never overwrite a non-empty field with null/None/"".
+- The extract tool only ADDs data. If extract says "unavailable", that means "no new info on this page" — keep existing values.
+- Only set a field to null if the page explicitly shows N/A / Not provided / — for that field.
+- When trying to capture email/phone/website, always consider link hrefs (mailto:, tel:, http).
+"""
+
+
+# ============================================================================
+# ACTIONS
+# ============================================================================
 
 @app.action("scrape-leads")
 async def scrape_leads(ctx: kernel.KernelContext, input_data: dict) -> dict:
     """
-    Scrape local business leads from Google Maps.
-
-    This action uses browser-use to navigate Google Maps, search for businesses,
-    and extract structured lead data.
+    Scrape leads from any website based on user instructions.
 
     Args:
-        ctx: Kernel context containing invocation information
-        input_data: Dictionary with query, location, and max_results
+        input_data: Dictionary with url, instructions, and max_results
 
     Returns:
-        ScrapeOutput containing list of leads and metadata
-
-    Example:
-        kernel invoke lead-scraper scrape-leads \
-            --data '{"query": "plumbers", "location": "Miami, FL", "max_results": 15}'
+        ScrapeOutput containing list of leads and CSV data
     """
-    # Validate input - default to empty dict if no payload provided
+    # Validate input
     scrape_input = ScrapeInput(**(input_data or {}))
-
-    # Use attribute access for Pydantic model (not dictionary subscript)
-    input_query = scrape_input.query
-    input_location = scrape_input.location
-    input_max_results = scrape_input.max_results
 
     # Format the prompt with user parameters
     task_prompt = SCRAPER_PROMPT.format(
-        query=input_query,
-        location=input_location,
-        max_results=input_max_results,
+        url=scrape_input.url,
+        instructions=scrape_input.instructions,
+        max_results=scrape_input.max_results,
     )
 
-    print(f"Starting lead scrape: {input_query} in {input_location}")
-    print(f"Target: {input_max_results} leads")
+    print(f"Starting lead scrape from: {scrape_input.url}")
+    print(f"Instructions: {scrape_input.instructions[:100]}...")
+    print(f"Target: {scrape_input.max_results} leads")
 
     # Create Kernel browser session
     kernel_browser = None
 
     try:
-
         kernel_browser = client.browsers.create(
             invocation_id=ctx.invocation_id,
             stealth=True,  # Use stealth mode to avoid detection
@@ -122,49 +181,103 @@ async def scrape_leads(ctx: kernel.KernelContext, input_data: dict) -> dict:
             window_size={"width": 1920, "height": 1080},
             viewport={"width": 1920, "height": 1080},
             device_scale_factor=1.0,
+            minimum_wait_page_load_time=1.5,
+            wait_for_network_idle_page_load_time=1.7,
         )
 
         # Create and run the browser-use agent
         agent = Agent(
             task=task_prompt,
             llm=llm,
-            browser_session=browser,
+            browser=browser,
+            extend_system_message=LLM_SYSTEM,
+            include_attributes=["href"],
+            use_vision=True,
         )
 
         print("Running browser-use agent...")
-        # Limit steps to prevent timeouts (this is a template demo)
-        result = await agent.run(max_steps=25)
+        result = await agent.run()
 
-        # Parse the result from final_result
-        leads = []
+        # Parse results - try final_result first, then fall back to history if needed
+        leads_data = []
         final_text = result.final_result()
-        
+
+        # If strict judge failed but we have data in history, try to find it
+        if not final_text:
+            print("No final result found. Checking history for data...")
+            for action in result.action_results():
+                if action.extracted_content and "[" in action.extracted_content:
+                    final_text = action.extracted_content
+                    break
+
         if final_text:
             print(f"Parsing final_result ({len(final_text)} chars)...")
-            leads = parse_leads_from_result(final_text)
-        else:
-            # If no final_result, check the last action for done text
-            print("No final_result, checking last action...")
-            action_results = result.action_results()
-            if action_results:
-                last_action = action_results[-1]
-                if hasattr(last_action, 'extracted_content') and last_action.extracted_content:
-                    content = last_action.extracted_content
-                    print(f"Found content in last action ({len(content)} chars)...")
-                    leads = parse_leads_from_result(content)
-        
-        print(f"Successfully extracted {len(leads)} leads")
-        
-        output = ScrapeOutput(
-            leads=leads,
-            total_found=len(leads),
-            query=input_query,
-            location=input_location,
+            try:
+                # Basic cleanup if the LLM wraps code in markdown
+                cleaned_text = final_text.replace("```json", "").replace("```", "").strip()
+                
+                # Find the JSON array in the response
+                start_idx = cleaned_text.find("[")
+                end_idx = cleaned_text.rfind("]") + 1
+                
+                if start_idx != -1 and end_idx > start_idx:
+                    json_text = cleaned_text[start_idx:end_idx]
+                    data = json.loads(json_text)
+
+                    if isinstance(data, list):
+                        leads_data = data
+            except json.JSONDecodeError as e:
+                print(f"Failed to parse JSON result: {e}")
+                print("Raw result:", final_text[:500])
+
+        print(f"Successfully extracted {len(leads_data)} leads")
+
+        # Generate CSV with dynamic columns
+        csv_string = generate_csv(leads_data)
+
+        result_output = ScrapeOutput(
+            leads=leads_data,
+            total_found=len(leads_data),
+            csv_data=csv_string
         )
-        return output.model_dump()
+        return result_output.model_dump()
 
     finally:
-        # Always clean up the browsers session
+        # Always clean up the browser session
         if kernel_browser is not None:
             client.browsers.delete_by_id(kernel_browser.session_id)
-        print("Browser session cleaned up")
+            print("Browser session cleaned up")
+
+
+def generate_csv(leads: list) -> str:
+    """
+    Generate CSV from a list of lead dictionaries.
+    Dynamically determines columns from the data.
+    """
+    if not leads:
+        return ""
+
+    # Collect all unique keys across all leads for headers
+    all_keys = set()
+    for lead in leads:
+        if isinstance(lead, dict):
+            all_keys.update(lead.keys())
+    
+    headers = sorted(list(all_keys))
+    
+    if not headers:
+        return ""
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Write header
+    writer.writerow(headers)
+    
+    # Write rows
+    for lead in leads:
+        if isinstance(lead, dict):
+            row = [lead.get(key, "") for key in headers]
+            writer.writerow(row)
+
+    return output.getvalue()
