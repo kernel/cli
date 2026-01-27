@@ -300,7 +300,15 @@ export class ComputerTool {
       await this.sleep(SCREENSHOT_DELAY_MS);
       return await this.screenshot();
     } catch (error) {
-      return { error: `Action failed: ${error}` };
+      // Even on error, try to get the current URL (required by Gemini Computer Use API)
+      let url = '';
+      try {
+        const state = await this.kernel.browsers.computer.getState(this.sessionId);
+        url = state.url || '';
+      } catch {
+        // Ignore URL fetch errors
+      }
+      return { error: `Action failed: ${error}`, url };
     }
   }
 
