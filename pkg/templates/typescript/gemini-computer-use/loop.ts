@@ -173,7 +173,8 @@ export async function samplingLoop({
           functionResponses.push({
             functionResponse: {
               name: fc.name,
-              response: { error: result.error },
+              // Always include URL (required by Gemini Computer Use API)
+              response: { error: result.error, url: result.url || 'about:blank' },
             },
           });
         } else {
