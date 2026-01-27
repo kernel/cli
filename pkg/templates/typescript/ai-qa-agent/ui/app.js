@@ -280,7 +280,7 @@ function displayResults(result) {
   }
 
   if (issues.length === 0) {
-    issuesHTML = '<div style="text-align: center; padding: 40px; color: #27ae60; font-size: 1.2rem;">✓ No issues found! The website passed all checks.</div>';
+    issuesHTML = '<div style="text-align: center; padding: 60px 40px; color: #047857; font-size: 16px; background: rgba(16, 185, 129, 0.05); border-radius: 12px; border: 1px solid rgba(16, 185, 129, 0.2);"><p style="font-size: 24px; margin-bottom: 8px;">✓</p>No issues found! The website passed all checks.</div>';
   }
 
   container.innerHTML = summaryHTML + issuesHTML;
@@ -312,10 +312,13 @@ function renderIssue(issue) {
 
   return `
     <div class="issue-item ${issue.severity}">
-      <div class="issue-badges">${badges}</div>
-      <div class="issue-description">${escapeHtml(issue.description)}</div>
-      ${meta}
-      ${recommendation}
+      <div></div>
+      <div>
+        <div class="issue-badges">${badges}</div>
+        <div class="issue-description">${escapeHtml(issue.description)}</div>
+        ${meta}
+        ${recommendation}
+      </div>
     </div>
   `;
 }
@@ -341,3 +344,47 @@ function escapeHtml(text) {
   div.textContent = text;
   return div.innerHTML;
 }
+
+// Select All button functionality
+document.querySelectorAll('.select-all-btn').forEach(btn => {
+  btn.addEventListener('click', function() {
+    const group = this.dataset.group;
+    const checkboxGroup = document.querySelector(`[data-checkbox-group="${group}"]`);
+    
+    if (!checkboxGroup) return;
+    
+    const checkboxes = checkboxGroup.querySelectorAll('input[type="checkbox"]');
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    
+    // Toggle: if all are checked, uncheck all; otherwise check all
+    checkboxes.forEach(cb => {
+      cb.checked = !allChecked;
+    });
+    
+    // Update button state
+    this.classList.toggle('active', !allChecked);
+    this.textContent = !allChecked ? 'Deselect All' : 'Select All';
+  });
+
+  // Initialize button state based on current checkbox states
+  const group = btn.dataset.group;
+  const checkboxGroup = document.querySelector(`[data-checkbox-group="${group}"]`);
+  
+  if (checkboxGroup) {
+    const checkboxes = checkboxGroup.querySelectorAll('input[type="checkbox"]');
+    
+    // Update button state when any checkbox changes
+    checkboxes.forEach(cb => {
+      cb.addEventListener('change', () => {
+        const allChecked = Array.from(checkboxes).every(c => c.checked);
+        btn.classList.toggle('active', allChecked);
+        btn.textContent = allChecked ? 'Deselect All' : 'Select All';
+      });
+    });
+
+    // Set initial state
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    btn.classList.toggle('active', allChecked);
+    btn.textContent = allChecked ? 'Deselect All' : 'Select All';
+  }
+});

@@ -5,15 +5,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>QA Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 
 <body>
+  <header>
+    <h1>AI Powered QA Agent</h1>
+    <p class="subtitle">AI-Powered Quality Assurance Testing</p>
+  </header>
   <div class="container">
-    <header>
-      <h1>🔍 QA Agent</h1>
-      <p class="subtitle">AI-powered quality assurance testing using vision models</p>
-    </header>
 
     <div class="content">
       <div class="form-panel">
@@ -51,8 +54,11 @@
 
           <!-- Compliance Checks -->
           <div class="form-section">
-            <h2>Compliance Checks</h2>
-            <div class="checkbox-grid">
+            <div class="section-header">
+              <h2>Compliance Checks</h2>
+              <button type="button" class="select-all-btn" data-group="compliance">Select All</button>
+            </div>
+            <div class="checkbox-grid" data-checkbox-group="compliance">
               <label class="checkbox-label">
                 <input type="checkbox" name="compliance.accessibility" value="true">
                 <div class="checkbox-content">
@@ -86,8 +92,11 @@
 
           <!-- Policy Violations -->
           <div class="form-section">
-            <h2>Policy Violations</h2>
-            <div class="checkbox-grid">
+            <div class="section-header">
+              <h2>Policy Violations</h2>
+              <button type="button" class="select-all-btn" data-group="policy">Select All</button>
+            </div>
+            <div class="checkbox-grid" data-checkbox-group="policy">
               <label class="checkbox-label">
                 <input type="checkbox" name="policyViolations.content" value="true">
                 <div class="checkbox-content">
@@ -107,8 +116,11 @@
 
           <!-- Additional Checks -->
           <div class="form-section">
-            <h2>Additional Checks</h2>
-            <div class="checkbox-grid">
+            <div class="section-header">
+              <h2>Additional Checks</h2>
+              <button type="button" class="select-all-btn" data-group="additional">Select All</button>
+            </div>
+            <div class="checkbox-grid" data-checkbox-group="additional">
               <label class="checkbox-label">
                 <input type="checkbox" name="brokenUI" value="true">
                 <div class="checkbox-content">
