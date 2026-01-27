@@ -46,20 +46,12 @@ class ComputerTool:
             response = self.kernel.browsers.computer.capture_screenshot(self.session_id)
             screenshot_bytes = response.read()
 
-            # Get current URL
-            url = ""
-            try:
-                state = self.kernel.browsers.computer.get_state(self.session_id)
-                url = state.url or ""
-            except Exception:
-                pass
-
             return ToolResult(
                 base64_image=base64.b64encode(screenshot_bytes).decode("utf-8"),
-                url=url,
+                url="about:blank",
             )
         except Exception as e:
-            return ToolResult(error=f"Failed to take screenshot: {e}")
+            return ToolResult(error=f"Failed to take screenshot: {e}", url="about:blank")
 
     async def execute_action(
         self, action_name: str, args: GeminiFunctionArgs
@@ -272,4 +264,4 @@ class ComputerTool:
             return await self.screenshot()
 
         except Exception as e:
-            return ToolResult(error=f"Action failed: {e}")
+            return ToolResult(error=f"Action failed: {e}", url="about:blank")
