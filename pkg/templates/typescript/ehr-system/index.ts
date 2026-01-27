@@ -1,33 +1,34 @@
 import { Kernel, type KernelContext } from '@onkernel/sdk';
-import 'dotenv/config';
-import { Agent } from './lib/agent';
-import computers from './lib/computers';
+import { samplingLoop } from './loop';
+import { KernelBrowserSession } from './session';
 
 interface Input {
   task?: string;
+  record_replay?: boolean;
 }
 
 interface Output {
   elapsed: number;
-  answer: string | null;
-  download?: string | null;
-  logs?: any[];
+  result: string | null;
+  replay_url?: string | null;
 }
 
 const kernel = new Kernel();
 const app = kernel.app('ehr-system');
 
-if (!process.env.OPENAI_API_KEY) {
-  throw new Error('OPENAI_API_KEY is not set');
+// LLM API Keys are set in the environment during `kernel deploy <filename> -e ANTHROPIC_API_KEY=XXX`
+// See https://www.kernel.sh/docs/launch/deploy#environment-variables
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+
+if (!ANTHROPIC_API_KEY) {
+  throw new Error('ANTHROPIC_API_KEY is not set');
 }
 
 const DEFAULT_TASK = `
-Go to https://ehr-system-six.vercel.app/login
-Login with any email and password (e.g. user@example.com / password).
-Navigate to the "Reports" page.
-Find the "Export CSV" button and click it to download the report.
-Wait for the download to start.
-CRITICAL: Do not ask for confirmation. Perform all steps immediately.
+Go to https://demo.openemr.io/openemr/portal/index.php
+Login with username: Phil1 | password: phil | email: heya@invalid.email.com.
+Navigate to the "Medical Reports" page.
+Find the "Download Summary of Care" button and click it to download the report.
 `;
 
 app.action<Input, Output>(
@@ -36,91 +37,63 @@ app.action<Input, Output>(
     const start = Date.now();
     const task = payload?.task || DEFAULT_TASK;
 
-    const kb = await kernel.browsers.create({ 
-      invocation_id: ctx.invocation_id,
-      stealth: true 
+    // Create browser session with optional replay recording
+    const session = new KernelBrowserSession(kernel, {
+      stealth: true,
+      recordReplay: payload?.record_replay ?? false,
     });
-    console.log('> Kernel browser live view url:', kb.browser_live_view_url);
+
+    await session.start();
+    console.log('> Kernel browser live view url:', session.liveViewUrl);
 
     try {
-      const { computer } = await computers.create({ type: 'kernel', cdp_ws_url: kb.cdp_ws_url });
-
-      const agent = new Agent({
-        model: 'computer-use-preview', // Using a capable model for computer use
-        computer,
-        tools: [],
-        acknowledge_safety_check_callback: (m: string): boolean => {
-          console.log(`> safety check: ${m}`);
-          return true;
-        },
+      // Run the sampling loop with Anthropic Computer Use
+      const finalMessages = await samplingLoop({
+        model: 'claude-sonnet-4-5-20250929',
+        messages: [{
+          role: 'user',
+          content: `You are an automated agent. Current date and time: ${new Date().toISOString()}. You must complete the task fully without asking for permission.\n\nTask: ${task}`,
+        }],
+        apiKey: ANTHROPIC_API_KEY,
+        thinkingBudget: 1024,
+        kernel,
+        sessionId: session.sessionId,
       });
 
-      console.log('Starting download listener...');
-      // Start listening for download before running the agent
-      // Set a long timeout (5 minutes) because the agent might take time to navigate
-      const downloadPromise = (computer as any).waitForDownload(300000);
-      
-      // run agent and get response
-      const logs = await agent.runFullTurn({
-        messages: [
-          {
-            role: 'system',
-            content: `You are an automated agent. Current date and time: ${new Date().toISOString()}. You must complete the task fully without asking for permission.`,
-          },
-          {
-            type: 'message',
-            role: 'user',
-            content: [{ type: 'input_text', text: task }],
-          },
-        ],
-        print_steps: true,
-        debug: true,
-        show_images: false,
-      });
-
-      // Wait for download to resolve (it should have happened during the run)
-      // We use a small timeout race just in case it's still pending but not happening
-      const download = await Promise.race([
-        downloadPromise,
-        new Promise<null>(resolve => setTimeout(() => resolve(null), 5000))
-      ]);
-
-      if (download) {
-        console.log(`Download captured: ${download}`);
-      } else {
-        console.log('No download captured within timeout.');
+      // Extract the final result from the messages
+      if (finalMessages.length === 0) {
+        throw new Error('No messages were generated during the sampling loop');
       }
+
+      const lastMessage = finalMessages[finalMessages.length - 1];
+      if (!lastMessage) {
+        throw new Error('Failed to get the last message from the sampling loop');
+      }
+
+      const result = typeof lastMessage.content === 'string'
+        ? lastMessage.content
+        : lastMessage.content.map(block =>
+          block.type === 'text' ? block.text : ''
+        ).join('');
 
       const elapsed = parseFloat(((Date.now() - start) / 1000).toFixed(2));
 
-      // filter only LLM messages
-
-      // filter only LLM messages
-      const messages = logs.filter(
-        (item: any) =>
-          item.type === 'message' &&
-          typeof item.role === 'string' &&
-          Array.isArray(item.content),
-      );
-      const assistant = messages.find((m: any) => m.role === 'assistant') as any;
-      const lastContentIndex = assistant?.content?.length ? assistant.content.length - 1 : -1;
-      const lastContent = lastContentIndex >= 0 ? assistant?.content?.[lastContentIndex] : null;
-      const answer = lastContent && 'text' in lastContent ? lastContent.text : null;
+      // Stop session and get replay URL if recording was enabled
+      const sessionInfo = await session.stop();
 
       return {
         elapsed,
-        answer,
-        download
+        result,
+        replay_url: sessionInfo.replayViewUrl,
       };
     } catch (error) {
       const elapsed = parseFloat(((Date.now() - start) / 1000).toFixed(2));
       console.error('Error in export-report:', error);
+      await session.stop();
       return {
         elapsed,
-        answer: null,
+        result: null,
       };
-    } finally {
-      await kernel.browsers.deleteByID(kb.session_id);
     }
   },
 );
