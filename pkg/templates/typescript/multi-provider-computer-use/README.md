@@ -85,3 +85,11 @@ kernel invoke ts-multi-provider-cua cua-task --payload '{
 - Uses Gemini 2.5 Computer Use Preview (`gemini-2.5-computer-use-preview-10-2025`)
 - Default viewport: 1200x800
 - Uses normalized coordinates (0-1000 scale internally)
+
+## Known Limitations
+
+### URL Reporting (Gemini)
+
+The Gemini Computer Use API requires a URL in all function responses. However, the Kernel Computer Controls API doesn't provide a method to retrieve the current page URL.
+
+As a workaround, this template reports `about:blank` as the URL in all responses. This works because Gemini primarily uses the screenshot to understand page state - the URL is a required field but not critical for functionality.

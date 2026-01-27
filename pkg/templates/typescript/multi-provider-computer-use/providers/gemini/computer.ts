@@ -48,22 +48,14 @@ export class ComputerTool {
       const arrayBuffer = await blob.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
 
-      // Get current URL
-      let url = '';
-      try {
-        const state = await this.kernel.browsers.computer.getState(this.sessionId);
-        url = state.url || '';
-      } catch {
-        // Ignore URL fetch errors
-      }
-
       return {
         base64Image: buffer.toString('base64'),
-        url,
+        url: 'about:blank',
       };
     } catch (error) {
       return {
         error: `Failed to take screenshot: ${error}`,
+        url: 'about:blank',
       };
     }
   }
@@ -300,15 +292,7 @@ export class ComputerTool {
       await this.sleep(SCREENSHOT_DELAY_MS);
       return await this.screenshot();
     } catch (error) {
-      // Even on error, try to get the current URL (required by Gemini Computer Use API)
-      let url = '';
-      try {
-        const state = await this.kernel.browsers.computer.getState(this.sessionId);
-        url = state.url || '';
-      } catch {
-        // Ignore URL fetch errors
-      }
-      return { error: `Action failed: ${error}`, url };
+      return { error: `Action failed: ${error}`, url: 'about:blank' };
     }
   }
 
