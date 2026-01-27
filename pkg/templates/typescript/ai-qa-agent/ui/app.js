@@ -280,7 +280,7 @@ function displayResults(result) {
   }
 
   if (issues.length === 0) {
-    issuesHTML = '<div style="text-align: center; padding: 60px 40px; color: #047857; font-size: 16px; background: rgba(16, 185, 129, 0.05); border-radius: 12px; border: 1px solid rgba(16, 185, 129, 0.2);"><p style="font-size: 24px; margin-bottom: 8px;">✓</p>No issues found! The website passed all checks.</div>';
+    issuesHTML = '<div style="text-align: center; padding: 48px 32px; color: #10B981; font-size: 14px; background: rgba(16, 185, 129, 0.1); border-radius: 8px; border: 1px solid rgba(16, 185, 129, 0.2);"><p style="font-size: 32px; margin-bottom: 8px;">✓</p>No issues found! The website passed all checks.</div>';
   }
 
   container.innerHTML = summaryHTML + issuesHTML;
@@ -312,13 +312,10 @@ function renderIssue(issue) {
 
   return `
     <div class="issue-item ${issue.severity}">
-      <div></div>
-      <div>
-        <div class="issue-badges">${badges}</div>
-        <div class="issue-description">${escapeHtml(issue.description)}</div>
-        ${meta}
-        ${recommendation}
-      </div>
+      <div class="issue-badges">${badges}</div>
+      <div class="issue-description">${escapeHtml(issue.description)}</div>
+      ${meta}
+      ${recommendation}
     </div>
   `;
 }
