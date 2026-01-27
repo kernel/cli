@@ -196,10 +196,14 @@ type BrowsersGetInput struct {
 }
 
 type BrowsersUpdateInput struct {
-	Identifier string
-	ProxyID    string
-	ClearProxy bool
-	Output     string
+	Identifier         string
+	ProxyID            string
+	ClearProxy         bool
+	ProfileID          string
+	ProfileName        string
+	ProfileSaveChanges BoolFlag
+	Viewport           string
+	Output             string
 }
 
 // BrowsersCmd is a cobra-independent command handler for browsers operations.
@@ -532,9 +536,9 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
-	// Validate that at least one update option is provided
-	if in.ProxyID == "" && !in.ClearProxy {
-		return fmt.Errorf("must specify --proxy-id or --clear-proxy")
+	// Validate profile selection: at most one of profile-id or profile-name must be provided
+	if in.ProfileID != "" && in.ProfileName != "" {
+		return fmt.Errorf("must specify at most one of --profile-id or --profile-name")
 	}
 
 	// Cannot specify both --proxy-id and --clear-proxy
@@ -542,20 +546,59 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("cannot specify both --proxy-id and --clear-proxy")
 	}
 
+	hasProxyChange := in.ProxyID != "" || in.ClearProxy
+	hasProfileChange := in.ProfileID != "" || in.ProfileName != ""
+	hasViewportChange := in.Viewport != ""
+
+	// Validate --save-changes is only used with a profile
+	if in.ProfileSaveChanges.Set && !hasProfileChange {
+		return fmt.Errorf("--save-changes requires --profile-id or --profile-name")
+	}
+
+	// Validate that at least one update option is provided
+	if !hasProxyChange && !hasProfileChange && !hasViewportChange {
+		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --profile-id, --profile-name, or --viewport")
+	}
+
 	params := kernel.BrowserUpdateParams{}
+
+	// Handle proxy changes
 	if in.ClearProxy {
-		// Set to empty string to remove proxy
 		params.ProxyID = kernel.Opt("")
 	} else if in.ProxyID != "" {
 		params.ProxyID = kernel.Opt(in.ProxyID)
 	}
 
-	if in.Output != "json" {
-		if in.ClearProxy {
-			pterm.Info.Printf("Removing proxy from browser %s...\n", in.Identifier)
-		} else {
-			pterm.Info.Printf("Updating browser %s with proxy %s...\n", in.Identifier, in.ProxyID)
+	// Handle profile changes
+	if hasProfileChange {
+		params.Profile = shared.BrowserProfileParam{}
+		if in.ProfileID != "" {
+			params.Profile.ID = kernel.Opt(in.ProfileID)
+		} else if in.ProfileName != "" {
+			params.Profile.Name = kernel.Opt(in.ProfileName)
 		}
+		if in.ProfileSaveChanges.Set {
+			params.Profile.SaveChanges = kernel.Opt(in.ProfileSaveChanges.Value)
+		}
+	}
+
+	// Handle viewport changes
+	if hasViewportChange {
+		width, height, refreshRate, err := parseViewport(in.Viewport)
+		if err != nil {
+			return fmt.Errorf("invalid viewport format: %v", err)
+		}
+		params.Viewport = shared.BrowserViewportParam{
+			Width:  width,
+			Height: height,
+		}
+		if refreshRate > 0 {
+			params.Viewport.RefreshRate = kernel.Opt(refreshRate)
+		}
+	}
+
+	if in.Output != "json" {
+		pterm.Info.Printf("Updating browser %s...\n", in.Identifier)
 	}
 
 	browser, err := b.browsers.Update(ctx, in.Identifier, params)
@@ -567,11 +610,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return util.PrintPrettyJSON(browser)
 	}
 
-	if in.ClearProxy {
-		pterm.Success.Printf("Removed proxy from browser %s\n", browser.SessionID)
-	} else {
-		pterm.Success.Printf("Updated browser %s with proxy %s\n", browser.SessionID, browser.ProxyID)
-	}
+	pterm.Success.Printf("Updated browser %s\n", browser.SessionID)
 	return nil
 }
 
@@ -1990,7 +2029,14 @@ var browsersGetCmd = &cobra.Command{
 var browsersUpdateCmd = &cobra.Command{
 	Use:   "update <id>",
 	Short: "Update a browser session",
-	Long:  "Update a running browser session. Currently supports changing or removing the proxy.",
+	Long: `Update a running browser session.
+
+Supported operations:
+  - Change or remove proxy (--proxy-id or --clear-proxy)
+  - Load a profile into a session that doesn't have one (--profile-id or --profile-name)
+  - Change viewport dimensions (--viewport)
+
+Note: Profiles can only be loaded into sessions that don't already have a profile.`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			return fmt.Errorf("missing required argument: browser ID\n\nUsage: kernel browsers update <id> [flags]")
@@ -2020,6 +2066,10 @@ func init() {
 	browsersUpdateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	browsersUpdateCmd.Flags().String("proxy-id", "", "ID of the proxy to use for the browser session")
 	browsersUpdateCmd.Flags().Bool("clear-proxy", false, "Remove the proxy from the browser session")
+	browsersUpdateCmd.Flags().String("profile-id", "", "Profile ID to load into the browser session (mutually exclusive with --profile-name)")
+	browsersUpdateCmd.Flags().String("profile-name", "", "Profile name to load into the browser session (mutually exclusive with --profile-id)")
+	browsersUpdateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
+	browsersUpdateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60")
 
 	browsersCmd.AddCommand(browsersListCmd)
 	browsersCmd.AddCommand(browsersCreateCmd)
@@ -2457,14 +2507,22 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	out, _ := cmd.Flags().GetString("output")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
 	clearProxy, _ := cmd.Flags().GetBool("clear-proxy")
+	profileID, _ := cmd.Flags().GetString("profile-id")
+	profileName, _ := cmd.Flags().GetString("profile-name")
+	saveChanges, _ := cmd.Flags().GetBool("save-changes")
+	viewport, _ := cmd.Flags().GetString("viewport")
 
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
 	return b.Update(cmd.Context(), BrowsersUpdateInput{
-		Identifier: args[0],
-		ProxyID:    proxyID,
-		ClearProxy: clearProxy,
-		Output:     out,
+		Identifier:         args[0],
+		ProxyID:            proxyID,
+		ClearProxy:         clearProxy,
+		ProfileID:          profileID,
+		ProfileName:        profileName,
+		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
+		Viewport:           viewport,
+		Output:             out,
 	})
 }
 

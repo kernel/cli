@@ -1,11 +1,12 @@
 {
-  "name": "ts-gemini-cua",
+  "name": "ts-yutori-cua",
   "module": "index.ts",
   "type": "module",
   "private": true,
   "dependencies": {
-    "@google/genai": "^1.0.0",
-    "@onkernel/sdk": "^0.23.0"
+    "@onkernel/sdk": "^0.24.0",
+    "openai": "^4.77.0",
+    "playwright-core": "^1.52.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.17",

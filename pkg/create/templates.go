@@ -19,6 +19,7 @@ const (
 	TemplateOpenAGIComputerUse   = "openagi-computer-use"
 	TemplateClaudeAgentSDK       = "claude-agent-sdk"
 	TemplateQaAgent              = "qa-agent"
+	TemplateYutoriComputerUse    = "yutori-computer-use"
 )
 
 type TemplateInfo struct {
@@ -63,7 +64,7 @@ var Templates = map[string]TemplateInfo{
 	TemplateGeminiComputerUse: {
 		Name:        "Gemini Computer Use",
 		Description: "Implements a Gemini computer use agent",
-		Languages:   []string{LanguageTypeScript},
+		Languages:   []string{LanguageTypeScript, LanguagePython},
 	},
 	TemplateBrowserUse: {
 		Name:        "Browser Use",
@@ -89,6 +90,10 @@ var Templates = map[string]TemplateInfo{
 		Name:        "QA Agent",
 		Description: "Visual QA testing agent using AI vision models",
 		Languages:   []string{LanguageTypeScript},
+	TemplateYutoriComputerUse: {
+		Name:        "Yutori n1 Computer Use",
+		Description: "Implements a Yutori n1 computer use agent",
+		Languages:   []string{LanguageTypeScript, LanguagePython},
 	},
 }
 
@@ -114,6 +119,8 @@ func GetSupportedTemplatesForLanguage(language string) TemplateKeyValues {
 				return 1
 			case TemplateGeminiComputerUse:
 				return 2
+			case TemplateYutoriComputerUse:
+				return 3
 			default:
 				return 10
 			}
@@ -199,7 +206,7 @@ var Commands = map[string]map[string]DeployConfig{
 		TemplateGeminiComputerUse: {
 			EntryPoint:    "index.ts",
 			NeedsEnvFile:  true,
-			InvokeCommand: "kernel invoke ts-gemini-cua gemini-cua-task",
+			InvokeCommand: `kernel invoke ts-gemini-cua cua-task --payload '{"query": "Navigate to http://magnitasks.com and click on Tasks in the sidebar"}'`,
 		},
 		TemplateClaudeAgentSDK: {
 			EntryPoint:    "index.ts",
@@ -210,6 +217,10 @@ var Commands = map[string]map[string]DeployConfig{
 			EntryPoint:    "index.ts",
 			NeedsEnvFile:  true,
 			InvokeCommand: `kernel invoke ts-qa-agent qa-test --payload '{"url": "https://cash.app", "model": "claude"}'`,
+		TemplateYutoriComputerUse: {
+			EntryPoint:    "index.ts",
+			NeedsEnvFile:  true,
+			InvokeCommand: `kernel invoke ts-yutori-cua cua-task --payload '{"query": "Navigate to https://example.com and describe the page"}'`,
 		},
 	},
 	LanguagePython: {
@@ -247,6 +258,16 @@ var Commands = map[string]map[string]DeployConfig{
 			EntryPoint:    "main.py",
 			NeedsEnvFile:  true,
 			InvokeCommand: `kernel invoke py-claude-agent-sdk agent-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'`,
+		},
+		TemplateGeminiComputerUse: {
+			EntryPoint:    "main.py",
+			NeedsEnvFile:  true,
+			InvokeCommand: `kernel invoke python-gemini-cua cua-task --payload '{"query": "Navigate to http://magnitasks.com and click on Tasks in the sidebar"}'`,
+		},
+		TemplateYutoriComputerUse: {
+			EntryPoint:    "main.py",
+			NeedsEnvFile:  true,
+			InvokeCommand: `kernel invoke python-yutori-cua cua-task --payload '{"query": "Navigate to https://example.com and describe the page"}'`,
 		},
 	},
 }
