@@ -59,8 +59,11 @@ Here are all valid language + template combinations:
 | typescript | gemini-computer-use    | ts-gemini-cua     | ts-gemini-cua         | Yes            | GOOGLE_API_KEY                 |
 | typescript | claude-agent-sdk       | ts-claude-agent-sdk | ts-claude-agent-sdk | Yes            | ANTHROPIC_API_KEY              |
 | typescript | yutori-computer-use    | ts-yutori-cua     | ts-yutori-cua         | Yes            | YUTORI_API_KEY                 |
+| typescript | multi-provider-computer-use | ts-multi-provider-cua | ts-multi-provider-cua | Yes      | ANTHROPIC_API_KEY, GOOGLE_API_KEY |
 
 > **Note:** The `yutori-computer-use` template supports two modes: `computer_use` (default, full VM screenshots) and `playwright` (viewport-only screenshots via CDP). Both modes should be tested.
+
+> **Note:** The `multi-provider-computer-use` template supports multiple providers at runtime. Test with both `anthropic` and `gemini` providers via the `provider` field in the payload.
 
 | python     | sample-app             | py-sample-app     | python-basic          | No             | -                              |
 | python     | captcha-solver         | py-captcha-solver | python-captcha-solver | No             | -                              |
@@ -90,6 +93,7 @@ Run each of these (they are non-interactive when all flags are provided):
 ../bin/kernel create -n ts-gemini-cua -l typescript -t gemini-computer-use
 ../bin/kernel create -n ts-claude-agent-sdk -l typescript -t claude-agent-sdk
 ../bin/kernel create -n ts-yutori-cua -l typescript -t yutori-computer-use
+../bin/kernel create -n ts-multi-provider-cua -l typescript -t multi-provider-computer-use
 
 # Python templates
 ../bin/kernel create -n py-sample-app -l python -t sample-app
@@ -196,6 +200,18 @@ echo "YUTORI_API_KEY=<value from human>" > .env
 cd ..
 ```
 
+**ts-multi-provider-cua** (needs ANTHROPIC_API_KEY, GOOGLE_API_KEY):
+
+```bash
+cd ts-multi-provider-cua
+cat > .env << 'EOF'
+ANTHROPIC_API_KEY=<value from human>
+GOOGLE_API_KEY=<value from human>
+EOF
+../bin/kernel deploy index.ts --env-file .env
+cd ..
+```
+
 **py-browser-use** (needs OPENAI_API_KEY):
 
 ```bash
@@ -266,6 +282,8 @@ kernel invoke ts-gemini-cua gemini-cua-task --payload '{"startingUrl": "https://
 kernel invoke ts-claude-agent-sdk agent-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'
 kernel invoke ts-yutori-cua cua-task --payload '{"query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items.", "record_replay": true, "mode": "computer_use"}'
 kernel invoke ts-yutori-cua cua-task --payload '{"query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items.", "record_replay": true, "mode": "playwright"}'
+kernel invoke ts-multi-provider-cua cua-task --payload '{"provider": "anthropic", "query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and move the 5 items in the To Do and In Progress items to the Done section of the Kanban board. You are done successfully when the items are moved.", "record_replay": true}'
+kernel invoke ts-multi-provider-cua cua-task --payload '{"provider": "gemini", "query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and move the 5 items in the To Do and In Progress items to the Done section of the Kanban board. You are done successfully when the items are moved.", "record_replay": true}'
 
 # Python apps
 kernel invoke python-basic get-page-title --payload '{"url": "https://www.google.com"}'
@@ -281,7 +299,7 @@ kernel invoke python-yutori-cua cua-task --payload '{"query": "Go to http://magn
 
 ## Step 7: Automated Runtime Testing (Optional)
 
-**STOP and ask the human:** "Would you like me to automatically invoke all 19 test cases and report back on their runtime status?"
+**STOP and ask the human:** "Would you like me to automatically invoke all 21 test cases and report back on their runtime status?"
 
 If the human agrees, invoke each template use the Kernel CLI and collect results. Present findings in this format:
 
@@ -303,6 +321,8 @@ If the human agrees, invoke each template use the Kernel CLI and collect results
 | ts-claude-agent-sdk | ts-claude-agent-sdk |         |       |
 | ts-yutori-cua     | ts-yutori-cua         |         | mode: computer_use |
 | ts-yutori-cua     | ts-yutori-cua         |         | mode: playwright |
+| ts-multi-provider-cua | ts-multi-provider-cua |     | provider: anthropic |
+| ts-multi-provider-cua | ts-multi-provider-cua |     | provider: gemini |
 | py-sample-app     | python-basic          |         |       |
 | py-captcha-solver | python-captcha-solver |         |       |
 | py-browser-use    | python-bu             |         |       |
@@ -324,9 +344,9 @@ Notes should include brief error messages for failures or confirmation of succes
 - [ ] Built CLI with `make build`
 - [ ] Created QA directory
 - [ ] Got KERNEL_API_KEY from human
-- [ ] Created all 17 template variations
+- [ ] Created all 18 template variations
 - [ ] Got required API keys from human (OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, OAGI_API_KEY, YUTORI_API_KEY)
-- [ ] Deployed all 17 apps
+- [ ] Deployed all 18 apps
 - [ ] Provided invoke commands to human for manual testing
 - [ ] (Optional) Ran automated runtime testing and reviewed results
 
