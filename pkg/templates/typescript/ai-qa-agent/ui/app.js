@@ -63,13 +63,32 @@ document.getElementById('qaForm').addEventListener('submit', async (e) => {
         submitBtn.querySelector('.btn-loader').style.display = 'none';
       } else if (data.type === 'error') {
         eventSource.close();
-        throw new Error(data.error);
+        // Handle error properly instead of throwing
+        progressPanel.style.display = 'none';
+        document.getElementById('errorMessage').textContent = data.error || 'An unknown error occurred';
+        errorPanel.style.display = 'block';
+        errorPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+        // Re-enable submit button
+        submitBtn.disabled = false;
+        submitBtn.querySelector('.btn-text').style.display = 'inline';
+        submitBtn.querySelector('.btn-loader').style.display = 'none';
       }
     };
 
     eventSource.onerror = (error) => {
       console.error('SSE Error:', error);
       eventSource.close();
+      
+      // Handle SSE connection errors
+      progressPanel.style.display = 'none';
+      document.getElementById('errorMessage').textContent = 'Connection to server lost. Please try again.';
+      errorPanel.style.display = 'block';
+
+      // Re-enable submit button
+      submitBtn.disabled = false;
+      submitBtn.querySelector('.btn-text').style.display = 'inline';
+      submitBtn.querySelector('.btn-loader').style.display = 'none';
     };
 
   } catch (error) {

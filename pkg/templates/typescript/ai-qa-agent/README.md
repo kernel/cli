@@ -128,16 +128,19 @@ KERNEL_API_KEY=your-kernel-api-key
 
 ### 3. Get API Keys
 
-- **Anthropic (Claude)**: https://console.anthropic.com/
-- **OpenAI (GPT-4o)**: https://platform.openai.com/api-keys
-- **Google (Gemini)**: https://aistudio.google.com/app/apikey
+- **Anthropic (Claude)**: <https://console.anthropic.com/>
+- **OpenAI (GPT-4o)**: <https://platform.openai.com/api-keys>
+- **Google (Gemini)**: <https://aistudio.google.com/app/apikey>
 
 ## Deploy
 
 Deploy your QA agent to Kernel:
 
 ```bash
-kernel login  # If you haven't already
+kernel login  # If you haven't already 
+or
+export KERNEL_API_KEY=<YOUR_API_KEY> # If you have an API key
+
 kernel deploy index.ts --env-file .env
 ```
 
