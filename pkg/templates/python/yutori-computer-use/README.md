@@ -37,9 +37,9 @@ When enabled, the response will include a `replay_url` field with a link to view
 
 ## Viewport Configuration
 
-Yutori n1 recommends a **1280×800 (WXGA, 16:10)** viewport for best grounding accuracy. Kernel's closest supported viewport is **1200×800 at 25Hz**, which this template uses by default.
+Yutori n1 recommends a **1280×800 (WXGA, 16:10)** viewport for best grounding accuracy.
 
-> **Note:** n1 outputs coordinates in a 1000×1000 relative space, which are automatically scaled to the actual viewport dimensions. The slight width difference (1200 vs 1280) should have minimal impact on accuracy.
+> **Note:** n1 outputs coordinates in a 1000×1000 relative space, which are automatically scaled to the actual viewport dimensions.
 
 See [Kernel Viewport Documentation](https://www.kernel.sh/docs/browsers/viewport) for all supported configurations.
 

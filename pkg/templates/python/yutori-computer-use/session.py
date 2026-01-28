@@ -32,7 +32,7 @@ class KernelBrowserSession:
     stealth: bool = True
     timeout_seconds: int = 300
 
-    viewport_width: int = 1200
+    viewport_width: int = 1280
     viewport_height: int = 800
 
     # Replay recording options
@@ -56,7 +56,6 @@ class KernelBrowserSession:
             viewport={
                 "width": self.viewport_width,
                 "height": self.viewport_height,
-                "refresh_rate": 25,
             },
         )
 

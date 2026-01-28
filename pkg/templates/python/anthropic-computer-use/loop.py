@@ -78,6 +78,8 @@ async def sampling_loop(
     tool_version: ToolVersion = "computer_use_20250124",
     thinking_budget: int | None = None,
     token_efficient_tools_beta: bool = False,
+    viewport_width: int = 1280,
+    viewport_height: int = 800,
 ):
     """
     Agentic sampling loop for the assistant/tool interaction of computer use.
@@ -99,7 +101,7 @@ async def sampling_loop(
     tool_group = TOOL_GROUPS_BY_VERSION[tool_version]
     tool_collection = ToolCollection(
         *(
-            ToolCls(kernel=kernel, session_id=session_id) if ToolCls.__name__.startswith("ComputerTool") else ToolCls()
+            ToolCls(kernel=kernel, session_id=session_id, width=viewport_width, height=viewport_height) if ToolCls.__name__.startswith("ComputerTool") else ToolCls()
             for ToolCls in tool_group.tools
         )
     )

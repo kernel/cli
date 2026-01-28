@@ -36,7 +36,7 @@ export class PlaywrightComputerTool {
   private context: BrowserContext | null = null;
   private page: Page | null = null;
 
-  constructor(cdpWsUrl: string, width = 1200, height = 800) {
+  constructor(cdpWsUrl: string, width = 1280, height = 800) {
     this.cdpWsUrl = cdpWsUrl;
     this.width = width;
     this.height = height;

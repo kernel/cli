@@ -107,8 +107,6 @@ class BaseComputerTool:
     """
 
     name: Literal["computer"] = "computer"
-    width: int = 1024
-    height: int = 768
     display_num: int | None = None
     
     # Kernel client and session
@@ -127,10 +125,12 @@ class BaseComputerTool:
             "display_number": self.display_num,
         }
 
-    def __init__(self, kernel: Kernel | None = None, session_id: str | None = None):
+    def __init__(self, kernel: Kernel | None = None, session_id: str | None = None, width: int = 1280, height: int = 800):
         super().__init__()
         self.kernel = kernel
         self.session_id = session_id
+        self.width = width
+        self.height = height
 
     def validate_coordinates(self, coordinate: tuple[int, int] | list[int] | None = None) -> tuple[int, int] | None:
         """Validate that coordinates are non-negative integers and convert lists to tuples if needed."""

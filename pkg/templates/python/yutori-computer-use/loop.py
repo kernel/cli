@@ -49,7 +49,7 @@ async def sampling_loop(
     cdp_ws_url: Optional[str] = None,
     max_tokens: int = 4096,
     max_iterations: int = 50,
-    viewport_width: int = 1200,
+    viewport_width: int = 1280,
     viewport_height: int = 800,
     mode: BrowserMode = "computer_use",
 ) -> dict[str, Any]:
