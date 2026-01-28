@@ -57,6 +57,8 @@ export async function samplingLoop({
   tokenEfficientToolsBeta = false,
   kernel,
   sessionId,
+  viewportWidth = 1280,
+  viewportHeight = 800,
 }: {
   model: string;
   systemPromptSuffix?: string;
@@ -69,10 +71,12 @@ export async function samplingLoop({
   tokenEfficientToolsBeta?: boolean;
   kernel: Kernel;
   sessionId: string;
+  viewportWidth?: number;
+  viewportHeight?: number;
 }): Promise<BetaMessageParam[]> {
   const selectedVersion = toolVersion || DEFAULT_TOOL_VERSION;
   const toolGroup = TOOL_GROUPS_BY_VERSION[selectedVersion];
-  const toolCollection = new ToolCollection(...toolGroup.tools.map((Tool: typeof ComputerTool20241022 | typeof ComputerTool20250124) => new Tool(kernel, sessionId)));
+  const toolCollection = new ToolCollection(...toolGroup.tools.map((Tool: typeof ComputerTool20241022 | typeof ComputerTool20250124) => new Tool(kernel, sessionId, viewportWidth, viewportHeight)));
 
   const system: BetaTextBlock = {
     type: 'text',

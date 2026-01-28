@@ -16,6 +16,10 @@ export interface SessionOptions {
   recordReplay?: boolean;
   /** Grace period in seconds before stopping replay */
   replayGracePeriod?: number;
+  /** Viewport width */
+  viewportWidth?: number;
+  /** Viewport height */
+  viewportHeight?: number;
 }
 
 export interface SessionInfo {
@@ -23,6 +27,8 @@ export interface SessionInfo {
   liveViewUrl: string;
   replayId?: string;
   replayViewUrl?: string;
+  viewportWidth: number;
+  viewportHeight: number;
 }
 
 const DEFAULT_OPTIONS: Required<SessionOptions> = {
@@ -30,6 +36,8 @@ const DEFAULT_OPTIONS: Required<SessionOptions> = {
   timeoutSeconds: 300,
   recordReplay: false,
   replayGracePeriod: 5.0,
+  viewportWidth: 1280,
+  viewportHeight: 800,
 };
 
 /**
@@ -76,12 +84,22 @@ export class KernelBrowserSession {
     return this._replayViewUrl;
   }
 
+  get viewportWidth(): number {
+    return this.options.viewportWidth;
+  }
+
+  get viewportHeight(): number {
+    return this.options.viewportHeight;
+  }
+
   get info(): SessionInfo {
     return {
       sessionId: this.sessionId,
       liveViewUrl: this._liveViewUrl || '',
       replayId: this._replayId || undefined,
       replayViewUrl: this._replayViewUrl || undefined,
+      viewportWidth: this.options.viewportWidth,
+      viewportHeight: this.options.viewportHeight,
     };
   }
 
@@ -94,8 +112,8 @@ export class KernelBrowserSession {
       stealth: this.options.stealth,
       timeout_seconds: this.options.timeoutSeconds,
       viewport: {
-        width: 1024,
-        height: 768,
+        width: this.options.viewportWidth,
+        height: this.options.viewportHeight,
       },
     });
 
