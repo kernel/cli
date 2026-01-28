@@ -4,8 +4,7 @@
  * Performs accessibility, legal, brand, and regulatory compliance checks.
  */
 
-import type { Page } from "playwright-core";
-import { parseAIResponse, scrollAndLoadImages } from "../helpers";
+import { parseAIResponse } from "../helpers";
 import {
   ACCESSIBILITY_PROMPT,
   createBrandGuidelinesPrompt,
@@ -24,18 +23,13 @@ import type {
  * Perform all enabled compliance checks on a page.
  */
 export async function performComplianceChecks(
-  page: Page,
+  screenshot: Buffer,
   url: string,
   visionProvider: VisionProvider,
   checks: ComplianceChecks,
   context?: QaContext
 ): Promise<QaIssue[]> {
   const issues: QaIssue[] = [];
-
-  // Scroll through page to load all lazy-loaded images
-  await scrollAndLoadImages(page);
-
-  const screenshot = await page.screenshot({ fullPage: true });
 
   console.log("Performing compliance checks...");
 
@@ -75,7 +69,11 @@ async function checkAccessibility(
 
   try {
     const response = await visionProvider.analyzeScreenshot(screenshot, ACCESSIBILITY_PROMPT);
+    console.log(`    AI response length: ${response.length} chars`);
+    console.log(`    AI response preview: ${response.substring(0, 200)}...`);
+    
     const parsed = parseAIResponse<ParsedComplianceIssue>(response);
+    console.log(`    Parsed ${parsed.length} issues from response`);
 
     const issues = parsed.map((issue) => ({
       severity: issue.severity || "info",
@@ -108,7 +106,11 @@ async function checkLegalCompliance(
 
   try {
     const response = await visionProvider.analyzeScreenshot(screenshot, LEGAL_COMPLIANCE_PROMPT);
+    console.log(`    AI response length: ${response.length} chars`);
+    console.log(`    AI response preview: ${response.substring(0, 200)}...`);
+    
     const parsed = parseAIResponse<ParsedComplianceIssue>(response);
+    console.log(`    Parsed ${parsed.length} issues from response`);
 
     const issues = parsed.map((issue) => ({
       severity: issue.severity || "warning",

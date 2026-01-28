@@ -1,16 +1,26 @@
 # Kernel QA Agent
 
-An AI-powered quality assurance agent that uses vision models (Claude, GPT-4o, Gemini) to automatically analyze websites for compliance issues, policy violations, broken UI, and design quality.
+An AI-powered quality assurance agent that uses **Anthropic Computer Use** to visually navigate websites and analyze them with vision models (Claude, GPT-4o, Gemini) for compliance issues, policy violations, broken UI, and design quality.
 
 ## What it does
 
-The QA Agent performs comprehensive analysis on websites by:
+The QA Agent uses **Anthropic Computer Use** to visually navigate websites like a human would, then performs comprehensive analysis:
 
+- **Visual Navigation**: Claude sees the screen and navigates, scrolls, and dismisses popups automatically
 - **Compliance Checking**: Validates accessibility (WCAG/ADA), legal requirements, brand guidelines, and industry regulations
 - **Policy Violation Detection**: Identifies content policy violations and security issues
 - **Broken UI Analysis**: Detects visual defects and design inconsistencies
 - **AI-Powered Insights**: Uses vision models to identify compliance gaps that traditional tools miss
 - **Comprehensive Reports**: Generates both JSON (machine-readable) and HTML (human-readable) reports with actionable recommendations
+
+## How It Works
+
+This template uses the **Computer Controls API adapter** pattern:
+
+1. **Claude navigates** to the URL using Computer Use (sees the screen, clicks, types, scrolls)
+2. **Claude captures screenshots** as it explores the page
+3. **Vision models analyze** the screenshots for compliance, policy, and visual issues
+4. **No brittle selectors** - Claude adapts to any UI layout
 
 ## Key Features
 
@@ -117,20 +127,48 @@ pnpm install
 Create a `.env` file in your project directory (you can copy from `env.example`):
 
 ```env
-# At least ONE of these is required, depending on which model you plan to use:
-ANTHROPIC_API_KEY=your-anthropic-api-key  # For Claude (recommended)
-OPENAI_API_KEY=your-openai-api-key        # For GPT-4o
-GOOGLE_API_KEY=your-google-api-key        # For Gemini
+# Required: Anthropic API key for Computer Use navigation
+ANTHROPIC_API_KEY=your-anthropic-api-key
+
+# Optional: For analysis (choose one or more)
+OPENAI_API_KEY=your-openai-api-key        # For GPT-4o analysis
+GOOGLE_API_KEY=your-google-api-key        # For Gemini analysis
 
 # Optional: Kernel API key (if not using kernel login)
 KERNEL_API_KEY=your-kernel-api-key
 ```
+
+**Note**: `ANTHROPIC_API_KEY` is required for navigation (Computer Use). The analysis model can be Claude, GPT-4o, or Gemini.
 
 ### 3. Get API Keys
 
 - **Anthropic (Claude)**: <https://console.anthropic.com/>
 - **OpenAI (GPT-4o)**: <https://platform.openai.com/api-keys>
 - **Google (Gemini)**: <https://aistudio.google.com/app/apikey>
+
+## Testing
+
+### Quick Test
+
+1. **Local validation:**
+   ```bash
+   npm install
+   npx tsc --noEmit
+   ```
+
+2. **Deploy and test:**
+   ```bash
+   kernel deploy index.ts --env-file .env
+   kernel invoke ts-qa-agent qa-test \
+     --payload '{"url": "https://example.com", "model": "claude", "checks": {"compliance": {"accessibility": true}}}'
+   ```
+
+3. **View logs:**
+   ```bash
+   kernel deploy logs <deployment_id> --follow
+   ```
+
+See [TESTING.md](./TESTING.md) for detailed testing instructions.
 
 ## Deploy
 
@@ -482,11 +520,31 @@ fs.writeFileSync("qa-report.html", result.htmlReport);
 - ✓ Broken or missing images
 - ✓ Design inconsistencies
 
+## Architecture
+
+The QA Agent uses a two-stage approach:
+
+1. **Navigation Stage (Anthropic Computer Use)**:
+   - Claude visually navigates to the URL
+   - Scrolls through the page to load all content
+   - Dismisses popups and modals automatically
+   - Captures screenshots of the fully-loaded page
+
+2. **Analysis Stage (Vision Models)**:
+   - Screenshots are analyzed by the selected vision model (Claude/GPT-4o/Gemini)
+   - Compliance, policy, and visual checks are performed
+   - Issues are categorized and reported
+
+This architecture provides:
+- **Robust Navigation**: Claude adapts to any UI layout
+- **Complete Coverage**: All lazy-loaded content is captured
+- **Flexible Analysis**: Choose the best vision model for your needs
+
 ## Limitations
 
-- Analyzes visible page content only (doesn't interact with modals or dynamic content)
 - AI accuracy depends on the chosen model and screenshot quality
 - Cannot verify actual HTTPS connection (only visible indicators)
+- Functional checks (JS errors, console errors) are not available with Computer Use
 - Brand guideline checking requires explicit guidelines in context
 - Industry regulations are based on common requirements, not exhaustive legal analysis
 

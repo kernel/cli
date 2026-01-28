@@ -4,8 +4,7 @@
  * Performs visual and UI design quality checks.
  */
 
-import type { Page } from "playwright-core";
-import { parseAIResponse, scrollAndLoadImages } from "../helpers";
+import { parseAIResponse } from "../helpers";
 import { VISUAL_QA_PROMPT } from "../prompts";
 import type { ParsedVisualIssue, QaIssue, VisionProvider } from "../types";
 
@@ -14,7 +13,7 @@ import type { ParsedVisualIssue, QaIssue, VisionProvider } from "../types";
  * Checks for broken UI elements and design quality issues.
  */
 export async function performVisualChecks(
-  page: Page,
+  screenshot: Buffer,
   url: string,
   visionProvider: VisionProvider
 ): Promise<QaIssue[]> {
@@ -22,16 +21,15 @@ export async function performVisualChecks(
 
   console.log(`Performing visual checks on ${url}...`);
 
-  // Scroll through page to load all lazy-loaded images
-  await scrollAndLoadImages(page);
-
-  // Capture full page screenshot
-  const screenshot = await page.screenshot({ fullPage: true });
   const screenshotBase64 = screenshot.toString("base64");
 
   try {
     const response = await visionProvider.analyzeScreenshot(screenshot, VISUAL_QA_PROMPT);
+    console.log(`  AI response length: ${response.length} chars`);
+    console.log(`  AI response preview: ${response.substring(0, 200)}...`);
+    
     const parsed = parseAIResponse<ParsedVisualIssue>(response);
+    console.log(`  Parsed ${parsed.length} issues from response`);
 
     for (const issue of parsed) {
       issues.push({

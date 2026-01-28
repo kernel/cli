@@ -4,8 +4,7 @@
  * Detects content policy and security policy violations.
  */
 
-import type { Page } from "playwright-core";
-import { parseAIResponse, scrollAndLoadImages } from "../helpers";
+import { parseAIResponse } from "../helpers";
 import { createContentPolicyPrompt, SECURITY_PROMPT } from "../prompts";
 import type { IssueSeverity, ParsedPolicyViolation, PolicyChecks, QaIssue, VisionProvider } from "../types";
 
@@ -27,18 +26,13 @@ function riskLevelToSeverity(riskLevel?: string): IssueSeverity {
  * Detect policy violations on a page.
  */
 export async function detectPolicyViolations(
-  page: Page,
+  screenshot: Buffer,
   url: string,
   visionProvider: VisionProvider,
   checks: PolicyChecks,
   customPolicies?: string
 ): Promise<QaIssue[]> {
   const violations: QaIssue[] = [];
-
-  // Scroll through page to load all lazy-loaded images
-  await scrollAndLoadImages(page);
-
-  const screenshot = await page.screenshot({ fullPage: true });
 
   console.log("Detecting policy violations...");
 
@@ -71,7 +65,11 @@ async function checkContentPolicy(
   try {
     const prompt = createContentPolicyPrompt(customPolicies);
     const response = await visionProvider.analyzeScreenshot(screenshot, prompt);
+    console.log(`    AI response length: ${response.length} chars`);
+    console.log(`    AI response preview: ${response.substring(0, 200)}...`);
+    
     const parsed = parseAIResponse<ParsedPolicyViolation>(response);
+    console.log(`    Parsed ${parsed.length} violations from response`);
 
     const issues = parsed.map((violation) => ({
       severity: riskLevelToSeverity(violation.riskLevel),

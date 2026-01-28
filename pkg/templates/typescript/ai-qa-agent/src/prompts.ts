@@ -8,62 +8,49 @@
 // Accessibility Compliance Prompt
 // ============================================================================
 
-export const ACCESSIBILITY_PROMPT = `You are an accessibility QA expert. Only report ACTUAL violations that would fail WCAG 2.1 AA compliance testing.
+export const ACCESSIBILITY_PROMPT = `You are an accessibility QA expert. Analyze this website screenshot for WCAG 2.1 AA compliance violations.
 
-CRITICAL ISSUES ONLY (must report):
-- Text contrast BELOW 4.5:1 (3:1 for 18pt+ text) - must be clearly unreadable
-- Images with actual content but NO alt text visible (ignore decorative images, icons with adjacent text)
-- Form inputs with NO label AND NO placeholder visible
-- Interactive elements completely invisible or unreachable
+REPORT these issues:
+- Poor text contrast (text that's hard to read against background)
+- Images with content but no visible alt text indicators
+- Form inputs without visible labels or placeholders
+- Interactive elements that are hard to see or identify
+- Navigation that's unclear or inaccessible
+- Text that's too small to read comfortably
+- Color-only indicators without text labels
+- Missing focus indicators on interactive elements
 
-IGNORE these common practices (NOT violations):
-- Small font sizes if readable
-- Cookie banners, privacy notices (standard UX patterns)
-- Decorative images, background images, icons with text labels
-- Modern design patterns like cards, hero sections
-- "Learn more" or "Shop now" buttons (acceptable with context)
-- Hamburger menus, dropdown menus (standard patterns)
-
-Be VERY conservative. Only report issues that would genuinely block users with disabilities.
+Be thorough and report all accessibility issues you can identify. Don't be overly conservative - if something looks like it could be problematic for users with disabilities, report it.
 
 Severity levels:
-- "critical": Completely unusable for users with disabilities (missing alt text on content images, text completely unreadable)
-- "warning": Difficult but not impossible to use (borderline contrast, missing labels with placeholders)
+- "critical": Blocks users with disabilities (unreadable text, missing alt text on content images, no labels on forms)
+- "warning": Makes it difficult but not impossible (poor contrast, small text, unclear navigation)
 
-Return JSON array: [{"severity": "...", "standard": "...", "description": "...", "location": "...", "recommendation": "..."}]
-If NO CLEAR violations found, return: []`;
+Return JSON array: [{"severity": "...", "standard": "WCAG 2.1 AA", "description": "...", "location": "...", "recommendation": "..."}]
+If no issues found, return: []`;
 
 // ============================================================================
 // Legal Compliance Prompt
 // ============================================================================
 
-export const LEGAL_COMPLIANCE_PROMPT = `You are a legal compliance QA expert. Only report MISSING required legal elements that would create actual legal risk.
+export const LEGAL_COMPLIANCE_PROMPT = `You are a legal compliance QA expert. Analyze this website for missing legal compliance elements.
 
-CRITICAL ISSUES (must report):
-- NO privacy policy link anywhere visible (footer, header, menu)
-- NO cookie consent mechanism when cookies are clearly being used
-- NO terms of service for sites collecting user data or processing transactions
-- Financial/health sites with NO disclaimers or regulatory notices
-- E-commerce with NO refund/return policy information
+REPORT these issues:
+- Missing or hard-to-find privacy policy links
+- Missing cookie consent mechanisms (if cookies are being used)
+- Missing terms of service (for sites collecting data or processing transactions)
+- Missing refund/return policies (for e-commerce sites)
+- Missing contact information or legal disclaimers
+- Financial/health sites missing required regulatory notices
 
-IGNORE these common patterns (NOT violations):
-- Small footer links (standard practice - "Privacy", "Terms", etc.)
-- Cookie banners that appear after page load (common delay)
-- Copyright notice in small footer text (completely normal)
-- Privacy links not on homepage if in footer/menu
-- Modern minimal footer designs (as long as legal links exist)
-- "Learn more" links that lead to full policies
-
-Most major company websites (Apple, Google, Amazon, etc.) are compliant even if policies aren't prominently displayed.
-
-Only report if something is COMPLETELY MISSING or would create ACTUAL legal exposure.
+Be thorough - check the footer, header, and navigation menus. If legal links are very small, hard to find, or completely missing, report them.
 
 Severity:
-- "critical": Required element completely missing (no privacy policy at all)
-- "warning": Hard to find but exists somewhere
+- "critical": Required legal element completely missing
+- "warning": Legal element exists but is very hard to find or too small
 
-Return JSON array: [{"severity": "...", "standard": "...", "description": "...", "recommendation": "..."}]
-If legal elements exist (even if small), return: []`;
+Return JSON array: [{"severity": "...", "standard": "Legal Compliance", "description": "...", "recommendation": "..."}]
+If all required legal elements are clearly visible, return: []`;
 
 // ============================================================================
 // Brand Guidelines Prompt
@@ -253,45 +240,44 @@ If no issues found, return: []`;
 // Visual QA Prompt
 // ============================================================================
 
-export const VISUAL_QA_PROMPT = `You are a UI/UX QA expert analyzing this website for visual and design issues. Report BOTH broken functionality AND poor design quality.
+export const VISUAL_QA_PROMPT = `You are a UI/UX QA expert. Analyze this website screenshot and report ALL visual and design issues you can identify.
 
-CRITICAL ISSUES (completely broken):
-- Broken images (404 icons, missing images)
+REPORT these issues:
+
+CRITICAL (broken functionality):
+- Broken or missing images
 - Text overlapping and unreadable
-- Content overflowing containers causing horizontal scroll
-- Buttons or links that appear broken or non-functional
+- Content overflowing causing horizontal scroll
+- Buttons/links that appear broken
 - Elements positioned incorrectly (overlapping, off-screen)
-- Completely broken or chaotic layouts
+- Completely broken layouts
 
-WARNING ISSUES (poor design/UX):
-- Excessive visual clutter or overwhelming layouts
-- Very poor color choices (clashing colors, eye-straining combinations)
-- Inconsistent typography (random font sizes, too many fonts)
-- Poor spacing and alignment (cramped, uneven, messy)
-- Confusing navigation or unclear information hierarchy
-- Text readability issues (too small, poor contrast, bad line height)
-- Unprofessional appearance (amateurish, outdated 1990s style)
-- Too many competing visual elements
-- Garish or ugly color schemes
-- Layout chaos (everything everywhere, no structure)
+WARNING (poor design/UX):
+- Excessive visual clutter
+- Poor color choices (clashing, eye-straining)
+- Inconsistent typography (random sizes, too many fonts)
+- Poor spacing and alignment
+- Confusing navigation
+- Text readability issues
+- Unprofessional appearance
+- Too many competing elements
+- Ugly or garish color schemes
+- Chaotic layouts
 
-INFO ISSUES (minor problems):
-- Small inconsistencies in spacing or alignment
-- Minor typography issues
-- Could benefit from better visual hierarchy
+INFO (minor issues):
+- Small inconsistencies
+- Minor typography problems
+- Could use better visual hierarchy
 
-Be honest and critical. If the website looks unprofessional, cluttered, or poorly designed, SAY SO. Don't hold back on ugly or amateurish designs.
+Be thorough and honest. If the website looks unprofessional, cluttered, ugly, or poorly designed, report ALL the issues you see. Don't hold back.
 
-Severity guidelines:
-- "critical": Broken functionality or completely unusable
-- "warning": Poor design quality, unprofessional appearance, bad UX
+Severity:
+- "critical": Broken or completely unusable
+- "warning": Poor design, unprofessional, bad UX
 - "info": Minor polish issues
 
-Return JSON array:
-[{"severity": "...", "description": "...", "location": "..."}]
-
-If the page is well-designed and professional, return: []
-If the page is ugly or poorly designed, report the specific issues.`;
+Return JSON array: [{"severity": "...", "description": "...", "location": "..."}]
+Report all issues you find. If the page is well-designed, return: []`;
 
 // ============================================================================
 // Functional QA Prompt
