@@ -280,7 +280,6 @@ func TestBrowsersDelete_Failure(t *testing.T) {
 	assert.True(t, strings.Contains(errMsg, "right failed") || strings.Contains(errMsg, "left failed"), "expected error message to contain either 'right failed' or 'left failed', got: %s", errMsg)
 }
 
-
 func TestBrowsersView_ByID_PrintsURL(t *testing.T) {
 	// Capture both pterm output and raw stdout
 	setupStdoutCapture(t)
@@ -1153,6 +1152,7 @@ func TestGetAvailableViewports_ReturnsExpectedOptions(t *testing.T) {
 	assert.Contains(t, viewports, "1920x1200@25")
 	assert.Contains(t, viewports, "1440x900@25")
 	assert.Contains(t, viewports, "1200x800@60")
+	assert.Contains(t, viewports, "1280x800@60")
 	assert.Contains(t, viewports, "1024x768@60")
 }
 

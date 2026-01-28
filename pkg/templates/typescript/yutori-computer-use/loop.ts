@@ -53,7 +53,7 @@ interface SamplingLoopOptions {
   cdpWsUrl?: string;
   maxTokens?: number;
   maxIterations?: number;
-  /** Viewport width for coordinate scaling (default: 1200, closest to Yutori's 1280 recommendation) */
+  /** Viewport width for coordinate scaling (default: 1280 per Yutori recommendation) */
   viewportWidth?: number;
   /** Viewport height for coordinate scaling (default: 800 per Yutori recommendation) */
   viewportHeight?: number;
@@ -80,8 +80,7 @@ export async function samplingLoop({
   cdpWsUrl,
   maxTokens = 4096,
   maxIterations = 50,
-  // Default viewport: 1200x800 (closest Kernel-supported size to Yutori's recommended 1280x800)
-  viewportWidth = 1200,
+  viewportWidth = 1280,
   viewportHeight = 800,
   mode = 'computer_use',
 }: SamplingLoopOptions): Promise<SamplingLoopResult> {

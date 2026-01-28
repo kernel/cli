@@ -38,7 +38,7 @@ MODIFIER_MAP = {
 
 
 class PlaywrightComputerTool:
-    def __init__(self, cdp_ws_url: str, width: int = 1200, height: int = 800):
+    def __init__(self, cdp_ws_url: str, width: int = 1280, height: int = 800):
         self.cdp_ws_url = cdp_ws_url
         self.width = width
         self.height = height
