@@ -37,7 +37,7 @@ const DEFAULT_OPTIONS: Required<SessionOptions> = {
   timeoutSeconds: 300,
   recordReplay: false,
   replayGracePeriod: 5.0,
-  viewportWidth: 1200,
+  viewportWidth: 1280,
   viewportHeight: 800,
 };
 
