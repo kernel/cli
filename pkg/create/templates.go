@@ -18,6 +18,7 @@ const (
 	TemplateStagehand            = "stagehand"
 	TemplateOpenAGIComputerUse   = "openagi-computer-use"
 	TemplateClaudeAgentSDK       = "claude-agent-sdk"
+	TemplateQaAgent              = "qa-agent"
 	TemplateYutoriComputerUse    = "yutori-computer-use"
 )
 
@@ -85,6 +86,10 @@ var Templates = map[string]TemplateInfo{
 		Description: "Implements a Claude Agent SDK browser automation agent",
 		Languages:   []string{LanguageTypeScript, LanguagePython},
 	},
+	TemplateQaAgent: {
+		Name:        "QA Agent",
+		Description: "Visual QA testing agent using AI vision models",
+		Languages:   []string{LanguageTypeScript},
 	TemplateYutoriComputerUse: {
 		Name:        "Yutori n1 Computer Use",
 		Description: "Implements a Yutori n1 computer use agent",
@@ -208,6 +213,10 @@ var Commands = map[string]map[string]DeployConfig{
 			NeedsEnvFile:  true,
 			InvokeCommand: `kernel invoke ts-claude-agent-sdk agent-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'`,
 		},
+		TemplateQaAgent: {
+			EntryPoint:    "index.ts",
+			NeedsEnvFile:  true,
+			InvokeCommand: `kernel invoke ts-qa-agent qa-test --payload '{"url": "https://cash.app", "model": "claude"}'`,
 		TemplateYutoriComputerUse: {
 			EntryPoint:    "index.ts",
 			NeedsEnvFile:  true,
