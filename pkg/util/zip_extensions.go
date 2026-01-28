@@ -51,7 +51,6 @@ var DefaultExtensionExclusions = struct {
 // ExtensionZipOptions configures extension-specific zipping behavior
 type ExtensionZipOptions struct {
 	ExcludeDefaults bool // If true, don't apply default exclusions
-	Verbose         bool // Track individual excluded files
 }
 
 // ZipStats tracks statistics about the zipping operation
@@ -61,7 +60,6 @@ type ZipStats struct {
 	FilesExcluded int
 	BytesIncluded int64
 	BytesExcluded int64
-	ExcludedPaths []string
 }
 
 func (s *ZipStats) AddIncluded(bytes int64) {
@@ -71,14 +69,11 @@ func (s *ZipStats) AddIncluded(bytes int64) {
 	s.BytesIncluded += bytes
 }
 
-func (s *ZipStats) AddExcluded(path string, bytes int64, verbose bool) {
+func (s *ZipStats) AddExcluded(bytes int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.FilesExcluded++
 	s.BytesExcluded += bytes
-	if verbose {
-		s.ExcludedPaths = append(s.ExcludedPaths, path)
-	}
 }
 
 // ZipExtensionDirectory zips a Chrome extension directory with smart defaults

@@ -18,6 +18,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	// MaxExtensionSize is the maximum allowed size for extension bundles from API (50MB)
+	MaxExtensionSize = 50 * 1024 * 1024
+)
+
 // ExtensionsService defines the subset of the Kernel SDK extension client that we use.
 type ExtensionsService interface {
 	List(ctx context.Context, opts ...option.RequestOption) (res *[]kernel.ExtensionListResponse, err error)
@@ -299,26 +304,6 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 		pterm.Info.Println("Analyzing extension directory...")
 	}
 
-	estimatedSize, err := estimateExtensionSize(absDir)
-	if err != nil {
-		pterm.Warning.Printf("Could not estimate size: %v\n", err)
-	} else {
-		const maxSize = 50 * 1024 * 1024
-		if estimatedSize > maxSize {
-			pterm.Error.Printf("Estimated bundle size (%s) exceeds limit (50MB)\n",
-				formatBytes(estimatedSize))
-			pterm.Info.Println("\nTo reduce size:")
-			pterm.Info.Println("  1. Ensure node_modules/ is not needed (already excluded)")
-			pterm.Info.Println("  2. Remove large assets or documentation files")
-			pterm.Info.Println("  3. Build extension for production (minified)")
-			return fmt.Errorf("bundle would exceed maximum size")
-		}
-
-		if in.Output != "json" {
-			pterm.Info.Printf("Estimated bundle size: %s\n", formatBytes(estimatedSize))
-		}
-	}
-
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("kernel_ext_%d.zip", time.Now().UnixNano()))
 
 	if in.Output != "json" {
@@ -328,7 +313,6 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 	// Use new extension-specific zip function
 	stats, err := util.ZipExtensionDirectory(absDir, tmpFile, &util.ExtensionZipOptions{
 		ExcludeDefaults: false, // Apply defaults
-		Verbose:         false,
 	})
 	if err != nil {
 		pterm.Error.Println("Failed to zip directory")
@@ -339,7 +323,7 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 	// Show helpful stats
 	if in.Output != "json" {
 		pterm.Success.Printf("Created bundle: %s (%d files)\n",
-			formatBytes(stats.BytesIncluded), stats.FilesIncluded)
+			util.FormatBytes(stats.BytesIncluded), stats.FilesIncluded)
 	}
 
 	// Final size validation
@@ -348,10 +332,9 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 		return fmt.Errorf("failed to stat zip: %w", err)
 	}
 
-	const maxSize = 50 * 1024 * 1024
-	if fileInfo.Size() > maxSize {
+	if fileInfo.Size() > MaxExtensionSize {
 		pterm.Error.Printf("Extension bundle is too large: %s (max: 50MB)\n",
-			formatBytes(fileInfo.Size()))
+			util.FormatBytes(fileInfo.Size()))
 		pterm.Info.Println("\nSuggestions to reduce size:")
 		pterm.Info.Println("  1. Ensure you're building the extension for production")
 		pterm.Info.Println("  2. Remove unnecessary assets (large images, videos)")
@@ -397,62 +380,6 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 	rows = append(rows, []string{"Size (bytes)", fmt.Sprintf("%d", item.SizeBytes)})
 	PrintTableNoPad(rows, true)
 	return nil
-}
-
-// formatBytes formats bytes in a human-readable format
-func formatBytes(bytes int64) string {
-	const unit = 1024
-	if bytes < unit {
-		return fmt.Sprintf("%d B", bytes)
-	}
-	div, exp := int64(unit), 0
-	for n := bytes / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
-}
-
-// estimateExtensionSize walks the directory and estimates the final zip size
-// This provides fast feedback if the bundle will be too large
-func estimateExtensionSize(srcDir string) (int64, error) {
-	var totalSize int64
-	excludeMap := make(map[string]bool)
-
-	// Build exclusion map for fast lookup
-	for _, pattern := range util.DefaultExtensionExclusions.ExcludeDirectory {
-		excludeMap[pattern] = true
-	}
-
-	err := filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// Check if path should be excluded
-		if info.IsDir() {
-			if excludeMap[filepath.Base(path)] {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		// Check against exact file names
-		base := filepath.Base(path)
-		// Check against file patterns
-		for _, pattern := range util.DefaultExtensionExclusions.ExcludeFilenamePatterns {
-			if matched, _ := filepath.Match(pattern, base); matched {
-				return nil
-			}
-		}
-
-		totalSize += info.Size()
-		return nil
-	})
-
-	// Zip typically compresses 20-40% for code/text files
-	// Use conservative 30% compression estimate
-	return int64(float64(totalSize) * 0.7), err
 }
 
 // --- Cobra wiring ---
