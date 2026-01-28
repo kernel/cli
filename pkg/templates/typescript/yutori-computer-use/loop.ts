@@ -53,9 +53,9 @@ interface SamplingLoopOptions {
   cdpWsUrl?: string;
   maxTokens?: number;
   maxIterations?: number;
-  /** Viewport width for coordinate scaling (default: 1280 per Yutori recommendation) */
+  /** Viewport width for coordinate scaling */
   viewportWidth?: number;
-  /** Viewport height for coordinate scaling (default: 800 per Yutori recommendation) */
+  /** Viewport height for coordinate scaling */
   viewportHeight?: number;
   /**
    * Browser interaction mode:
