@@ -105,6 +105,9 @@ func ZipExtensionDirectory(srcDir, destZip string, opts *ExtensionZipOptions) (*
 		walker.ExcludeFilename = append(walker.ExcludeFilename, DefaultExtensionExclusions.ExcludeFilenamePatterns...)
 	}
 
+	// Ensure walker is terminated on any return path to prevent goroutine leak
+	defer walker.Terminate()
+
 	// Track walker errors
 	errChan := make(chan error, 1)
 	go func() {
