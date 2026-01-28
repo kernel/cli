@@ -56,7 +56,6 @@ class KernelBrowserSession:
             viewport={
                 "width": self.viewport_width,
                 "height": self.viewport_height,
-                "refresh_rate": 25,
             },
         )
 

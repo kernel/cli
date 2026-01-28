@@ -117,7 +117,6 @@ export class KernelBrowserSession {
       viewport: {
         width: this.options.viewportWidth,
         height: this.options.viewportHeight,
-        refresh_rate: 25,
       },
     });
 
