@@ -18,6 +18,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	// MaxExtensionSize is the maximum allowed size for extension bundles from API (50MB)
+	MaxExtensionSize = 50 * 1024 * 1024
+)
+
 // ExtensionsService defines the subset of the Kernel SDK extension client that we use.
 type ExtensionsService interface {
 	List(ctx context.Context, opts ...option.RequestOption) (res *[]kernel.ExtensionListResponse, err error)
@@ -294,31 +299,73 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 		return fmt.Errorf("directory %s does not exist", absDir)
 	}
 
+	// Pre-flight size check
+	if in.Output != "json" {
+		pterm.Info.Println("Analyzing extension directory...")
+	}
+
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("kernel_ext_%d.zip", time.Now().UnixNano()))
+
 	if in.Output != "json" {
 		pterm.Info.Println("Zipping extension directory...")
 	}
-	if err := util.ZipDirectory(absDir, tmpFile); err != nil {
+
+	// Use new extension-specific zip function
+	stats, err := util.ZipExtensionDirectory(absDir, tmpFile, &util.ExtensionZipOptions{
+		ExcludeDefaults: false, // Apply defaults
+	})
+	if err != nil {
 		pterm.Error.Println("Failed to zip directory")
 		return err
 	}
 	defer os.Remove(tmpFile)
 
+	// Get zip file size
+	fileInfo, err := os.Stat(tmpFile)
+	if err != nil {
+		return fmt.Errorf("failed to stat zip: %w", err)
+	}
+
+	if in.Output != "json" {
+		pterm.Success.Printf("Created bundle: %s (%d files)\n",
+			util.FormatBytes(fileInfo.Size()), stats.FilesIncluded)
+	}
+
+	// Final size validation
+
+	if fileInfo.Size() > MaxExtensionSize {
+		pterm.Error.Printf("Extension bundle is too large: %s (max: 50MB)\n",
+			util.FormatBytes(fileInfo.Size()))
+		pterm.Info.Println("\nSuggestions to reduce size:")
+		pterm.Info.Println("  1. Ensure you're building the extension for production")
+		pterm.Info.Println("  2. Remove unnecessary assets (large images, videos)")
+		pterm.Info.Println("  3. Check manifest.json references only needed files")
+		return fmt.Errorf("bundle exceeds maximum size")
+	}
+
+	// Open file for upload
 	f, err := os.Open(tmpFile)
 	if err != nil {
 		return fmt.Errorf("failed to open temp zip: %w", err)
 	}
 	defer f.Close()
 
+	// Upload
+	if in.Output != "json" {
+		pterm.Info.Println("Uploading extension...")
+	}
+
 	params := kernel.ExtensionUploadParams{File: f}
 	if in.Name != "" {
 		params.Name = kernel.Opt(in.Name)
 	}
+
 	item, err := e.extensions.Upload(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
+	// Display results
 	if in.Output == "json" {
 		return util.PrintPrettyJSON(item)
 	}
