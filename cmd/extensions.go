@@ -320,17 +320,18 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 	}
 	defer os.Remove(tmpFile)
 
-	// Show helpful stats
-	if in.Output != "json" {
-		pterm.Success.Printf("Created bundle: %s (%d files)\n",
-			util.FormatBytes(stats.BytesIncluded), stats.FilesIncluded)
-	}
-
-	// Final size validation
+	// Get zip file size
 	fileInfo, err := os.Stat(tmpFile)
 	if err != nil {
 		return fmt.Errorf("failed to stat zip: %w", err)
 	}
+
+	if in.Output != "json" {
+		pterm.Success.Printf("Created bundle: %s (%d files)\n",
+			util.FormatBytes(fileInfo.Size()), stats.FilesIncluded)
+	}
+
+	// Final size validation
 
 	if fileInfo.Size() > MaxExtensionSize {
 		pterm.Error.Printf("Extension bundle is too large: %s (max: 50MB)\n",
