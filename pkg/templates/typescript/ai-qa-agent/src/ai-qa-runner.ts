@@ -71,10 +71,16 @@ export async function runQaTask(
 
   logTaskConfiguration(url, model, normalized);
 
-  // Get API key based on model
-  const apiKey = getApiKeyForModel(model);
-  if (!apiKey) {
-    throw new Error(`${model.toUpperCase()}_API_KEY is required`);
+  // Navigation always uses Anthropic Computer Use (regardless of analysis model)
+  const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
+  if (!anthropicApiKey) {
+    throw new Error("ANTHROPIC_API_KEY is required for navigation (Computer Use)");
+  }
+
+  // Analysis model API key (for vision checks)
+  const visionApiKey = getApiKeyForModel(model);
+  if (!visionApiKey) {
+    throw new Error(`${model.toUpperCase()}_API_KEY is required for analysis`);
   }
 
   // Create vision provider
@@ -94,14 +100,14 @@ export async function runQaTask(
   console.log("Kernel browser live view url:", session.liveViewUrl);
 
   try {
-    // Navigate and capture screenshots using Computer Use
+    // Navigate and capture screenshots using Anthropic Computer Use
     progress("navigate", `Navigating to ${url}...`);
     console.log(`\nNavigating to ${url} using Anthropic Computer Use...`);
 
     const navResult = await navigateAndCaptureScreenshots({
       url,
       dismissPopups: normalized.dismissPopups,
-      apiKey,
+      apiKey: anthropicApiKey,
       kernel,
       sessionId: session.sessionId,
     });
