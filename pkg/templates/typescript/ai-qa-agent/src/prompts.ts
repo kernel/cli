@@ -10,6 +10,8 @@
 
 export const ACCESSIBILITY_PROMPT = `You are an accessibility QA expert. Analyze this website screenshot for WCAG 2.1 AA compliance violations.
 
+IMPORTANT: You MUST return a valid JSON array. Be thorough and find ALL accessibility issues.
+
 REPORT these issues:
 - Poor text contrast (text that's hard to read against background)
 - Images with content but no visible alt text indicators
@@ -19,21 +21,30 @@ REPORT these issues:
 - Text that's too small to read comfortably
 - Color-only indicators without text labels
 - Missing focus indicators on interactive elements
+- Buttons or links that are hard to identify
+- Content that requires mouse hover to access
 
-Be thorough and report all accessibility issues you can identify. Don't be overly conservative - if something looks like it could be problematic for users with disabilities, report it.
+Be thorough and report ALL accessibility issues you can identify. Don't be conservative - if something looks problematic for users with disabilities, report it.
 
 Severity levels:
 - "critical": Blocks users with disabilities (unreadable text, missing alt text on content images, no labels on forms)
 - "warning": Makes it difficult but not impossible (poor contrast, small text, unclear navigation)
 
-Return JSON array: [{"severity": "...", "standard": "WCAG 2.1 AA", "description": "...", "location": "...", "recommendation": "..."}]
-If no issues found, return: []`;
+CRITICAL: You MUST return ONLY a valid JSON array. No additional text before or after.
+Format: [{"severity": "critical|warning|info", "standard": "WCAG 2.1 AA", "description": "detailed description", "location": "where on page", "recommendation": "how to fix"}]
+
+Example response:
+[{"severity": "warning", "standard": "WCAG 2.1 AA", "description": "Text contrast is poor - light gray text on white background", "location": "Main heading area", "recommendation": "Increase text contrast to meet 4.5:1 ratio"}]
+
+If you find issues, return the JSON array. If NO issues found, return: []`;
 
 // ============================================================================
 // Legal Compliance Prompt
 // ============================================================================
 
 export const LEGAL_COMPLIANCE_PROMPT = `You are a legal compliance QA expert. Analyze this website for missing legal compliance elements.
+
+IMPORTANT: You MUST return a valid JSON array. Be thorough and check ALL areas of the page.
 
 REPORT these issues:
 - Missing or hard-to-find privacy policy links
@@ -42,6 +53,7 @@ REPORT these issues:
 - Missing refund/return policies (for e-commerce sites)
 - Missing contact information or legal disclaimers
 - Financial/health sites missing required regulatory notices
+- Copyright notices that are too small or missing
 
 Be thorough - check the footer, header, and navigation menus. If legal links are very small, hard to find, or completely missing, report them.
 
@@ -49,8 +61,13 @@ Severity:
 - "critical": Required legal element completely missing
 - "warning": Legal element exists but is very hard to find or too small
 
-Return JSON array: [{"severity": "...", "standard": "Legal Compliance", "description": "...", "recommendation": "..."}]
-If all required legal elements are clearly visible, return: []`;
+CRITICAL: You MUST return ONLY a valid JSON array. No additional text before or after.
+Format: [{"severity": "critical|warning", "standard": "Legal Compliance", "description": "detailed description", "recommendation": "how to fix"}]
+
+Example response:
+[{"severity": "warning", "standard": "Legal Compliance", "description": "Privacy policy link is very small and hard to find in footer", "recommendation": "Make privacy policy link more prominent"}]
+
+If you find issues, return the JSON array. If all required legal elements are clearly visible, return: []`;
 
 // ============================================================================
 // Brand Guidelines Prompt
@@ -194,21 +211,30 @@ Return JSON array: [{"riskLevel": "...", "description": "...", "location": "..."
 If no violations of the CUSTOM POLICIES above, return: []`;
   }
 
-  return `You are a content moderation expert. Check for common policy violations (be conservative - only flag clear issues):
+  return `You are a content moderation expert. Analyze this website screenshot for policy violations.
+
+IMPORTANT: You MUST return a valid JSON array. Be thorough and find ALL violations.
 
 Check for:
 - Inappropriate or offensive content (hate speech, discriminatory language)
 - Misleading claims or false advertising (unsubstantiated claims, fake testimonials)
 - Unverified health/medical claims (unapproved treatments, miracle cures)
 - Deceptive practices (hidden fees, fake urgency, bait-and-switch)
+- Spam or low-quality content
+- Misleading headlines or clickbait
 
 For each violation found:
 - riskLevel: "high" (immediate action required) | "medium" (review needed) | "low" (minor concern)
 - description: what violates policy and why
 - location: where on the page
 
-Return JSON array: [{"riskLevel": "...", "description": "...", "location": "..."}]
-If no violations found, return: []`;
+CRITICAL: You MUST return ONLY a valid JSON array. No additional text before or after.
+Format: [{"riskLevel": "high|medium|low", "description": "detailed description", "location": "where on page"}]
+
+Example response:
+[{"riskLevel": "medium", "description": "Misleading headline that doesn't match content", "location": "Main article headline"}]
+
+If you find violations, return the JSON array. If no violations found, return: []`;
 }
 
 // ============================================================================
@@ -242,6 +268,8 @@ If no issues found, return: []`;
 
 export const VISUAL_QA_PROMPT = `You are a UI/UX QA expert. Analyze this website screenshot and report ALL visual and design issues you can identify.
 
+IMPORTANT: You MUST return a valid JSON array. Be thorough and find ALL issues.
+
 REPORT these issues:
 
 CRITICAL (broken functionality):
@@ -263,6 +291,9 @@ WARNING (poor design/UX):
 - Too many competing elements
 - Ugly or garish color schemes
 - Chaotic layouts
+- Amateurish design
+- Outdated styling
+- Poor visual hierarchy
 
 INFO (minor issues):
 - Small inconsistencies
@@ -276,8 +307,13 @@ Severity:
 - "warning": Poor design, unprofessional, bad UX
 - "info": Minor polish issues
 
-Return JSON array: [{"severity": "...", "description": "...", "location": "..."}]
-Report all issues you find. If the page is well-designed, return: []`;
+CRITICAL: You MUST return ONLY a valid JSON array. No additional text before or after.
+Format: [{"severity": "critical|warning|info", "description": "detailed description", "location": "where on page"}]
+
+Example response:
+[{"severity": "warning", "description": "Excessive visual clutter with too many competing elements", "location": "Main content area"}, {"severity": "warning", "description": "Poor color scheme with clashing colors", "location": "Header section"}]
+
+If you find issues, return the JSON array. If the page is well-designed, return: []`;
 
 // ============================================================================
 // Functional QA Prompt

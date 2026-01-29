@@ -17,7 +17,7 @@ export class ClaudeVisionProvider implements VisionProvider {
     const base64Image = screenshot.toString("base64");
 
     const response = await this.client.messages.create({
-      model: "claude-3-5-sonnet-20250219",
+      model: "claude-sonnet-4-5-20250929",
       max_tokens: 4096,
       messages: [
         {

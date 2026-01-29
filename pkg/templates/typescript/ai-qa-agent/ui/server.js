@@ -1,10 +1,10 @@
-import express from 'express';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
 import Anthropic from '@anthropic-ai/sdk';
-import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { config } from 'dotenv';
+import express from 'express';
+import OpenAI from 'openai';
+import { dirname } from 'path';
+import { fileURLToPath } from 'url';
 
 // Load environment variables
 config();
@@ -32,8 +32,8 @@ class ClaudeVisionProvider {
   async analyzeScreenshot(screenshot, prompt) {
     const base64Image = screenshot.toString("base64");
     const response = await this.client.messages.create({
-      model: "claude-3-5-sonnet-20241022",
-      max_tokens: 2048,
+      model: "claude-sonnet-4-5-20250929",
+      max_tokens: 4096,
       messages: [{
         role: "user",
         content: [
@@ -108,17 +108,17 @@ const sseConnections = new Map();
 // SSE endpoint for progress updates
 app.get('/api/progress/:sessionId', (req, res) => {
   const sessionId = req.params.sessionId;
-  
+
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
-  
+
   // Store this connection
   sseConnections.set(sessionId, res);
-  
+
   // Send initial connection message
   res.write(`data: ${JSON.stringify({ type: 'connected' })}\n\n`);
-  
+
   // Clean up on close
   req.on('close', () => {
     sseConnections.delete(sessionId);
@@ -136,44 +136,44 @@ function sendProgress(sessionId, data) {
 // API endpoint to run QA analysis
 app.post('/api/run-qa', async (req, res) => {
   const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  
+
   try {
     const input = req.body;
-    
+
     console.log('Received request:', JSON.stringify(input, null, 2));
-    
+
     // Validate input
     if (!input.url) {
       return res.status(400).json({ error: 'URL is required' });
     }
-    
+
     // Send session ID immediately
     res.json({ sessionId });
-    
+
     // Import and run the QA task from index.ts
-    const { default: runQA } = await import('../index.ts');
-    
+    const runQaTask = (await import('../index.ts')).default;
+
     // Send progress: Starting
     sendProgress(sessionId, {
       type: 'status',
       step: 'starting',
       message: `Starting analysis of ${input.url}...`
     });
-    
+
     // Create a wrapper that sends progress updates
     const progressCallback = (step, message) => {
       sendProgress(sessionId, { type: 'status', step, message });
     };
-    
+
     // Run the QA analysis with progress callback
-    const result = await runQA(undefined, input, progressCallback);
-    
+    const result = await runQaTask(undefined, input, progressCallback);
+
     // Send final result
     sendProgress(sessionId, {
       type: 'complete',
       result
     });
-    
+
   } catch (error) {
     console.error('Error running QA:', error);
     sendProgress(sessionId, {
