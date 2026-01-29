@@ -71,7 +71,7 @@ STEPS:
 2. Wait for the page to load completely
 3. In the main search field (labeled "Company name, ticker, or CIK number" or similar), type: ${company}
 4. Click on "Show more search options" or similar to expand the search filters
-5. Set the "Filed date range" to "Custom" and enter both the from and to dates as ${date}
+5. Set the "Filed date range" to "Custom" and enter both the from and to dates as ${date}. Type the date directly into the from and to fields—do NOT use the date picker or dropdown to select a date; typing is much faster.
 ${stateStep}
 7. Click the Search button to execute the search
 8. Wait for results to load
@@ -86,13 +86,14 @@ ${stateStep}
    - filmNumber: The film number
 
 IMPORTANT:
+- For date fields (Filed date range from/to): always type the date directly—do NOT use the date picker or dropdown; typing is much faster.
 - If a popup, survey, or feedback modal appears, close it by clicking the X button or "No thanks" before continuing
 - After the search completes, note the TOTAL NUMBER OF RESULTS shown (e.g., "96 search results"). Use this count to verify you have extracted ALL filings.
 - Before extracting data, zoom out the page to see more results at once. Press ctrl+minus once, then press ctrl+minus again, then press ctrl+minus a third time (each as a separate key action). This makes it easier to capture all entries.
 - ALWAYS use the scroll action (with scroll_direction and scroll_amount) to navigate through results. DO NOT use Page_Down, Page_Up, Home, End, or arrow keys for scrolling - these jump too far and will cause you to miss entries.
 - ALWAYS set scroll_amount: 1 for each scroll action to move through the table one row at a time. Never use scroll_amount > 1.
 - Keep track of how many filings you have extracted vs. the total count shown
-- If no results are found, report that clearly
+- If the page shows "No results found for your search!" (after you have applied filters and selected columns), do NOT try to extract data. Output an empty array [] in the FILINGS_DATA section and report that no results were found.
 
 OUTPUT FORMAT (VERY IMPORTANT - follow exactly):
 When you have finished extracting all the data, output the results as a valid JSON array. 
@@ -107,6 +108,7 @@ ${FILINGS_DATA_END_MARKER}
 
 Rules for the JSON:
 - Output must be a valid JSON array (starts with [ and ends with ])
+- If you see "No results found for your search!" on the page (after selecting all fields), output an empty array: []
 - Each filing is a JSON object with these exact keys: formAndFile, filedDate, filingEntityPerson, cik, located, fileNumber, filmNumber
 - Use empty string "" for missing values, not null
 - Dates must be in YYYY-MM-DD format
