@@ -9,7 +9,9 @@
 export interface QaTaskInput {
   url: string;
   model?: ModelType;
+  /** Defaults to true when not passed */
   dismissPopups?: boolean;
+  /** Defaults to all checks enabled (true) when not passed */
   checks?: QaChecks;
   context?: QaContext;
 }
@@ -29,20 +31,29 @@ export interface QaTaskOutput {
 export type ModelType = "claude" | "gpt4o" | "gemini";
 
 export interface QaChecks {
+  /** Defaults to all true when not passed */
   compliance?: ComplianceChecks;
+  /** Defaults to all true when not passed */
   policyViolations?: PolicyChecks;
+  /** Defaults to true when not passed */
   brokenUI?: boolean;
 }
 
 export interface ComplianceChecks {
+  /** Defaults to true when not passed */
   accessibility?: boolean;
+  /** Defaults to true when not passed */
   legal?: boolean;
+  /** Defaults to true when not passed */
   brand?: boolean;
+  /** Defaults to true when not passed */
   regulatory?: boolean;
 }
 
 export interface PolicyChecks {
+  /** Defaults to true when not passed */
   content?: boolean;
+  /** Defaults to true when not passed */
   security?: boolean;
 }
 

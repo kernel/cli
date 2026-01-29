@@ -11,7 +11,7 @@
 
 import { Kernel, type KernelContext } from "@onkernel/sdk";
 import { config } from "dotenv";
-import { runQaTask } from "./src/qa-runner";
+import { runQaTask } from "./src/ai-qa-runner";
 import type { ModelType, QaTaskInput, QaTaskOutput } from "./src/types";
 
 // Load environment variables from .env file
