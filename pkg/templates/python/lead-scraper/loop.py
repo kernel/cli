@@ -71,7 +71,6 @@ async def sampling_loop(
     api_key: str,
     kernel: Kernel,
     session_id: str,
-    provider: APIProvider = APIProvider.ANTHROPIC,
     system_prompt_suffix: str = "",
     only_n_most_recent_images: int | None = None,
     max_tokens: int = 4096,
@@ -109,22 +108,19 @@ async def sampling_loop(
     )
 
     while True:
-        enable_prompt_caching = False
         betas = [tool_group.beta_flag] if tool_group.beta_flag else []
         if token_efficient_tools_beta:
             betas.append("token-efficient-tools-2025-02-19")
         image_truncation_threshold = only_n_most_recent_images or 0
         client = Anthropic(api_key=api_key, max_retries=4)
-        enable_prompt_caching = True
 
-        if enable_prompt_caching:
-            betas.append(PROMPT_CACHING_BETA_FLAG)
-            _inject_prompt_caching(messages)
-            # Because cached reads are 10% of the price, we don't think it's
-            # ever sensible to break the cache by truncating images
-            only_n_most_recent_images = 0
-            # Use type ignore to bypass TypedDict check until SDK types are updated
-            system["cache_control"] = {"type": "ephemeral"}  # type: ignore
+        betas.append(PROMPT_CACHING_BETA_FLAG)
+        _inject_prompt_caching(messages)
+        # Because cached reads are 10% of the price, we don't think it's
+        # ever sensible to break the cache by truncating images
+        only_n_most_recent_images = 0
+        # Use type ignore to bypass TypedDict check until SDK types are updated
+        system["cache_control"] = {"type": "ephemeral"}  # type: ignore
 
         if only_n_most_recent_images:
             _maybe_filter_to_n_most_recent_images(

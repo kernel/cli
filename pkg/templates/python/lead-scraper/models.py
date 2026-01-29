@@ -18,7 +18,7 @@ class ScrapeInput(BaseModel):
         le=100,
         description="Maximum number of leads to scrape (1-100)"
     )
-    record_play: bool = Field(
+    record_replay: bool = Field(
         default=False,
         description="Whether to record the session for replay"
     )

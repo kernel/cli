@@ -193,7 +193,7 @@ async def scrape_leads(ctx: kernel.KernelContext, input_data: dict) -> dict:
                 final_text = "".join(
                     block["text"]
                     for block in last_message["content"]
-                    if isinstance(block, Dict) and block.get("type") == "text"
+                    if isinstance(block, dict) and block.get("type") == "text"
                 )
 
             # Parse results
