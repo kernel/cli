@@ -11,7 +11,7 @@ Usage:
         "url": "https://www.osbar.org/members/membersearch_start.asp",
         "instructions": "Find all active attorney members in Portland. For each, extract as many information as possible.",
         "max_results": 3,
-        "record_play": false
+        "record_replay": false
     }'
 """
 
