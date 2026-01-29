@@ -13,10 +13,14 @@ class ScrapeInput(BaseModel):
         description="Description of what leads to extract and how to navigate the site"
     )
     max_results: int = Field(
-        default=10,
+        default=3,
         ge=1,
         le=100,
         description="Maximum number of leads to scrape (1-100)"
+    )
+    record_play: bool = Field(
+        default=False,
+        description="Whether to record the session for replay"
     )
 
 

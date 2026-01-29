@@ -8,9 +8,10 @@ navigate the site and return leads as a downloadable CSV.
 Usage:
     kernel deploy main.py -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
     kernel invoke lead-scraper scrape-leads --payload '{
-        "url": "https://example.com/directory",
-        "instructions": "Find all company listings. For each, extract: company name, email, phone, website.",
-        "max_results": 10
+        "url": "https://www.osbar.org/members/membersearch_start.asp",
+        "instructions": "Find all active attorney members in Portland. For each, extract as many information as possible.",
+        "max_results": 3,
+        "record_play": false
     }'
 """
 
@@ -158,7 +159,7 @@ async def scrape_leads(ctx: kernel.KernelContext, input_data: dict) -> dict:
     try:
         async with KernelBrowserSession(
             stealth=True,
-            record_replay=False,
+            record_replay=scrape_input.record_replay,
         ) as session:
             print(f"Browser live view: {session.live_view_url}")
 
