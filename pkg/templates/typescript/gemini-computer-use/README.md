@@ -53,6 +53,14 @@ The Gemini model can execute the following browser actions:
 | `drag_and_drop` | Drag from one point to another |
 | `wait_5_seconds` | Wait for 5 seconds |
 
+## Known Limitations
+
+### URL Reporting
+
+The Gemini Computer Use API requires a URL in all function responses. However, the Kernel Computer Controls API doesn't provide a method to retrieve the current page URL.
+
+As a workaround, this template reports `about:blank` as the URL in all responses. This works because Gemini primarily uses the screenshot to understand page state - the URL is a required field but not critical for functionality.
+
 ## Resources
 
 - [Google Gemini Computer Use Documentation](https://ai.google.dev/gemini-api/docs/computer-use)

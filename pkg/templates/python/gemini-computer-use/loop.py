@@ -177,7 +177,7 @@ async def sampling_loop(
                         Part(
                             function_response=FunctionResponse(
                                 name=fc.name,
-                                response={"error": result.error},
+                                response={"error": result.error, "url": result.url or "about:blank"},
                             )
                         )
                     )
