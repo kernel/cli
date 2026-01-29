@@ -13,7 +13,6 @@ import {
   performVisualChecks,
 } from "./checks";
 import { normalizeUrl } from "./helpers";
-import { generateHtmlReport, generateJsonReport } from "./reports";
 import type { QaIssue, QaTaskInput, QaTaskOutput } from "./types";
 import { createVisionProvider } from "./vision-providers";
 
@@ -166,18 +165,8 @@ export async function runQaTask(
       console.log(`\nUI analysis: Found ${uiIssues.length} UI issues`);
     }
 
-    // Generate reports
-    progress("generating", "Generating reports...");
-    const metadata = {
-      url,
-      model: visionProvider.name,
-      timestamp: new Date(),
-    };
-
-    const jsonReport = generateJsonReport(allIssues, metadata);
-    const htmlReport = generateHtmlReport(allIssues, metadata);
-
     // Log completion summary
+    progress("generating", "Generating reports...");
     logCompletionSummary(allIssues);
     progress("complete", `Analysis complete! Found ${allIssues.length} issues.`);
 
@@ -190,8 +179,6 @@ export async function runQaTask(
         infos: allIssues.filter((i) => i.severity === "info").length,
       },
       issues: allIssues,
-      jsonReport,
-      htmlReport,
     };
   } catch (error) {
     console.error("QA analysis failed:", error);

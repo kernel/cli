@@ -6,15 +6,15 @@
  */
 
 import { Anthropic } from '@anthropic-ai/sdk';
-import { DateTime } from 'luxon';
+import type { Kernel } from '@onkernel/sdk';
 import { Buffer } from 'buffer';
 import { createHash } from 'crypto';
-import type { Kernel } from '@onkernel/sdk';
+import { DateTime } from 'luxon';
 import { DEFAULT_TOOL_VERSION, TOOL_GROUPS_BY_VERSION, ToolCollection, type ToolVersion } from '../tools/collection';
 import { ComputerTool20241022, ComputerTool20250124 } from '../tools/computer';
 import type { ActionParams } from '../tools/types/computer';
 import { Action } from '../tools/types/computer';
-import type { BetaMessageParam, BetaTextBlock, BetaContentBlock } from '../types/beta';
+import type { BetaMessageParam, BetaTextBlock } from '../types/beta';
 import { injectPromptCaching, PROMPT_CACHING_BETA_FLAG, responseToParams } from '../utils/computer-use';
 import { makeApiToolResult } from '../utils/tool-results';
 
@@ -68,7 +68,7 @@ export async function navigateAndCaptureScreenshots({
   toolVersion?: ToolVersion;
   thinkingBudget?: number;
 }): Promise<QaNavigationResult> {
-  
+
   const selectedVersion = toolVersion || DEFAULT_TOOL_VERSION;
   const toolGroup = TOOL_GROUPS_BY_VERSION[selectedVersion];
   const toolCollection = new ToolCollection(...toolGroup.tools.map((Tool: typeof ComputerTool20241022 | typeof ComputerTool20250124) => new Tool(kernel, sessionId)));
@@ -80,9 +80,9 @@ export async function navigateAndCaptureScreenshots({
 4. Efficiently scroll through the page using larger scroll amounts (3-5 units) to load lazy-loaded content
 5. Take a screenshot only when you reach a new section or when content visibly changes
 6. Once you've scrolled to the bottom and loaded all content, take a final screenshot
-7. Confirm you have successfully navigated to the page and captured all content
+7. After 3-5 screenshots covering the page, respond with "Navigation complete" to finish
 
-Be efficient: Avoid taking screenshots after every small scroll. Only capture when content changes significantly.`;
+Be efficient: Take 3-5 screenshots max (initial load, after scroll, final view). Then confirm completion.`;
 
   const messages: BetaMessageParam[] = [{
     role: 'user',
@@ -101,7 +101,7 @@ Be efficient: Avoid taking screenshots after every small scroll. Only capture wh
   const screenshotHashes = new Set<string>(); // Track screenshot hashes to avoid duplicates
   let finalMessage = '';
   let iterationCount = 0;
-  const MAX_ITERATIONS = 30; // Prevent infinite loops
+  const MAX_ITERATIONS = 12; // Keep under invocation timeout; 5+ screenshots is enough for QA
 
   while (iterationCount < MAX_ITERATIONS) {
     iterationCount++;
@@ -128,11 +128,11 @@ Be efficient: Avoid taking screenshots after every small scroll. Only capture wh
     if (response.stop_reason === 'end_turn') {
       const lastTextBlock = responseParams.find((b) => b.type === 'text' && 'text' in b);
       finalMessage = (lastTextBlock && typeof lastTextBlock === 'object' && 'text' in lastTextBlock ? (lastTextBlock as { text: string }).text : '') || 'Navigation completed';
-      
-      const success = finalMessage.toLowerCase().includes('success') || 
-                    finalMessage.toLowerCase().includes('completed') ||
-                    finalMessage.toLowerCase().includes('navigated');
-      
+
+      const success = finalMessage.toLowerCase().includes('success') ||
+        finalMessage.toLowerCase().includes('completed') ||
+        finalMessage.toLowerCase().includes('navigated');
+
       return { success, screenshots, message: finalMessage };
     }
 
@@ -149,21 +149,21 @@ Be efficient: Avoid taking screenshots after every small scroll. Only capture wh
 
           try {
             const result = await toolCollection.run(contentBlock.name, toolInput);
-            
+
             // Capture screenshots from tool results, but skip near-duplicates
             if (result.base64Image) {
               const buffer = Buffer.from(result.base64Image, 'base64');
-              
+
               // Create a hash of the image to detect duplicates
               // Use a simple hash of buffer size + first 1KB to quickly detect identical/similar images
               const hashInput = `${buffer.length}-${buffer.subarray(0, Math.min(1024, buffer.length)).toString('base64').substring(0, 100)}`;
               const hash = createHash('md5').update(hashInput).digest('hex');
-              
+
               // Only store if this is a new screenshot (different hash)
               // Always store the first screenshot and screenshots from explicit SCREENSHOT actions
               const isExplicitScreenshot = toolInput.action === Action.SCREENSHOT;
               const isFirstScreenshot = screenshots.length === 0;
-              
+
               if (!screenshotHashes.has(hash) && (isExplicitScreenshot || isFirstScreenshot || screenshots.length < 5)) {
                 screenshotHashes.add(hash);
                 screenshots.push({
@@ -185,7 +185,7 @@ Be efficient: Avoid taking screenshots after every small scroll. Only capture wh
                 console.log(`Skipping duplicate screenshot (hash: ${hash.substring(0, 8)}...)`);
               }
             }
-            
+
             const toolResult = makeApiToolResult(result, contentBlock.id!);
             toolResultContent.push(toolResult);
           } catch (error) {
@@ -201,15 +201,21 @@ Be efficient: Avoid taking screenshots after every small scroll. Only capture wh
     } else if (response.stop_reason !== 'tool_use') {
       return { success: false, screenshots, message: 'Loop ended without completion' };
     }
+
+    // Early exit: 5+ screenshots is enough for QA analysis; avoid invocation timeout
+    if (screenshots.length >= 5 && iterationCount >= 6) {
+      console.log(`Early exit: ${screenshots.length} screenshots captured (iteration ${iterationCount})`);
+      return { success: true, screenshots, message: 'Navigation complete. Captured sufficient screenshots for QA.' };
+    }
   }
 
   // If we hit max iterations, return what we have
   if (iterationCount >= MAX_ITERATIONS) {
     console.log(`Reached max iterations (${MAX_ITERATIONS}), stopping navigation loop`);
-    return { 
-      success: screenshots.length > 0, 
-      screenshots, 
-      message: `Navigation stopped after ${iterationCount} iterations. Captured ${screenshots.length} unique screenshots.` 
+    return {
+      success: screenshots.length > 0,
+      screenshots,
+      message: `Navigation stopped after ${iterationCount} iterations. Captured ${screenshots.length} unique screenshots.`
     };
   }
 

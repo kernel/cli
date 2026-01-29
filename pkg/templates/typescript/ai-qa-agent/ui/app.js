@@ -79,7 +79,7 @@ document.getElementById('qaForm').addEventListener('submit', async (e) => {
     eventSource.onerror = (error) => {
       console.error('SSE Error:', error);
       eventSource.close();
-      
+
       // Handle SSE connection errors
       progressPanel.style.display = 'none';
       document.getElementById('errorMessage').textContent = 'Connection to server lost. Please try again.';
@@ -285,8 +285,8 @@ function displayResults(result) {
 
   container.innerHTML = summaryHTML + issuesHTML;
 
-  // Store HTML report for export
-  window.currentHtmlReport = result.htmlReport;
+  // Store result for export (HTML built client-side from issues)
+  window.currentResult = result;
 }
 
 // Render individual issue
@@ -320,11 +320,13 @@ function renderIssue(issue) {
   `;
 }
 
-// Export HTML report
+// Export HTML report (built client-side from result)
 document.getElementById('exportBtn').addEventListener('click', () => {
-  if (!window.currentHtmlReport) return;
+  if (!window.currentResult) return;
 
-  const blob = new Blob([window.currentHtmlReport], { type: 'text/html' });
+  const result = window.currentResult;
+  const html = buildHtmlReport(result);
+  const blob = new Blob([html], { type: 'text/html' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -335,6 +337,64 @@ document.getElementById('exportBtn').addEventListener('click', () => {
   URL.revokeObjectURL(url);
 });
 
+function buildHtmlReport(result) {
+  const s = result.summary;
+  const issues = result.issues || [];
+  const compliance = issues.filter(i => i.category === 'compliance');
+  const policy = issues.filter(i => i.category === 'policy');
+  const visual = issues.filter(i => i.category === 'visual');
+
+  const issueHtml = (i) => `
+    <div class="issue severity-${i.severity}">
+      <div class="issue-header">
+        <span class="badge badge-${i.severity}">${i.severity.toUpperCase()}</span>
+        ${i.riskLevel ? `<span class="badge badge-warning">RISK: ${i.riskLevel.toUpperCase()}</span>` : ''}
+        ${i.standard ? `<span class="badge badge-info">${escapeHtml(i.standard)}</span>` : ''}
+      </div>
+      <p class="issue-description">${escapeHtml(i.description)}</p>
+      ${i.location ? `<p class="issue-location"><strong>Location:</strong> ${escapeHtml(i.location)}</p>` : ''}
+      ${i.recommendation ? `<p class="issue-location" style="color: #27ae60;"><strong>Recommendation:</strong> ${escapeHtml(i.recommendation)}</p>` : ''}
+      ${i.page ? `<p class="issue-page"><strong>Page:</strong> ${escapeHtml(i.page)}</p>` : ''}
+    </div>`;
+
+  const section = (title, items, byType, typeKey) => {
+    if (items.length === 0) return '';
+    if (byType) {
+      const groups = {};
+      items.forEach(i => { const k = i[typeKey] || 'other'; (groups[k] || (groups[k] = [])).push(i); });
+      return `<div class="section"><h2>${title} (${items.length})</h2>${Object.entries(groups).map(([k, arr]) => `<h3>${k}</h3>${arr.map(issueHtml).join('')}`).join('')}</div>`;
+    }
+    return `<div class="section"><h2>${title} (${items.length})</h2>${items.map(issueHtml).join('')}</div>`;
+  };
+
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>QA Report</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}body{font-family:system-ui,sans-serif;line-height:1.6;color:#333;background:#f5f5f5;padding:20px}
+.container{max-width:1200px;margin:0 auto;background:#fff;padding:30px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1)}
+h1{color:#2c3e50;margin-bottom:10px}h2{color:#2c3e50;margin:20px 0 10px;padding-bottom:8px;border-bottom:2px solid #ecf0f1}
+.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:30px}
+.summary-card{padding:20px;border-radius:8px;text-align:center}
+.summary-card.total{background:#3498db;color:#fff}.summary-card.critical{background:#e74c3c;color:#fff}
+.summary-card.warning{background:#f39c12;color:#fff}.summary-card.info{background:#1abc9c;color:#fff}
+.issue{border:1px solid #ddd;border-left:4px solid #3498db;padding:20px;margin-bottom:15px;border-radius:4px}
+.issue.severity-critical{border-left-color:#e74c3c}.issue.severity-warning{border-left-color:#f39c12}.issue.severity-info{border-left-color:#1abc9c}
+.badge{display:inline-block;padding:4px 12px;border-radius:4px;font-size:12px;font-weight:600;margin-right:8px}
+</style></head><body><div class="container">
+<h1>QA Report</h1>
+<div class="metadata"><p><strong>Generated:</strong> ${new Date().toLocaleString()}</p></div>
+<div class="summary">
+  <div class="summary-card total"><div class="number">${s.totalIssues}</div><div class="label">Total</div></div>
+  <div class="summary-card critical"><div class="number">${s.criticalIssues}</div><div class="label">Critical</div></div>
+  <div class="summary-card warning"><div class="number">${s.warnings}</div><div class="label">Warnings</div></div>
+  <div class="summary-card info"><div class="number">${s.infos}</div><div class="label">Info</div></div>
+</div>
+${section('Compliance Issues', compliance)}
+${section('Policy Violations', policy)}
+${section('Broken UI Issues', visual)}
+</div></body></html>`;
+}
+
 // Utility: Escape HTML
 function escapeHtml(text) {
   const div = document.createElement('div');
@@ -344,20 +404,20 @@ function escapeHtml(text) {
 
 // Select All button functionality
 document.querySelectorAll('.select-all-btn').forEach(btn => {
-  btn.addEventListener('click', function() {
+  btn.addEventListener('click', function () {
     const group = this.dataset.group;
     const checkboxGroup = document.querySelector(`[data-checkbox-group="${group}"]`);
-    
+
     if (!checkboxGroup) return;
-    
+
     const checkboxes = checkboxGroup.querySelectorAll('input[type="checkbox"]');
     const allChecked = Array.from(checkboxes).every(cb => cb.checked);
-    
+
     // Toggle: if all are checked, uncheck all; otherwise check all
     checkboxes.forEach(cb => {
       cb.checked = !allChecked;
     });
-    
+
     // Update button state
     this.classList.toggle('active', !allChecked);
     this.textContent = !allChecked ? 'Deselect All' : 'Select All';
@@ -366,10 +426,10 @@ document.querySelectorAll('.select-all-btn').forEach(btn => {
   // Initialize button state based on current checkbox states
   const group = btn.dataset.group;
   const checkboxGroup = document.querySelector(`[data-checkbox-group="${group}"]`);
-  
+
   if (checkboxGroup) {
     const checkboxes = checkboxGroup.querySelectorAll('input[type="checkbox"]');
-    
+
     // Update button state when any checkbox changes
     checkboxes.forEach(cb => {
       cb.addEventListener('change', () => {

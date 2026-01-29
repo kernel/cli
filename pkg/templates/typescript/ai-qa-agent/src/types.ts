@@ -20,8 +20,6 @@ export interface QaTaskOutput {
   success: boolean;
   summary: QaSummary;
   issues: QaIssue[];
-  jsonReport: string;
-  htmlReport: string;
 }
 
 // ============================================================================

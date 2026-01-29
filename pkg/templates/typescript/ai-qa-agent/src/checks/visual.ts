@@ -21,13 +21,11 @@ export async function performVisualChecks(
 
   console.log(`Performing visual checks on ${url}...`);
 
-  const screenshotBase64 = screenshot.toString("base64");
-
   try {
     const response = await visionProvider.analyzeScreenshot(screenshot, VISUAL_QA_PROMPT);
     console.log(`  AI response length: ${response.length} chars`);
     console.log(`  AI response preview: ${response.substring(0, 200)}...`);
-    
+
     const parsed = parseAIResponse<ParsedVisualIssue>(response);
     console.log(`  Parsed ${parsed.length} issues from response`);
 
@@ -38,7 +36,6 @@ export async function performVisualChecks(
         description: issue.description,
         page: url,
         location: issue.location,
-        screenshot: screenshotBase64,
       });
     }
 

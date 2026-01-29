@@ -65,14 +65,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   })
     .then((result) => {
       console.log("\n" + "=".repeat(80));
-      console.log("JSON REPORT:");
+      console.log("RESULT:");
       console.log("=".repeat(80));
-      console.log(result.jsonReport);
-
-      console.log("\n" + "=".repeat(80));
-      console.log("HTML REPORT:");
-      console.log("=".repeat(80));
-      console.log("HTML report generated (view in browser)");
+      console.log(JSON.stringify(result, null, 2));
       console.log("=".repeat(80));
 
       process.exit(0);

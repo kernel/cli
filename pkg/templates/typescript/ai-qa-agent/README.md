@@ -78,11 +78,8 @@ This template uses the **Computer Controls API adapter** pattern:
       "description": "Broken images detected",
       "page": "https://example.com",
       "location": "Main hero section",
-      "screenshot": "base64_encoded_screenshot"
     }
-  ],
-  "jsonReport": "{ ... }",
-  "htmlReport": "<!DOCTYPE html>..."
+  ]
 }
 ```
 
@@ -445,21 +442,9 @@ Machine-readable format perfect for CI/CD integration:
 }
 ```
 
-### HTML Report
+### HTML Report (UI Export)
 
-Beautiful, interactive report with:
-- Executive summary dashboard
-- Issues grouped by severity and category
-- Embedded screenshots for visual issues
-- Responsive design for viewing on any device
-
-The HTML report is included in the response as `htmlReport` field. Save it to a file to view in your browser:
-
-```javascript
-// In your integration code
-const result = await invoke("qa-test", { url: "https://example.com" });
-fs.writeFileSync("qa-report.html", result.htmlReport);
-```
+The web UI can export an HTML report from the results. Use the "Export HTML Report" button after running an analysis. The API returns `success`, `summary`, and `issues` for programmatic use.
 
 ## What Issues Does It Detect?
 
