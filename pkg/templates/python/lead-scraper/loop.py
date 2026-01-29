@@ -6,7 +6,6 @@ Modified to use Kernel Computer Controls API instead of Playwright.
 
 import os
 from datetime import datetime
-from enum import StrEnum
 from typing import Any, cast
 
 from kernel import Kernel
@@ -31,11 +30,6 @@ from tools import (
 )
 
 PROMPT_CACHING_BETA_FLAG = "prompt-caching-2024-07-31"
-
-
-class APIProvider(StrEnum):
-    ANTHROPIC = "anthropic"
-
 
 # This system prompt is optimized for the Docker environment in this repository and
 # specific tool combinations enabled.
@@ -69,13 +63,12 @@ async def sampling_loop(
     model: str,
     messages: list[BetaMessageParam],
     api_key: str,
+    thinking_budget: int | None = None,
     kernel: Kernel,
     session_id: str,
     system_prompt_suffix: str = "",
-    only_n_most_recent_images: int | None = None,
     max_tokens: int = 4096,
     tool_version: ToolVersion = "computer_use_20250124",
-    thinking_budget: int | None = None,
     token_efficient_tools_beta: bool = False,
 ):
     """
@@ -87,9 +80,7 @@ async def sampling_loop(
         api_key: The API key for authentication
         kernel: The Kernel client instance
         session_id: The Kernel browser session ID
-        provider: The API provider (defaults to ANTHROPIC)
         system_prompt_suffix: Additional system prompt text (defaults to empty string)
-        only_n_most_recent_images: Optional limit on number of recent images to keep
         max_tokens: Maximum tokens for the response (defaults to 4096)
         tool_version: Version of tools to use (defaults to V20250124)
         thinking_budget: Optional token budget for thinking
@@ -111,23 +102,13 @@ async def sampling_loop(
         betas = [tool_group.beta_flag] if tool_group.beta_flag else []
         if token_efficient_tools_beta:
             betas.append("token-efficient-tools-2025-02-19")
-        image_truncation_threshold = only_n_most_recent_images or 0
         client = Anthropic(api_key=api_key, max_retries=4)
 
         betas.append(PROMPT_CACHING_BETA_FLAG)
         _inject_prompt_caching(messages)
-        # Because cached reads are 10% of the price, we don't think it's
-        # ever sensible to break the cache by truncating images
-        only_n_most_recent_images = 0
         # Use type ignore to bypass TypedDict check until SDK types are updated
         system["cache_control"] = {"type": "ephemeral"}  # type: ignore
 
-        if only_n_most_recent_images:
-            _maybe_filter_to_n_most_recent_images(
-                messages,
-                only_n_most_recent_images,
-                min_removal_threshold=image_truncation_threshold,
-            )
         extra_body = {}
         if thinking_budget:
             # Ensure we only send the required fields for thinking

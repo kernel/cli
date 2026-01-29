@@ -19,9 +19,7 @@ import csv
 import io
 import json
 import os
-from typing import Dict
 
-import kernel
 from kernel import Kernel
 from loop import sampling_loop
 from session import KernelBrowserSession
