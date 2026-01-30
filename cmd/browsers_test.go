@@ -1147,11 +1147,12 @@ func TestParseViewport_InvalidFormats(t *testing.T) {
 
 func TestGetAvailableViewports_ReturnsExpectedOptions(t *testing.T) {
 	viewports := getAvailableViewports()
-	assert.Len(t, viewports, 6)
+	assert.Len(t, viewports, 7)
 	assert.Contains(t, viewports, "2560x1440@10")
 	assert.Contains(t, viewports, "1920x1080@25")
 	assert.Contains(t, viewports, "1920x1200@25")
 	assert.Contains(t, viewports, "1440x900@25")
+	assert.Contains(t, viewports, "1280x800@60")
 	assert.Contains(t, viewports, "1200x800@60")
 	assert.Contains(t, viewports, "1024x768@60")
 }
