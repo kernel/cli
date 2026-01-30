@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenEMR Portal Login</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="login-body">
+    <div class="login-card">
+        <div class="login-logo">
+            <span>open</span><span class="emr">EMR</span>
+        </div>
+        
+        <form onsubmit="event.preventDefault(); window.location.href='dashboard.html'">
+            <div class="form-group">
+                <label for="authUser">Username</label>
+                <input type="text" id="authUser" name="authUser" class="form-control" placeholder="Enter your username" required>
+            </div>
+            <div class="form-group">
+                <label for="clearPass">Password</label>
+                <input type="password" id="clearPass" name="clearPass" class="form-control" placeholder="••••••••" required>
+            </div>
+            <div class="form-group">
+                <label for="email">E-Mail Address</label>
+                <input type="email" id="email" name="email" class="form-control" placeholder="name@example.com">
+            </div>
+            <!-- Hidden/Visual Only Language Select for style consistency -->
+            <div class="form-group">
+                <label for="language">Language</label>
+                <select id="language" class="form-control" style="appearance: none; -webkit-appearance: none;">
+                    <option>English (Standard)</option>
+                </select>
+            </div>
+            <button type="submit" class="btn-primary">Log In</button>
+        </form>
+    </div>
+</body>
+</html>
