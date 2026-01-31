@@ -72,7 +72,7 @@ interface SamplingLoopResult {
 }
 
 export async function samplingLoop({
-  model = 'n1-latest',
+  model = 'n1-preview-2025-11',
   task,
   apiKey,
   kernel,
@@ -80,7 +80,7 @@ export async function samplingLoop({
   cdpWsUrl,
   maxTokens = 4096,
   maxIterations = 50,
-  viewportWidth = 1280,
+  viewportWidth = 1200,
   viewportHeight = 800,
   mode = 'computer_use',
 }: SamplingLoopOptions): Promise<SamplingLoopResult> {
@@ -118,6 +118,7 @@ export async function samplingLoop({
       },
     ];
 
+    // Add initial screenshot as observation (n1's required format)
     if (initialScreenshot.base64Image) {
       conversationMessages.push({
         role: 'observation',

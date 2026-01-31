@@ -41,7 +41,7 @@ class N1ComputerToolProtocol(Protocol):
 
 async def sampling_loop(
     *,
-    model: str = "n1-latest",
+    model: str = "n1-preview-2025-11",
     task: str,
     api_key: str,
     kernel: Kernel,
@@ -86,6 +86,7 @@ async def sampling_loop(
             }
         ]
 
+        # Add initial screenshot as observation (n1's required format)
         if initial_screenshot.get("base64_image"):
             conversation_messages.append({
                 "role": "observation",

@@ -50,7 +50,7 @@ app.action<QueryInput, QueryOutput>(
       // Run the sampling loop
       const mode = payload.mode ?? 'computer_use';
       const { finalAnswer, messages } = await samplingLoop({
-        model: 'n1-latest',
+        model: 'n1-preview-2025-11',
         task: payload.query,
         apiKey: YUTORI_API_KEY,
         kernel,
