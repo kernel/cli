@@ -98,7 +98,7 @@ export class ComputerTool {
   private width: number;
   private height: number;
 
-  constructor(kernel: Kernel, sessionId: string, width = 1280, height = 800) {
+  constructor(kernel: Kernel, sessionId: string, width = 1200, height = 800) {
     this.kernel = kernel;
     this.sessionId = sessionId;
     this.width = width;

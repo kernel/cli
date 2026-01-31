@@ -53,9 +53,9 @@ interface SamplingLoopOptions {
   cdpWsUrl?: string;
   maxTokens?: number;
   maxIterations?: number;
-  /** Viewport width for coordinate scaling */
+  /** Viewport width for coordinate scaling (default: 1200, closest to Yutori's 1280 recommendation) */
   viewportWidth?: number;
-  /** Viewport height for coordinate scaling */
+  /** Viewport height for coordinate scaling (default: 800 per Yutori recommendation) */
   viewportHeight?: number;
   /**
    * Browser interaction mode:
@@ -80,6 +80,7 @@ export async function samplingLoop({
   cdpWsUrl,
   maxTokens = 4096,
   maxIterations = 50,
+  // Default viewport: 1200x800 (closest Kernel-supported size to Yutori's recommended 1280x800)
   viewportWidth = 1200,
   viewportHeight = 800,
   mode = 'computer_use',
@@ -118,7 +119,6 @@ export async function samplingLoop({
       },
     ];
 
-    // Add initial screenshot as observation (n1's required format)
     if (initialScreenshot.base64Image) {
       conversationMessages.push({
         role: 'observation',

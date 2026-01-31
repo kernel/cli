@@ -91,7 +91,7 @@ MODIFIER_MAP = {
 
 
 class ComputerTool:
-    def __init__(self, kernel: Kernel, session_id: str, width: int = 1280, height: int = 800):
+    def __init__(self, kernel: Kernel, session_id: str, width: int = 1200, height: int = 800):
         self.kernel = kernel
         self.session_id = session_id
         self.width = width
