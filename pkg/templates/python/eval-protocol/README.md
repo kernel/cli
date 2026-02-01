@@ -160,16 +160,19 @@ eval-protocol/
 
 #### run-rollout
 
+Uses on-demand browsers (`kernel.browsers.create()`) for one-off testing/debugging jobs.
+
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `task` | string | required | Task instruction |
 | `initial_url` | string | required | Starting URL |
-| `pool_name` | string | null | Browser pool name |
 | `max_steps` | int | 15 | Max agent steps |
 | `model` | string | qwen3-vl-30b-a3b | VLM model |
 | `score` | bool | false | Score with WebJudge |
 
 #### run-evaluation
+
+Uses browser pools for scaled parallel evaluation.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|

@@ -76,7 +76,6 @@ def decode_screenshots(encoded: list[str]) -> list[Image.Image]:
 class RolloutInput(TypedDict, total=False):
     task: str  # Task instruction (required)
     initial_url: str  # Starting URL (required)
-    pool_name: Optional[str]  # Browser pool name (creates single session if not provided)
     max_steps: Optional[int]  # Max agent steps (default: 15)
     model: Optional[str]  # VLM model (default: qwen3-vl-30b-a3b-thinking)
     score: Optional[bool]  # Whether to score with WebJudge (default: False)
@@ -159,7 +158,6 @@ async def run_rollout(
 
     task = payload["task"]
     initial_url = payload["initial_url"]
-    pool_name = payload.get("pool_name")
     max_steps = payload.get("max_steps", DEFAULT_MAX_STEPS)
     model = payload.get("model", DEFAULT_MODEL)
     should_score = payload.get("score", False)
@@ -185,25 +183,16 @@ async def run_rollout(
         extra_actions=AGENT_AUTH_ACTIONS,
     )
 
-    # Run rollout
-    if pool_name:
-        # Use existing pool
-        with acquired_browser(kernel, pool_name) as adapter:
-            adapter.start_heartbeat_sync(task_label=task[:30])
-            result = await _run_single_rollout(
-                adapter, agent_config, task, initial_url, max_steps
-            )
-    else:
-        # Create single browser session with 1-hour timeout for long-running rollouts
-        browser = kernel.browsers.create(stealth=True, timeout_seconds=DEFAULT_BROWSER_TIMEOUT_SECONDS)
-        adapter = KernelBrowserAdapter(kernel, browser)
-        try:
-            adapter.start_heartbeat_sync(task_label=task[:30])
-            result = await _run_single_rollout(
-                adapter, agent_config, task, initial_url, max_steps
-            )
-        finally:
-            adapter.stop_heartbeat_sync()
+    # Run rollout with on-demand browser (not a pool)
+    browser = kernel.browsers.create(stealth=True, timeout_seconds=DEFAULT_BROWSER_TIMEOUT_SECONDS)
+    adapter = KernelBrowserAdapter(kernel, browser)
+    try:
+        adapter.start_heartbeat_sync(task_label=task[:30])
+        result = await _run_single_rollout(
+            adapter, agent_config, task, initial_url, max_steps
+        )
+    finally:
+        adapter.stop_heartbeat_sync()
 
     # Score with WebJudge if requested
     score = None
