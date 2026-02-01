@@ -1,0 +1,24 @@
+[project]
+name = "eval-protocol-app"
+version = "0.1.0"
+description = "VLM browser agent evaluation using Eval Protocol with Kernel"
+requires-python = ">=3.10"
+dependencies = [
+    "kernel>=0.23.0",
+    "openai>=2.13.0",
+    "pillow>=12.0.0",
+    "python-dotenv>=1.2.1",
+    "rich>=14.2.0",
+    "websockets>=15.0.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+]

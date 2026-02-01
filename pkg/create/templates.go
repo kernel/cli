@@ -19,6 +19,7 @@ const (
 	TemplateOpenAGIComputerUse   = "openagi-computer-use"
 	TemplateClaudeAgentSDK       = "claude-agent-sdk"
 	TemplateYutoriComputerUse    = "yutori-computer-use"
+	TemplateEvalProtocol         = "eval-protocol"
 )
 
 type TemplateInfo struct {
@@ -89,6 +90,11 @@ var Templates = map[string]TemplateInfo{
 		Name:        "Yutori n1 Computer Use",
 		Description: "Implements a Yutori n1 computer use agent",
 		Languages:   []string{LanguageTypeScript, LanguagePython},
+	},
+	TemplateEvalProtocol: {
+		Name:        "Eval Protocol",
+		Description: "VLM browser agent evaluation with Eval Protocol framework",
+		Languages:   []string{LanguagePython},
 	},
 }
 
@@ -259,6 +265,11 @@ var Commands = map[string]map[string]DeployConfig{
 			EntryPoint:    "main.py",
 			NeedsEnvFile:  true,
 			InvokeCommand: `kernel invoke python-yutori-cua cua-task --payload '{"query": "Navigate to https://example.com and describe the page"}'`,
+		},
+		TemplateEvalProtocol: {
+			EntryPoint:    "main.py",
+			NeedsEnvFile:  true,
+			InvokeCommand: `kernel invoke python-eval-protocol run-rollout --payload '{"task": "Navigate to github.com and find the sign in page", "initial_url": "https://github.com"}'`,
 		},
 	},
 }
