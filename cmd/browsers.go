@@ -2078,6 +2078,9 @@ func init() {
 	browsersCmd.AddCommand(browsersGetCmd)
 	browsersCmd.AddCommand(browsersUpdateCmd)
 
+	// ssh
+	browsersCmd.AddCommand(sshCmd)
+
 	// logs
 	logsRoot := &cobra.Command{Use: "logs", Short: "Browser logs operations"}
 	logsStream := &cobra.Command{Use: "stream <id>", Short: "Stream browser logs", Args: cobra.ExactArgs(1), RunE: runBrowsersLogsStream}
