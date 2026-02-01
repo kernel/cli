@@ -37,7 +37,7 @@ from .actions import (
     TypeTextAction,
     WaitAction,
 )
-from .utils import compute_image_similarity
+from .utils import compute_image_similarity, normalized_to_pixel, pixel_to_normalized
 
 if TYPE_CHECKING:
     from kernel import Kernel
@@ -152,15 +152,11 @@ return { closedPages: pages.length - 1 };
 
     def normalized_to_pixel(self, norm_x: int, norm_y: int) -> tuple[int, int]:
         """Convert normalized coordinates (0-999) to pixel coordinates."""
-        pixel_x = int(norm_x * self.viewport_width / 999)
-        pixel_y = int(norm_y * self.viewport_height / 999)
-        return pixel_x, pixel_y
+        return normalized_to_pixel(norm_x, norm_y, self.viewport_width, self.viewport_height)
 
     def pixel_to_normalized(self, pixel_x: int, pixel_y: int) -> tuple[int, int]:
         """Convert pixel coordinates to normalized coordinates (0-999)."""
-        norm_x = int(pixel_x * 999 / self.viewport_width)
-        norm_y = int(pixel_y * 999 / self.viewport_height)
-        return norm_x, norm_y
+        return pixel_to_normalized(pixel_x, pixel_y, self.viewport_width, self.viewport_height)
 
     def capture_screenshot(self, max_retries: int = 5, initial_delay: float = 0.1) -> Image.Image:
         """Capture a screenshot of the current browser state.
@@ -399,9 +395,7 @@ class MockBrowserAdapter:
         self._custom_handlers[action_type] = handler
 
     def normalized_to_pixel(self, norm_x: int, norm_y: int) -> tuple[int, int]:
-        pixel_x = int(norm_x * self.viewport_width / 999)
-        pixel_y = int(norm_y * self.viewport_height / 999)
-        return pixel_x, pixel_y
+        return normalized_to_pixel(norm_x, norm_y, self.viewport_width, self.viewport_height)
 
     def capture_screenshot(self) -> Image.Image:
         return self.screenshot

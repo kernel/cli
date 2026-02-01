@@ -157,8 +157,8 @@ def pixel_to_normalized(
     x = max(0, min(x, image_width - 1))
     y = max(0, min(y, image_height - 1))
 
-    norm_x = int((x / image_width) * QWEN_COORDINATE_SPACE)
-    norm_y = int((y / image_height) * QWEN_COORDINATE_SPACE)
+    norm_x = int((x / (image_width - 1)) * QWEN_COORDINATE_SPACE)
+    norm_y = int((y / (image_height - 1)) * QWEN_COORDINATE_SPACE)
 
     return norm_x, norm_y
 
@@ -181,8 +181,8 @@ def normalized_to_pixel(
     Returns:
         Tuple of (pixel_x, pixel_y)
     """
-    pixel_x = int((norm_x / QWEN_COORDINATE_SPACE) * image_width)
-    pixel_y = int((norm_y / QWEN_COORDINATE_SPACE) * image_height)
+    pixel_x = int((norm_x / QWEN_COORDINATE_SPACE) * (image_width - 1))
+    pixel_y = int((norm_y / QWEN_COORDINATE_SPACE) * (image_height - 1))
 
     return pixel_x, pixel_y
 
