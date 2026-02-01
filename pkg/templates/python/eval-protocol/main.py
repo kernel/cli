@@ -45,7 +45,7 @@ DEFAULT_MODEL = "accounts/fireworks/models/qwen3-vl-30b-a3b-thinking"
 DEFAULT_MAX_STEPS = 15
 DEFAULT_POOL_SIZE = 20
 DEFAULT_SCORE_THRESHOLD = 0.5
-DEFAULT_BROWSER_TIMEOUT_SECONDS = 3600  # 1 hour - allows for long-running evaluations
+DEFAULT_BROWSER_TIMEOUT_SECONDS = 3600  # 1 hour
 FIREWORKS_BASE_URL = "https://api.fireworks.ai/inference/v1"
 
 
@@ -183,7 +183,6 @@ async def run_rollout(
         extra_actions=AGENT_AUTH_ACTIONS,
     )
 
-    # Run rollout with on-demand browser (not a pool)
     browser = kernel.browsers.create(stealth=True, timeout_seconds=DEFAULT_BROWSER_TIMEOUT_SECONDS)
     adapter = KernelBrowserAdapter(kernel, browser)
     try:
