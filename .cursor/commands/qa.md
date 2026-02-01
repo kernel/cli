@@ -313,7 +313,7 @@ kernel invoke python-yutori-cua cua-task --payload '{"query": "Go to http://magn
 # Eval Protocol (multiple actions)
 kernel invoke python-eval-protocol run-rollout --payload '{"task": "Navigate to github.com and find the sign in page", "initial_url": "https://github.com"}'
 kernel invoke python-eval-protocol run-rollout --payload '{"task": "Navigate to github.com and find the sign in page", "initial_url": "https://github.com", "score": true}'
-kernel invoke python-eval-protocol run-evaluation --payload '{"num_tasks": 2, "pool_size": 1}'
+kernel invoke python-eval-protocol run-evaluation --payload '{"max_tasks": 2, "pool_size": 1}'
 ```
 
 ## Step 7: Automated Runtime Testing (Optional)
