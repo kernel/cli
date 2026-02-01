@@ -45,6 +45,7 @@ DEFAULT_MODEL = "accounts/fireworks/models/qwen3-vl-30b-a3b-thinking"
 DEFAULT_MAX_STEPS = 15
 DEFAULT_POOL_SIZE = 20
 DEFAULT_SCORE_THRESHOLD = 0.5
+DEFAULT_BROWSER_TIMEOUT_SECONDS = 3600  # 1 hour - allows for long-running evaluations
 FIREWORKS_BASE_URL = "https://api.fireworks.ai/inference/v1"
 
 
@@ -193,8 +194,8 @@ async def run_rollout(
                 adapter, agent_config, task, initial_url, max_steps
             )
     else:
-        # Create single browser session
-        browser = kernel_client.browsers.create(stealth=True, timeout_seconds=300)
+        # Create single browser session with 1-hour timeout for long-running rollouts
+        browser = kernel_client.browsers.create(stealth=True, timeout_seconds=DEFAULT_BROWSER_TIMEOUT_SECONDS)
         adapter = KernelBrowserAdapter(kernel_client, browser)
         try:
             adapter.start_heartbeat_sync(task_label=task[:30])
@@ -344,7 +345,11 @@ async def run_evaluation(
     if not pool_name:
         pool_name = f"eval-ephemeral-{os.getpid()}"
         print(f"Creating ephemeral pool: {pool_name} with {pool_size} browsers")
-        kernel_client.browser_pools.create(name=pool_name, size=pool_size)
+        kernel_client.browser_pools.create(
+            name=pool_name,
+            size=pool_size,
+            timeout_seconds=DEFAULT_BROWSER_TIMEOUT_SECONDS,
+        )
         ephemeral_pool = True
     else:
         print(f"Using existing pool: {pool_name}")
