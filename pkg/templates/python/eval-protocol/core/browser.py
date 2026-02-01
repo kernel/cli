@@ -162,10 +162,22 @@ return { closedPages: pages.length - 1 };
         norm_y = int(pixel_y * 999 / self.viewport_height)
         return norm_x, norm_y
 
-    def capture_screenshot(self) -> Image.Image:
-        """Capture a screenshot of the current browser state."""
-        image_data = self.kernel.browsers.computer.capture_screenshot(id=self.session_id)
-        return Image.open(io.BytesIO(image_data.read()))
+    def capture_screenshot(self, max_retries: int = 5, initial_delay: float = 0.1) -> Image.Image:
+        """Capture a screenshot of the current browser state.
+
+        Includes retry logic with exponential backoff to handle cases where the
+        browser isn't immediately ready after creation.
+        """
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                image_data = self.kernel.browsers.computer.capture_screenshot(id=self.session_id)
+                return Image.open(io.BytesIO(image_data.read()))
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    time.sleep(initial_delay * (2 ** attempt))  # 100ms, 200ms, 400ms, 800ms...
+        raise RuntimeError(f"Failed to capture screenshot after {max_retries} attempts: {last_error}")
 
     def wait_for_screen_settle(
         self,
