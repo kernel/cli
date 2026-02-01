@@ -185,13 +185,9 @@ async def run_rollout(
 
     browser = kernel.browsers.create(stealth=True, timeout_seconds=DEFAULT_BROWSER_TIMEOUT_SECONDS)
     adapter = KernelBrowserAdapter(kernel, browser)
-    try:
-        adapter.start_heartbeat_sync(task_label=task[:30])
-        result = await _run_single_rollout(
-            adapter, agent_config, task, initial_url, max_steps
-        )
-    finally:
-        adapter.stop_heartbeat_sync()
+    result = await _run_single_rollout(
+        adapter, agent_config, task, initial_url, max_steps
+    )
 
     # Score with WebJudge if requested
     score = None
@@ -366,8 +362,6 @@ async def run_evaluation(
 
             try:
                 with acquired_browser(kernel, pool_name) as adapter:
-                    adapter.start_heartbeat_sync(task_label=task_id)
-
                     rollout_result = await _run_single_rollout(
                         adapter, agent_config, task, initial_url, max_steps
                     )
