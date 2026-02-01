@@ -171,7 +171,7 @@ async def run_rollout(
         raise ValueError("FIREWORKS_API_KEY environment variable is required")
 
     # Create Kernel client
-    kernel_client = Kernel()
+    kernel = Kernel()
 
     # Determine system prompt
     system_prompt = custom_system_prompt or get_agent_auth_system_prompt()
@@ -188,15 +188,15 @@ async def run_rollout(
     # Run rollout
     if pool_name:
         # Use existing pool
-        with acquired_browser(kernel_client, pool_name) as adapter:
+        with acquired_browser(kernel, pool_name) as adapter:
             adapter.start_heartbeat_sync(task_label=task[:30])
             result = await _run_single_rollout(
                 adapter, agent_config, task, initial_url, max_steps
             )
     else:
         # Create single browser session with 1-hour timeout for long-running rollouts
-        browser = kernel_client.browsers.create(stealth=True, timeout_seconds=DEFAULT_BROWSER_TIMEOUT_SECONDS)
-        adapter = KernelBrowserAdapter(kernel_client, browser)
+        browser = kernel.browsers.create(stealth=True, timeout_seconds=DEFAULT_BROWSER_TIMEOUT_SECONDS)
+        adapter = KernelBrowserAdapter(kernel, browser)
         try:
             adapter.start_heartbeat_sync(task_label=task[:30])
             result = await _run_single_rollout(
@@ -338,14 +338,14 @@ async def run_evaluation(
     print(f"Loaded {len(tasks)} tasks from {tasks_path}")
 
     # Create Kernel client
-    kernel_client = Kernel()
+    kernel = Kernel()
 
     # Create or use existing pool
     ephemeral_pool = False
     if not pool_name:
         pool_name = f"eval-ephemeral-{os.getpid()}"
         print(f"Creating ephemeral pool: {pool_name} with {pool_size} browsers")
-        kernel_client.browser_pools.create(
+        kernel.browser_pools.create(
             name=pool_name,
             size=pool_size,
             timeout_seconds=DEFAULT_BROWSER_TIMEOUT_SECONDS,
@@ -377,7 +377,7 @@ async def run_evaluation(
             initial_url = task_data.get("initial_url", "")
 
             try:
-                with acquired_browser(kernel_client, pool_name) as adapter:
+                with acquired_browser(kernel, pool_name) as adapter:
                     adapter.start_heartbeat_sync(task_label=task_id)
 
                     rollout_result = await _run_single_rollout(
@@ -430,7 +430,7 @@ async def run_evaluation(
     if ephemeral_pool:
         print(f"Deleting ephemeral pool: {pool_name}")
         try:
-            kernel_client.browser_pools.delete(name=pool_name)
+            kernel.browser_pools.delete(name=pool_name)
         except Exception as e:
             logger.warning(f"Failed to delete ephemeral pool: {e}")
 
