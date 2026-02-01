@@ -412,7 +412,7 @@ async def run_evaluation(
     if ephemeral_pool:
         print(f"Deleting ephemeral pool: {pool_name}")
         try:
-            kernel.browser_pools.delete(name=pool_name)
+            kernel.browser_pools.delete(pool_name, force=True)
         except Exception as e:
             logger.warning(f"Failed to delete ephemeral pool: {e}")
 
