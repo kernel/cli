@@ -85,14 +85,12 @@ func connectSSH(ctx context.Context, client kernel.Client, cfg ssh.Config) error
 		return fmt.Errorf("failed to get browser: %w", err)
 	}
 
-	// Extract VM domain from live view URL or CDP URL
+	// Extract VM domain from CDP URL (which contains the JWT with the actual FQDN)
 	var vmDomain string
-	if browser.BrowserLiveViewURL != "" {
-		vmDomain, err = ssh.ExtractVMDomain(browser.BrowserLiveViewURL)
-	} else if browser.CdpWsURL != "" {
+	if browser.CdpWsURL != "" {
 		vmDomain, err = ssh.ExtractVMDomain(browser.CdpWsURL)
 	} else {
-		return fmt.Errorf("browser has no live view URL or CDP URL - cannot determine VM domain")
+		return fmt.Errorf("browser has no CDP URL - cannot determine VM domain")
 	}
 	if err != nil {
 		return fmt.Errorf("failed to extract VM domain: %w", err)

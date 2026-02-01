@@ -4,6 +4,8 @@ package ssh
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"net/url"
@@ -60,26 +62,70 @@ func GenerateKeyPair() (*KeyPair, error) {
 	}, nil
 }
 
-// ExtractVMDomain extracts the VM hostname from a BrowserLiveViewURL or CdpWsURL.
-// Examples:
-//   - "https://vm-abc123.kernel.live/..." -> "vm-abc123.kernel.live"
-//   - "wss://vm-abc123.kernel.live/..." -> "vm-abc123.kernel.live"
-func ExtractVMDomain(rawURL string) (string, error) {
-	if rawURL == "" {
+// ExtractVMDomain extracts the VM FQDN from a CDP WebSocket URL by decoding the JWT.
+// The CDP URL contains a JWT with the actual Unikraft FQDN in the payload.
+// Example CDP URL: wss://proxy.xxx.dev.onkernel.com:8443/browser/cdp?jwt=eyJ...
+// The JWT payload contains: {"session": {"fqdn": "actual-vm-domain.onkernel.app"}}
+func ExtractVMDomain(cdpURL string) (string, error) {
+	if cdpURL == "" {
 		return "", fmt.Errorf("empty URL")
 	}
 
-	parsed, err := url.Parse(rawURL)
+	parsed, err := url.Parse(cdpURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse URL: %w", err)
 	}
 
-	host := parsed.Hostname()
-	if host == "" {
-		return "", fmt.Errorf("no hostname in URL: %s", rawURL)
+	// Extract JWT from query parameter
+	jwt := parsed.Query().Get("jwt")
+	if jwt == "" {
+		// Fallback to hostname if no JWT (shouldn't happen in practice)
+		host := parsed.Hostname()
+		if host == "" {
+			return "", fmt.Errorf("no hostname in URL: %s", cdpURL)
+		}
+		return host, nil
 	}
 
-	return host, nil
+	// JWT is header.payload.signature - we need the payload (middle part)
+	parts := strings.Split(jwt, ".")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("invalid JWT format")
+	}
+
+	// Decode base64url payload
+	payload := parts[1]
+	// Add padding if needed (base64url may omit padding)
+	switch len(payload) % 4 {
+	case 2:
+		payload += "=="
+	case 3:
+		payload += "="
+	}
+	// Convert base64url to standard base64
+	payload = strings.ReplaceAll(payload, "-", "+")
+	payload = strings.ReplaceAll(payload, "_", "/")
+
+	decoded, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode JWT payload: %w", err)
+	}
+
+	// Parse JSON payload
+	var claims struct {
+		Session struct {
+			FQDN string `json:"fqdn"`
+		} `json:"session"`
+	}
+	if err := json.Unmarshal(decoded, &claims); err != nil {
+		return "", fmt.Errorf("failed to parse JWT payload: %w", err)
+	}
+
+	if claims.Session.FQDN == "" {
+		return "", fmt.Errorf("no FQDN in JWT payload")
+	}
+
+	return claims.Session.FQDN, nil
 }
 
 // CheckWebsocatInstalled verifies websocat is available in PATH.
