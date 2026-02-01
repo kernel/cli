@@ -71,6 +71,7 @@ Here are all valid language + template combinations:
 | python     | openagi-computer-use   | py-openagi-cua    | python-openagi-cua    | Yes            | OAGI_API_KEY                   |
 | python     | claude-agent-sdk       | py-claude-agent-sdk | py-claude-agent-sdk | Yes            | ANTHROPIC_API_KEY              |
 | python     | yutori-computer-use    | py-yutori-cua     | python-yutori-cua     | Yes            | YUTORI_API_KEY                 |
+| python     | eval-protocol          | py-eval-protocol  | python-eval-protocol  | Yes            | FIREWORKS_API_KEY, KERNEL_API_KEY, OPENAI_API_KEY |
 
 > **Yutori Modes:**
 > - `computer_use` (default): Uses Kernel's Computer Controls API with full VM screenshots
@@ -102,6 +103,7 @@ Run each of these (they are non-interactive when all flags are provided):
 ../bin/kernel create -n py-claude-agent-sdk -l python -t claude-agent-sdk
 ../bin/kernel create -n py-gemini-cua -l python -t gemini-computer-use
 ../bin/kernel create -n py-yutori-cua -l python -t yutori-computer-use
+../bin/kernel create -n py-eval-protocol -l python -t eval-protocol
 ```
 
 ## Step 5: Deploy Each Template
@@ -261,6 +263,24 @@ echo "YUTORI_API_KEY=<value from human>" > .env
 cd ..
 ```
 
+**py-eval-protocol** (needs FIREWORKS_API_KEY, KERNEL_API_KEY, OPENAI_API_KEY):
+
+```bash
+cd py-eval-protocol
+cat > .env << 'ENVEOF'
+FIREWORKS_API_KEY=<value from human>
+KERNEL_API_KEY=<value from human>
+OPENAI_API_KEY=<value from human>
+ENVEOF
+../bin/kernel deploy main.py --env-file .env
+cd ..
+```
+
+> **Note:** The `eval-protocol` template has three actions:
+> - `run-rollout`: Single browser rollout (quick test)
+> - `run-evaluation`: Parallel evaluation with browser pools (longer running)
+> - `create-rft-job`: Requires manual install of `eval-protocol` package (see KERNEL-932)
+
 ## Step 6: Provide Invoke Commands
 
 Once all deployments are complete, present the human with these invoke commands to test manually:
@@ -289,6 +309,11 @@ kernel invoke py-claude-agent-sdk agent-task --payload '{"task": "Go to https://
 kernel invoke python-gemini-cua cua-task --payload '{"query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and move the 5 items in the To Do and In Progress items to the Done section of the Kanban board. You are done successfully when the items are moved.", "record_replay": true}'
 kernel invoke python-yutori-cua cua-task --payload '{"query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items.", "record_replay": true, "mode": "computer_use"}'
 kernel invoke python-yutori-cua cua-task --payload '{"query": "Go to http://magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items.", "record_replay": true, "mode": "playwright"}'
+
+# Eval Protocol (multiple actions)
+kernel invoke python-eval-protocol run-rollout --payload '{"task": "Navigate to github.com and find the sign in page", "initial_url": "https://github.com"}'
+kernel invoke python-eval-protocol run-rollout --payload '{"task": "Navigate to github.com and find the sign in page", "initial_url": "https://github.com", "score": true}'
+kernel invoke python-eval-protocol run-evaluation --payload '{"num_tasks": 2, "pool_size": 1}'
 ```
 
 ## Step 7: Automated Runtime Testing (Optional)
@@ -325,6 +350,9 @@ If the human agrees, invoke each template use the Kernel CLI and collect results
 | py-gemini-cua     | python-gemini-cua     |         |       |
 | py-yutori-cua     | python-yutori-cua     |         | mode: computer_use |
 | py-yutori-cua     | python-yutori-cua     |         | mode: playwright |
+| py-eval-protocol  | python-eval-protocol  |         | action: run-rollout |
+| py-eval-protocol  | python-eval-protocol  |         | action: run-rollout (with score) |
+| py-eval-protocol  | python-eval-protocol  |         | action: run-evaluation |
 
 Status values:
 - **SUCCESS**: App started and returned a result
@@ -337,9 +365,9 @@ Notes should include brief error messages for failures or confirmation of succes
 - [ ] Built CLI with `make build`
 - [ ] Created QA directory
 - [ ] Got KERNEL_API_KEY from human
-- [ ] Created all 18 template variations
-- [ ] Got required API keys from human (OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, OAGI_API_KEY, YUTORI_API_KEY)
-- [ ] Deployed all 18 apps
+- [ ] Created all 19 template variations
+- [ ] Got required API keys from human (OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, OAGI_API_KEY, YUTORI_API_KEY, FIREWORKS_API_KEY)
+- [ ] Deployed all 19 apps
 - [ ] Provided invoke commands to human for manual testing
 - [ ] (Optional) Ran automated runtime testing and reviewed results
 
