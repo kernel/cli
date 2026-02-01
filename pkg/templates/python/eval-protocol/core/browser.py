@@ -252,9 +252,13 @@ return { closedPages: pages.length - 1 };
         result = self.kernel.browsers.playwright.execute(
             id=self.session_id, code="return { url: page.url() };"
         )
-        data = cast(dict[str, str], result.result)
-        url = data.get("url")
-        return url if url else ""
+        if not result.success:
+            logger.warning(
+                f"Failed to get current URL for session {self.session_id}: {result.error}"
+            )
+            return ""
+        data = cast(dict[str, str], result.result) if result.result else {}
+        return data.get("url", "")
 
     def execute_action(self, action: Action) -> bool:
         """Execute an action via Kernel's computer control API."""
