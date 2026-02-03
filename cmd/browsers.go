@@ -127,7 +127,6 @@ func getAvailableViewports() []string {
 		"1280x800@60",
 		"1024x768@60",
 		"1200x800@60",
-		"1280x800@60",
 	}
 }
 

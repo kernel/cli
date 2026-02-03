@@ -1153,7 +1153,6 @@ func TestGetAvailableViewports_ReturnsExpectedOptions(t *testing.T) {
 	assert.Contains(t, viewports, "1440x900@25")
 	assert.Contains(t, viewports, "1280x800@60")
 	assert.Contains(t, viewports, "1200x800@60")
-	assert.Contains(t, viewports, "1280x800@60")
 	assert.Contains(t, viewports, "1024x768@60")
 }
 
