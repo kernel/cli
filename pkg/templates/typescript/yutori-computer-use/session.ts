@@ -16,9 +16,9 @@ export interface SessionOptions {
   recordReplay?: boolean;
   /** Grace period in seconds before stopping replay */
   replayGracePeriod?: number;
-  /** Viewport width (default: 1200, closest to Yutori's 1280 recommendation) */
+  /** Viewport width */
   viewportWidth?: number;
-  /** Viewport height (default: 800 per Yutori recommendation) */
+  /** Viewport height */
   viewportHeight?: number;
 }
 
