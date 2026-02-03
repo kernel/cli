@@ -5,7 +5,7 @@ This template demonstrates how to use **Playwright** with **OpenAI's Computer Us
 ## Logic
 
 The automation performs the following steps:
-1.  Navigate to the EHR login page (`https://ehr-system-six.vercel.app/login`).
+1.  Navigate to the local OpenEMR login page (served from `openEMR/index.html` in this template).
 2.  Authenticate using valid credentials (any email/password works for this demo).
 3.  Navigate to the **Reports** section in the dashboard.
 4.  Click the **Export CSV** button to download the patient report.

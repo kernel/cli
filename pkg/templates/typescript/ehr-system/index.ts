@@ -24,8 +24,10 @@ if (!ANTHROPIC_API_KEY) {
   throw new Error('ANTHROPIC_API_KEY is not set');
 }
 
+const LOGIN_URL = 'https://ehr-system-six.vercel.app/login';
+
 const DEFAULT_TASK = `
-Go to https://demo.openemr.io/openemr/portal/index.php
+Go to ${LOGIN_URL}
 Login with username: Phil1 | password: phil | email: heya@invalid.email.com.
 Navigate to the "Medical Reports" page.
 Find the "Download Summary of Care" button and click it to download the report.
