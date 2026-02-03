@@ -35,6 +35,14 @@ var invocationHistoryCmd = &cobra.Command{
 	RunE:  runInvocationHistory,
 }
 
+var invocationBrowsersCmd = &cobra.Command{
+	Use:   "browsers <invocation_id>",
+	Short: "List browser sessions for an invocation",
+	Long:  "List all active browser sessions created within a specific invocation.",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runInvocationBrowsers,
+}
+
 func init() {
 	invokeCmd.Flags().StringP("version", "v", "latest", "Specify a version of the app to invoke (optional, defaults to 'latest')")
 	invokeCmd.Flags().StringP("payload", "p", "", "JSON payload for the invocation (optional)")
@@ -49,6 +57,9 @@ func init() {
 	invocationHistoryCmd.Flags().String("version", "", "Filter by invocation version")
 	invocationHistoryCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	invokeCmd.AddCommand(invocationHistoryCmd)
+
+	invocationBrowsersCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	invokeCmd.AddCommand(invocationBrowsersCmd)
 }
 
 func runInvoke(cmd *cobra.Command, args []string) error {
@@ -431,5 +442,58 @@ func runInvocationHistory(cmd *cobra.Command, args []string) error {
 	} else {
 		pterm.DefaultTable.WithHasHeader().WithData(table).Render()
 	}
+	return nil
+}
+
+func runInvocationBrowsers(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	invocationID := args[0]
+	output, _ := cmd.Flags().GetString("output")
+
+	if output != "" && output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
+	resp, err := client.Invocations.ListBrowsers(cmd.Context(), invocationID)
+	if err != nil {
+		pterm.Error.Printf("Failed to list browsers for invocation: %v\n", err)
+		return nil
+	}
+
+	if output == "json" {
+		if len(resp.Browsers) == 0 {
+			fmt.Println("[]")
+			return nil
+		}
+		return util.PrintPrettyJSONSlice(resp.Browsers)
+	}
+
+	if len(resp.Browsers) == 0 {
+		pterm.Info.Printf("No active browsers found for invocation %s\n", invocationID)
+		return nil
+	}
+
+	table := pterm.TableData{{"Session ID", "Created At", "Headless", "Stealth", "Timeout", "CDP WS URL", "Live View URL"}}
+
+	for _, browser := range resp.Browsers {
+		created := util.FormatLocal(browser.CreatedAt)
+		liveView := browser.BrowserLiveViewURL
+		if liveView == "" {
+			liveView = "-"
+		}
+
+		table = append(table, []string{
+			browser.SessionID,
+			created,
+			fmt.Sprintf("%v", browser.Headless),
+			fmt.Sprintf("%v", browser.Stealth),
+			fmt.Sprintf("%d", browser.TimeoutSeconds),
+			truncateURL(browser.CdpWsURL, 40),
+			truncateURL(liveView, 40),
+		})
+	}
+
+	pterm.Info.Printf("Browsers for invocation %s:\n", invocationID)
+	pterm.DefaultTable.WithHasHeader().WithData(table).Render()
 	return nil
 }
