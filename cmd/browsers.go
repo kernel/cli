@@ -127,6 +127,7 @@ func getAvailableViewports() []string {
 		"1280x800@60",
 		"1024x768@60",
 		"1200x800@60",
+		"1280x800@60",
 	}
 }
 
@@ -2070,7 +2071,7 @@ func init() {
 	browsersUpdateCmd.Flags().String("profile-id", "", "Profile ID to load into the browser session (mutually exclusive with --profile-name)")
 	browsersUpdateCmd.Flags().String("profile-name", "", "Profile name to load into the browser session (mutually exclusive with --profile-id)")
 	browsersUpdateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
-	browsersUpdateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60")
+	browsersUpdateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 
 	browsersCmd.AddCommand(browsersListCmd)
 	browsersCmd.AddCommand(browsersCreateCmd)
@@ -2078,6 +2079,9 @@ func init() {
 	browsersCmd.AddCommand(browsersViewCmd)
 	browsersCmd.AddCommand(browsersGetCmd)
 	browsersCmd.AddCommand(browsersUpdateCmd)
+
+	// ssh
+	browsersCmd.AddCommand(sshCmd)
 
 	// logs
 	logsRoot := &cobra.Command{Use: "logs", Short: "Browser logs operations"}
@@ -2305,7 +2309,7 @@ func init() {
 	browsersCreateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
 	browsersCreateCmd.Flags().String("proxy-id", "", "Proxy ID to use for the browser session")
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
-	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60")
+	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersCreateCmd.Flags().Bool("viewport-interactive", false, "Interactively select viewport size from list")
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")

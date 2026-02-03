@@ -12,6 +12,8 @@ export class ComputerTool implements BaseAnthropicTool {
   protected sessionId: string;
   protected _screenshotDelay = 2.0;
   protected version: '20241022' | '20250124';
+  protected width: number;
+  protected height: number;
   
   private lastMousePosition: [number, number] = [0, 0];
 
@@ -39,10 +41,12 @@ export class ComputerTool implements BaseAnthropicTool {
     Action.WAIT,
   ]);
 
-  constructor(kernel: Kernel, sessionId: string, version: '20241022' | '20250124' = '20250124') {
+  constructor(kernel: Kernel, sessionId: string, version: '20241022' | '20250124' = '20250124', width = 1280, height = 800) {
     this.kernel = kernel;
     this.sessionId = sessionId;
     this.version = version;
+    this.width = width;
+    this.height = height;
   }
 
   get apiType(): 'computer_20241022' | 'computer_20250124' {
@@ -53,8 +57,8 @@ export class ComputerTool implements BaseAnthropicTool {
     const params = {
       name: this.name,
       type: this.apiType,
-      display_width_px: 1024,
-      display_height_px: 768,
+      display_width_px: this.width,
+      display_height_px: this.height,
       display_number: null,
     };
     return params;
@@ -380,13 +384,13 @@ export class ComputerTool implements BaseAnthropicTool {
 
 // For backward compatibility
 export class ComputerTool20241022 extends ComputerTool {
-  constructor(kernel: Kernel, sessionId: string) {
-    super(kernel, sessionId, '20241022');
+  constructor(kernel: Kernel, sessionId: string, width = 1280, height = 800) {
+    super(kernel, sessionId, '20241022', width, height);
   }
 }
 
 export class ComputerTool20250124 extends ComputerTool {
-  constructor(kernel: Kernel, sessionId: string) {
-    super(kernel, sessionId, '20250124');
+  constructor(kernel: Kernel, sessionId: string, width = 1280, height = 800) {
+    super(kernel, sessionId, '20250124', width, height);
   }
 }
