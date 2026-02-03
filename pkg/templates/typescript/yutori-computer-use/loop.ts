@@ -80,8 +80,7 @@ export async function samplingLoop({
   cdpWsUrl,
   maxTokens = 4096,
   maxIterations = 50,
-  // Default viewport: 1200x800 (closest Kernel-supported size to Yutori's recommended 1280x800)
-  viewportWidth = 1200,
+  viewportWidth = 1280,
   viewportHeight = 800,
   mode = 'computer_use',
 }: SamplingLoopOptions): Promise<SamplingLoopResult> {
