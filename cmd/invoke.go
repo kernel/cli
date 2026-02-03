@@ -40,6 +40,7 @@ func init() {
 	invokeCmd.Flags().StringP("payload", "p", "", "JSON payload for the invocation (optional)")
 	invokeCmd.Flags().StringP("payload-file", "f", "", "Path to a JSON file containing the payload (use '-' for stdin)")
 	invokeCmd.Flags().BoolP("sync", "s", false, "Invoke synchronously (default false). A synchronous invocation will open a long-lived HTTP POST to the Kernel API to wait for the invocation to complete. This will time out after 60 seconds, so only use this option if you expect your invocation to complete in less than 60 seconds. The default is to invoke asynchronously, in which case the CLI will open an SSE connection to the Kernel API after submitting the invocation and wait for the invocation to complete.")
+	invokeCmd.Flags().Int64("async-timeout", 0, "Timeout in seconds for async invocations (min 10, max 3600). Only applies when async mode is used.")
 	invokeCmd.Flags().StringP("output", "o", "", "Output format: json for JSONL streaming output")
 	invokeCmd.MarkFlagsMutuallyExclusive("payload", "payload-file")
 
@@ -70,11 +71,15 @@ func runInvoke(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("version cannot be an empty string")
 	}
 	isSync, _ := cmd.Flags().GetBool("sync")
+	asyncTimeout, _ := cmd.Flags().GetInt64("async-timeout")
 	params := kernel.InvocationNewParams{
 		AppName:    appName,
 		ActionName: actionName,
 		Version:    version,
 		Async:      kernel.Opt(!isSync),
+	}
+	if asyncTimeout > 0 {
+		params.AsyncTimeoutSeconds = kernel.Opt(asyncTimeout)
 	}
 
 	payloadStr, hasPayload, err := getPayload(cmd)
