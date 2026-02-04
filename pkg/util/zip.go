@@ -11,8 +11,16 @@ import (
 	"github.com/boyter/gocodewalker"
 )
 
+// ZipOptions which directories and files to exclude from the zip
+type ZipOptions struct {
+	// ExcludeDirectories: exact directory names to exclude (case-sensitive)
+	ExcludeDirectories []string
+	// ExcludeFilenamePatterns: glob patterns for filename exclusion (e.g., "*.test.js")
+	ExcludeFilenamePatterns []string
+}
+
 // ZipDirectory compresses the given source directory into the destination file path.
-func ZipDirectory(srcDir, destZip string) error {
+func ZipDirectory(srcDir, destZip string, opts *ZipOptions) error {
 	zipFile, err := os.Create(destZip)
 	if err != nil {
 		return err
@@ -28,9 +36,16 @@ func ZipDirectory(srcDir, destZip string) error {
 	// Include hidden files (to match previous behaviour) but still respect .gitignore rules
 	walker.IncludeHidden = true
 
-	// Start walking in a separate goroutine so we can process files as they arrive
+	// Apply directory exclusions to walker
+	if opts != nil {
+		walker.ExcludeDirectory = append(walker.ExcludeDirectory, opts.ExcludeDirectories...)
+	}
+
+	defer walker.Terminate()
+
+	errChan := make(chan error, 1)
 	go func() {
-		_ = walker.Start()
+		errChan <- walker.Start()
 	}()
 
 	// Track directories we've already added to the zip archive so we don't duplicate entries
@@ -43,6 +58,22 @@ func ZipDirectory(srcDir, destZip string) error {
 			return err
 		}
 		relPath = filepath.ToSlash(relPath)
+
+		// Check against pattern-based exclusions if provided
+		if opts != nil && len(opts.ExcludeFilenamePatterns) > 0 {
+			filename := filepath.Base(f.Location)
+			shouldExclude := false
+			for _, pattern := range opts.ExcludeFilenamePatterns {
+				matched, err := filepath.Match(pattern, filename)
+				if err == nil && matched {
+					shouldExclude = true
+					break
+				}
+			}
+			if shouldExclude {
+				continue
+			}
+		}
 
 		// Ensure parent directories exist in the archive
 		if dir := filepath.Dir(relPath); dir != "." && dir != "" {
@@ -113,6 +144,10 @@ func ZipDirectory(srcDir, destZip string) error {
 				return err
 			}
 		}
+	}
+
+	if err := <-errChan; err != nil {
+		return fmt.Errorf("directory walk failed: %w", err)
 	}
 
 	return nil
