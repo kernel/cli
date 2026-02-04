@@ -116,3 +116,63 @@ func TestZipDirectory(t *testing.T) {
 		}
 	})
 }
+
+func TestUnzip(t *testing.T) {
+	tmpZip, err := os.CreateTemp("", "test-unzip-*.zip")
+	if err != nil {
+		t.Fatalf("Failed to create temp zip: %v", err)
+	}
+	tmpZip.Close()
+	defer os.Remove(tmpZip.Name())
+
+	zw, err := os.Create(tmpZip.Name())
+	if err != nil {
+		t.Fatalf("Failed to open zip for writing: %v", err)
+	}
+	zipWriter := zip.NewWriter(zw)
+
+	testFiles := map[string]string{
+		"file1.txt":        "content of file 1",
+		"subdir/file2.txt": "content of file 2",
+	}
+
+	if _, err := zipWriter.Create("subdir/"); err != nil {
+		t.Fatalf("Failed to create dir entry: %v", err)
+	}
+
+	for name, content := range testFiles {
+		w, err := zipWriter.Create(name)
+		if err != nil {
+			t.Fatalf("Failed to create zip entry %s: %v", name, err)
+		}
+		if _, err := w.Write([]byte(content)); err != nil {
+			t.Fatalf("Failed to write zip entry %s: %v", name, err)
+		}
+	}
+	zipWriter.Close()
+	zw.Close()
+
+	// Unzip to temp directory
+	destDir, err := os.MkdirTemp("", "test-unzip-dest-*")
+	if err != nil {
+		t.Fatalf("Failed to create dest dir: %v", err)
+	}
+	defer os.RemoveAll(destDir)
+
+	if err := Unzip(tmpZip.Name(), destDir); err != nil {
+		t.Fatalf("Unzip failed: %v", err)
+	}
+
+	// Verify extracted files
+	for name, expectedContent := range testFiles {
+		path := filepath.Join(destDir, name)
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("Failed to read extracted file %s: %v", name, err)
+			continue
+		}
+		if string(content) != expectedContent {
+			t.Errorf("File %s: expected %q, got %q", name, expectedContent, string(content))
+		}
+	}
+}
