@@ -19,9 +19,27 @@ import (
 )
 
 const (
-	// MaxExtensionSize is the maximum allowed size for extension bundles from API (50MB)
-	MaxExtensionSize = 50 * 1024 * 1024
+	MaxExtensionSizeBytes = 50 * 1024 * 1024 // 50MB
 )
+
+// defaultExtensionExclusions contains patterns for files that are not needed
+// when zipping Chrome extensions
+var defaultExtensionExclusions = util.ZipOptions{
+	ExcludeDirectories: []string{
+		"node_modules",
+		".git",
+		"__tests__",
+		"coverage",
+	},
+	ExcludeFilenamePatterns: []string{
+		"*.test.js",
+		"*.test.ts",
+		"*.spec.js",
+		"*.spec.ts",
+		"*.log",
+		"*.swp",
+	},
+}
 
 // ExtensionsService defines the subset of the Kernel SDK extension client that we use.
 type ExtensionsService interface {
@@ -310,30 +328,22 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 		pterm.Info.Println("Zipping extension directory...")
 	}
 
-	// Use new extension-specific zip function
-	stats, err := util.ZipExtensionDirectory(absDir, tmpFile, &util.ExtensionZipOptions{
-		ExcludeDefaults: false, // Apply defaults
-	})
-	if err != nil {
+	if err := util.ZipDirectory(absDir, tmpFile, &defaultExtensionExclusions); err != nil {
 		pterm.Error.Println("Failed to zip directory")
 		return err
 	}
 	defer os.Remove(tmpFile)
 
-	// Get zip file size
 	fileInfo, err := os.Stat(tmpFile)
 	if err != nil {
 		return fmt.Errorf("failed to stat zip: %w", err)
 	}
 
 	if in.Output != "json" {
-		pterm.Success.Printf("Created bundle: %s (%d files)\n",
-			util.FormatBytes(fileInfo.Size()), stats.FilesIncluded)
+		pterm.Success.Printf("Created bundle: %s\n", util.FormatBytes(fileInfo.Size()))
 	}
 
-	// Final size validation
-
-	if fileInfo.Size() > MaxExtensionSize {
+	if fileInfo.Size() > MaxExtensionSizeBytes {
 		pterm.Error.Printf("Extension bundle is too large: %s (max: 50MB)\n",
 			util.FormatBytes(fileInfo.Size()))
 		pterm.Info.Println("\nSuggestions to reduce size:")
@@ -343,14 +353,12 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 		return fmt.Errorf("bundle exceeds maximum size")
 	}
 
-	// Open file for upload
 	f, err := os.Open(tmpFile)
 	if err != nil {
 		return fmt.Errorf("failed to open temp zip: %w", err)
 	}
 	defer f.Close()
 
-	// Upload
 	if in.Output != "json" {
 		pterm.Info.Println("Uploading extension...")
 	}
@@ -365,7 +373,6 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 		return util.CleanedUpSdkError{Err: err}
 	}
 
-	// Display results
 	if in.Output == "json" {
 		return util.PrintPrettyJSON(item)
 	}
