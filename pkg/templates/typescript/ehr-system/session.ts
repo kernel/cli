@@ -1,0 +1,222 @@
+/**
+ * Kernel Browser Session Manager.
+ * 
+ * Provides a class for managing Kernel browser lifecycle
+ * with optional video replay recording.
+ */
+
+import type { Kernel } from '@onkernel/sdk';
+
+export interface SessionOptions {
+  /** Enable stealth mode to avoid bot detection */
+  stealth?: boolean;
+  /** Browser session timeout in seconds */
+  timeoutSeconds?: number;
+  /** Enable replay recording (requires paid plan) */
+  recordReplay?: boolean;
+  /** Grace period in seconds before stopping replay */
+  replayGracePeriod?: number;
+}
+
+export interface SessionInfo {
+  sessionId: string;
+  liveViewUrl: string;
+  replayId?: string;
+  replayViewUrl?: string;
+}
+
+const DEFAULT_OPTIONS: Required<SessionOptions> = {
+  stealth: true,
+  timeoutSeconds: 300,
+  recordReplay: false,
+  replayGracePeriod: 5.0,
+};
+
+/**
+ * Manages Kernel browser lifecycle with optional replay recording.
+ * 
+ * Usage:
+ * ```typescript
+ * const session = new KernelBrowserSession(kernel, options);
+ * await session.start();
+ * try {
+ *   // Use session.sessionId for computer controls
+ * } finally {
+ *   await session.stop();
+ * }
+ * ```
+ */
+export class KernelBrowserSession {
+  private kernel: Kernel;
+  private options: Required<SessionOptions>;
+  
+  // Session state
+  private _sessionId: string | null = null;
+  private _liveViewUrl: string | null = null;
+  private _replayId: string | null = null;
+  private _replayViewUrl: string | null = null;
+
+  constructor(kernel: Kernel, options: SessionOptions = {}) {
+    this.kernel = kernel;
+    this.options = { ...DEFAULT_OPTIONS, ...options };
+  }
+
+  get sessionId(): string {
+    if (!this._sessionId) {
+      throw new Error('Session not started. Call start() first.');
+    }
+    return this._sessionId;
+  }
+
+  get liveViewUrl(): string | null {
+    return this._liveViewUrl;
+  }
+
+  get replayViewUrl(): string | null {
+    return this._replayViewUrl;
+  }
+
+  get info(): SessionInfo {
+    return {
+      sessionId: this.sessionId,
+      liveViewUrl: this._liveViewUrl || '',
+      replayId: this._replayId || undefined,
+      replayViewUrl: this._replayViewUrl || undefined,
+    };
+  }
+
+  /**
+   * Create a Kernel browser session and optionally start recording.
+   */
+  async start(): Promise<SessionInfo> {
+    // Create browser with specified settings
+    const browser = await this.kernel.browsers.create({
+      stealth: this.options.stealth,
+      timeout_seconds: this.options.timeoutSeconds,
+      viewport: {
+        width: 1024,
+        height: 768,
+        refresh_rate: 60,
+      },
+    });
+
+    this._sessionId = browser.session_id;
+    this._liveViewUrl = browser.browser_live_view_url ?? null;
+
+    console.log(`Kernel browser created: ${this._sessionId}`);
+    console.log(`Live view URL: ${this._liveViewUrl}`);
+
+    // Start replay recording if enabled
+    if (this.options.recordReplay) {
+      try {
+        await this.startReplay();
+      } catch (error) {
+        console.warn(`Warning: Failed to start replay recording: ${error}`);
+        console.warn('Continuing without replay recording.');
+      }
+    }
+
+    return this.info;
+  }
+
+  /**
+   * Start recording a replay of the browser session.
+   */
+  private async startReplay(): Promise<void> {
+    if (!this._sessionId) {
+      return;
+    }
+
+    console.log('Starting replay recording...');
+    const replay = await this.kernel.browsers.replays.start(this._sessionId);
+    this._replayId = replay.replay_id;
+    console.log(`Replay recording started: ${this._replayId}`);
+  }
+
+  /**
+   * Stop recording and get the replay URL.
+   */
+  private async stopReplay(): Promise<void> {
+    if (!this._sessionId || !this._replayId) {
+      return;
+    }
+
+    console.log('Stopping replay recording...');
+    await this.kernel.browsers.replays.stop(this._replayId, {
+      id: this._sessionId,
+    });
+    console.log('Replay recording stopped. Processing video...');
+
+    // Wait a moment for processing
+    await this.sleep(2000);
+
+    // Poll for replay to be ready (with timeout)
+    const maxWait = 60000; // 60 seconds
+    const startTime = Date.now();
+    let replayReady = false;
+
+    while (Date.now() - startTime < maxWait) {
+      try {
+        const replays = await this.kernel.browsers.replays.list(this._sessionId);
+        for (const replay of replays) {
+          if (replay.replay_id === this._replayId) {
+            this._replayViewUrl = replay.replay_view_url ?? null;
+            replayReady = true;
+            break;
+          }
+        }
+        if (replayReady) {
+          break;
+        }
+      } catch {
+        // Ignore errors while polling
+      }
+      await this.sleep(1000);
+    }
+
+    if (!replayReady) {
+      console.log('Warning: Replay may still be processing');
+    } else if (this._replayViewUrl) {
+      console.log(`Replay view URL: ${this._replayViewUrl}`);
+    }
+  }
+
+  /**
+   * Stop recording, and delete the browser session.
+   */
+  async stop(): Promise<SessionInfo> {
+    const info = this.info;
+
+    if (this._sessionId) {
+      try {
+        // Stop replay if recording was enabled
+        if (this.options.recordReplay && this._replayId) {
+          // Wait grace period before stopping to capture final state
+          if (this.options.replayGracePeriod > 0) {
+            console.log(`Waiting ${this.options.replayGracePeriod}s grace period...`);
+            await this.sleep(this.options.replayGracePeriod * 1000);
+          }
+          await this.stopReplay();
+          info.replayViewUrl = this._replayViewUrl || undefined;
+        }
+      } finally {
+        // Always clean up the browser session, even if replay stopping fails
+        console.log(`Destroying browser session: ${this._sessionId}`);
+        await this.kernel.browsers.deleteByID(this._sessionId);
+        console.log('Browser session destroyed.');
+      }
+    }
+
+    // Reset state
+    this._sessionId = null;
+    this._liveViewUrl = null;
+    this._replayId = null;
+    this._replayViewUrl = null;
+
+    return info;
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+}
