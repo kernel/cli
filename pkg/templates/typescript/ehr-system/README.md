@@ -1,38 +1,41 @@
 # EHR System Automation Template
 
-This template demonstrates how to use **Playwright** with **OpenAI's Computer Use** capabilities on Kernel to automate an Electronic Health Records (EHR) system workflow.
+This template demonstrates how to run an agentic browser workflow on Kernel to automate an Electronic Health Records (EHR) portal. It uses an Anthropic Computer Use loop with Kernel's Computer Controls API.
 
 ## Logic
 
 The automation performs the following steps:
-1.  Navigate to the local OpenEMR login page (served from `openEMR/index.html` in this template).
+1.  Navigate to the EHR login page (`https://ehr-system-six.vercel.app/login`).
 2.  Authenticate using valid credentials (any email/password works for this demo).
-3.  Navigate to the **Reports** section in the dashboard.
-4.  Click the **Export CSV** button to download the patient report.
+3.  Navigate to the **Medical Reports** section in the dashboard.
+4.  Click the **Download Summary of Care** button to download the report.
 
-This template uses an agentic loop where OpenAI Vision analyzes the page and directs Playwright to interact with elements.
+## Quickstart
 
-## Usage
+Deploy:
 
-1.  **Deploy the app:**
+```bash
+kernel deploy index.ts -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
+```
 
-    ```bash
-    kernel deploy index.ts -e OPENAI_API_KEY=$OPENAI_API_KEY
-    ```
+Invoke:
 
-2.  **Invoke the action:**
+```bash
+kernel invoke ehr-system export-report
+```
 
-    ```bash
-    kernel invoke ehr-system export-report
-    ```
+View logs:
 
-3.  **View logs:**
+```bash
+kernel logs ehr-system --follow
+```
 
-    ```bash
-    kernel logs ehr-system --follow
-    ```
+## Notes
+
+- The login page must be publicly reachable from the Kernel browser session.
+- Update the URL in `pkg/templates/typescript/ehr-system/index.ts` if you host the portal elsewhere.
 
 ## Requirements
 
--   OPENAI_API_KEY environment variable set.
--   Kernel CLI installed and authenticated.
+- ANTHROPIC_API_KEY environment variable set.
+- Kernel CLI installed and authenticated.
