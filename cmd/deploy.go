@@ -236,7 +236,7 @@ func runDeploy(cmd *cobra.Command, args []string) (err error) {
 	}
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("kernel_%d.zip", time.Now().UnixNano()))
 	logger.Debug("compressing files", logger.Args("sourceDir", sourceDir, "tmpFile", tmpFile))
-	if err := util.ZipDirectory(sourceDir, tmpFile); err != nil {
+	if err := util.ZipDirectory(sourceDir, tmpFile, nil); err != nil {
 		if spinner != nil {
 			spinner.Fail("Failed to compress files")
 		}
