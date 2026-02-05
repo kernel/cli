@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QA Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+  <header>
+    <h1>Run QA in minutes</h1>
+    <p class="subtitle">AI-powered quality assurance testing for any website</p>
+  </header>
+  <div class="container">
+
+    <div class="content">
+      <div class="form-panel">
+        <form id="qaForm">
+          <!-- URL Input -->
+          <div class="form-section">
+            <h2>Target Website</h2>
+            <div class="form-group">
+              <label for="url">Website URL</label>
+              <input type="url" id="url" name="url" placeholder="https://website.com" required>
+            </div>
+          </div>
+
+          <!-- Model Selection -->
+          <div class="form-section">
+            <h2>Vision Model</h2>
+            <div class="form-group">
+              <label>Choose AI Model</label>
+              <div class="radio-group">
+                <label class="radio-label">
+                  <input type="radio" name="model" value="claude" checked>
+                  <span>Claude (Sonnet 3.5) - Most Accurate</span>
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="model" value="gpt4o">
+                  <span>GPT-4o - Balanced</span>
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="model" value="gemini">
+                  <span>Gemini (2.0 Flash) - Fastest</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Compliance Checks -->
+          <div class="form-section">
+            <div class="section-header">
+              <h2>Compliance Checks</h2>
+              <button type="button" class="select-all-btn" data-group="compliance">Select All</button>
+            </div>
+            <div class="checkbox-grid" data-checkbox-group="compliance">
+              <label class="checkbox-label">
+                <input type="checkbox" name="compliance.accessibility" value="true" checked>
+                <div class="checkbox-content">
+                  <strong>Accessibility</strong>
+                  <span>WCAG 2.1 AA compliance</span>
+                </div>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" name="compliance.legal" value="true" checked>
+                <div class="checkbox-content">
+                  <strong>Legal</strong>
+                  <span>Privacy, terms, disclaimers</span>
+                </div>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" name="compliance.brand" value="true" checked>
+                <div class="checkbox-content">
+                  <strong>Brand</strong>
+                  <span>Brand guidelines adherence</span>
+                </div>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" name="compliance.regulatory" value="true" checked>
+                <div class="checkbox-content">
+                  <strong>Regulatory</strong>
+                  <span>Industry regulations</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- Policy Violations -->
+          <div class="form-section">
+            <div class="section-header">
+              <h2>Policy Violations</h2>
+              <button type="button" class="select-all-btn" data-group="policy">Select All</button>
+            </div>
+            <div class="checkbox-grid" data-checkbox-group="policy">
+              <label class="checkbox-label">
+                <input type="checkbox" name="policyViolations.content" value="true" checked>
+                <div class="checkbox-content">
+                  <strong>Content Policy</strong>
+                  <span>Inappropriate or misleading content</span>
+                </div>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" name="policyViolations.security" value="true" checked>
+                <div class="checkbox-content">
+                  <strong>Security</strong>
+                  <span>Exposed data, insecure elements</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- Additional Checks -->
+          <div class="form-section">
+            <div class="section-header">
+              <h2>Additional Checks</h2>
+              <button type="button" class="select-all-btn" data-group="additional">Select All</button>
+            </div>
+            <div class="checkbox-grid" data-checkbox-group="additional">
+              <label class="checkbox-label">
+                <input type="checkbox" name="brokenUI" value="true" checked>
+                <div class="checkbox-content">
+                  <strong>Broken UI</strong>
+                  <span>Visual defects and design issues</span>
+                </div>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" name="dismissPopups" value="true" checked>
+                <div class="checkbox-content">
+                  <strong>Dismiss Popups</strong>
+                  <span>Auto-close cookie banners, modals, and overlays</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- Context -->
+          <div class="form-section">
+            <h2>Context (Optional)</h2>
+            <div class="form-group">
+              <label for="industry">Industry</label>
+              <select id="industry" name="context.industry">
+                <option value="">None</option>
+                <option value="finance">Finance</option>
+                <option value="healthcare">Healthcare</option>
+                <option value="ecommerce">E-commerce</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="brandGuidelines">Brand Guidelines</label>
+              <textarea id="brandGuidelines" name="context.brandGuidelines"
+                placeholder="e.g., Logo must be in top-left, primary color #007bff, font family Inter..."
+                rows="3"></textarea>
+            </div>
+
+            <div class="form-group">
+              <label for="customPolicies">Custom Policies</label>
+              <textarea id="customPolicies" name="context.customPolicies"
+                placeholder="e.g., No medical claims without FDA approval. All testimonials must include disclaimers..."
+                rows="3"></textarea>
+            </div>
+          </div>
+
+          <!-- Submit Button -->
+          <button type="submit" class="submit-btn" id="submitBtn">
+            <span class="btn-text">Run QA Analysis</span>
+            <span class="btn-loader" style="display: none;">
+              <span class="spinner"></span> Analyzing...
+            </span>
+          </button>
+        </form>
+      </div>
+
+      <!-- Progress Panel -->
+      <div class="progress-panel" id="progressPanel" style="display: none;">
+        <div class="progress-header">
+          <h2>Analysis in Progress</h2>
+        </div>
+        <div class="progress-steps" id="progressSteps"></div>
+      </div>
+
+      <!-- Results Panel -->
+      <div class="results-panel" id="resultsPanel" style="display: none;">
+        <div class="results-header">
+          <h2>Analysis Results</h2>
+          <button class="export-btn" id="exportBtn">Export HTML Report</button>
+        </div>
+        <div id="resultsContent"></div>
+      </div>
+
+      <!-- Error Panel -->
+      <div class="error-panel" id="errorPanel" style="display: none;">
+        <h3>Error</h3>
+        <p id="errorMessage"></p>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+
+</html>
