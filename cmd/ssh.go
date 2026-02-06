@@ -176,7 +176,7 @@ func connectSSH(ctx context.Context, client kernel.Client, cfg ssh.Config) error
 	if !jsonOutput {
 		pterm.Info.Println("Setting up SSH services on VM...")
 	}
-	if err := setupVMSSH(ctx, client, browser.SessionID, publicKey); err != nil {
+	if err := setupVMSSH(ctx, client, browser.SessionID, publicKey, jsonOutput); err != nil {
 		return fmt.Errorf("failed to setup SSH on VM: %w", err)
 	}
 	if !jsonOutput {
@@ -186,7 +186,7 @@ func connectSSH(ctx context.Context, client kernel.Client, cfg ssh.Config) error
 	if cfg.SetupOnly {
 		if jsonOutput {
 			proxyCmd := fmt.Sprintf("websocat --binary wss://%s:2222", vmDomain)
-			sshCommand := fmt.Sprintf("ssh -o 'ProxyCommand=%s' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i %s root@localhost", proxyCmd, keyFile)
+			sshCommand := fmt.Sprintf("ssh -o 'ProxyCommand=%s' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i %s root@localhost", proxyCmd, keyFile)
 			result := sshSetupResult{
 				VMDomain:     vmDomain,
 				SessionID:    browser.SessionID,
@@ -240,7 +240,7 @@ func connectSSH(ctx context.Context, client kernel.Client, cfg ssh.Config) error
 }
 
 // setupVMSSH installs and configures sshd + websocat on the VM using process.exec
-func setupVMSSH(ctx context.Context, client kernel.Client, sessionID, publicKey string) error {
+func setupVMSSH(ctx context.Context, client kernel.Client, sessionID, publicKey string, jsonOutput bool) error {
 	// First check if services are already running
 	checkScript := ssh.CheckServicesScript()
 	checkResp, err := client.Browsers.Process.Exec(ctx, sessionID, kernel.BrowserProcessExecParams{
@@ -253,7 +253,9 @@ func setupVMSSH(ctx context.Context, client kernel.Client, sessionID, publicKey 
 	} else if checkResp != nil && checkResp.StdoutB64 != "" {
 		stdout, _ := base64.StdEncoding.DecodeString(checkResp.StdoutB64)
 		if strings.TrimSpace(string(stdout)) == "RUNNING" {
-			pterm.Info.Println("SSH services already running, injecting key...")
+			if !jsonOutput {
+				pterm.Info.Println("SSH services already running, injecting key...")
+			}
 			// Just inject the key
 			return injectSSHKey(ctx, client, sessionID, publicKey)
 		}
