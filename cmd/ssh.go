@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,6 +16,15 @@ import (
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
+
+// sshSetupResult is the JSON output structure for --setup-only -o json.
+type sshSetupResult struct {
+	VMDomain     string `json:"vm_domain"`
+	SessionID    string `json:"session_id"`
+	SSHKeyFile   string `json:"ssh_key_file"`
+	ProxyCommand string `json:"proxy_command"`
+	SSHCommand   string `json:"ssh_command"`
+}
 
 var sshCmd = &cobra.Command{
 	Use:   "ssh <id>",
@@ -49,6 +59,7 @@ func init() {
 	sshCmd.Flags().StringP("local-forward", "L", "", "Local port forwarding (localport:host:remoteport)")
 	sshCmd.Flags().StringP("remote-forward", "R", "", "Remote port forwarding (remoteport:host:localport)")
 	sshCmd.Flags().Bool("setup-only", false, "Setup SSH on VM without connecting")
+	sshCmd.Flags().StringP("output", "o", "", "Output format: json for machine-readable output (only with --setup-only)")
 }
 
 func runSSH(cmd *cobra.Command, args []string) error {
@@ -60,6 +71,14 @@ func runSSH(cmd *cobra.Command, args []string) error {
 	localForward, _ := cmd.Flags().GetString("local-forward")
 	remoteForward, _ := cmd.Flags().GetString("remote-forward")
 	setupOnly, _ := cmd.Flags().GetBool("setup-only")
+	output, _ := cmd.Flags().GetString("output")
+
+	if output != "" && output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+	if output == "json" && !setupOnly {
+		return fmt.Errorf("--output json is only supported with --setup-only")
+	}
 
 	cfg := ssh.Config{
 		BrowserID:     browserID,
@@ -67,19 +86,24 @@ func runSSH(cmd *cobra.Command, args []string) error {
 		LocalForward:  localForward,
 		RemoteForward: remoteForward,
 		SetupOnly:     setupOnly,
+		Output:        output,
 	}
 
 	return connectSSH(ctx, client, cfg)
 }
 
 func connectSSH(ctx context.Context, client kernel.Client, cfg ssh.Config) error {
+	jsonOutput := cfg.Output == "json"
+
 	// Check websocat is installed locally
 	if err := ssh.CheckWebsocatInstalled(); err != nil {
 		return err
 	}
 
 	// Get browser info
-	pterm.Info.Printf("Getting browser %s info...\n", cfg.BrowserID)
+	if !jsonOutput {
+		pterm.Info.Printf("Getting browser %s info...\n", cfg.BrowserID)
+	}
 	browser, err := client.Browsers.Get(ctx, cfg.BrowserID, kernel.BrowserGetParams{})
 	if err != nil {
 		return fmt.Errorf("failed to get browser: %w", err)
@@ -95,7 +119,9 @@ func connectSSH(ctx context.Context, client kernel.Client, cfg ssh.Config) error
 	if err != nil {
 		return fmt.Errorf("failed to extract VM domain: %w", err)
 	}
-	pterm.Info.Printf("VM domain: %s\n", vmDomain)
+	if !jsonOutput {
+		pterm.Info.Printf("VM domain: %s\n", vmDomain)
+	}
 
 	// Generate or load SSH keypair
 	var privateKeyPEM, publicKey string
@@ -104,7 +130,9 @@ func connectSSH(ctx context.Context, client kernel.Client, cfg ssh.Config) error
 
 	if cfg.IdentityFile != "" {
 		// Use provided key
-		pterm.Info.Printf("Using SSH key: %s\n", cfg.IdentityFile)
+		if !jsonOutput {
+			pterm.Info.Printf("Using SSH key: %s\n", cfg.IdentityFile)
+		}
 		keyFile = cfg.IdentityFile
 
 		// Read public key to inject into VM
@@ -117,7 +145,9 @@ func connectSSH(ctx context.Context, client kernel.Client, cfg ssh.Config) error
 		publicKey = strings.TrimSpace(string(pubKeyData))
 	} else {
 		// Generate ephemeral keypair
-		pterm.Info.Println("Generating ephemeral SSH keypair...")
+		if !jsonOutput {
+			pterm.Info.Println("Generating ephemeral SSH keypair...")
+		}
 		keyPair, err := ssh.GenerateKeyPair()
 		if err != nil {
 			return fmt.Errorf("failed to generate SSH keypair: %w", err)
@@ -134,8 +164,8 @@ func connectSSH(ctx context.Context, client kernel.Client, cfg ssh.Config) error
 		pterm.Debug.Printf("Temp key file: %s\n", keyFile)
 	}
 
-	// Cleanup temp key on exit
-	if cleanupKey {
+	// Cleanup temp key on exit (skip if JSON setup-only, since the caller needs the key)
+	if cleanupKey && !(cfg.SetupOnly && jsonOutput) {
 		defer func() {
 			pterm.Debug.Printf("Cleaning up temp key: %s\n", keyFile)
 			os.Remove(keyFile)
@@ -143,13 +173,31 @@ func connectSSH(ctx context.Context, client kernel.Client, cfg ssh.Config) error
 	}
 
 	// Setup SSH services on VM
-	pterm.Info.Println("Setting up SSH services on VM...")
+	if !jsonOutput {
+		pterm.Info.Println("Setting up SSH services on VM...")
+	}
 	if err := setupVMSSH(ctx, client, browser.SessionID, publicKey); err != nil {
 		return fmt.Errorf("failed to setup SSH on VM: %w", err)
 	}
-	pterm.Success.Println("SSH services running on VM")
+	if !jsonOutput {
+		pterm.Success.Println("SSH services running on VM")
+	}
 
 	if cfg.SetupOnly {
+		if jsonOutput {
+			proxyCmd := fmt.Sprintf("websocat --binary wss://%s:2222", vmDomain)
+			sshCommand := fmt.Sprintf("ssh -o 'ProxyCommand=%s' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i %s root@localhost", proxyCmd, keyFile)
+			result := sshSetupResult{
+				VMDomain:     vmDomain,
+				SessionID:    browser.SessionID,
+				SSHKeyFile:   keyFile,
+				ProxyCommand: proxyCmd,
+				SSHCommand:   sshCommand,
+			}
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(result)
+		}
 		pterm.Info.Println("\n--setup-only specified, not connecting.")
 		pterm.Info.Printf("To connect manually:\n")
 		pterm.Info.Printf("  ssh -o 'ProxyCommand=websocat --binary wss://%s:2222' -i %s root@localhost\n", vmDomain, keyFile)
