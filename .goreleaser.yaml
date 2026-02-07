@@ -40,7 +40,7 @@ brews:
 
 npms:
   - name: "@onkernel/cli"
-    repository: "https://github.com/kernel"
+    repository: "https://github.com/kernel/cli"
     bugs: https://github.com/kernel/cli/issues
     description: Kernel CLI
     homepage: https://www.kernel.sh/docs
