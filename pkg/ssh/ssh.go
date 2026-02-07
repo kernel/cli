@@ -23,6 +23,7 @@ type Config struct {
 	LocalForward  string // -L flag value
 	RemoteForward string // -R flag value
 	SetupOnly     bool
+	Output        string // "json" for machine-readable output
 }
 
 // KeyPair holds an SSH keypair
