@@ -189,8 +189,11 @@ func (c AgentAuthCmd) Create(ctx context.Context, in AgentAuthCreateInput) error
 		{"Status", string(agent.Status)},
 		{"Can Reauth", fmt.Sprintf("%t", agent.CanReauth)},
 	}
-	if agent.CredentialName != "" {
-		tableData = append(tableData, []string{"Credential Name", agent.CredentialName})
+	if agent.Credential.Name != "" {
+		tableData = append(tableData, []string{"Credential Name", agent.Credential.Name})
+	}
+	if agent.Credential.Provider != "" {
+		tableData = append(tableData, []string{"Credential Provider", agent.Credential.Provider})
 	}
 
 	PrintTableNoPad(tableData, true)
@@ -223,8 +226,11 @@ func (c AgentAuthCmd) Get(ctx context.Context, in AgentAuthGetInput) error {
 	if agent.CredentialID != "" {
 		tableData = append(tableData, []string{"Credential ID", agent.CredentialID})
 	}
-	if agent.CredentialName != "" {
-		tableData = append(tableData, []string{"Credential Name", agent.CredentialName})
+	if agent.Credential.Name != "" {
+		tableData = append(tableData, []string{"Credential Name", agent.Credential.Name})
+	}
+	if agent.Credential.Provider != "" {
+		tableData = append(tableData, []string{"Credential Provider", agent.Credential.Provider})
 	}
 	if agent.PostLoginURL != "" {
 		tableData = append(tableData, []string{"Post-Login URL", agent.PostLoginURL})

@@ -20,6 +20,7 @@ type CredentialProvidersService interface {
 	List(ctx context.Context, opts ...option.RequestOption) (res *[]kernel.CredentialProvider, err error)
 	Delete(ctx context.Context, id string, opts ...option.RequestOption) (err error)
 	Test(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.CredentialProviderTestResult, err error)
+	ListItems(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.CredentialProviderListItemsResponse, err error)
 }
 
 // CredentialProvidersCmd handles credential provider operations independent of cobra.
@@ -58,6 +59,11 @@ type CredentialProvidersDeleteInput struct {
 }
 
 type CredentialProvidersTestInput struct {
+	ID     string
+	Output string
+}
+
+type CredentialProvidersListItemsInput struct {
 	ID     string
 	Output string
 }
@@ -281,6 +287,51 @@ func (c CredentialProvidersCmd) Test(ctx context.Context, in CredentialProviders
 	return nil
 }
 
+func (c CredentialProvidersCmd) ListItems(ctx context.Context, in CredentialProvidersListItemsInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
+	if in.Output != "json" {
+		pterm.Info.Printf("Listing items for credential provider '%s'...\n", in.ID)
+	}
+
+	result, err := c.providers.ListItems(ctx, in.ID)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		if len(result.Items) == 0 {
+			fmt.Println("[]")
+			return nil
+		}
+		return util.PrintPrettyJSONSlice(result.Items)
+	}
+
+	if len(result.Items) == 0 {
+		pterm.Info.Println("No items found")
+		return nil
+	}
+
+	tableData := pterm.TableData{{"Path", "Title", "Vault", "URLs"}}
+	for _, item := range result.Items {
+		urls := ""
+		if len(item.URLs) > 0 {
+			urls = strings.Join(item.URLs, ", ")
+		}
+		tableData = append(tableData, []string{
+			item.Path,
+			item.Title,
+			item.VaultName,
+			urls,
+		})
+	}
+
+	PrintTableNoPad(tableData, true)
+	return nil
+}
+
 // --- Cobra wiring ---
 
 var credentialProvidersCmd = &cobra.Command{
@@ -345,6 +396,14 @@ var credentialProvidersTestCmd = &cobra.Command{
 	RunE:  runCredentialProvidersTest,
 }
 
+var credentialProvidersListItemsCmd = &cobra.Command{
+	Use:   "list-items <id>",
+	Short: "List items from a credential provider",
+	Long:  `List all credential items available from the specified external credential provider.`,
+	Args:  cobra.ExactArgs(1),
+	RunE:  runCredentialProvidersListItems,
+}
+
 func init() {
 	credentialProvidersCmd.AddCommand(credentialProvidersListCmd)
 	credentialProvidersCmd.AddCommand(credentialProvidersGetCmd)
@@ -352,6 +411,7 @@ func init() {
 	credentialProvidersCmd.AddCommand(credentialProvidersUpdateCmd)
 	credentialProvidersCmd.AddCommand(credentialProvidersDeleteCmd)
 	credentialProvidersCmd.AddCommand(credentialProvidersTestCmd)
+	credentialProvidersCmd.AddCommand(credentialProvidersListItemsCmd)
 
 	// List flags
 	credentialProvidersListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
@@ -379,6 +439,9 @@ func init() {
 
 	// Test flags
 	credentialProvidersTestCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+
+	// ListItems flags
+	credentialProvidersListItemsCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 }
 
 func runCredentialProvidersList(cmd *cobra.Command, args []string) error {
@@ -460,6 +523,18 @@ func runCredentialProvidersTest(cmd *cobra.Command, args []string) error {
 	svc := client.CredentialProviders
 	c := CredentialProvidersCmd{providers: &svc}
 	return c.Test(cmd.Context(), CredentialProvidersTestInput{
+		ID:     args[0],
+		Output: output,
+	})
+}
+
+func runCredentialProvidersListItems(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	output, _ := cmd.Flags().GetString("output")
+
+	svc := client.CredentialProviders
+	c := CredentialProvidersCmd{providers: &svc}
+	return c.ListItems(cmd.Context(), CredentialProvidersListItemsInput{
 		ID:     args[0],
 		Output: output,
 	})
