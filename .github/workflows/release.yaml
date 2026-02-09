@@ -19,6 +19,7 @@ jobs:
         with:
           app-id: ${{ secrets.ADMIN_APP_ID }}
           private-key: ${{ secrets.ADMIN_APP_PRIVATE_KEY }}
+          repositories: cli,homebrew-tap
 
       - name: Checkout
         uses: actions/checkout@v4
