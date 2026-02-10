@@ -402,6 +402,10 @@ func (c AuthConnectionCmd) Follow(ctx context.Context, in AuthConnectionFollowIn
 	}
 
 	stream := c.svc.FollowStreaming(ctx, in.ID)
+	if stream == nil {
+		pterm.Error.Println("failed to open follow stream")
+		return nil
+	}
 	defer stream.Close()
 
 	if in.Output != "json" {
