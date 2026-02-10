@@ -1,6 +1,9 @@
 package util
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // OrDash returns the string if non-empty, otherwise returns "-".
 func OrDash(s string) string {
@@ -28,4 +31,18 @@ func JoinOrDash(items ...string) string {
 		return "-"
 	}
 	return strings.Join(items, ", ")
+}
+
+// FormatBytes formats bytes in a human-readable format
+func FormatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
