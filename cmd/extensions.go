@@ -319,14 +319,10 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 
 	// Pre-flight size check
 	if in.Output != "json" {
-		pterm.Info.Println("Analyzing extension directory...")
+		pterm.Info.Println("Compressing extension directory...")
 	}
 
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("kernel_ext_%d.zip", time.Now().UnixNano()))
-
-	if in.Output != "json" {
-		pterm.Info.Println("Zipping extension directory...")
-	}
 
 	if err := util.ZipDirectory(absDir, tmpFile, &defaultExtensionExclusions); err != nil {
 		pterm.Error.Println("Failed to zip directory")
@@ -344,8 +340,8 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 	}
 
 	if fileInfo.Size() > MaxExtensionSizeBytes {
-		pterm.Error.Printf("Extension bundle is too large: %s (max: 50MB)\n",
-			util.FormatBytes(fileInfo.Size()))
+		pterm.Error.Printf("Extension bundle is too large: %s (max: %s)\n",
+			util.FormatBytes(fileInfo.Size()), util.FormatBytes(MaxExtensionSizeBytes))
 		pterm.Info.Println("\nSuggestions to reduce size:")
 		pterm.Info.Println("  1. Ensure you're building the extension for production")
 		pterm.Info.Println("  2. Remove unnecessary assets (large images, videos)")
