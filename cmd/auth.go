@@ -24,9 +24,11 @@ type JWTClaims struct {
 
 var authCmd = &cobra.Command{
 	Use:   "auth",
-	Short: "Show current authentication status",
+	Short: "Show authentication status and manage auth connections",
 	Long: `Display information about the current authentication state, including logged-in user details and token expiry.
-Use --log-level debug to show additional details like user ID and storage method.`,
+Use --log-level debug to show additional details like user ID and storage method.
+
+Use "kernel auth connections" to manage managed auth connections for automated login flows.`,
 	RunE: runAuth,
 }
 
