@@ -404,8 +404,9 @@ var browserPoolsListCmd = &cobra.Command{
 }
 
 var browserPoolsCreateCmd = &cobra.Command{
-	Use:   "create",
+	Use:   "create [name]",
 	Short: "Create a new browser pool",
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runBrowserPoolsCreate,
 }
 
@@ -517,7 +518,11 @@ func runBrowserPoolsList(cmd *cobra.Command, args []string) error {
 func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 
+	// Name can be provided as positional argument or via --name flag
 	name, _ := cmd.Flags().GetString("name")
+	if len(args) > 0 && args[0] != "" {
+		name = args[0]
+	}
 	size, _ := cmd.Flags().GetInt64("size")
 	fillRate, _ := cmd.Flags().GetInt64("fill-rate")
 	timeout, _ := cmd.Flags().GetInt64("timeout")
