@@ -35,11 +35,20 @@ var invocationHistoryCmd = &cobra.Command{
 	RunE:  runInvocationHistory,
 }
 
+var invocationBrowsersCmd = &cobra.Command{
+	Use:   "browsers <invocation_id>",
+	Short: "List browser sessions for an invocation",
+	Long:  "List all active browser sessions created within a specific invocation.",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runInvocationBrowsers,
+}
+
 func init() {
 	invokeCmd.Flags().StringP("version", "v", "latest", "Specify a version of the app to invoke (optional, defaults to 'latest')")
 	invokeCmd.Flags().StringP("payload", "p", "", "JSON payload for the invocation (optional)")
 	invokeCmd.Flags().StringP("payload-file", "f", "", "Path to a JSON file containing the payload (use '-' for stdin)")
 	invokeCmd.Flags().BoolP("sync", "s", false, "Invoke synchronously (default false). A synchronous invocation will open a long-lived HTTP POST to the Kernel API to wait for the invocation to complete. This will time out after 60 seconds, so only use this option if you expect your invocation to complete in less than 60 seconds. The default is to invoke asynchronously, in which case the CLI will open an SSE connection to the Kernel API after submitting the invocation and wait for the invocation to complete.")
+	invokeCmd.Flags().Int64("async-timeout", 0, "Timeout in seconds for async invocations (min 10, max 3600). Only applies when async mode is used.")
 	invokeCmd.Flags().StringP("output", "o", "", "Output format: json for JSONL streaming output")
 	invokeCmd.MarkFlagsMutuallyExclusive("payload", "payload-file")
 
@@ -48,6 +57,9 @@ func init() {
 	invocationHistoryCmd.Flags().String("version", "", "Filter by invocation version")
 	invocationHistoryCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	invokeCmd.AddCommand(invocationHistoryCmd)
+
+	invocationBrowsersCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	invokeCmd.AddCommand(invocationBrowsersCmd)
 }
 
 func runInvoke(cmd *cobra.Command, args []string) error {
@@ -70,11 +82,15 @@ func runInvoke(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("version cannot be an empty string")
 	}
 	isSync, _ := cmd.Flags().GetBool("sync")
+	asyncTimeout, _ := cmd.Flags().GetInt64("async-timeout")
 	params := kernel.InvocationNewParams{
 		AppName:    appName,
 		ActionName: actionName,
 		Version:    version,
 		Async:      kernel.Opt(!isSync),
+	}
+	if asyncTimeout > 0 {
+		params.AsyncTimeoutSeconds = kernel.Opt(asyncTimeout)
 	}
 
 	payloadStr, hasPayload, err := getPayload(cmd)
@@ -179,21 +195,21 @@ func runInvoke(cmd *cobra.Command, args []string) error {
 			if err == nil {
 				fmt.Println(string(bs))
 			}
-		// Check for terminal states
-		if ev.Event == "invocation_state" {
-			stateEv := ev.AsInvocationState()
-			status := stateEv.Invocation.Status
-			if status == string(kernel.InvocationGetResponseStatusSucceeded) {
-				return nil
+			// Check for terminal states
+			if ev.Event == "invocation_state" {
+				stateEv := ev.AsInvocationState()
+				status := stateEv.Invocation.Status
+				if status == string(kernel.InvocationGetResponseStatusSucceeded) {
+					return nil
+				}
+				if status == string(kernel.InvocationGetResponseStatusFailed) {
+					return fmt.Errorf("invocation failed")
+				}
 			}
-			if status == string(kernel.InvocationGetResponseStatusFailed) {
-				return fmt.Errorf("invocation failed")
+			if ev.Event == "error" {
+				errEv := ev.AsError()
+				return fmt.Errorf("%s: %s", errEv.Error.Code, errEv.Error.Message)
 			}
-		}
-		if ev.Event == "error" {
-			errEv := ev.AsError()
-			return fmt.Errorf("%s: %s", errEv.Error.Code, errEv.Error.Message)
-		}
 			continue
 		}
 
@@ -426,5 +442,62 @@ func runInvocationHistory(cmd *cobra.Command, args []string) error {
 	} else {
 		pterm.DefaultTable.WithHasHeader().WithData(table).Render()
 	}
+	return nil
+}
+
+func runInvocationBrowsers(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	invocationID := args[0]
+	output, _ := cmd.Flags().GetString("output")
+
+	if output != "" && output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
+	resp, err := client.Invocations.ListBrowsers(cmd.Context(), invocationID)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if resp == nil {
+		pterm.Info.Printf("No active browsers found for invocation %s\n", invocationID)
+		return nil
+	}
+
+	if output == "json" {
+		if len(resp.Browsers) == 0 {
+			fmt.Println("[]")
+			return nil
+		}
+		return util.PrintPrettyJSONSlice(resp.Browsers)
+	}
+
+	if len(resp.Browsers) == 0 {
+		pterm.Info.Printf("No active browsers found for invocation %s\n", invocationID)
+		return nil
+	}
+
+	table := pterm.TableData{{"Session ID", "Created At", "Headless", "Stealth", "Timeout", "CDP WS URL", "Live View URL"}}
+
+	for _, browser := range resp.Browsers {
+		created := util.FormatLocal(browser.CreatedAt)
+		liveView := browser.BrowserLiveViewURL
+		if liveView == "" {
+			liveView = "-"
+		}
+
+		table = append(table, []string{
+			browser.SessionID,
+			created,
+			fmt.Sprintf("%v", browser.Headless),
+			fmt.Sprintf("%v", browser.Stealth),
+			fmt.Sprintf("%d", browser.TimeoutSeconds),
+			truncateURL(browser.CdpWsURL, 40),
+			truncateURL(liveView, 40),
+		})
+	}
+
+	pterm.Info.Printf("Browsers for invocation %s:\n", invocationID)
+	pterm.DefaultTable.WithHasHeader().WithData(table).Render()
 	return nil
 }
