@@ -404,8 +404,9 @@ var browserPoolsListCmd = &cobra.Command{
 }
 
 var browserPoolsCreateCmd = &cobra.Command{
-	Use:   "create",
+	Use:   "create [name]",
 	Short: "Create a new browser pool",
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runBrowserPoolsCreate,
 }
 
@@ -518,6 +519,12 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 
 	name, _ := cmd.Flags().GetString("name")
+	if len(args) > 0 && args[0] != "" {
+		if cmd.Flags().Changed("name") {
+			return fmt.Errorf("cannot specify pool name as both a positional argument and --name flag")
+		}
+		name = args[0]
+	}
 	size, _ := cmd.Flags().GetInt64("size")
 	fillRate, _ := cmd.Flags().GetInt64("fill-rate")
 	timeout, _ := cmd.Flags().GetInt64("timeout")
