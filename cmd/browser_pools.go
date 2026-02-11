@@ -518,9 +518,11 @@ func runBrowserPoolsList(cmd *cobra.Command, args []string) error {
 func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 
-	// Name can be provided as positional argument or via --name flag
 	name, _ := cmd.Flags().GetString("name")
 	if len(args) > 0 && args[0] != "" {
+		if cmd.Flags().Changed("name") {
+			return fmt.Errorf("cannot specify pool name as both a positional argument and --name flag")
+		}
 		name = args[0]
 	}
 	size, _ := cmd.Flags().GetInt64("size")
