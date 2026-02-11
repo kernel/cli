@@ -1954,7 +1954,7 @@ func (b BrowsersCmd) ExtensionsUpload(ctx context.Context, in BrowsersExtensions
 		tempZipPath := filepath.Join(os.TempDir(), fmt.Sprintf("kernel-ext-%s.zip", extName))
 
 		pterm.Info.Printf("Zipping %s as %s...\n", extPath, extName)
-		if err := util.ZipDirectory(extPath, tempZipPath); err != nil {
+		if err := util.ZipDirectory(extPath, tempZipPath, nil); err != nil {
 			pterm.Error.Printf("Failed to zip %s: %v\n", extPath, err)
 			return nil
 		}

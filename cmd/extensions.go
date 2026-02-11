@@ -18,6 +18,29 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	MaxExtensionSizeBytes = 50 * 1024 * 1024 // 50MB
+)
+
+// defaultExtensionExclusions contains patterns for files that are not needed
+// when zipping Chrome extensions
+var defaultExtensionExclusions = util.ZipOptions{
+	ExcludeDirectories: []string{
+		"node_modules",
+		".git",
+		"__tests__",
+		"coverage",
+	},
+	ExcludeFilenamePatterns: []string{
+		"*.test.js",
+		"*.test.ts",
+		"*.spec.js",
+		"*.spec.ts",
+		"*.log",
+		"*.swp",
+	},
+}
+
 // ExtensionsService defines the subset of the Kernel SDK extension client that we use.
 type ExtensionsService interface {
 	List(ctx context.Context, opts ...option.RequestOption) (res *[]kernel.ExtensionListResponse, err error)
@@ -294,15 +317,37 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 		return fmt.Errorf("directory %s does not exist", absDir)
 	}
 
-	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("kernel_ext_%d.zip", time.Now().UnixNano()))
+	// Pre-flight size check
 	if in.Output != "json" {
-		pterm.Info.Println("Zipping extension directory...")
+		pterm.Info.Println("Compressing extension directory...")
 	}
-	if err := util.ZipDirectory(absDir, tmpFile); err != nil {
+
+	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("kernel_ext_%d.zip", time.Now().UnixNano()))
+
+	if err := util.ZipDirectory(absDir, tmpFile, &defaultExtensionExclusions); err != nil {
 		pterm.Error.Println("Failed to zip directory")
 		return err
 	}
 	defer os.Remove(tmpFile)
+
+	fileInfo, err := os.Stat(tmpFile)
+	if err != nil {
+		return fmt.Errorf("failed to stat zip: %w", err)
+	}
+
+	if in.Output != "json" {
+		pterm.Success.Printf("Created bundle: %s\n", util.FormatBytes(fileInfo.Size()))
+	}
+
+	if fileInfo.Size() > MaxExtensionSizeBytes {
+		pterm.Error.Printf("Extension bundle is too large: %s (max: %s)\n",
+			util.FormatBytes(fileInfo.Size()), util.FormatBytes(MaxExtensionSizeBytes))
+		pterm.Info.Println("\nSuggestions to reduce size:")
+		pterm.Info.Println("  1. Ensure you're building the extension for production")
+		pterm.Info.Println("  2. Remove unnecessary assets (large images, videos)")
+		pterm.Info.Println("  3. Check manifest.json references only needed files")
+		return fmt.Errorf("bundle exceeds maximum size")
+	}
 
 	f, err := os.Open(tmpFile)
 	if err != nil {
@@ -310,10 +355,15 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 	}
 	defer f.Close()
 
+	if in.Output != "json" {
+		pterm.Info.Println("Uploading extension...")
+	}
+
 	params := kernel.ExtensionUploadParams{File: f}
 	if in.Name != "" {
 		params.Name = kernel.Opt(in.Name)
 	}
+
 	item, err := e.extensions.Upload(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
