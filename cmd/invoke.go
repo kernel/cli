@@ -195,21 +195,21 @@ func runInvoke(cmd *cobra.Command, args []string) error {
 			if err == nil {
 				fmt.Println(string(bs))
 			}
-		// Check for terminal states
-		if ev.Event == "invocation_state" {
-			stateEv := ev.AsInvocationState()
-			status := stateEv.Invocation.Status
-			if status == string(kernel.InvocationGetResponseStatusSucceeded) {
-				return nil
+			// Check for terminal states
+			if ev.Event == "invocation_state" {
+				stateEv := ev.AsInvocationState()
+				status := stateEv.Invocation.Status
+				if status == string(kernel.InvocationGetResponseStatusSucceeded) {
+					return nil
+				}
+				if status == string(kernel.InvocationGetResponseStatusFailed) {
+					return fmt.Errorf("invocation failed")
+				}
 			}
-			if status == string(kernel.InvocationGetResponseStatusFailed) {
-				return fmt.Errorf("invocation failed")
+			if ev.Event == "error" {
+				errEv := ev.AsError()
+				return fmt.Errorf("%s: %s", errEv.Error.Code, errEv.Error.Message)
 			}
-		}
-		if ev.Event == "error" {
-			errEv := ev.AsError()
-			return fmt.Errorf("%s: %s", errEv.Error.Code, errEv.Error.Message)
-		}
 			continue
 		}
 
@@ -456,7 +456,11 @@ func runInvocationBrowsers(cmd *cobra.Command, args []string) error {
 
 	resp, err := client.Invocations.ListBrowsers(cmd.Context(), invocationID)
 	if err != nil {
-		pterm.Error.Printf("Failed to list browsers for invocation: %v\n", err)
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if resp == nil {
+		pterm.Info.Printf("No active browsers found for invocation %s\n", invocationID)
 		return nil
 	}
 

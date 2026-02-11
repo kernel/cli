@@ -409,6 +409,9 @@ func (c AuthConnectionCmd) Follow(ctx context.Context, in AuthConnectionFollowIn
 	}
 
 	stream := c.svc.FollowStreaming(ctx, in.ID)
+	if stream == nil {
+		return fmt.Errorf("failed to establish SSE stream")
+	}
 	defer stream.Close()
 
 	if in.Output != "json" {
