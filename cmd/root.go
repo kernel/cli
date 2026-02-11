@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/fang"
 	"github.com/charmbracelet/lipgloss/v2"
+	"github.com/kernel/cli/cmd/hypeman"
 	"github.com/kernel/cli/cmd/mcp"
 	"github.com/kernel/cli/cmd/proxies"
 	"github.com/kernel/cli/pkg/auth"
@@ -90,7 +91,7 @@ func isAuthExempt(cmd *cobra.Command) bool {
 
 	// Check if the top-level command is in the exempt list
 	switch topLevel.Name() {
-	case "login", "logout", "help", "completion", "create", "mcp", "upgrade":
+	case "login", "logout", "help", "completion", "create", "mcp", "upgrade", "hypeman":
 		return true
 	case "auth":
 		// Only exempt the auth command itself (status display), not its subcommands
@@ -146,6 +147,7 @@ func init() {
 	rootCmd.AddCommand(credentialProvidersCmd)
 	rootCmd.AddCommand(createCmd)
 	rootCmd.AddCommand(mcp.MCPCmd)
+	rootCmd.AddCommand(hypeman.HypemanCmd)
 	rootCmd.AddCommand(upgradeCmd)
 
 	rootCmd.PersistentPostRunE = func(cmd *cobra.Command, args []string) error {
