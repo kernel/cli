@@ -64,9 +64,10 @@ type AuthConnectionDeleteInput struct {
 }
 
 type AuthConnectionLoginInput struct {
-	ID               string
-	SaveCredentialAs string
-	Output           string
+	ID        string
+	ProxyID   string
+	ProxyName string
+	Output    string
 }
 
 type AuthConnectionSubmitInput struct {
@@ -129,7 +130,7 @@ func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateIn
 
 	if in.ProxyID != "" {
 		params.ManagedAuthCreateRequest.Proxy = kernel.ManagedAuthCreateRequestProxyParam{
-			ProxyID: kernel.Opt(in.ProxyID),
+			ID: kernel.Opt(in.ProxyID),
 		}
 	}
 
@@ -315,8 +316,14 @@ func (c AuthConnectionCmd) Login(ctx context.Context, in AuthConnectionLoginInpu
 	}
 
 	params := kernel.AuthConnectionLoginParams{}
-	if in.SaveCredentialAs != "" {
-		params.LoginRequest.SaveCredentialAs = kernel.Opt(in.SaveCredentialAs)
+	if in.ProxyID != "" || in.ProxyName != "" {
+		params.Proxy = kernel.AuthConnectionLoginParamsProxy{}
+		if in.ProxyID != "" {
+			params.Proxy.ID = kernel.Opt(in.ProxyID)
+		}
+		if in.ProxyName != "" {
+			params.Proxy.Name = kernel.Opt(in.ProxyName)
+		}
 	}
 
 	if in.Output != "json" {
@@ -559,7 +566,8 @@ func init() {
 
 	// Login flags
 	authConnectionsLoginCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
-	authConnectionsLoginCmd.Flags().String("save-credential-as", "", "Save credentials under this name on success")
+	authConnectionsLoginCmd.Flags().String("proxy-id", "", "Proxy ID to use for this login")
+	authConnectionsLoginCmd.Flags().String("proxy-name", "", "Proxy name to use for this login")
 
 	// Submit flags
 	authConnectionsSubmitCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
@@ -659,14 +667,16 @@ func runAuthConnectionsDelete(cmd *cobra.Command, args []string) error {
 func runAuthConnectionsLogin(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	output, _ := cmd.Flags().GetString("output")
-	saveCredentialAs, _ := cmd.Flags().GetString("save-credential-as")
+	proxyID, _ := cmd.Flags().GetString("proxy-id")
+	proxyName, _ := cmd.Flags().GetString("proxy-name")
 
 	svc := client.Auth.Connections
 	c := AuthConnectionCmd{svc: &svc}
 	return c.Login(cmd.Context(), AuthConnectionLoginInput{
-		ID:               args[0],
-		SaveCredentialAs: saveCredentialAs,
-		Output:           output,
+		ID:        args[0],
+		ProxyID:   proxyID,
+		ProxyName: proxyName,
+		Output:    output,
 	})
 }
 

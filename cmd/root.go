@@ -141,7 +141,6 @@ func init() {
 	rootCmd.AddCommand(extensionsCmd)
 	rootCmd.AddCommand(credentialsCmd)
 	rootCmd.AddCommand(credentialProvidersCmd)
-	rootCmd.AddCommand(agentsCmd)
 	rootCmd.AddCommand(createCmd)
 	rootCmd.AddCommand(mcp.MCPCmd)
 	rootCmd.AddCommand(upgradeCmd)
