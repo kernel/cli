@@ -82,6 +82,14 @@ func isAuthExempt(cmd *cobra.Command) bool {
 		return true
 	}
 
+	// auth connections subcommands require authentication even though
+	// the parent "auth" command is exempt.
+	for c := cmd; c != nil; c = c.Parent() {
+		if c == authConnectionsCmd {
+			return false
+		}
+	}
+
 	// Walk up to find the top-level command (direct child of rootCmd)
 	topLevel := cmd
 	for topLevel.Parent() != nil && topLevel.Parent() != rootCmd {

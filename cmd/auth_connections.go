@@ -371,9 +371,10 @@ func (c AuthConnectionCmd) Submit(ctx context.Context, in AuthConnectionSubmitIn
 	}
 
 	params := kernel.AuthConnectionSubmitParams{
-		SubmitFieldsRequest: kernel.SubmitFieldsRequestParam{
-			Fields: in.FieldValues,
-		},
+		SubmitFieldsRequest: kernel.SubmitFieldsRequestParam{},
+	}
+	if hasFields {
+		params.SubmitFieldsRequest.Fields = in.FieldValues
 	}
 	if hasMfaOption {
 		params.SubmitFieldsRequest.MfaOptionID = kernel.Opt(in.MfaOptionID)
