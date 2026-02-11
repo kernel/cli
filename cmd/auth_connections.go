@@ -41,6 +41,9 @@ type AuthConnectionCreateInput struct {
 	CredentialPath      string
 	CredentialAuto      bool
 	ProxyID             string
+	ProxyName           string
+	SaveCredentials     bool
+	NoSaveCredentials   bool
 	HealthCheckInterval int
 	Output              string
 }
@@ -128,10 +131,18 @@ func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateIn
 		}
 	}
 
-	if in.ProxyID != "" {
-		params.ManagedAuthCreateRequest.Proxy = kernel.ManagedAuthCreateRequestProxyParam{
-			ID: kernel.Opt(in.ProxyID),
+	if in.ProxyID != "" || in.ProxyName != "" {
+		params.ManagedAuthCreateRequest.Proxy = kernel.ManagedAuthCreateRequestProxyParam{}
+		if in.ProxyID != "" {
+			params.ManagedAuthCreateRequest.Proxy.ID = kernel.Opt(in.ProxyID)
 		}
+		if in.ProxyName != "" {
+			params.ManagedAuthCreateRequest.Proxy.Name = kernel.Opt(in.ProxyName)
+		}
+	}
+
+	if in.NoSaveCredentials {
+		params.ManagedAuthCreateRequest.SaveCredentials = kernel.Opt(false)
 	}
 
 	if in.Output != "json" {
@@ -549,7 +560,9 @@ func init() {
 	authConnectionsCreateCmd.Flags().String("credential-provider", "", "External credential provider name")
 	authConnectionsCreateCmd.Flags().String("credential-path", "", "Provider-specific path (e.g., VaultName/ItemName)")
 	authConnectionsCreateCmd.Flags().Bool("credential-auto", false, "Lookup by domain from the specified provider")
-	authConnectionsCreateCmd.Flags().String("proxy-id", "", "Optional proxy ID to use")
+	authConnectionsCreateCmd.Flags().String("proxy-id", "", "Proxy ID to use")
+	authConnectionsCreateCmd.Flags().String("proxy-name", "", "Proxy name to use")
+	authConnectionsCreateCmd.Flags().Bool("no-save-credentials", false, "Disable saving credentials after successful login")
 	authConnectionsCreateCmd.Flags().Int("health-check-interval", 0, "Interval in seconds between health checks (300-86400)")
 	_ = authConnectionsCreateCmd.MarkFlagRequired("domain")
 	_ = authConnectionsCreateCmd.MarkFlagRequired("profile-name")
@@ -605,6 +618,8 @@ func runAuthConnectionsCreate(cmd *cobra.Command, args []string) error {
 	credentialPath, _ := cmd.Flags().GetString("credential-path")
 	credentialAuto, _ := cmd.Flags().GetBool("credential-auto")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
+	proxyName, _ := cmd.Flags().GetString("proxy-name")
+	noSaveCredentials, _ := cmd.Flags().GetBool("no-save-credentials")
 	healthCheckInterval, _ := cmd.Flags().GetInt("health-check-interval")
 
 	svc := client.Auth.Connections
@@ -619,6 +634,8 @@ func runAuthConnectionsCreate(cmd *cobra.Command, args []string) error {
 		CredentialPath:      credentialPath,
 		CredentialAuto:      credentialAuto,
 		ProxyID:             proxyID,
+		ProxyName:           proxyName,
+		NoSaveCredentials:   noSaveCredentials,
 		HealthCheckInterval: healthCheckInterval,
 		Output:              output,
 	})

@@ -90,8 +90,11 @@ func isAuthExempt(cmd *cobra.Command) bool {
 
 	// Check if the top-level command is in the exempt list
 	switch topLevel.Name() {
-	case "login", "logout", "auth", "help", "completion", "create", "mcp", "upgrade":
+	case "login", "logout", "help", "completion", "create", "mcp", "upgrade":
 		return true
+	case "auth":
+		// Only exempt the auth command itself (status display), not its subcommands
+		return cmd == topLevel
 	}
 
 	return false
