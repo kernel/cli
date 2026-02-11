@@ -42,8 +42,7 @@ type AuthConnectionCreateInput struct {
 	CredentialAuto      bool
 	ProxyID             string
 	ProxyName           string
-	SaveCredentials     bool
-	NoSaveCredentials   bool
+	NoSaveCredentials bool
 	HealthCheckInterval int
 	Output              string
 }
