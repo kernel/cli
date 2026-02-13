@@ -373,7 +373,11 @@ func (c BrowserPoolsCmd) Release(ctx context.Context, in BrowserPoolsReleaseInpu
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	pterm.Success.Printf("Released browser %s back to pool %s\n", in.SessionID, in.IDOrName)
+	if in.Reuse.Set && !in.Reuse.Value {
+		pterm.Success.Printf("Deleted browser %s from pool %s\n", in.SessionID, in.IDOrName)
+	} else {
+		pterm.Success.Printf("Released browser %s back to pool %s\n", in.SessionID, in.IDOrName)
+	}
 	return nil
 }
 
