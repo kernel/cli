@@ -72,7 +72,7 @@ interface SamplingLoopResult {
 }
 
 export async function samplingLoop({
-  model = 'n1-preview-2025-11',
+  model = 'n1-latest',
   task,
   apiKey,
   kernel,

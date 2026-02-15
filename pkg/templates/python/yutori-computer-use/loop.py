@@ -41,7 +41,7 @@ class N1ComputerToolProtocol(Protocol):
 
 async def sampling_loop(
     *,
-    model: str = "n1-preview-2025-11",
+    model: str = "n1-latest",
     task: str,
     api_key: str,
     kernel: Kernel,
