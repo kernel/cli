@@ -124,6 +124,7 @@ func getAvailableViewports() []string {
 		"1920x1080@25",
 		"1920x1200@25",
 		"1440x900@25",
+		"1280x800@60",
 		"1024x768@60",
 		"1200x800@60",
 	}
@@ -221,6 +222,7 @@ type BrowsersCmd struct {
 type BrowsersListInput struct {
 	Output         string
 	IncludeDeleted bool
+	Status         string
 	Limit          int
 	Offset         int
 }
@@ -231,7 +233,19 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	}
 
 	params := kernel.BrowserListParams{}
-	if in.IncludeDeleted {
+	// Use new Status parameter if provided, otherwise fall back to deprecated IncludeDeleted
+	if in.Status != "" {
+		switch in.Status {
+		case "active":
+			params.Status = kernel.BrowserListParamsStatusActive
+		case "deleted":
+			params.Status = kernel.BrowserListParamsStatusDeleted
+		case "all":
+			params.Status = kernel.BrowserListParamsStatusAll
+		default:
+			return fmt.Errorf("invalid --status value: %s (must be 'active', 'deleted', or 'all')", in.Status)
+		}
+	} else if in.IncludeDeleted {
 		params.IncludeDeleted = kernel.Opt(true)
 	}
 	if in.Limit > 0 {
@@ -262,7 +276,8 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 
 	// Prepare table data
 	headers := []string{"Browser ID", "Created At", "Persistent ID", "Profile", "CDP WS URL", "Live View URL"}
-	if in.IncludeDeleted {
+	showDeletedAt := in.IncludeDeleted || in.Status == "deleted" || in.Status == "all"
+	if showDeletedAt {
 		headers = append(headers, "Deleted At")
 	}
 	tableData := pterm.TableData{headers}
@@ -289,7 +304,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 			truncateURL(browser.BrowserLiveViewURL, 50),
 		}
 
-		if in.IncludeDeleted {
+		if showDeletedAt {
 			deletedAt := "-"
 			if !browser.DeletedAt.IsZero() {
 				deletedAt = util.FormatLocal(browser.DeletedAt)
@@ -1939,7 +1954,7 @@ func (b BrowsersCmd) ExtensionsUpload(ctx context.Context, in BrowsersExtensions
 		tempZipPath := filepath.Join(os.TempDir(), fmt.Sprintf("kernel-ext-%s.zip", extName))
 
 		pterm.Info.Printf("Zipping %s as %s...\n", extPath, extName)
-		if err := util.ZipDirectory(extPath, tempZipPath); err != nil {
+		if err := util.ZipDirectory(extPath, tempZipPath, nil); err != nil {
 			pterm.Error.Printf("Failed to zip %s: %v\n", extPath, err)
 			return nil
 		}
@@ -2052,7 +2067,8 @@ Note: Profiles can only be loaded into sessions that don't already have a profil
 func init() {
 	// list flags
 	browsersListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
-	browsersListCmd.Flags().Bool("include-deleted", false, "Include soft-deleted browser sessions in the results")
+	browsersListCmd.Flags().Bool("include-deleted", false, "DEPRECATED: Use --status instead. Include soft-deleted browser sessions in the results")
+	browsersListCmd.Flags().String("status", "", "Filter by status: 'active' (default), 'deleted', or 'all'")
 	browsersListCmd.Flags().Int("limit", 0, "Maximum number of results to return (default 20, max 100)")
 	browsersListCmd.Flags().Int("offset", 0, "Number of results to skip (for pagination)")
 
@@ -2069,7 +2085,7 @@ func init() {
 	browsersUpdateCmd.Flags().String("profile-id", "", "Profile ID to load into the browser session (mutually exclusive with --profile-name)")
 	browsersUpdateCmd.Flags().String("profile-name", "", "Profile name to load into the browser session (mutually exclusive with --profile-id)")
 	browsersUpdateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
-	browsersUpdateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60")
+	browsersUpdateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 
 	browsersCmd.AddCommand(browsersListCmd)
 	browsersCmd.AddCommand(browsersCreateCmd)
@@ -2077,6 +2093,9 @@ func init() {
 	browsersCmd.AddCommand(browsersViewCmd)
 	browsersCmd.AddCommand(browsersGetCmd)
 	browsersCmd.AddCommand(browsersUpdateCmd)
+
+	// ssh
+	browsersCmd.AddCommand(sshCmd)
 
 	// logs
 	logsRoot := &cobra.Command{Use: "logs", Short: "Browser logs operations"}
@@ -2304,7 +2323,7 @@ func init() {
 	browsersCreateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
 	browsersCreateCmd.Flags().String("proxy-id", "", "Proxy ID to use for the browser session")
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
-	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60")
+	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersCreateCmd.Flags().Bool("viewport-interactive", false, "Interactively select viewport size from list")
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
@@ -2318,11 +2337,13 @@ func runBrowsersList(cmd *cobra.Command, args []string) error {
 	b := BrowsersCmd{browsers: &svc}
 	out, _ := cmd.Flags().GetString("output")
 	includeDeleted, _ := cmd.Flags().GetBool("include-deleted")
+	status, _ := cmd.Flags().GetString("status")
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
 	return b.List(cmd.Context(), BrowsersListInput{
 		Output:         out,
 		IncludeDeleted: includeDeleted,
+		Status:         status,
 		Limit:          limit,
 		Offset:         offset,
 	})
