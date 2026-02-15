@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "VLM browser agent evaluation using Eval Protocol with Kernel"
 requires-python = ">=3.10"
 dependencies = [
-    "eval-protocol>=0.3.11",
+    "httpx>=0.27.0",
     "kernel>=0.23.0",
     "openai>=2.13.0",
     "pillow>=12.0.0",

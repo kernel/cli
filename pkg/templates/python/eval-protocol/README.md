@@ -61,7 +61,7 @@ kernel invoke python-eval-protocol run-rollout --payload '{
 
 #### 2. Run Evaluation
 
-Run parallel evaluation on the task dataset:
+Run parallel evaluation on the task dataset. The response includes `results_jsonl` containing the scored trajectories in Fireworks RFT dataset format — pass this directly to `create-rft-job`:
 
 ```bash
 # With existing pool
@@ -70,23 +70,33 @@ kernel invoke python-eval-protocol run-evaluation --payload '{
   "max_tasks": 10
 }'
 
-# Create ephemeral pool
+# With ephemeral pool
 kernel invoke python-eval-protocol run-evaluation --payload '{
   "pool_size": 20,
   "max_tasks": 50
 }'
 ```
 
+The response `results_jsonl` field contains the JSONL content to pass to `create-rft-job`.
+
 #### 3. Create RFT Job
 
-Create a reinforcement fine-tuning job from evaluation results:
+Create a reinforcement fine-tuning job via the Fireworks API (no CLI required). Takes the inline JSONL from `run-evaluation` and a pre-created evaluator on Fireworks.
+
+**One-time setup:** Create an evaluator in the [Fireworks dashboard](https://app.fireworks.ai/dashboard/evaluators) (or via their API). Note your **Account ID** (from dashboard URL or account settings) and **Evaluator ID**.
 
 ```bash
+# Pass results_jsonl from run-evaluation response
 kernel invoke python-eval-protocol create-rft-job --payload '{
+  "account_id": "YOUR_FIREWORKS_ACCOUNT_ID",
+  "results_jsonl": "<paste results_jsonl from run-evaluation output>",
+  "evaluator_id": "YOUR_EVALUATOR_ID",
   "base_model": "accounts/fireworks/models/qwen3-vl-8b-instruct",
   "epochs": 4
 }'
 ```
+
+Returns `job_id`, `dataset_id`, `status`, and `dashboard_url` for monitoring.
 
 ## Architecture
 
@@ -98,7 +108,8 @@ kernel invoke python-eval-protocol create-rft-job --payload '{
 │  │  2. Create/use browser pool                              │  │
 │  │  3. Run tasks in parallel (concurrency = pool size)      │  │
 │  │  4. Score each trajectory with WebJudge                  │  │
-│  │  5. Aggregate and return results                         │  │
+│  │  5. Build JSONL content (returned inline as results_jsonl)  │  │
+│  │  6. Aggregate and return results                            │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                            │                                    │
 │                            ▼                                    │
@@ -132,6 +143,7 @@ eval-protocol/
 │   ├── agent.py               # QwenAgent VLM agent
 │   ├── agent_loop.py          # Multi-step agent loop
 │   ├── browser.py             # Kernel browser adapter
+│   ├── fireworks_api.py       # Fireworks REST API (dataset + RFT job)
 │   ├── prompts.py             # System prompt builder
 │   ├── utils.py               # Image processing utilities
 │   └── reward_models/
@@ -183,6 +195,24 @@ Uses browser pools for scaled parallel evaluation.
 | `model` | string | qwen3-vl-30b-a3b | VLM model |
 | `score_threshold` | float | 0.5 | Pass threshold |
 | `max_tasks` | int | null | Limit tasks |
+
+Response includes `results_jsonl` (JSONL content) for use with `create-rft-job`.
+
+#### create-rft-job
+
+Accepts inline JSONL from `run-evaluation`, uploads it to Fireworks, and creates an RFT job via API. Requires a pre-created evaluator on Fireworks.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `account_id` | string | yes | Fireworks account ID (from dashboard) |
+| `results_jsonl` | string | yes | JSONL content from `run-evaluation` response |
+| `evaluator_id` | string | yes | Fireworks evaluator ID or resource name |
+| `base_model` | string | yes | Base model to fine-tune (e.g. accounts/fireworks/models/qwen3-vl-8b-instruct) |
+| `output_model` | string | no | Custom output model ID |
+| `chunk_size` | int | no | 50 |
+| `max_context_length` | int | no | 32768 |
+| `batch_size` | int | no | 32768 |
+| `epochs` | int | no | 4 |
 
 ## Related
 

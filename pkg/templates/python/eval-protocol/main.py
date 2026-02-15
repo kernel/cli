@@ -21,7 +21,7 @@ import io
 import json
 import logging
 import os
-import subprocess
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, TypedDict
 
@@ -32,6 +32,14 @@ from PIL import Image
 from core.agent import AgentConfig, QwenAgent
 from core.agent_loop import run_agent_loop
 from core.browser import KernelBrowserAdapter, acquired_browser
+from core.fireworks_api import (
+    create_dataset,
+    create_rft_job as api_create_rft_job,
+    dataset_resource_name,
+    evaluator_resource_name,
+    upload_dataset,
+    wait_for_dataset_ready,
+)
 from core.prompts import get_system_prompt
 from core.reward_models.base import Trajectory
 from core.reward_models.webjudge import WebJudge
@@ -110,10 +118,15 @@ class EvaluationOutput(TypedDict):
     average_score: float
     results: list[dict]  # Per-task results with scores, trajectories
     pool_used: str  # Name of pool used
+    results_jsonl: str  # JSONL content (Fireworks RFT dataset format) — pass to create-rft-job
 
 
 class RftInput(TypedDict, total=False):
-    base_model: str  # e.g., "accounts/fireworks/models/qwen3-vl-8b-instruct" (required)
+    account_id: str  # Fireworks account ID from dashboard (required)
+    results_jsonl: str  # JSONL content from run-evaluation's results_jsonl field (required)
+    evaluator_id: str  # Fireworks evaluator resource name or ID (required)
+    base_model: str  # e.g. "accounts/fireworks/models/qwen3-vl-8b-instruct" (required)
+    output_model: Optional[str]  # Custom output model ID (optional)
     chunk_size: Optional[int]  # default: 50
     max_context_length: Optional[int]  # default: 32768
     batch_size: Optional[int]  # default: 32768
@@ -123,7 +136,8 @@ class RftInput(TypedDict, total=False):
 class RftOutput(TypedDict):
     job_id: str
     status: str
-    command_used: str
+    dataset_id: str  # Uploaded dataset ID
+    dashboard_url: str  # Link to Fireworks dashboard for monitoring
 
 
 # =============================================================================
@@ -424,6 +438,20 @@ async def run_evaluation(
 
     print(f"Evaluation complete: {passed}/{len(results)} passed ({avg_score:.2%} avg score)")
 
+    # Build JSONL content in Fireworks RFT dataset format
+    system_prompt = get_agent_auth_system_prompt()
+    jsonl_lines = []
+    for r in results:
+        jsonl_lines.append(json.dumps({
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": r["task"]},
+            ],
+            "score": r["score"],
+        }))
+    results_jsonl = "\n".join(jsonl_lines) + "\n"
+    print(f"Generated {len(jsonl_lines)} JSONL records for RFT dataset")
+
     return EvaluationOutput(
         total_tasks=len(results),
         passed=passed,
@@ -431,6 +459,7 @@ async def run_evaluation(
         average_score=avg_score,
         results=results,
         pool_used=pool_name,
+        results_jsonl=results_jsonl,
     )
 
 
@@ -442,68 +471,98 @@ async def create_rft_job(
     """
     Create an RFT (Reinforcement Fine-Tuning) job from evaluation results.
 
-    This uses the Eval Protocol CLI to create a fine-tuning job.
+    Accepts inline JSONL content (from run-evaluation's results_jsonl output),
+    uploads it to Fireworks as a dataset, and creates the RFT job via API.
+    Requires a pre-created evaluator on Fireworks (see README).
 
     Args:
         ctx: Kernel context
-        payload: RftInput with base_model and optional configuration
+        payload: RftInput with account_id, results_jsonl, evaluator_id, base_model, and optional config
 
     Returns:
-        RftOutput with job ID and status
+        RftOutput with job ID, status, dataset_id, and dashboard URL
     """
+    if not payload.get("account_id"):
+        raise ValueError("account_id is required (get from Fireworks dashboard)")
+    if not payload.get("results_jsonl"):
+        raise ValueError("results_jsonl is required (JSONL content from run-evaluation)")
+    if not payload.get("evaluator_id"):
+        raise ValueError("evaluator_id is required (Fireworks evaluator ID or resource name)")
     if not payload.get("base_model"):
         raise ValueError("base_model is required")
 
+    account_id = payload["account_id"]
+    results_jsonl = payload["results_jsonl"]
+    evaluator_id = payload["evaluator_id"]
     base_model = payload["base_model"]
+    output_model = payload.get("output_model")
     chunk_size = payload.get("chunk_size", 50)
     max_context_length = payload.get("max_context_length", 32768)
     batch_size = payload.get("batch_size", 32768)
     epochs = payload.get("epochs", 4)
 
-    # Build command
-    cmd = [
-        "ep", "create", "rft",
-        "--base-model", base_model,
-        "--chunk-size", str(chunk_size),
-        "--max-context-length", str(max_context_length),
-        "--batch-size", str(batch_size),
-        "--epochs", str(epochs),
-    ]
+    api_key = os.getenv("FIREWORKS_API_KEY")
+    if not api_key:
+        raise ValueError("FIREWORKS_API_KEY environment variable is required")
 
-    cmd_str = " ".join(cmd)
-    print(f"Running: {cmd_str}")
+    # Write inline JSONL to a temp file for upload
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False)
+    tmp.write(results_jsonl)
+    tmp.close()
+    results_path = Path(tmp.name)
 
-    # Run command
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+    # Run API calls in thread pool to avoid blocking
+    def _do_create() -> dict:
+        try:
+            timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+            dataset_id = f"eval-dataset-{timestamp}"
+            create_dataset(account_id, dataset_id, api_key)
+            print(f"Created dataset: {dataset_id}")
+            upload_dataset(account_id, dataset_id, results_path, api_key)
+            print("Uploaded results file")
+            wait_for_dataset_ready(account_id, dataset_id, api_key)
+            print("Dataset ready")
 
-        # Parse job ID from output
-        output = result.stdout
-        job_id = "unknown"
-        for line in output.split("\n"):
-            if "job" in line.lower() and "id" in line.lower():
-                # Try to extract job ID
-                parts = line.split()
-                for i, part in enumerate(parts):
-                    if part.lower() == "id:" and i + 1 < len(parts):
-                        job_id = parts[i + 1]
-                        break
+            dataset_resource = dataset_resource_name(account_id, dataset_id)
+            evaluator_resource = evaluator_resource_name(account_id, evaluator_id)
+            training_config = {
+                "baseModel": base_model,
+                "maxContextLength": max_context_length,
+                "batchSize": batch_size,
+                "epochs": epochs,
+            }
+            if output_model:
+                training_config["outputModel"] = output_model
 
-        return RftOutput(
-            job_id=job_id,
-            status="created",
-            command_used=cmd_str,
-        )
+            job = api_create_rft_job(
+                account_id,
+                api_key,
+                dataset_resource,
+                evaluator_resource,
+                training_config,
+                display_name=f"eval-rft-{timestamp}",
+                chunk_size=chunk_size,
+            )
+            return {"job": job, "dataset_id": dataset_id}
+        finally:
+            results_path.unlink(missing_ok=True)
 
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"RFT job creation failed: {e.stderr}")
-    except FileNotFoundError:
-        raise RuntimeError(
-            "Eval Protocol CLI (ep) not found. "
-            "Install with: pip install eval-protocol"
-        )
+    result = await asyncio.to_thread(_do_create)
+    job = result["job"]
+    dataset_id = result["dataset_id"]
+
+    job_name = job.get("name", "")
+    job_id = job_name.split("/")[-1] if job_name else "unknown"
+    state = job.get("state", "UNKNOWN")
+    dashboard_url = f"https://app.fireworks.ai/dashboard/fine-tuning/jobs/{job_id}" if job_id != "unknown" else "https://app.fireworks.ai/dashboard/fine-tuning"
+
+    print(f"RFT job created: {job_id}")
+    print(f"Dashboard: {dashboard_url}")
+
+    return RftOutput(
+        job_id=job_id,
+        status=state.lower() if state else "created",
+        dataset_id=dataset_id,
+        dashboard_url=dashboard_url,
+    )

@@ -278,8 +278,8 @@ cd ..
 
 > **Note:** The `eval-protocol` template has three actions:
 > - `run-rollout`: Single browser rollout (quick test)
-> - `run-evaluation`: Parallel evaluation with browser pools (longer running)
-> - `create-rft-job`: Requires manual install of `eval-protocol` package (see KERNEL-932)
+> - `run-evaluation`: Parallel evaluation with browser pools; returns scored JSONL inline (`results_jsonl`)
+> - `create-rft-job`: Accepts inline JSONL from `run-evaluation`, uploads to Fireworks, and creates RFT job via API (requires Fireworks account_id and evaluator_id)
 
 ## Step 6: Provide Invoke Commands
 
@@ -314,6 +314,8 @@ kernel invoke python-yutori-cua cua-task --payload '{"query": "Go to https://www
 kernel invoke python-eval-protocol run-rollout --payload '{"task": "Navigate to github.com and find the sign in page", "initial_url": "https://github.com"}'
 kernel invoke python-eval-protocol run-rollout --payload '{"task": "Navigate to github.com and find the sign in page", "initial_url": "https://github.com", "score": true}'
 kernel invoke python-eval-protocol run-evaluation --payload '{"max_tasks": 2, "pool_size": 1}'
+# create-rft-job: use results_jsonl from run-evaluation output; get account_id and evaluator_id from Fireworks dashboard
+kernel invoke python-eval-protocol create-rft-job --payload '{"account_id": "<fireworks-account-id>", "results_jsonl": "<paste results_jsonl from run-evaluation>", "evaluator_id": "<fireworks-evaluator-id>", "base_model": "accounts/fireworks/models/qwen3-vl-8b-instruct"}'
 ```
 
 ## Step 7: Automated Runtime Testing (Optional)
