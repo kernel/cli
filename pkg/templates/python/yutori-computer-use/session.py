@@ -39,6 +39,9 @@ class KernelBrowserSession:
     record_replay: bool = False
     replay_grace_period: float = 5.0  # Seconds to wait before stopping replay
 
+    # Kiosk mode (hides address bar and tabs in live view)
+    kiosk_mode: bool = False
+
     # Set after browser creation
     session_id: Optional[str] = field(default=None, init=False)
     live_view_url: Optional[str] = field(default=None, init=False)
@@ -57,6 +60,7 @@ class KernelBrowserSession:
                 "width": self.viewport_width,
                 "height": self.viewport_height,
             },
+            kiosk_mode=self.kiosk_mode,
         )
 
         self.session_id = browser.session_id

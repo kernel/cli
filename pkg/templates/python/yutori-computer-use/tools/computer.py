@@ -89,11 +89,12 @@ MODIFIER_MAP = {
 
 
 class ComputerTool:
-    def __init__(self, kernel: Kernel, session_id: str, width: int = 1280, height: int = 800):
+    def __init__(self, kernel: Kernel, session_id: str, width: int = 1280, height: int = 800, kiosk_mode: bool = False):
         self.kernel = kernel
         self.session_id = session_id
         self.width = width
         self.height = height
+        self.kiosk_mode = kiosk_mode
 
     async def execute(self, action: N1Action) -> ToolResult:
         action_type = action.get("action_type")

@@ -25,6 +25,7 @@ interface SamplingLoopOptions {
   maxIterations?: number;
   viewportWidth?: number;
   viewportHeight?: number;
+  kioskMode?: boolean;
 }
 
 interface SamplingLoopResult {
@@ -42,13 +43,14 @@ export async function samplingLoop({
   maxIterations = 50,
   viewportWidth = 1280,
   viewportHeight = 800,
+  kioskMode = false,
 }: SamplingLoopOptions): Promise<SamplingLoopResult> {
   const client = new OpenAI({
     apiKey,
     baseURL: 'https://api.yutori.com/v1',
   });
 
-  const computerTool = new ComputerTool(kernel, sessionId, viewportWidth, viewportHeight);
+  const computerTool = new ComputerTool(kernel, sessionId, viewportWidth, viewportHeight, kioskMode);
 
   const initialScreenshot = await computerTool.screenshot();
 

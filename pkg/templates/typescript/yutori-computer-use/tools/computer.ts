@@ -97,12 +97,14 @@ export class ComputerTool {
   private sessionId: string;
   private width: number;
   private height: number;
+  private kioskMode: boolean;
 
-  constructor(kernel: Kernel, sessionId: string, width = 1280, height = 800) {
+  constructor(kernel: Kernel, sessionId: string, width = 1280, height = 800, kioskMode = false) {
     this.kernel = kernel;
     this.sessionId = sessionId;
     this.width = width;
     this.height = height;
+    this.kioskMode = kioskMode;
   }
 
   async execute(action: N1Action): Promise<ToolResult> {

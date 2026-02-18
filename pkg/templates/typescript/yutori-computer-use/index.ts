@@ -9,6 +9,7 @@ const app = kernel.app('ts-yutori-cua');
 interface QueryInput {
   query: string;
   record_replay?: boolean;
+  kiosk?: boolean;
 }
 
 interface QueryOutput {
@@ -31,10 +32,12 @@ app.action<QueryInput, QueryOutput>(
       throw new Error('Query is required');
     }
 
-    // Create browser session with optional replay recording
+    // Create browser session with optional replay recording and kiosk mode
+    const kioskMode = payload.kiosk ?? false;
     const session = new KernelBrowserSession(kernel, {
       stealth: true,
       recordReplay: payload.record_replay ?? false,
+      kioskMode,
     });
 
     await session.start();
@@ -50,6 +53,7 @@ app.action<QueryInput, QueryOutput>(
         sessionId: session.sessionId,
         viewportWidth: session.viewportWidth,
         viewportHeight: session.viewportHeight,
+        kioskMode,
       });
 
       // Extract the result

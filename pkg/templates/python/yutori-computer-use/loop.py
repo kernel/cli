@@ -31,6 +31,7 @@ async def sampling_loop(
     max_iterations: int = 50,
     viewport_width: int = 1280,
     viewport_height: int = 800,
+    kiosk_mode: bool = False,
 ) -> dict[str, Any]:
     """Run the n1 sampling loop until the model stops calling tools or max iterations."""
     client = OpenAI(
@@ -38,7 +39,7 @@ async def sampling_loop(
         base_url="https://api.yutori.com/v1",
     )
 
-    computer_tool = ComputerTool(kernel, session_id, viewport_width, viewport_height)
+    computer_tool = ComputerTool(kernel, session_id, viewport_width, viewport_height, kiosk_mode=kiosk_mode)
 
     initial_screenshot = await computer_tool.screenshot()
 

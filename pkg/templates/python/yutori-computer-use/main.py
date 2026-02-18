@@ -9,6 +9,7 @@ from session import KernelBrowserSession
 class QueryInput(TypedDict):
     query: str
     record_replay: Optional[bool]
+    kiosk: Optional[bool]
 
 
 class QueryOutput(TypedDict):
@@ -46,10 +47,12 @@ async def cua_task(
         raise ValueError("Query is required")
 
     record_replay = payload.get("record_replay", False)
+    kiosk_mode = payload.get("kiosk", False)
 
     async with KernelBrowserSession(
         stealth=True,
         record_replay=record_replay,
+        kiosk_mode=kiosk_mode,
     ) as session:
         print("Kernel browser live view url:", session.live_view_url)
 
@@ -61,6 +64,7 @@ async def cua_task(
             session_id=str(session.session_id),
             viewport_width=session.viewport_width,
             viewport_height=session.viewport_height,
+            kiosk_mode=kiosk_mode,
         )
 
         final_answer = loop_result.get("final_answer")
