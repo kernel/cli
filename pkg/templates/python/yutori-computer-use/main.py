@@ -59,7 +59,7 @@ async def cua_task(
         print("Kernel browser live view url:", session.live_view_url)
 
         loop_result = await sampling_loop(
-            model="n1-preview-2025-11",
+            model="n1-latest",
             task=payload["query"],
             api_key=str(api_key),
             kernel=session.kernel,

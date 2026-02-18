@@ -3,9 +3,8 @@ Yutori n1 Sampling Loop
 
 Implements the agent loop for Yutori's n1 computer use model.
 n1 uses an OpenAI-compatible API with specific conventions:
-- Screenshots use role: "observation" (not "user")
+- Screenshots and tool results are sent with role: "user"
 - Coordinates are returned in 1000x1000 space and need scaling
-- WebP format recommended for screenshots
 
 Supports two modes:
 - computer_use: Uses Kernel's Computer Controls API (full VM screenshots)
@@ -41,7 +40,7 @@ class N1ComputerToolProtocol(Protocol):
 
 async def sampling_loop(
     *,
-    model: str = "n1-preview-2025-11",
+    model: str = "n1-latest",
     task: str,
     api_key: str,
     kernel: Kernel,
@@ -49,7 +48,7 @@ async def sampling_loop(
     cdp_ws_url: Optional[str] = None,
     max_tokens: int = 4096,
     max_iterations: int = 50,
-    viewport_width: int = 1200,
+    viewport_width: int = 1280,
     viewport_height: int = 800,
     mode: BrowserMode = "computer_use",
 ) -> dict[str, Any]:
@@ -88,7 +87,7 @@ async def sampling_loop(
 
         if initial_screenshot.get("base64_image"):
             conversation_messages.append({
-                "role": "observation",
+                "role": "user",
                 "content": [
                     {
                         "type": "image_url",
@@ -157,16 +156,16 @@ async def sampling_loop(
                     result = {"error": str(e)}
 
                 if result.get("base64_image") or result.get("output"):
-                    observation_content = []
+                    result_content = []
 
                     if result.get("output"):
-                        observation_content.append({
+                        result_content.append({
                             "type": "text",
                             "text": result["output"],
                         })
 
                     if result.get("base64_image"):
-                        observation_content.append({
+                        result_content.append({
                             "type": "image_url",
                             "image_url": {
                                 "url": f"data:image/png;base64,{result['base64_image']}"
@@ -174,12 +173,12 @@ async def sampling_loop(
                         })
 
                     conversation_messages.append({
-                        "role": "observation",
-                        "content": observation_content,
+                        "role": "user",
+                        "content": result_content,
                     })
                 elif result.get("error"):
                     conversation_messages.append({
-                        "role": "observation",
+                        "role": "user",
                         "content": [{"type": "text", "text": f"Action failed: {result['error']}"}],
                     })
 
