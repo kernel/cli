@@ -72,7 +72,7 @@ async def sampling_loop(
             )
         except Exception as api_error:
             print(f"API call failed: {api_error}")
-            raise api_error
+            raise
 
         if not response.choices or len(response.choices) == 0:
             print(f"No choices in response: {response}")
