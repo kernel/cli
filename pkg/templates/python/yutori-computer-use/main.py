@@ -79,17 +79,9 @@ async def cua_task(
 
 
 def _extract_last_assistant_message(messages: list) -> str:
-    import json
-
     for msg in reversed(messages):
         if msg.get("role") == "assistant":
             content = msg.get("content")
-            if isinstance(content, str):
-                # Try to parse the thoughts from JSON response
-                try:
-                    parsed = json.loads(content)
-                    if parsed.get("thoughts"):
-                        return parsed["thoughts"]
-                except json.JSONDecodeError:
-                    return content
+            if isinstance(content, str) and content:
+                return content
     return "Task completed"

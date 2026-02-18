@@ -73,18 +73,8 @@ app.action<QueryInput, QueryOutput>(
 function extractLastAssistantMessage(messages: { role: string; content: string | unknown[] }[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
-    if (msg.role === 'assistant') {
-      if (typeof msg.content === 'string') {
-        // Try to parse the thoughts from JSON response
-        try {
-          const parsed = JSON.parse(msg.content);
-          if (parsed.thoughts) {
-            return parsed.thoughts;
-          }
-        } catch {
-          return msg.content;
-        }
-      }
+    if (msg.role === 'assistant' && typeof msg.content === 'string' && msg.content) {
+      return msg.content;
     }
   }
   return 'Task completed';
