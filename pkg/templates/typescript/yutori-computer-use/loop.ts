@@ -3,9 +3,8 @@
  * 
  * Implements the agent loop for Yutori's n1 computer use model.
  * n1 uses an OpenAI-compatible API with specific conventions:
- * - Screenshots use role: "observation" (not "user")
+ * - Screenshots and tool results are sent with role: "user"
  * - Coordinates are returned in 1000x1000 space and need scaling
- * - WebP format recommended for screenshots
  * 
  * Supports two modes:
  * - computer_use: Uses Kernel's Computer Controls API (full VM screenshots)
@@ -31,7 +30,7 @@ interface N1ComputerTool {
 // Per docs: "we generally do not recommend providing custom system prompts"
 
 interface Message {
-  role: 'user' | 'assistant' | 'observation';
+  role: 'user' | 'assistant';
   content: string | MessageContent[];
 }
 
@@ -120,7 +119,7 @@ export async function samplingLoop({
 
     if (initialScreenshot.base64Image) {
       conversationMessages.push({
-        role: 'observation',
+        role: 'user',
         content: [
           {
             type: 'image_url',
@@ -199,17 +198,17 @@ export async function samplingLoop({
         }
 
         if (result.base64Image || result.output) {
-          const observationContent: MessageContent[] = [];
+          const resultContent: MessageContent[] = [];
 
           if (result.output) {
-            observationContent.push({
+            resultContent.push({
               type: 'text',
               text: result.output,
             });
           }
 
           if (result.base64Image) {
-            observationContent.push({
+            resultContent.push({
               type: 'image_url',
               image_url: {
                 url: `data:image/png;base64,${result.base64Image}`,
@@ -218,12 +217,12 @@ export async function samplingLoop({
           }
 
           conversationMessages.push({
-            role: 'observation',
-            content: observationContent,
+            role: 'user',
+            content: resultContent,
           });
         } else if (result.error) {
           conversationMessages.push({
-            role: 'observation',
+            role: 'user',
             content: [{ type: 'text', text: `Action failed: ${result.error}` }],
           });
         }
