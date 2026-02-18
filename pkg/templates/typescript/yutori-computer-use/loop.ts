@@ -6,9 +6,6 @@
  * - Screenshots and tool results are sent with role: "user"
  * - Coordinates are returned in 1000x1000 space and need scaling
  * 
- * Supports two modes:
- * - computer_use: Uses Kernel's Computer Controls API (full VM screenshots)
- * - playwright: Uses Playwright via CDP (viewport-only screenshots, optimized for n1)
  * 
  * @see https://docs.yutori.com/reference/n1
  */
@@ -16,15 +13,6 @@
 import OpenAI from 'openai';
 import type { Kernel } from '@onkernel/sdk';
 import { ComputerTool, type N1Action, type ToolResult } from './tools/computer';
-import { PlaywrightComputerTool } from './tools/playwright-computer';
-
-/** Mode for browser interaction */
-export type BrowserMode = 'computer_use' | 'playwright';
-
-interface N1ComputerTool {
-  execute(action: N1Action): Promise<ToolResult>;
-  screenshot(): Promise<ToolResult>;
-}
 
 // n1 uses its own system prompt - custom prompts may degrade performance
 // Per docs: "we generally do not recommend providing custom system prompts"
@@ -48,21 +36,12 @@ interface SamplingLoopOptions {
   apiKey: string;
   kernel: Kernel;
   sessionId: string;
-  /** CDP WebSocket URL for playwright mode */
-  cdpWsUrl?: string;
   maxTokens?: number;
   maxIterations?: number;
   /** Viewport width for coordinate scaling */
   viewportWidth?: number;
   /** Viewport height for coordinate scaling */
   viewportHeight?: number;
-  /**
-   * Browser interaction mode:
-   * - computer_use: Uses Kernel's Computer Controls API (full VM screenshots)
-   * - playwright: Uses Playwright via CDP (viewport-only screenshots, optimized for n1)
-   * @default 'computer_use'
-   */
-  mode?: BrowserMode;
 }
 
 interface SamplingLoopResult {
@@ -76,172 +55,147 @@ export async function samplingLoop({
   apiKey,
   kernel,
   sessionId,
-  cdpWsUrl,
   maxTokens = 4096,
   maxIterations = 50,
   viewportWidth = 1280,
   viewportHeight = 800,
-  mode = 'computer_use',
 }: SamplingLoopOptions): Promise<SamplingLoopResult> {
   const client = new OpenAI({
     apiKey,
     baseURL: 'https://api.yutori.com/v1',
   });
 
-  let computerTool: N1ComputerTool;
-  let playwrightTool: PlaywrightComputerTool | null = null;
+  const computerTool = new ComputerTool(kernel, sessionId, viewportWidth, viewportHeight);
 
-  console.log(`Mode requested: '${mode}', cdpWsUrl available: ${cdpWsUrl != null}`);
+  const initialScreenshot = await computerTool.screenshot();
 
-  if (mode === 'playwright') {
-    if (!cdpWsUrl) {
-      throw new Error('cdpWsUrl is required for playwright mode');
-    }
-    console.log(`Connecting to CDP WebSocket: ${cdpWsUrl.substring(0, 50)}...`);
-    playwrightTool = new PlaywrightComputerTool(cdpWsUrl, viewportWidth, viewportHeight);
-    await playwrightTool.connect();
-    computerTool = playwrightTool;
-    console.log('Using playwright mode (viewport-only screenshots)');
-  } else {
-    computerTool = new ComputerTool(kernel, sessionId, viewportWidth, viewportHeight);
-    console.log('Using computer_use mode (Computer Controls API)');
+  const conversationMessages: Message[] = [
+    {
+      role: 'user',
+      content: [{ type: 'text', text: task }],
+    },
+  ];
+
+  if (initialScreenshot.base64Image) {
+    conversationMessages.push({
+      role: 'user',
+      content: [
+        {
+          type: 'image_url',
+          image_url: {
+            url: `data:image/png;base64,${initialScreenshot.base64Image}`,
+          },
+        },
+      ],
+    });
   }
 
-  try {
-    const initialScreenshot = await computerTool.screenshot();
+  let iteration = 0;
+  let finalAnswer: string | undefined;
 
-    const conversationMessages: Message[] = [
-      {
-        role: 'user',
-        content: [{ type: 'text', text: task }],
-      },
-    ];
+  while (iteration < maxIterations) {
+    iteration++;
+    console.log(`\n=== Iteration ${iteration} ===`);
 
-    if (initialScreenshot.base64Image) {
-      conversationMessages.push({
-        role: 'user',
-        content: [
-          {
+    let response;
+    try {
+      response = await client.chat.completions.create({
+        model,
+        messages: conversationMessages as OpenAI.ChatCompletionMessageParam[],
+        max_tokens: maxTokens,
+        temperature: 0.3,
+      });
+    } catch (apiError) {
+      console.error('API call failed:', apiError);
+      throw apiError;
+    }
+
+    if (!response.choices || response.choices.length === 0) {
+      console.error('No choices in response:', JSON.stringify(response, null, 2));
+      throw new Error('No choices in API response');
+    }
+
+    const assistantMessage = response.choices[0]?.message;
+    if (!assistantMessage) {
+      throw new Error('No response from model');
+    }
+
+    const responseContent = assistantMessage.content || '';
+    console.log('Assistant response:', responseContent);
+
+    conversationMessages.push({
+      role: 'assistant',
+      content: responseContent,
+    });
+
+    const parsed = parseN1Response(responseContent);
+
+    if (!parsed || !parsed.actions || parsed.actions.length === 0) {
+      console.log('No actions found in response, ending loop');
+      break;
+    }
+
+    for (const action of parsed.actions) {
+      console.log('Executing action:', action.action_type, action);
+
+      if (action.action_type === 'stop') {
+        finalAnswer = action.answer;
+        console.log('Stop action received, final answer:', finalAnswer);
+        return { messages: conversationMessages, finalAnswer };
+      }
+
+      const scaledAction = scaleCoordinates(action, viewportWidth, viewportHeight);
+
+      let result: ToolResult;
+      try {
+        result = await computerTool.execute(scaledAction);
+      } catch (error) {
+        console.error('Action failed:', error);
+        result = {
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+
+      if (result.base64Image || result.output) {
+        const resultContent: MessageContent[] = [];
+
+        if (result.output) {
+          resultContent.push({
+            type: 'text',
+            text: result.output,
+          });
+        }
+
+        if (result.base64Image) {
+          resultContent.push({
             type: 'image_url',
             image_url: {
-              url: `data:image/png;base64,${initialScreenshot.base64Image}`,
+              url: `data:image/png;base64,${result.base64Image}`,
             },
-          },
-        ],
-      });
-    }
+          });
+        }
 
-    let iteration = 0;
-    let finalAnswer: string | undefined;
-
-    while (iteration < maxIterations) {
-      iteration++;
-      console.log(`\n=== Iteration ${iteration} ===`);
-
-      let response;
-      try {
-        response = await client.chat.completions.create({
-          model,
-          messages: conversationMessages as OpenAI.ChatCompletionMessageParam[],
-          max_tokens: maxTokens,
-          temperature: 0.3,
+        conversationMessages.push({
+          role: 'user',
+          content: resultContent,
         });
-      } catch (apiError) {
-        console.error('API call failed:', apiError);
-        throw apiError;
+      } else if (result.error) {
+        conversationMessages.push({
+          role: 'user',
+          content: [{ type: 'text', text: `Action failed: ${result.error}` }],
+        });
       }
-
-      if (!response.choices || response.choices.length === 0) {
-        console.error('No choices in response:', JSON.stringify(response, null, 2));
-        throw new Error('No choices in API response');
-      }
-
-      const assistantMessage = response.choices[0]?.message;
-      if (!assistantMessage) {
-        throw new Error('No response from model');
-      }
-
-      const responseContent = assistantMessage.content || '';
-      console.log('Assistant response:', responseContent);
-
-      conversationMessages.push({
-        role: 'assistant',
-        content: responseContent,
-      });
-
-      const parsed = parseN1Response(responseContent);
-
-      if (!parsed || !parsed.actions || parsed.actions.length === 0) {
-        console.log('No actions found in response, ending loop');
-        break;
-      }
-
-      for (const action of parsed.actions) {
-        console.log('Executing action:', action.action_type, action);
-
-        if (action.action_type === 'stop') {
-          finalAnswer = action.answer;
-          console.log('Stop action received, final answer:', finalAnswer);
-          return { messages: conversationMessages, finalAnswer };
-        }
-
-        const scaledAction = scaleCoordinates(action, viewportWidth, viewportHeight);
-
-        let result: ToolResult;
-        try {
-          result = await computerTool.execute(scaledAction);
-        } catch (error) {
-          console.error('Action failed:', error);
-          result = {
-            error: error instanceof Error ? error.message : String(error),
-          };
-        }
-
-        if (result.base64Image || result.output) {
-          const resultContent: MessageContent[] = [];
-
-          if (result.output) {
-            resultContent.push({
-              type: 'text',
-              text: result.output,
-            });
-          }
-
-          if (result.base64Image) {
-            resultContent.push({
-              type: 'image_url',
-              image_url: {
-                url: `data:image/png;base64,${result.base64Image}`,
-              },
-            });
-          }
-
-          conversationMessages.push({
-            role: 'user',
-            content: resultContent,
-          });
-        } else if (result.error) {
-          conversationMessages.push({
-            role: 'user',
-            content: [{ type: 'text', text: `Action failed: ${result.error}` }],
-          });
-        }
-      }
-    }
-
-    if (iteration >= maxIterations) {
-      console.log('Max iterations reached');
-    }
-
-    return {
-      messages: conversationMessages,
-      finalAnswer,
-    };
-  } finally {
-    if (playwrightTool) {
-      await playwrightTool.disconnect();
     }
   }
+
+  if (iteration >= maxIterations) {
+    console.log('Max iterations reached');
+  }
+
+  return {
+    messages: conversationMessages,
+    finalAnswer,
+  };
 }
 
 function parseN1Response(content: string): { thoughts?: string; actions?: N1Action[] } | null {

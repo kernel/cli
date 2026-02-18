@@ -1,5 +1,5 @@
 import { Kernel, type KernelContext } from '@onkernel/sdk';
-import { samplingLoop, type BrowserMode } from './loop';
+import { samplingLoop } from './loop';
 import { KernelBrowserSession } from './session';
 
 const kernel = new Kernel();
@@ -9,12 +9,6 @@ const app = kernel.app('ts-yutori-cua');
 interface QueryInput {
   query: string;
   record_replay?: boolean;
-  /**
-   * Browser interaction mode:
-   * - computer_use: Uses Kernel's Computer Controls API (full VM screenshots) - default
-   * - playwright: Uses Playwright via CDP (viewport-only screenshots, optimized for n1)
-   */
-  mode?: BrowserMode;
 }
 
 interface QueryOutput {
@@ -48,17 +42,14 @@ app.action<QueryInput, QueryOutput>(
 
     try {
       // Run the sampling loop
-      const mode = payload.mode ?? 'computer_use';
       const { finalAnswer, messages } = await samplingLoop({
         model: 'n1-latest',
         task: payload.query,
         apiKey: YUTORI_API_KEY,
         kernel,
         sessionId: session.sessionId,
-        cdpWsUrl: session.cdpWsUrl ?? undefined,
         viewportWidth: session.viewportWidth,
         viewportHeight: session.viewportHeight,
-        mode,
       });
 
       // Extract the result
