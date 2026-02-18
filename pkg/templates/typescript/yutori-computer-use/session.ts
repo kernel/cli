@@ -16,10 +16,12 @@ export interface SessionOptions {
   recordReplay?: boolean;
   /** Grace period in seconds before stopping replay */
   replayGracePeriod?: number;
-  /** Viewport width (default: 1200, closest to Yutori's 1280 recommendation) */
+  /** Viewport width */
   viewportWidth?: number;
-  /** Viewport height (default: 800 per Yutori recommendation) */
+  /** Viewport height */
   viewportHeight?: number;
+  /** Launch browser in kiosk mode (hides address bar and tabs) */
+  kioskMode?: boolean;
 }
 
 export interface SessionInfo {
@@ -37,8 +39,9 @@ const DEFAULT_OPTIONS: Required<SessionOptions> = {
   timeoutSeconds: 300,
   recordReplay: false,
   replayGracePeriod: 5.0,
-  viewportWidth: 1200,
+  viewportWidth: 1280,
   viewportHeight: 800,
+  kioskMode: false,
 };
 
 /**
@@ -98,6 +101,10 @@ export class KernelBrowserSession {
     return this.options.viewportHeight;
   }
 
+  get kioskMode(): boolean {
+    return this.options.kioskMode;
+  }
+
   get info(): SessionInfo {
     return {
       sessionId: this.sessionId,
@@ -118,6 +125,7 @@ export class KernelBrowserSession {
         width: this.options.viewportWidth,
         height: this.options.viewportHeight,
       },
+      kiosk_mode: this.options.kioskMode,
     });
 
     this._sessionId = browser.session_id;

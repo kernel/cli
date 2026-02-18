@@ -1,27 +1,30 @@
 """
 Yutori n1 Computer Tool
 
-Maps n1 action format to Kernel's Computer Controls API.
+Maps n1-latest action format to Kernel's Computer Controls API.
+Screenshots are converted to WebP for better compression across multi-step trajectories.
 """
 
 import asyncio
 import base64
 import json
-from typing import Literal, TypedDict, Optional
+from io import BytesIO
+from typing import Literal, TypedDict
 
 from kernel import Kernel
+from PIL import Image
 
 from .base import ToolError, ToolResult
 
-TYPING_DELAY_MS = 12  # Typing delay in milliseconds (used by Kernel API)
-# Delays in seconds for asyncio.sleep (matches TypeScript 300ms = 0.3s)
+TYPING_DELAY_MS = 12
 SCREENSHOT_DELAY_S = 0.3
 ACTION_DELAY_S = 0.3
 
-
-# n1 action types
 N1ActionType = Literal[
-    "click",
+    "left_click",
+    "double_click",
+    "triple_click",
+    "right_click",
     "scroll",
     "type",
     "key_press",
@@ -31,14 +34,12 @@ N1ActionType = Literal[
     "refresh",
     "go_back",
     "goto_url",
-    "read_texts_and_links",
-    "stop",
 ]
 
 
 class N1Action(TypedDict, total=False):
     action_type: N1ActionType
-    center_coordinates: tuple[int, int] | list[int]
+    coordinates: tuple[int, int] | list[int]
     start_coordinates: tuple[int, int] | list[int]
     direction: Literal["up", "down", "left", "right"]
     amount: int
@@ -47,10 +48,8 @@ class N1Action(TypedDict, total=False):
     clear_before_typing: bool
     key_comb: str
     url: str
-    answer: str
 
 
-# Key mappings from Playwright format (n1 output) to xdotool format (Kernel)
 KEY_MAP = {
     "Enter": "Return",
     "Escape": "Escape",
@@ -91,17 +90,21 @@ MODIFIER_MAP = {
 
 
 class ComputerTool:
-    def __init__(self, kernel: Kernel, session_id: str, width: int = 1200, height: int = 800):
+    def __init__(self, kernel: Kernel, session_id: str, width: int = 1280, height: int = 800, kiosk_mode: bool = False):
         self.kernel = kernel
         self.session_id = session_id
         self.width = width
         self.height = height
+        self.kiosk_mode = kiosk_mode
 
     async def execute(self, action: N1Action) -> ToolResult:
         action_type = action.get("action_type")
 
         handlers = {
-            "click": self._handle_click,
+            "left_click": lambda a: self._handle_click(a, "left", 1),
+            "double_click": lambda a: self._handle_click(a, "left", 2),
+            "triple_click": lambda a: self._handle_click(a, "left", 3),
+            "right_click": lambda a: self._handle_click(a, "right", 1),
             "scroll": self._handle_scroll,
             "type": self._handle_type,
             "key_press": self._handle_key_press,
@@ -111,8 +114,6 @@ class ComputerTool:
             "refresh": self._handle_refresh,
             "go_back": self._handle_go_back,
             "goto_url": self._handle_goto_url,
-            "read_texts_and_links": self._handle_read_texts_and_links,
-            "stop": self._handle_stop,
         }
 
         handler = handlers.get(action_type)
@@ -121,23 +122,23 @@ class ComputerTool:
 
         return await handler(action)
 
-    async def _handle_click(self, action: N1Action) -> ToolResult:
-        coords = self._get_coordinates(action.get("center_coordinates"))
+    async def _handle_click(self, action: N1Action, button: str, num_clicks: int) -> ToolResult:
+        coords = self._get_coordinates(action.get("coordinates"))
 
         self.kernel.browsers.computer.click_mouse(
             self.session_id,
             x=coords["x"],
             y=coords["y"],
-            button="left",
+            button=button,
             click_type="click",
-            num_clicks=1,
+            num_clicks=num_clicks,
         )
 
         await asyncio.sleep(SCREENSHOT_DELAY_S)
         return await self.screenshot()
 
     async def _handle_scroll(self, action: N1Action) -> ToolResult:
-        coords = self._get_coordinates(action.get("center_coordinates"))
+        coords = self._get_coordinates(action.get("coordinates"))
         direction = action.get("direction")
         amount = action.get("amount", 3)
 
@@ -218,7 +219,7 @@ class ComputerTool:
         return await self.screenshot()
 
     async def _handle_hover(self, action: N1Action) -> ToolResult:
-        coords = self._get_coordinates(action.get("center_coordinates"))
+        coords = self._get_coordinates(action.get("coordinates"))
 
         self.kernel.browsers.computer.move_mouse(
             self.session_id,
@@ -231,7 +232,7 @@ class ComputerTool:
 
     async def _handle_drag(self, action: N1Action) -> ToolResult:
         start_coords = self._get_coordinates(action.get("start_coordinates"))
-        end_coords = self._get_coordinates(action.get("center_coordinates"))
+        end_coords = self._get_coordinates(action.get("coordinates"))
 
         self.kernel.browsers.computer.drag_mouse(
             self.session_id,
@@ -267,6 +268,17 @@ class ComputerTool:
         if not url:
             raise ToolError("url is required for goto_url action")
 
+        if self.kiosk_mode:
+            response = self.kernel.browsers.playwright.execute(
+                self.session_id,
+                code=f"await page.goto({json.dumps(url)});",
+                timeout_sec=60,
+            )
+            if not response.success:
+                raise ToolError(response.error or "Playwright goto failed")
+            await asyncio.sleep(ACTION_DELAY_S)
+            return await self.screenshot()
+
         self.kernel.browsers.computer.press_key(
             self.session_id,
             keys=["ctrl+l"],
@@ -293,48 +305,16 @@ class ComputerTool:
         await asyncio.sleep(2)
         return await self.screenshot()
 
-    async def _handle_read_texts_and_links(self, action: N1Action) -> ToolResult:
-        try:
-            result = self.kernel.browsers.playwright.execute(
-                self.session_id,
-                code="""
-                    const snapshot = await page._snapshotForAI();
-                    const url = page.url();
-                    const title = await page.title();
-                    return { url, title, snapshot };
-                """,
-                timeout_sec=30
-            )
-
-            screenshot_result = await self.screenshot()
-
-            if result.success and result.result:
-                data = result.result
-                return {
-                    "base64_image": screenshot_result.get("base64_image", ""),
-                    "output": json.dumps({
-                        "url": data.get("url"),
-                        "title": data.get("title"),
-                        "snapshot": data.get("snapshot")
-                    }, indent=2)
-                }
-
-            print("Playwright execution failed, falling back to screenshot only")
-            return screenshot_result
-        except Exception as e:
-            print(f"read_texts_and_links failed: {e}")
-            return await self.screenshot()
-
-    async def _handle_stop(self, action: N1Action) -> ToolResult:
-        return {"output": action.get("answer", "Task completed")}
-
     async def screenshot(self) -> ToolResult:
         try:
             response = self.kernel.browsers.computer.capture_screenshot(
                 self.session_id
             )
-            image_bytes = response.read()
-            base64_image = base64.b64encode(image_bytes).decode("utf-8")
+            png_bytes = response.read()
+            img = Image.open(BytesIO(png_bytes))
+            webp_buf = BytesIO()
+            img.save(webp_buf, "WEBP", quality=80)
+            base64_image = base64.b64encode(webp_buf.getvalue()).decode("utf-8")
             return {"base64_image": base64_image}
         except Exception as e:
             raise ToolError(f"Failed to take screenshot: {e}")
@@ -343,7 +323,6 @@ class ComputerTool:
         self, coords: tuple[int, int] | list[int] | None
     ) -> dict[str, int]:
         if coords is None or len(coords) != 2:
-            # Default to center of screen
             return {"x": self.width // 2, "y": self.height // 2}
 
         x, y = coords
@@ -353,7 +332,6 @@ class ComputerTool:
         return {"x": int(x), "y": int(y)}
 
     def _map_key(self, key: str) -> str:
-        # Handle modifier combinations (e.g., "Control+a" -> "ctrl+a")
         if "+" in key:
             parts = key.split("+")
             mapped_parts = []
@@ -361,11 +339,9 @@ class ComputerTool:
                 trimmed = part.strip()
                 lower = trimmed.lower()
                 
-                # Map modifier names
                 if lower in MODIFIER_MAP:
                     mapped_parts.append(MODIFIER_MAP[lower])
                 else:
-                    # Check KEY_MAP for special keys
                     mapped_parts.append(KEY_MAP.get(trimmed, trimmed))
             
             return "+".join(mapped_parts)

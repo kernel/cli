@@ -37,6 +37,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Finder (MacOS) folder config
 .DS_Store
+
+# Cursor
+.cursor/plans/
 kernel
 
 # QA testing directories
