@@ -92,9 +92,11 @@ type BrowserPlaywrightService interface {
 
 // BrowserComputerService defines the subset we use for OS-level mouse & screen.
 type BrowserComputerService interface {
+	Batch(ctx context.Context, id string, body kernel.BrowserComputerBatchParams, opts ...option.RequestOption) (err error)
 	CaptureScreenshot(ctx context.Context, id string, body kernel.BrowserComputerCaptureScreenshotParams, opts ...option.RequestOption) (res *http.Response, err error)
 	ClickMouse(ctx context.Context, id string, body kernel.BrowserComputerClickMouseParams, opts ...option.RequestOption) (err error)
 	DragMouse(ctx context.Context, id string, body kernel.BrowserComputerDragMouseParams, opts ...option.RequestOption) (err error)
+	GetMousePosition(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.BrowserComputerGetMousePositionResponse, err error)
 	MoveMouse(ctx context.Context, id string, body kernel.BrowserComputerMoveMouseParams, opts ...option.RequestOption) (err error)
 	PressKey(ctx context.Context, id string, body kernel.BrowserComputerPressKeyParams, opts ...option.RequestOption) (err error)
 	Scroll(ctx context.Context, id string, body kernel.BrowserComputerScrollParams, opts ...option.RequestOption) (err error)
@@ -740,6 +742,16 @@ type BrowsersComputerSetCursorInput struct {
 	Hidden     bool
 }
 
+type BrowsersComputerGetMousePositionInput struct {
+	Identifier string
+	Output     string
+}
+
+type BrowsersComputerBatchInput struct {
+	Identifier  string
+	ActionsJSON string
+}
+
 func (b BrowsersCmd) ComputerClickMouse(ctx context.Context, in BrowsersComputerClickMouseInput) error {
 	if b.computer == nil {
 		pterm.Error.Println("computer service not available")
@@ -953,6 +965,49 @@ func (b BrowsersCmd) ComputerSetCursor(ctx context.Context, in BrowsersComputerS
 	} else {
 		pterm.Success.Println("Cursor shown")
 	}
+	return nil
+}
+
+func (b BrowsersCmd) ComputerGetMousePosition(ctx context.Context, in BrowsersComputerGetMousePositionInput) error {
+	if b.computer == nil {
+		pterm.Error.Println("computer service not available")
+		return nil
+	}
+	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	res, err := b.computer.GetMousePosition(ctx, br.SessionID)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	if in.Output == "json" {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(res)
+	}
+	fmt.Printf("x: %d\ny: %d\n", res.X, res.Y)
+	return nil
+}
+
+func (b BrowsersCmd) ComputerBatch(ctx context.Context, in BrowsersComputerBatchInput) error {
+	if b.computer == nil {
+		pterm.Error.Println("computer service not available")
+		return nil
+	}
+	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	var body kernel.BrowserComputerBatchParams
+	if err := json.Unmarshal([]byte(in.ActionsJSON), &body); err != nil {
+		pterm.Error.Printf("Invalid JSON: %v\n", err)
+		return nil
+	}
+	if err := b.computer.Batch(ctx, br.SessionID, body); err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	pterm.Success.Println("Batch actions executed")
 	return nil
 }
 
@@ -2300,7 +2355,16 @@ func init() {
 	computerSetCursor.Flags().String("hidden", "", "Whether to hide the cursor: true or false")
 	_ = computerSetCursor.MarkFlagRequired("hidden")
 
-	computerRoot.AddCommand(computerClick, computerMove, computerScreenshot, computerType, computerPressKey, computerScroll, computerDrag, computerSetCursor)
+	// computer get-mouse-position
+	computerGetMousePosition := &cobra.Command{Use: "get-mouse-position <id>", Short: "Get current mouse cursor position", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerGetMousePosition}
+	computerGetMousePosition.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+
+	// computer batch
+	computerBatch := &cobra.Command{Use: "batch <id>", Short: "Execute a batch of computer actions from JSON", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerBatch}
+	computerBatch.Flags().String("actions", "", "JSON array of actions (e.g., [{\"type\":\"click_mouse\",...}])")
+	_ = computerBatch.MarkFlagRequired("actions")
+
+	computerRoot.AddCommand(computerClick, computerMove, computerScreenshot, computerType, computerPressKey, computerScroll, computerDrag, computerSetCursor, computerGetMousePosition, computerBatch)
 	browsersCmd.AddCommand(computerRoot)
 
 	// playwright
@@ -2999,6 +3063,24 @@ func runBrowsersComputerSetCursor(cmd *cobra.Command, args []string) error {
 
 	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
 	return b.ComputerSetCursor(cmd.Context(), BrowsersComputerSetCursorInput{Identifier: args[0], Hidden: hidden})
+}
+
+func runBrowsersComputerGetMousePosition(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	output, _ := cmd.Flags().GetString("output")
+
+	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
+	return b.ComputerGetMousePosition(cmd.Context(), BrowsersComputerGetMousePositionInput{Identifier: args[0], Output: output})
+}
+
+func runBrowsersComputerBatch(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	actionsJSON, _ := cmd.Flags().GetString("actions")
+
+	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
+	return b.ComputerBatch(cmd.Context(), BrowsersComputerBatchInput{Identifier: args[0], ActionsJSON: actionsJSON})
 }
 
 func truncateURL(url string, maxLen int) string {

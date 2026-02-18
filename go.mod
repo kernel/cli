@@ -10,7 +10,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/joho/godotenv v1.5.1
 	github.com/kernel/hypeman-go v0.9.7-0.20260211202932-a897d4c032e1
-	github.com/kernel/kernel-go-sdk v0.33.0
+	github.com/kernel/kernel-go-sdk v0.34.0
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/pterm/pterm v0.12.80
 	github.com/samber/lo v1.51.0

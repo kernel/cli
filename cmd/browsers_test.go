@@ -671,7 +671,9 @@ func makeStream[T any](vals []T) *ssestream.Stream[T] {
 // --- Fake for Computer ---
 
 type FakeComputerService struct {
+	BatchFunc               func(ctx context.Context, id string, body kernel.BrowserComputerBatchParams, opts ...option.RequestOption) error
 	ClickMouseFunc          func(ctx context.Context, id string, body kernel.BrowserComputerClickMouseParams, opts ...option.RequestOption) error
+	GetMousePositionFunc    func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserComputerGetMousePositionResponse, error)
 	MoveMouseFunc           func(ctx context.Context, id string, body kernel.BrowserComputerMoveMouseParams, opts ...option.RequestOption) error
 	CaptureScreenshotFunc   func(ctx context.Context, id string, body kernel.BrowserComputerCaptureScreenshotParams, opts ...option.RequestOption) (*http.Response, error)
 	PressKeyFunc            func(ctx context.Context, id string, body kernel.BrowserComputerPressKeyParams, opts ...option.RequestOption) error
@@ -681,11 +683,23 @@ type FakeComputerService struct {
 	SetCursorVisibilityFunc func(ctx context.Context, id string, body kernel.BrowserComputerSetCursorVisibilityParams, opts ...option.RequestOption) (*kernel.BrowserComputerSetCursorVisibilityResponse, error)
 }
 
+func (f *FakeComputerService) Batch(ctx context.Context, id string, body kernel.BrowserComputerBatchParams, opts ...option.RequestOption) error {
+	if f.BatchFunc != nil {
+		return f.BatchFunc(ctx, id, body, opts...)
+	}
+	return nil
+}
 func (f *FakeComputerService) ClickMouse(ctx context.Context, id string, body kernel.BrowserComputerClickMouseParams, opts ...option.RequestOption) error {
 	if f.ClickMouseFunc != nil {
 		return f.ClickMouseFunc(ctx, id, body, opts...)
 	}
 	return nil
+}
+func (f *FakeComputerService) GetMousePosition(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserComputerGetMousePositionResponse, error) {
+	if f.GetMousePositionFunc != nil {
+		return f.GetMousePositionFunc(ctx, id, opts...)
+	}
+	return &kernel.BrowserComputerGetMousePositionResponse{X: 100, Y: 200}, nil
 }
 func (f *FakeComputerService) MoveMouse(ctx context.Context, id string, body kernel.BrowserComputerMoveMouseParams, opts ...option.RequestOption) error {
 	if f.MoveMouseFunc != nil {
