@@ -1,16 +1,17 @@
 """
 Yutori n1 Sampling Loop
 
-Implements the agent loop for Yutori's n1 computer use model.
-n1 uses an OpenAI-compatible API with specific conventions:
-- Screenshots and tool results are sent with role: "user"
+Implements the agent loop for Yutori's n1-latest computer use model.
+n1-latest uses an OpenAI-compatible API with tool_calls:
+- Actions are returned via tool_calls in the assistant message
+- Tool results use role: "tool" with matching tool_call_id
+- The model stops by returning content without tool_calls
 - Coordinates are returned in 1000x1000 space and need scaling
 
 @see https://docs.yutori.com/reference/n1
 """
 
 import json
-import re
 from typing import Any, Optional
 
 from kernel import Kernel
@@ -31,7 +32,7 @@ async def sampling_loop(
     viewport_width: int = 1280,
     viewport_height: int = 800,
 ) -> dict[str, Any]:
-    """Run the n1 sampling loop until the model returns a stop action or max iterations."""
+    """Run the n1 sampling loop until the model stops calling tools or max iterations."""
     client = OpenAI(
         api_key=api_key,
         base_url="https://api.yutori.com/v1",
@@ -41,25 +42,18 @@ async def sampling_loop(
 
     initial_screenshot = await computer_tool.screenshot()
 
-    conversation_messages: list[dict[str, Any]] = [
-        {
-            "role": "user",
-            "content": [{"type": "text", "text": task}],
-        }
-    ]
-
+    user_content: list[dict[str, Any]] = [{"type": "text", "text": task}]
     if initial_screenshot.get("base64_image"):
-        conversation_messages.append({
-            "role": "user",
-            "content": [
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/png;base64,{initial_screenshot['base64_image']}"
-                    },
-                }
-            ],
+        user_content.append({
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/webp;base64,{initial_screenshot['base64_image']}"
+            },
         })
+
+    conversation_messages: list[dict[str, Any]] = [
+        {"role": "user", "content": user_content}
+    ]
 
     iteration = 0
     final_answer: Optional[str] = None
@@ -83,31 +77,55 @@ async def sampling_loop(
             print(f"No choices in response: {response}")
             raise ValueError("No choices in API response")
 
-        assistant_message = response.choices[0].message
+        choice = response.choices[0]
+        assistant_message = choice.message
         if not assistant_message:
             raise ValueError("No response from model")
 
-        response_content = assistant_message.content or ""
-        print("Assistant response:", response_content)
+        print("Assistant content:", assistant_message.content or "(none)")
 
-        conversation_messages.append({
+        # Preserve full assistant message (including tool_calls) in history
+        assistant_dict: dict[str, Any] = {
             "role": "assistant",
-            "content": response_content,
-        })
+            "content": assistant_message.content or "",
+        }
+        if assistant_message.tool_calls:
+            assistant_dict["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": tc.type,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in assistant_message.tool_calls
+            ]
+        conversation_messages.append(assistant_dict)
 
-        parsed = _parse_n1_response(response_content)
+        tool_calls = assistant_message.tool_calls
 
-        if not parsed or not parsed.get("actions"):
-            print("No actions found in response, ending loop")
+        # No tool_calls means the model is done
+        if not tool_calls:
+            final_answer = assistant_message.content or None
+            print(f"No tool_calls, model is done. Final answer: {final_answer}")
             break
 
-        for action in parsed["actions"]:
-            print(f"Executing action: {action.get('action_type')}", action)
+        for tc in tool_calls:
+            action_name = tc.function.name
+            try:
+                args = json.loads(tc.function.arguments)
+            except json.JSONDecodeError:
+                print(f"Failed to parse tool_call arguments: {tc.function.arguments}")
+                conversation_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": "Error: failed to parse arguments",
+                })
+                continue
 
-            if action.get("action_type") == "stop":
-                final_answer = action.get("answer")
-                print(f"Stop action received, final answer: {final_answer}")
-                return {"messages": conversation_messages, "final_answer": final_answer}
+            action: N1Action = {"action_type": action_name, **args}
+            print(f"Executing action: {action_name}", args)
 
             scaled_action = _scale_coordinates(action, viewport_width, viewport_height)
 
@@ -118,31 +136,31 @@ async def sampling_loop(
                 print(f"Action failed: {e}")
                 result = {"error": str(e)}
 
-            if result.get("base64_image") or result.get("output"):
-                result_content = []
-
-                if result.get("output"):
-                    result_content.append({
-                        "type": "text",
-                        "text": result["output"],
-                    })
-
-                if result.get("base64_image"):
-                    result_content.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{result['base64_image']}"
-                        },
-                    })
-
+            # Build tool response message
+            if result.get("base64_image"):
                 conversation_messages.append({
-                    "role": "user",
-                    "content": result_content,
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/webp;base64,{result['base64_image']}"
+                            },
+                        }
+                    ],
                 })
             elif result.get("error"):
                 conversation_messages.append({
-                    "role": "user",
-                    "content": [{"type": "text", "text": f"Action failed: {result['error']}"}],
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": f"Action failed: {result['error']}",
+                })
+            else:
+                conversation_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result.get("output", "OK"),
                 })
 
     if iteration >= max_iterations:
@@ -154,27 +172,12 @@ async def sampling_loop(
     }
 
 
-def _parse_n1_response(content: str) -> Optional[dict[str, Any]]:
-    try:
-        # The response should be JSON
-        return json.loads(content)
-    except json.JSONDecodeError:
-        # Try to extract JSON from the response if it's wrapped in text
-        json_match = re.search(r'\{[\s\S]*\}', content)
-        if json_match:
-            try:
-                return json.loads(json_match.group(0))
-            except json.JSONDecodeError:
-                print(f"Failed to parse action JSON: {json_match.group(0)}")
-        return None
-
-
 def _scale_coordinates(action: N1Action, viewport_width: int, viewport_height: int) -> N1Action:
     scaled = dict(action)
 
-    if "center_coordinates" in scaled and scaled["center_coordinates"]:
-        coords = scaled["center_coordinates"]
-        scaled["center_coordinates"] = [
+    if "coordinates" in scaled and scaled["coordinates"]:
+        coords = scaled["coordinates"]
+        scaled["coordinates"] = [
             round((coords[0] / 1000) * viewport_width),
             round((coords[1] / 1000) * viewport_height),
         ]

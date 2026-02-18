@@ -1,11 +1,12 @@
 /**
  * Yutori n1 Sampling Loop
  * 
- * Implements the agent loop for Yutori's n1 computer use model.
- * n1 uses an OpenAI-compatible API with specific conventions:
- * - Screenshots and tool results are sent with role: "user"
+ * Implements the agent loop for Yutori's n1-latest computer use model.
+ * n1-latest uses an OpenAI-compatible API with tool_calls:
+ * - Actions are returned via tool_calls in the assistant message
+ * - Tool results use role: "tool" with matching tool_call_id
+ * - The model stops by returning content without tool_calls
  * - Coordinates are returned in 1000x1000 space and need scaling
- * 
  * 
  * @see https://docs.yutori.com/reference/n1
  */
@@ -13,22 +14,6 @@
 import OpenAI from 'openai';
 import type { Kernel } from '@onkernel/sdk';
 import { ComputerTool, type N1Action, type ToolResult } from './tools/computer';
-
-// n1 uses its own system prompt - custom prompts may degrade performance
-// Per docs: "we generally do not recommend providing custom system prompts"
-
-interface Message {
-  role: 'user' | 'assistant';
-  content: string | MessageContent[];
-}
-
-interface MessageContent {
-  type: 'text' | 'image_url';
-  text?: string;
-  image_url?: {
-    url: string;
-  };
-}
 
 interface SamplingLoopOptions {
   model?: string;
@@ -38,14 +23,12 @@ interface SamplingLoopOptions {
   sessionId: string;
   maxTokens?: number;
   maxIterations?: number;
-  /** Viewport width for coordinate scaling */
   viewportWidth?: number;
-  /** Viewport height for coordinate scaling */
   viewportHeight?: number;
 }
 
 interface SamplingLoopResult {
-  messages: Message[];
+  messages: OpenAI.ChatCompletionMessageParam[];
   finalAnswer?: string;
 }
 
@@ -69,26 +52,22 @@ export async function samplingLoop({
 
   const initialScreenshot = await computerTool.screenshot();
 
-  const conversationMessages: Message[] = [
+  const conversationMessages: OpenAI.ChatCompletionMessageParam[] = [
     {
       role: 'user',
-      content: [{ type: 'text', text: task }],
+      content: [
+        { type: 'text', text: task },
+        ...(initialScreenshot.base64Image
+          ? [{
+              type: 'image_url' as const,
+              image_url: {
+                url: `data:image/webp;base64,${initialScreenshot.base64Image}`,
+              },
+            }]
+          : []),
+      ],
     },
   ];
-
-  if (initialScreenshot.base64Image) {
-    conversationMessages.push({
-      role: 'user',
-      content: [
-        {
-          type: 'image_url',
-          image_url: {
-            url: `data:image/png;base64,${initialScreenshot.base64Image}`,
-          },
-        },
-      ],
-    });
-  }
 
   let iteration = 0;
   let finalAnswer: string | undefined;
@@ -101,7 +80,7 @@ export async function samplingLoop({
     try {
       response = await client.chat.completions.create({
         model,
-        messages: conversationMessages as OpenAI.ChatCompletionMessageParam[],
+        messages: conversationMessages,
         max_tokens: maxTokens,
         temperature: 0.3,
       });
@@ -115,34 +94,47 @@ export async function samplingLoop({
       throw new Error('No choices in API response');
     }
 
-    const assistantMessage = response.choices[0]?.message;
+    const choice = response.choices[0];
+    const assistantMessage = choice.message;
     if (!assistantMessage) {
       throw new Error('No response from model');
     }
 
-    const responseContent = assistantMessage.content || '';
-    console.log('Assistant response:', responseContent);
+    console.log('Assistant content:', assistantMessage.content || '(none)');
 
-    conversationMessages.push({
-      role: 'assistant',
-      content: responseContent,
-    });
+    // Preserve full assistant message (including tool_calls) in history
+    conversationMessages.push(assistantMessage);
 
-    const parsed = parseN1Response(responseContent);
+    const toolCalls = assistantMessage.tool_calls;
 
-    if (!parsed || !parsed.actions || parsed.actions.length === 0) {
-      console.log('No actions found in response, ending loop');
+    // No tool_calls means the model is done
+    if (!toolCalls || toolCalls.length === 0) {
+      finalAnswer = assistantMessage.content || undefined;
+      console.log('No tool_calls, model is done. Final answer:', finalAnswer);
       break;
     }
 
-    for (const action of parsed.actions) {
-      console.log('Executing action:', action.action_type, action);
-
-      if (action.action_type === 'stop') {
-        finalAnswer = action.answer;
-        console.log('Stop action received, final answer:', finalAnswer);
-        return { messages: conversationMessages, finalAnswer };
+    for (const toolCall of toolCalls) {
+      const actionName = toolCall.function.name;
+      let args: Record<string, unknown>;
+      try {
+        args = JSON.parse(toolCall.function.arguments);
+      } catch {
+        console.error('Failed to parse tool_call arguments:', toolCall.function.arguments);
+        conversationMessages.push({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: 'Error: failed to parse arguments',
+        });
+        continue;
       }
+
+      const action: N1Action = {
+        action_type: actionName as N1Action['action_type'],
+        ...args,
+      };
+
+      console.log('Executing action:', actionName, args);
 
       const scaledAction = scaleCoordinates(action, viewportWidth, viewportHeight);
 
@@ -156,33 +148,31 @@ export async function samplingLoop({
         };
       }
 
-      if (result.base64Image || result.output) {
-        const resultContent: MessageContent[] = [];
-
-        if (result.output) {
-          resultContent.push({
-            type: 'text',
-            text: result.output,
-          });
-        }
-
-        if (result.base64Image) {
-          resultContent.push({
-            type: 'image_url',
-            image_url: {
-              url: `data:image/png;base64,${result.base64Image}`,
-            },
-          });
-        }
-
+      // Build tool response message
+      if (result.base64Image) {
         conversationMessages.push({
-          role: 'user',
-          content: resultContent,
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: [
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:image/webp;base64,${result.base64Image}`,
+              },
+            },
+          ] as unknown as string,
         });
       } else if (result.error) {
         conversationMessages.push({
-          role: 'user',
-          content: [{ type: 'text', text: `Action failed: ${result.error}` }],
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: `Action failed: ${result.error}`,
+        });
+      } else {
+        conversationMessages.push({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: result.output || 'OK',
         });
       }
     }
@@ -198,32 +188,13 @@ export async function samplingLoop({
   };
 }
 
-function parseN1Response(content: string): { thoughts?: string; actions?: N1Action[] } | null {
-  try {
-    // The response should be JSON
-    const parsed = JSON.parse(content);
-    return parsed;
-  } catch {
-    // Try to extract JSON from the response if it's wrapped in text
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        return JSON.parse(jsonMatch[0]);
-      } catch {
-        console.error('Failed to parse action JSON:', jsonMatch[0]);
-      }
-    }
-    return null;
-  }
-}
-
 function scaleCoordinates(action: N1Action, viewportWidth: number, viewportHeight: number): N1Action {
   const scaled = { ...action };
 
-  if (scaled.center_coordinates) {
-    scaled.center_coordinates = [
-      Math.round((scaled.center_coordinates[0] / 1000) * viewportWidth),
-      Math.round((scaled.center_coordinates[1] / 1000) * viewportHeight),
+  if (scaled.coordinates) {
+    scaled.coordinates = [
+      Math.round((scaled.coordinates[0] / 1000) * viewportWidth),
+      Math.round((scaled.coordinates[1] / 1000) * viewportHeight),
     ];
   }
 
