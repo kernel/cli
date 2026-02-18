@@ -20,7 +20,7 @@ kernel deploy index.ts --env-file .env
 ## Usage
 
 ```bash
-kernel invoke ts-yutori-cua cua-task --payload '{"query": "Navigate to https://example.com and describe the page"}'
+kernel invoke ts-yutori-cua cua-task --payload '{"query": "Go to https://www.magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items."}'
 ```
 
 ## Recording Replays
@@ -34,6 +34,24 @@ kernel invoke ts-yutori-cua cua-task --payload '{"query": "Navigate to https://e
 ```
 
 When enabled, the response will include a `replay_url` field with a link to view the recorded session.
+
+## Kiosk mode
+
+Prefer **non-kiosk mode** by default and when the agent is expected to switch domains via URL. Use **kiosk (`"kiosk": true`)** when: (1) you're recording sessions and want a cleaner UI in the replay, or (2) you're automating on a single website and the combination of the complex site layout and browser chrome (address bar, tabs) may confuse the agent. 
+
+Note: In kiosk mode the agent may still try to use the address bar to enter URLs; it's not available, so it will eventually use `goto_url`, but those attempts may result in slowdown of the overall session.
+
+Default (non-kiosk):
+
+```bash
+kernel invoke ts-yutori-cua cua-task --payload '{"query": "Navigate to https://example.com, then navigate to ign.com and describe the page"}'
+```
+
+With kiosk (single-site or recording):
+
+```bash
+kernel invoke ts-yutori-cua cua-task --payload '{"query": "Enter https://example.com in the search box and then describe the page.", "kiosk": true}'
+```
 
 ## Viewport Configuration
 
