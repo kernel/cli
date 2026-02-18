@@ -7,6 +7,7 @@ Screenshots are converted to WebP for better compression across multi-step traje
 
 import asyncio
 import base64
+import json
 from io import BytesIO
 from typing import Literal, TypedDict
 
@@ -266,6 +267,17 @@ class ComputerTool:
         url = action.get("url")
         if not url:
             raise ToolError("url is required for goto_url action")
+
+        if self.kiosk_mode:
+            response = self.kernel.browsers.playwright.execute(
+                self.session_id,
+                code=f"await page.goto({json.dumps(url)});",
+                timeout_sec=60,
+            )
+            if not response.success:
+                raise ToolError(response.error or "Playwright goto failed")
+            await asyncio.sleep(ACTION_DELAY_S)
+            return await self.screenshot()
 
         self.kernel.browsers.computer.press_key(
             self.session_id,

@@ -300,6 +300,18 @@ export class ComputerTool {
       throw new ToolError('url is required for goto_url action');
     }
 
+    if (this.kioskMode) {
+      const response = await this.kernel.browsers.playwright.execute(this.sessionId, {
+        code: `await page.goto(${JSON.stringify(url)});`,
+        timeout_sec: 60,
+      });
+      if (!response.success) {
+        return { error: response.error ?? 'Playwright goto failed' };
+      }
+      await this.sleep(ACTION_DELAY_MS);
+      return this.screenshot();
+    }
+
     await this.kernel.browsers.computer.pressKey(this.sessionId, {
       keys: ['ctrl+l'],
     });
