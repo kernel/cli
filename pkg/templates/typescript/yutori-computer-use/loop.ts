@@ -21,7 +21,7 @@ interface SamplingLoopOptions {
   apiKey: string;
   kernel: Kernel;
   sessionId: string;
-  maxTokens?: number;
+  maxCompletionTokens?: number;
   maxIterations?: number;
   viewportWidth?: number;
   viewportHeight?: number;
@@ -38,7 +38,7 @@ export async function samplingLoop({
   apiKey,
   kernel,
   sessionId,
-  maxTokens = 4096,
+  maxCompletionTokens = 4096,
   maxIterations = 50,
   viewportWidth = 1280,
   viewportHeight = 800,
@@ -81,7 +81,7 @@ export async function samplingLoop({
       response = await client.chat.completions.create({
         model,
         messages: conversationMessages,
-        max_tokens: maxTokens,
+        max_completion_tokens: maxCompletionTokens,
         temperature: 0.3,
       });
     } catch (apiError) {

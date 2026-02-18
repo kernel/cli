@@ -27,7 +27,7 @@ async def sampling_loop(
     api_key: str,
     kernel: Kernel,
     session_id: str,
-    max_tokens: int = 4096,
+    max_completion_tokens: int = 4096,
     max_iterations: int = 50,
     viewport_width: int = 1280,
     viewport_height: int = 800,
@@ -66,7 +66,7 @@ async def sampling_loop(
             response = client.chat.completions.create(
                 model=model,
                 messages=conversation_messages,
-                max_tokens=max_tokens,
+                max_completion_tokens=max_completion_tokens,
                 temperature=0.3,
             )
         except Exception as api_error:
