@@ -150,7 +150,6 @@ export async function samplingLoop({
         };
       }
 
-      // Build tool response message
       if (result.base64Image) {
         conversationMessages.push({
           role: 'tool',

@@ -137,7 +137,6 @@ async def sampling_loop(
                 print(f"Action failed: {e}")
                 result = {"error": str(e)}
 
-            # Build tool response message
             if result.get("base64_image"):
                 conversation_messages.append({
                     "role": "tool",
