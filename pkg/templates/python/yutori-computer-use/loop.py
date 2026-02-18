@@ -85,24 +85,7 @@ async def sampling_loop(
 
         print("Assistant content:", assistant_message.content or "(none)")
 
-        # Preserve full assistant message (including tool_calls) in history
-        assistant_dict: dict[str, Any] = {
-            "role": "assistant",
-            "content": assistant_message.content or "",
-        }
-        if assistant_message.tool_calls:
-            assistant_dict["tool_calls"] = [
-                {
-                    "id": tc.id,
-                    "type": tc.type,
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
-                }
-                for tc in assistant_message.tool_calls
-            ]
-        conversation_messages.append(assistant_dict)
+        conversation_messages.append(assistant_message.model_dump(exclude_none=True))
 
         tool_calls = assistant_message.tool_calls
 
