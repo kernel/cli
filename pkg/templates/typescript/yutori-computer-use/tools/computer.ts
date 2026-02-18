@@ -1,11 +1,13 @@
 /**
  * Yutori n1 Computer Tool
  * 
- * Maps n1 action format to Kernel's Computer Controls API.
+ * Maps n1-latest action format to Kernel's Computer Controls API.
+ * Screenshots are converted to WebP for better compression across multi-step trajectories.
  */
 
 import { Buffer } from 'buffer';
 import type { Kernel } from '@onkernel/sdk';
+import sharp from 'sharp';
 
 const TYPING_DELAY_MS = 12;
 const SCREENSHOT_DELAY_MS = 300;
@@ -24,9 +26,11 @@ export class ToolError extends Error {
   }
 }
 
-// n1 action types
 export type N1ActionType =
-  | 'click'
+  | 'left_click'
+  | 'double_click'
+  | 'triple_click'
+  | 'right_click'
   | 'scroll'
   | 'type'
   | 'key_press'
@@ -35,13 +39,11 @@ export type N1ActionType =
   | 'wait'
   | 'refresh'
   | 'go_back'
-  | 'goto_url'
-  | 'read_texts_and_links'
-  | 'stop';
+  | 'goto_url';
 
 export interface N1Action {
   action_type: N1ActionType;
-  center_coordinates?: [number, number];
+  coordinates?: [number, number];
   start_coordinates?: [number, number];
   direction?: 'up' | 'down' | 'left' | 'right';
   amount?: number;
@@ -50,10 +52,8 @@ export interface N1Action {
   clear_before_typing?: boolean;
   key_comb?: string;
   url?: string;
-  answer?: string;
 }
 
-// Key mappings from Playwright format (n1 output) to xdotool format (Kernel)
 const KEY_MAP: Record<string, string> = {
   'Enter': 'Return',
   'Escape': 'Escape',
@@ -109,8 +109,14 @@ export class ComputerTool {
     const { action_type } = action;
 
     switch (action_type) {
-      case 'click':
-        return this.handleClick(action);
+      case 'left_click':
+        return this.handleClick(action, 'left', 1);
+      case 'double_click':
+        return this.handleClick(action, 'left', 2);
+      case 'triple_click':
+        return this.handleClick(action, 'left', 3);
+      case 'right_click':
+        return this.handleClick(action, 'right', 1);
       case 'scroll':
         return this.handleScroll(action);
       case 'type':
@@ -129,24 +135,20 @@ export class ComputerTool {
         return this.handleGoBack();
       case 'goto_url':
         return this.handleGotoUrl(action);
-      case 'read_texts_and_links':
-        return this.handleReadTextsAndLinks();
-      case 'stop':
-        return this.handleStop(action);
       default:
         throw new ToolError(`Unknown action type: ${action_type}`);
     }
   }
 
-  private async handleClick(action: N1Action): Promise<ToolResult> {
-    const coords = this.getCoordinates(action.center_coordinates);
+  private async handleClick(action: N1Action, button: 'left' | 'right', numClicks: number): Promise<ToolResult> {
+    const coords = this.getCoordinates(action.coordinates);
     
     await this.kernel.browsers.computer.clickMouse(this.sessionId, {
       x: coords.x,
       y: coords.y,
-      button: 'left',
+      button,
       click_type: 'click',
-      num_clicks: 1,
+      num_clicks: numClicks,
     });
 
     await this.sleep(SCREENSHOT_DELAY_MS);
@@ -154,7 +156,7 @@ export class ComputerTool {
   }
 
   private async handleScroll(action: N1Action): Promise<ToolResult> {
-    const coords = this.getCoordinates(action.center_coordinates);
+    const coords = this.getCoordinates(action.coordinates);
     const direction = action.direction;
     const amount = action.amount ?? 3;
 
@@ -243,7 +245,7 @@ export class ComputerTool {
   }
 
   private async handleHover(action: N1Action): Promise<ToolResult> {
-    const coords = this.getCoordinates(action.center_coordinates);
+    const coords = this.getCoordinates(action.coordinates);
 
     await this.kernel.browsers.computer.moveMouse(this.sessionId, {
       x: coords.x,
@@ -256,7 +258,7 @@ export class ComputerTool {
 
   private async handleDrag(action: N1Action): Promise<ToolResult> {
     const startCoords = this.getCoordinates(action.start_coordinates);
-    const endCoords = this.getCoordinates(action.center_coordinates);
+    const endCoords = this.getCoordinates(action.coordinates);
 
     await this.kernel.browsers.computer.dragMouse(this.sessionId, {
       path: [[startCoords.x, startCoords.y], [endCoords.x, endCoords.y]],
@@ -320,63 +322,16 @@ export class ComputerTool {
     return this.screenshot();
   }
 
-  private async handleReadTextsAndLinks(): Promise<ToolResult> {
-    try {
-      // Get AI snapshot via Playwright Execution API
-      const result = await this.kernel.browsers.playwright.execute(
-        this.sessionId,
-        {
-          code: `
-            const snapshot = await page._snapshotForAI();
-            const url = page.url();
-            const title = await page.title();
-            return { url, title, snapshot };
-          `,
-          timeout_sec: 30
-        }
-      );
-
-      // Get screenshot via Computer Controls API
-      const screenshotResult = await this.screenshot();
-
-      if (result.success && result.result) {
-        const { url, title, snapshot } = result.result as {
-          url: string;
-          title: string;
-          snapshot: string;
-        };
-
-        return {
-          base64Image: screenshotResult.base64Image,
-          output: JSON.stringify({ url, title, snapshot }, null, 2)
-        };
-      }
-
-      // Fallback to just screenshot if Playwright execution fails
-      console.warn('Playwright execution failed, falling back to screenshot only');
-      return screenshotResult;
-    } catch (error) {
-      console.warn('read_texts_and_links failed:', error);
-      return this.screenshot();
-    }
-  }
-
-  private handleStop(action: N1Action): ToolResult {
-    // Return the final answer without taking a screenshot
-    return {
-      output: action.answer || 'Task completed',
-    };
-  }
-
   async screenshot(): Promise<ToolResult> {
     try {
       const response = await this.kernel.browsers.computer.captureScreenshot(this.sessionId);
       const blob = await response.blob();
       const arrayBuffer = await blob.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
+      const pngBuffer = Buffer.from(arrayBuffer);
+      const webpBuffer = await sharp(pngBuffer).webp({ quality: 80 }).toBuffer();
 
       return {
-        base64Image: buffer.toString('base64'),
+        base64Image: webpBuffer.toString('base64'),
       };
     } catch (error) {
       throw new ToolError(`Failed to take screenshot: ${error}`);
@@ -385,7 +340,6 @@ export class ComputerTool {
 
   private getCoordinates(coords?: [number, number]): { x: number; y: number } {
     if (!coords || coords.length !== 2) {
-      // Default to center of screen
       return { x: this.width / 2, y: this.height / 2 };
     }
 
@@ -398,19 +352,16 @@ export class ComputerTool {
   }
 
   private mapKey(key: string): string {
-    // Handle modifier combinations (e.g., "Control+a" -> "ctrl+a")
     if (key.includes('+')) {
       const parts = key.split('+');
       const mappedParts = parts.map(part => {
         const trimmed = part.trim();
         const lower = trimmed.toLowerCase();
         
-        // Map modifier names
         if (MODIFIER_MAP[lower]) {
           return MODIFIER_MAP[lower];
         }
         
-        // Check KEY_MAP for special keys
         return KEY_MAP[trimmed] || trimmed;
       });
       return mappedParts.join('+');
