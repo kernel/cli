@@ -154,6 +154,7 @@ export async function samplingLoop({
         conversationMessages.push({
           role: 'tool',
           tool_call_id: toolCall.id,
+          // @ts-expect-error Yutori n1 accepts image content arrays in tool messages
           content: [
             {
               type: 'image_url',
@@ -161,7 +162,7 @@ export async function samplingLoop({
                 url: `data:image/webp;base64,${result.base64Image}`,
               },
             },
-          ] as unknown as string,
+          ],
         });
       } else if (result.error) {
         conversationMessages.push({
