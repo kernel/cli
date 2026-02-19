@@ -1,5 +1,5 @@
 import { Kernel, type KernelContext } from '@onkernel/sdk';
-import { samplingLoop, type BrowserMode } from './loop';
+import { samplingLoop } from './loop';
 import { KernelBrowserSession } from './session';
 
 const kernel = new Kernel();
@@ -9,12 +9,7 @@ const app = kernel.app('ts-yutori-cua');
 interface QueryInput {
   query: string;
   record_replay?: boolean;
-  /**
-   * Browser interaction mode:
-   * - computer_use: Uses Kernel's Computer Controls API (full VM screenshots) - default
-   * - playwright: Uses Playwright via CDP (viewport-only screenshots, optimized for n1)
-   */
-  mode?: BrowserMode;
+  kiosk?: boolean;
 }
 
 interface QueryOutput {
@@ -37,10 +32,12 @@ app.action<QueryInput, QueryOutput>(
       throw new Error('Query is required');
     }
 
-    // Create browser session with optional replay recording
+    // Create browser session with optional replay recording and kiosk mode
+    const kioskMode = payload.kiosk ?? false;
     const session = new KernelBrowserSession(kernel, {
       stealth: true,
       recordReplay: payload.record_replay ?? false,
+      kioskMode,
     });
 
     await session.start();
@@ -48,17 +45,15 @@ app.action<QueryInput, QueryOutput>(
 
     try {
       // Run the sampling loop
-      const mode = payload.mode ?? 'computer_use';
       const { finalAnswer, messages } = await samplingLoop({
-        model: 'n1-preview-2025-11',
+        model: 'n1-latest',
         task: payload.query,
         apiKey: YUTORI_API_KEY,
         kernel,
         sessionId: session.sessionId,
-        cdpWsUrl: session.cdpWsUrl ?? undefined,
         viewportWidth: session.viewportWidth,
         viewportHeight: session.viewportHeight,
-        mode,
+        kioskMode,
       });
 
       // Extract the result
@@ -82,18 +77,8 @@ app.action<QueryInput, QueryOutput>(
 function extractLastAssistantMessage(messages: { role: string; content: string | unknown[] }[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
-    if (msg.role === 'assistant') {
-      if (typeof msg.content === 'string') {
-        // Try to parse the thoughts from JSON response
-        try {
-          const parsed = JSON.parse(msg.content);
-          if (parsed.thoughts) {
-            return parsed.thoughts;
-          }
-        } catch {
-          return msg.content;
-        }
-      }
+    if (msg.role === 'assistant' && typeof msg.content === 'string' && msg.content) {
+      return msg.content;
     }
   }
   return 'Task completed';

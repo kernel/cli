@@ -20,7 +20,7 @@ kernel deploy index.ts --env-file .env
 ## Usage
 
 ```bash
-kernel invoke ts-yutori-cua cua-task --payload '{"query": "Navigate to https://example.com and describe the page"}'
+kernel invoke ts-yutori-cua cua-task --payload '{"query": "Go to https://www.magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items."}'
 ```
 
 ## Recording Replays
@@ -35,19 +35,44 @@ kernel invoke ts-yutori-cua cua-task --payload '{"query": "Navigate to https://e
 
 When enabled, the response will include a `replay_url` field with a link to view the recorded session.
 
+## Kiosk mode
+
+Prefer **non-kiosk mode** by default and when the agent is expected to switch domains via URL. Use **kiosk (`"kiosk": true`)** when: (1) you're recording sessions and want a cleaner UI in the replay, or (2) you're automating on a single website and the combination of the complex site layout and browser chrome (address bar, tabs) may confuse the agent. 
+
+Note: In kiosk mode the agent may still try to use the address bar to enter URLs; it's not available, so it will eventually use `goto_url`, but those attempts may result in slowdown of the overall session.
+
+Default (non-kiosk):
+
+```bash
+kernel invoke ts-yutori-cua cua-task --payload '{"query": "Navigate to https://example.com, then navigate to ign.com and describe the page"}'
+```
+
+With kiosk (single-site or recording):
+
+```bash
+kernel invoke ts-yutori-cua cua-task --payload '{"query": "Enter https://example.com in the search box and then describe the page.", "kiosk": true}'
+```
+
 ## Viewport Configuration
 
-Yutori n1 recommends a **1280×800 (WXGA, 16:10)** viewport for best grounding accuracy. Kernel's closest supported viewport is **1200×800 at 25Hz**, which this template uses by default.
+Yutori n1 recommends a **1280×800 (WXGA, 16:10)** viewport for best grounding accuracy.
 
-> **Note:** n1 outputs coordinates in a 1000×1000 relative space, which are automatically scaled to the actual viewport dimensions. The slight width difference (1200 vs 1280) should have minimal impact on accuracy.
+> **Note:** n1 outputs coordinates in a 1000×1000 relative space, which are automatically scaled to the actual viewport dimensions.
 
 See [Kernel Viewport Documentation](https://www.kernel.sh/docs/browsers/viewport) for all supported configurations.
 
-## n1 Supported Actions
+## Screenshots
+
+Screenshots are automatically converted to WebP format for better compression across multi-step trajectories, as recommended by Yutori.
+
+## n1-latest Supported Actions
 
 | Action | Description |
 |--------|-------------|
-| `click` | Left mouse click at coordinates |
+| `left_click` | Left mouse click at coordinates |
+| `double_click` | Double-click at coordinates |
+| `triple_click` | Triple-click at coordinates |
+| `right_click` | Right mouse click at coordinates |
 | `scroll` | Scroll page in a direction |
 | `type` | Type text into focused element |
 | `key_press` | Send keyboard input |
@@ -57,7 +82,6 @@ See [Kernel Viewport Documentation](https://www.kernel.sh/docs/browsers/viewport
 | `refresh` | Reload current page |
 | `go_back` | Navigate back in history |
 | `goto_url` | Navigate to a URL |
-| `stop` | End task with final answer |
 
 ## Resources
 

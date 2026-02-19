@@ -60,8 +60,6 @@ Here are all valid language + template combinations:
 | typescript | claude-agent-sdk       | ts-claude-agent-sdk | ts-claude-agent-sdk | Yes            | ANTHROPIC_API_KEY              |
 | typescript | yutori-computer-use    | ts-yutori-cua     | ts-yutori-cua         | Yes            | YUTORI_API_KEY                 |
 
-> **Note:** The `yutori-computer-use` template supports two modes: `computer_use` (default, full VM screenshots) and `playwright` (viewport-only screenshots via CDP). Both modes should be tested.
-
 | python     | sample-app             | py-sample-app     | python-basic          | No             | -                              |
 | python     | gemini-computer-use    | py-gemini-cua     | python-gemini-cua     | Yes            | GOOGLE_API_KEY                 |
 | python     | captcha-solver         | py-captcha-solver | python-captcha-solver | No             | -                              |
@@ -72,9 +70,7 @@ Here are all valid language + template combinations:
 | python     | claude-agent-sdk       | py-claude-agent-sdk | py-claude-agent-sdk | Yes            | ANTHROPIC_API_KEY              |
 | python     | yutori-computer-use    | py-yutori-cua     | python-yutori-cua     | Yes            | YUTORI_API_KEY                 |
 
-> **Yutori Modes:**
-> - `computer_use` (default): Uses Kernel's Computer Controls API with full VM screenshots
-> - `playwright`: Uses Playwright via CDP WebSocket for viewport-only screenshots (optimized for n1 model)
+> **Yutori:** Test both default browser and `"kiosk": true` (uses Playwright for goto_url when kiosk is enabled).
 
 ### Create Commands
 
@@ -275,8 +271,8 @@ kernel invoke ts-magnitude mag-url-extract --payload '{"url": "https://en.wikipe
 kernel invoke ts-openai-cua cua-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 5 articles"}'
 kernel invoke ts-gemini-cua cua-task --payload '{"query": "Go to https://www.magnitasks.com, Click the Tasks option in the left-side bar, and move the 5 items in the To Do and In Progress items to the Done section of the Kanban board. You are done successfully when the items are moved.", "record_replay": true}'
 kernel invoke ts-claude-agent-sdk agent-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'
-kernel invoke ts-yutori-cua cua-task --payload '{"query": "Go to https://www.magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items.", "record_replay": true, "mode": "computer_use"}'
-kernel invoke ts-yutori-cua cua-task --payload '{"query": "Go to https://www.magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items.", "record_replay": true, "mode": "playwright"}'
+kernel invoke ts-yutori-cua cua-task --payload '{"query": "Go to https://www.magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items.", "record_replay": true}'
+kernel invoke ts-yutori-cua cua-task --payload '{"query": "Go to https://www.magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items.", "record_replay": true, "kiosk": true}'
 
 # Python apps
 kernel invoke python-basic get-page-title --payload '{"url": "https://www.google.com"}'
@@ -287,8 +283,8 @@ kernel invoke python-openai-cua cua-task --payload '{"task": "Go to https://news
 kernel invoke python-openagi-cua openagi-default-task -p '{"instruction": "Navigate to https://agiopen.org and click the What is Computer Use? button"}'
 kernel invoke py-claude-agent-sdk agent-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'
 kernel invoke python-gemini-cua cua-task --payload '{"query": "Go to https://www.magnitasks.com, Click the Tasks option in the left-side bar, and move the 5 items in the To Do and In Progress items to the Done section of the Kanban board. You are done successfully when the items are moved.", "record_replay": true}'
-kernel invoke python-yutori-cua cua-task --payload '{"query": "Go to https://www.magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items.", "record_replay": true, "mode": "computer_use"}'
-kernel invoke python-yutori-cua cua-task --payload '{"query": "Go to https://www.magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items.", "record_replay": true, "mode": "playwright"}'
+kernel invoke python-yutori-cua cua-task --payload '{"query": "Go to https://www.magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items.", "record_replay": true}'
+kernel invoke python-yutori-cua cua-task --payload '{"query": "Go to https://www.magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items.", "record_replay": true, "kiosk": true}'
 ```
 
 ## Step 7: Automated Runtime Testing (Optional)
@@ -313,8 +309,8 @@ If the human agrees, invoke each template use the Kernel CLI and collect results
 | ts-openai-cua     | ts-openai-cua         |         |       |
 | ts-gemini-cua     | ts-gemini-cua         |         |       |
 | ts-claude-agent-sdk | ts-claude-agent-sdk |         |       |
-| ts-yutori-cua     | ts-yutori-cua         |         | mode: computer_use |
-| ts-yutori-cua     | ts-yutori-cua         |         | mode: playwright |
+| ts-yutori-cua     | ts-yutori-cua         |         | default |
+| ts-yutori-cua     | ts-yutori-cua         |         | kiosk: true |
 | py-sample-app     | python-basic          |         |       |
 | py-captcha-solver | python-captcha-solver |         |       |
 | py-browser-use    | python-bu             |         |       |
@@ -323,8 +319,8 @@ If the human agrees, invoke each template use the Kernel CLI and collect results
 | py-openagi-cua    | python-openagi-cua    |         |       |
 | py-claude-agent-sdk | py-claude-agent-sdk |         |       |
 | py-gemini-cua     | python-gemini-cua     |         |       |
-| py-yutori-cua     | python-yutori-cua     |         | mode: computer_use |
-| py-yutori-cua     | python-yutori-cua     |         | mode: playwright |
+| py-yutori-cua     | python-yutori-cua     |         | default |
+| py-yutori-cua     | python-yutori-cua     |         | kiosk: true |
 
 Status values:
 - **SUCCESS**: App started and returned a result

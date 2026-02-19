@@ -2,17 +2,14 @@ import os
 from typing import Optional, TypedDict
 
 import kernel
-from loop import sampling_loop, BrowserMode
+from loop import sampling_loop
 from session import KernelBrowserSession
 
 
 class QueryInput(TypedDict):
     query: str
     record_replay: Optional[bool]
-    # Browser interaction mode:
-    # - computer_use: Uses Kernel's Computer Controls API (full VM screenshots) - default
-    # - playwright: Uses Playwright via CDP (viewport-only screenshots, optimized for n1)
-    mode: Optional[BrowserMode]
+    kiosk: Optional[bool]
 
 
 class QueryOutput(TypedDict):
@@ -50,24 +47,24 @@ async def cua_task(
         raise ValueError("Query is required")
 
     record_replay = payload.get("record_replay", False)
-    mode: BrowserMode = payload.get("mode") or "computer_use"
+    kiosk_mode = payload.get("kiosk", False)
 
     async with KernelBrowserSession(
         stealth=True,
         record_replay=record_replay,
+        kiosk_mode=kiosk_mode,
     ) as session:
         print("Kernel browser live view url:", session.live_view_url)
 
         loop_result = await sampling_loop(
-            model="n1-preview-2025-11",
+            model="n1-latest",
             task=payload["query"],
             api_key=str(api_key),
             kernel=session.kernel,
             session_id=str(session.session_id),
-            cdp_ws_url=session.cdp_ws_url,
             viewport_width=session.viewport_width,
             viewport_height=session.viewport_height,
-            mode=mode,
+            kiosk_mode=kiosk_mode,
         )
 
         final_answer = loop_result.get("final_answer")
@@ -86,17 +83,9 @@ async def cua_task(
 
 
 def _extract_last_assistant_message(messages: list) -> str:
-    import json
-
     for msg in reversed(messages):
         if msg.get("role") == "assistant":
             content = msg.get("content")
-            if isinstance(content, str):
-                # Try to parse the thoughts from JSON response
-                try:
-                    parsed = json.loads(content)
-                    if parsed.get("thoughts"):
-                        return parsed["thoughts"]
-                except json.JSONDecodeError:
-                    return content
+            if isinstance(content, str) and content:
+                return content
     return "Task completed"
