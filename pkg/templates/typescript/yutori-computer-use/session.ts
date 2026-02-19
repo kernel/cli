@@ -8,6 +8,8 @@
 import type { Kernel } from '@onkernel/sdk';
 
 export interface SessionOptions {
+  /** Invocation ID to link browser session to the action invocation */
+  invocationId?: string;
   /** Enable stealth mode to avoid bot detection */
   stealth?: boolean;
   /** Browser session timeout in seconds */
@@ -34,7 +36,9 @@ export interface SessionInfo {
   viewportHeight: number;
 }
 
-const DEFAULT_OPTIONS: Required<SessionOptions> = {
+type SessionOptionsWithDefaults = Required<Omit<SessionOptions, 'invocationId'>> & Pick<SessionOptions, 'invocationId'>;
+
+const DEFAULT_OPTIONS: Required<Omit<SessionOptions, 'invocationId'>> = {
   stealth: true,
   timeoutSeconds: 300,
   recordReplay: false,
@@ -60,7 +64,7 @@ const DEFAULT_OPTIONS: Required<SessionOptions> = {
  */
 export class KernelBrowserSession {
   private kernel: Kernel;
-  private options: Required<SessionOptions>;
+  private options: SessionOptionsWithDefaults;
   
   // Session state
   private _sessionId: string | null = null;
@@ -119,6 +123,7 @@ export class KernelBrowserSession {
 
   async start(): Promise<SessionInfo> {
     const browser = await this.kernel.browsers.create({
+      invocation_id: this.options.invocationId,
       stealth: this.options.stealth,
       timeout_seconds: this.options.timeoutSeconds,
       viewport: {
@@ -128,9 +133,9 @@ export class KernelBrowserSession {
       kiosk_mode: this.options.kioskMode,
     });
 
-    this._sessionId = browser.session_id;
-    this._liveViewUrl = browser.browser_live_view_url;
-    this._cdpWsUrl = browser.cdp_ws_url;
+    this._sessionId = browser.session_id ?? null;
+    this._liveViewUrl = browser.browser_live_view_url ?? null;
+    this._cdpWsUrl = browser.cdp_ws_url ?? null;
 
     console.log(`Kernel browser created: ${this._sessionId}`);
     console.log(`Live view URL: ${this._liveViewUrl}`);
@@ -183,7 +188,7 @@ export class KernelBrowserSession {
         const replays = await this.kernel.browsers.replays.list(this._sessionId);
         for (const replay of replays) {
           if (replay.replay_id === this._replayId) {
-            this._replayViewUrl = replay.replay_view_url;
+            this._replayViewUrl = replay.replay_view_url ?? null;
             replayReady = true;
             break;
           }
