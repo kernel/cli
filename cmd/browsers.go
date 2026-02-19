@@ -299,8 +299,8 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 		}
 
 		poolID := "-"
-		if browser.PoolID != "" {
-			poolID = browser.PoolID
+		if poolField, ok := browser.JSON.ExtraFields["pool_id"]; ok && poolField.Valid() {
+			poolID = strings.Trim(poolField.Raw(), "\"")
 		}
 
 		row := []string{
