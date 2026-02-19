@@ -174,6 +174,7 @@ type BrowsersCreateInput struct {
 	TimeoutSeconds     int
 	Stealth            BoolFlag
 	Headless           BoolFlag
+	GPU                BoolFlag
 	Kiosk              BoolFlag
 	ProfileID          string
 	ProfileName        string
@@ -341,6 +342,9 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 	if in.Headless.Set {
 		params.Headless = kernel.Opt(in.Headless.Value)
+	}
+	if in.GPU.Set {
+		params.GPU = kernel.Opt(in.GPU.Value)
 	}
 	if in.Kiosk.Set {
 		params.KioskMode = kernel.Opt(in.Kiosk.Value)
@@ -529,6 +533,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	tableData = append(tableData, []string{"Timeout (seconds)", fmt.Sprintf("%d", browser.TimeoutSeconds)})
 	tableData = append(tableData, []string{"Headless", fmt.Sprintf("%t", browser.Headless)})
 	tableData = append(tableData, []string{"Stealth", fmt.Sprintf("%t", browser.Stealth)})
+	tableData = append(tableData, []string{"GPU", fmt.Sprintf("%t", browser.GPU)})
 	tableData = append(tableData, []string{"Kiosk Mode", fmt.Sprintf("%t", browser.KioskMode)})
 	if browser.Viewport.Width > 0 && browser.Viewport.Height > 0 {
 		viewportStr := fmt.Sprintf("%dx%d", browser.Viewport.Width, browser.Viewport.Height)
@@ -2380,6 +2385,7 @@ func init() {
 	_ = browsersCreateCmd.Flags().MarkDeprecated("persistent-id", "use --timeout (up to 72 hours) and profiles instead")
 	browsersCreateCmd.Flags().BoolP("stealth", "s", false, "Launch browser in stealth mode to avoid detection")
 	browsersCreateCmd.Flags().BoolP("headless", "H", false, "Launch browser without GUI access")
+	browsersCreateCmd.Flags().Bool("gpu", false, "Launch browser with hardware-accelerated GPU rendering")
 	browsersCreateCmd.Flags().Bool("kiosk", false, "Launch browser in kiosk mode")
 	browsersCreateCmd.Flags().IntP("timeout", "t", 60, "Timeout in seconds for the browser session")
 	browsersCreateCmd.Flags().String("profile-id", "", "Profile ID to load into the browser session (mutually exclusive with --profile-name)")
@@ -2423,6 +2429,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	}
 	stealthVal, _ := cmd.Flags().GetBool("stealth")
 	headlessVal, _ := cmd.Flags().GetBool("headless")
+	gpuVal, _ := cmd.Flags().GetBool("gpu")
 	kioskVal, _ := cmd.Flags().GetBool("kiosk")
 	timeout, _ := cmd.Flags().GetInt("timeout")
 	profileID, _ := cmd.Flags().GetString("profile-id")
@@ -2534,6 +2541,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		TimeoutSeconds:     timeout,
 		Stealth:            BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealthVal},
 		Headless:           BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headlessVal},
+		GPU:                BoolFlag{Set: cmd.Flags().Changed("gpu"), Value: gpuVal},
 		Kiosk:              BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kioskVal},
 		ProfileID:          profileID,
 		ProfileName:        profileName,
