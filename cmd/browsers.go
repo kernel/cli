@@ -2366,7 +2366,7 @@ func init() {
 
 	// computer batch
 	computerBatch := &cobra.Command{Use: "batch <id>", Short: "Execute a batch of computer actions from JSON", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerBatch}
-	computerBatch.Flags().String("actions", "", "JSON array of actions (e.g., [{\"type\":\"click_mouse\",...}])")
+	computerBatch.Flags().String("actions", "", "JSON object with actions array (e.g., {\"actions\":[{\"type\":\"click_mouse\",...}]})")
 	_ = computerBatch.MarkFlagRequired("actions")
 
 	computerRoot.AddCommand(computerClick, computerMove, computerScreenshot, computerType, computerPressKey, computerScroll, computerDrag, computerSetCursor, computerGetMousePosition, computerBatch)
