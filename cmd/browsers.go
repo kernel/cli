@@ -92,9 +92,11 @@ type BrowserPlaywrightService interface {
 
 // BrowserComputerService defines the subset we use for OS-level mouse & screen.
 type BrowserComputerService interface {
+	Batch(ctx context.Context, id string, body kernel.BrowserComputerBatchParams, opts ...option.RequestOption) (err error)
 	CaptureScreenshot(ctx context.Context, id string, body kernel.BrowserComputerCaptureScreenshotParams, opts ...option.RequestOption) (res *http.Response, err error)
 	ClickMouse(ctx context.Context, id string, body kernel.BrowserComputerClickMouseParams, opts ...option.RequestOption) (err error)
 	DragMouse(ctx context.Context, id string, body kernel.BrowserComputerDragMouseParams, opts ...option.RequestOption) (err error)
+	GetMousePosition(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.BrowserComputerGetMousePositionResponse, err error)
 	MoveMouse(ctx context.Context, id string, body kernel.BrowserComputerMoveMouseParams, opts ...option.RequestOption) (err error)
 	PressKey(ctx context.Context, id string, body kernel.BrowserComputerPressKeyParams, opts ...option.RequestOption) (err error)
 	Scroll(ctx context.Context, id string, body kernel.BrowserComputerScrollParams, opts ...option.RequestOption) (err error)
@@ -172,6 +174,7 @@ type BrowsersCreateInput struct {
 	TimeoutSeconds     int
 	Stealth            BoolFlag
 	Headless           BoolFlag
+	GPU                BoolFlag
 	Kiosk              BoolFlag
 	ProfileID          string
 	ProfileName        string
@@ -339,6 +342,9 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 	if in.Headless.Set {
 		params.Headless = kernel.Opt(in.Headless.Value)
+	}
+	if in.GPU.Set {
+		params.GPU = kernel.Opt(in.GPU.Value)
 	}
 	if in.Kiosk.Set {
 		params.KioskMode = kernel.Opt(in.Kiosk.Value)
@@ -527,6 +533,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	tableData = append(tableData, []string{"Timeout (seconds)", fmt.Sprintf("%d", browser.TimeoutSeconds)})
 	tableData = append(tableData, []string{"Headless", fmt.Sprintf("%t", browser.Headless)})
 	tableData = append(tableData, []string{"Stealth", fmt.Sprintf("%t", browser.Stealth)})
+	tableData = append(tableData, []string{"GPU", fmt.Sprintf("%t", browser.GPU)})
 	tableData = append(tableData, []string{"Kiosk Mode", fmt.Sprintf("%t", browser.KioskMode)})
 	if browser.Viewport.Width > 0 && browser.Viewport.Height > 0 {
 		viewportStr := fmt.Sprintf("%dx%d", browser.Viewport.Width, browser.Viewport.Height)
@@ -738,6 +745,16 @@ type BrowsersComputerDragMouseInput struct {
 type BrowsersComputerSetCursorInput struct {
 	Identifier string
 	Hidden     bool
+}
+
+type BrowsersComputerGetMousePositionInput struct {
+	Identifier string
+	Output     string
+}
+
+type BrowsersComputerBatchInput struct {
+	Identifier  string
+	ActionsJSON string
 }
 
 func (b BrowsersCmd) ComputerClickMouse(ctx context.Context, in BrowsersComputerClickMouseInput) error {
@@ -953,6 +970,49 @@ func (b BrowsersCmd) ComputerSetCursor(ctx context.Context, in BrowsersComputerS
 	} else {
 		pterm.Success.Println("Cursor shown")
 	}
+	return nil
+}
+
+func (b BrowsersCmd) ComputerGetMousePosition(ctx context.Context, in BrowsersComputerGetMousePositionInput) error {
+	if b.computer == nil {
+		pterm.Error.Println("computer service not available")
+		return nil
+	}
+	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	res, err := b.computer.GetMousePosition(ctx, br.SessionID)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	if in.Output == "json" {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(res)
+	}
+	fmt.Printf("x: %d\ny: %d\n", res.X, res.Y)
+	return nil
+}
+
+func (b BrowsersCmd) ComputerBatch(ctx context.Context, in BrowsersComputerBatchInput) error {
+	if b.computer == nil {
+		pterm.Error.Println("computer service not available")
+		return nil
+	}
+	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	var body kernel.BrowserComputerBatchParams
+	if err := json.Unmarshal([]byte(in.ActionsJSON), &body); err != nil {
+		pterm.Error.Printf("Invalid JSON: %v\n", err)
+		return nil
+	}
+	if err := b.computer.Batch(ctx, br.SessionID, body); err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	pterm.Success.Println("Batch actions executed")
 	return nil
 }
 
@@ -2300,7 +2360,16 @@ func init() {
 	computerSetCursor.Flags().String("hidden", "", "Whether to hide the cursor: true or false")
 	_ = computerSetCursor.MarkFlagRequired("hidden")
 
-	computerRoot.AddCommand(computerClick, computerMove, computerScreenshot, computerType, computerPressKey, computerScroll, computerDrag, computerSetCursor)
+	// computer get-mouse-position
+	computerGetMousePosition := &cobra.Command{Use: "get-mouse-position <id>", Short: "Get current mouse cursor position", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerGetMousePosition}
+	computerGetMousePosition.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+
+	// computer batch
+	computerBatch := &cobra.Command{Use: "batch <id>", Short: "Execute a batch of computer actions from JSON", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerBatch}
+	computerBatch.Flags().String("actions", "", "JSON object with actions array (e.g., {\"actions\":[{\"type\":\"click_mouse\",...}]})")
+	_ = computerBatch.MarkFlagRequired("actions")
+
+	computerRoot.AddCommand(computerClick, computerMove, computerScreenshot, computerType, computerPressKey, computerScroll, computerDrag, computerSetCursor, computerGetMousePosition, computerBatch)
 	browsersCmd.AddCommand(computerRoot)
 
 	// playwright
@@ -2316,6 +2385,7 @@ func init() {
 	_ = browsersCreateCmd.Flags().MarkDeprecated("persistent-id", "use --timeout (up to 72 hours) and profiles instead")
 	browsersCreateCmd.Flags().BoolP("stealth", "s", false, "Launch browser in stealth mode to avoid detection")
 	browsersCreateCmd.Flags().BoolP("headless", "H", false, "Launch browser without GUI access")
+	browsersCreateCmd.Flags().Bool("gpu", false, "Launch browser with hardware-accelerated GPU rendering")
 	browsersCreateCmd.Flags().Bool("kiosk", false, "Launch browser in kiosk mode")
 	browsersCreateCmd.Flags().IntP("timeout", "t", 60, "Timeout in seconds for the browser session")
 	browsersCreateCmd.Flags().String("profile-id", "", "Profile ID to load into the browser session (mutually exclusive with --profile-name)")
@@ -2359,6 +2429,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	}
 	stealthVal, _ := cmd.Flags().GetBool("stealth")
 	headlessVal, _ := cmd.Flags().GetBool("headless")
+	gpuVal, _ := cmd.Flags().GetBool("gpu")
 	kioskVal, _ := cmd.Flags().GetBool("kiosk")
 	timeout, _ := cmd.Flags().GetInt("timeout")
 	profileID, _ := cmd.Flags().GetString("profile-id")
@@ -2470,6 +2541,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		TimeoutSeconds:     timeout,
 		Stealth:            BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealthVal},
 		Headless:           BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headlessVal},
+		GPU:                BoolFlag{Set: cmd.Flags().Changed("gpu"), Value: gpuVal},
 		Kiosk:              BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kioskVal},
 		ProfileID:          profileID,
 		ProfileName:        profileName,
@@ -2999,6 +3071,24 @@ func runBrowsersComputerSetCursor(cmd *cobra.Command, args []string) error {
 
 	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
 	return b.ComputerSetCursor(cmd.Context(), BrowsersComputerSetCursorInput{Identifier: args[0], Hidden: hidden})
+}
+
+func runBrowsersComputerGetMousePosition(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	output, _ := cmd.Flags().GetString("output")
+
+	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
+	return b.ComputerGetMousePosition(cmd.Context(), BrowsersComputerGetMousePositionInput{Identifier: args[0], Output: output})
+}
+
+func runBrowsersComputerBatch(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	actionsJSON, _ := cmd.Flags().GetString("actions")
+
+	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
+	return b.ComputerBatch(cmd.Context(), BrowsersComputerBatchInput{Identifier: args[0], ActionsJSON: actionsJSON})
 }
 
 func truncateURL(url string, maxLen int) string {
