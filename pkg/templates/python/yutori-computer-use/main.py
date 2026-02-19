@@ -50,6 +50,7 @@ async def cua_task(
     kiosk_mode = payload.get("kiosk", False)
 
     async with KernelBrowserSession(
+        invocation_id=ctx.invocation_id,
         stealth=True,
         record_replay=record_replay,
         kiosk_mode=kiosk_mode,

@@ -5,7 +5,7 @@ description = "Kernel sample app for OpenAGI Lux computer-use models"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "kernel>=0.22.0",
+    "kernel>=0.35.0",
     "oagi>=0.1.0",
     "python-dotenv>=1.0.0",
     "Pillow>=10.0.0",

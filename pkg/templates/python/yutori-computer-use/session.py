@@ -42,6 +42,9 @@ class KernelBrowserSession:
     # Kiosk mode (hides address bar and tabs in live view)
     kiosk_mode: bool = False
 
+    # Invocation ID to link browser session to the action invocation
+    invocation_id: Optional[str] = None
+
     # Set after browser creation
     session_id: Optional[str] = field(default=None, init=False)
     live_view_url: Optional[str] = field(default=None, init=False)
@@ -54,6 +57,7 @@ class KernelBrowserSession:
         self._kernel = Kernel()
 
         browser = self._kernel.browsers.create(
+            invocation_id=self.invocation_id,
             stealth=self.stealth,
             timeout_seconds=self.timeout_seconds,
             viewport={

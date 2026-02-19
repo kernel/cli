@@ -52,6 +52,7 @@ async def cua_task(
     record_replay = payload.get("record_replay", False)
 
     async with KernelBrowserSession(
+        invocation_id=ctx.invocation_id,
         stealth=True,
         record_replay=record_replay,
     ) as session:

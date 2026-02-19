@@ -33,6 +33,7 @@ app.action<QueryInput, QueryOutput>(
 
     // Create browser session with optional replay recording
     const session = new KernelBrowserSession(kernel, {
+      invocationId: ctx.invocation_id,
       stealth: true,
       recordReplay: payload.record_replay ?? false,
     });
