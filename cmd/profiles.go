@@ -14,6 +14,7 @@ import (
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/pterm/pterm"
+	"github.com/samber/lo"
 	"github.com/spf13/cobra"
 )
 
@@ -32,10 +33,10 @@ type ProfilesGetInput struct {
 }
 
 type ProfilesListInput struct {
-	Output string
-	Limit  int
-	Offset int
-	Query  string
+	Output  string
+	Page    int
+	PerPage int
+	Query   string
 }
 
 type ProfilesCreateInput struct {
@@ -64,30 +65,41 @@ func (p ProfilesCmd) List(ctx context.Context, in ProfilesListInput) error {
 		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
+	page := in.Page
+	perPage := in.PerPage
+	if page <= 0 {
+		page = 1
+	}
+	if perPage <= 0 {
+		perPage = 20
+	}
+
 	if in.Output != "json" {
 		pterm.Info.Println("Fetching profiles...")
 	}
 
 	params := kernel.ProfileListParams{}
-	if in.Limit > 0 {
-		params.Limit = kernel.Opt(int64(in.Limit))
-	}
-	if in.Offset > 0 {
-		params.Offset = kernel.Opt(int64(in.Offset))
-	}
 	if in.Query != "" {
 		params.Query = kernel.Opt(in.Query)
 	}
+	params.Limit = kernel.Opt(int64(perPage + 1))
+	params.Offset = kernel.Opt(int64((page - 1) * perPage))
 
-	page, err := p.profiles.List(ctx, params)
+	result, err := p.profiles.List(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
 	var items []kernel.Profile
-	if page != nil {
-		items = page.Items
+	if result != nil {
+		items = result.Items
 	}
+
+	hasMore := len(items) > perPage
+	if hasMore {
+		items = items[:perPage]
+	}
+	itemsThisPage := len(items)
 
 	if in.Output == "json" {
 		if len(items) == 0 {
@@ -116,6 +128,17 @@ func (p ProfilesCmd) List(ctx context.Context, in ProfilesListInput) error {
 		})
 	}
 	PrintTableNoPad(rows, true)
+
+	pterm.Printf("\nPage: %d  Per-page: %d  Items this page: %d  Has more: %s\n", page, perPage, itemsThisPage, lo.Ternary(hasMore, "yes", "no"))
+	if hasMore {
+		nextPage := page + 1
+		nextCmd := fmt.Sprintf("kernel profile list --page %d --per-page %d", nextPage, perPage)
+		if in.Query != "" {
+			nextCmd += fmt.Sprintf(" --query \"%s\"", in.Query)
+		}
+		pterm.Printf("Next: %s\n", nextCmd)
+	}
+
 	return nil
 }
 
@@ -320,8 +343,8 @@ func init() {
 	profilesCmd.AddCommand(profilesDownloadCmd)
 
 	profilesListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
-	profilesListCmd.Flags().Int("limit", 0, "Maximum number of results to return")
-	profilesListCmd.Flags().Int("offset", 0, "Number of results to skip")
+	profilesListCmd.Flags().Int("per-page", 20, "Items per page (default 20)")
+	profilesListCmd.Flags().Int("page", 1, "Page number (1-based)")
 	profilesListCmd.Flags().String("query", "", "Search profiles by name or ID")
 	profilesGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	profilesCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
@@ -334,16 +357,17 @@ func init() {
 func runProfilesList(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	output, _ := cmd.Flags().GetString("output")
-	limit, _ := cmd.Flags().GetInt("limit")
-	offset, _ := cmd.Flags().GetInt("offset")
+	perPage, _ := cmd.Flags().GetInt("per-page")
+	page, _ := cmd.Flags().GetInt("page")
 	query, _ := cmd.Flags().GetString("query")
+
 	svc := client.Profiles
 	p := ProfilesCmd{profiles: &svc}
 	return p.List(cmd.Context(), ProfilesListInput{
-		Output: output,
-		Limit:  limit,
-		Offset: offset,
-		Query:  query,
+		Output:  output,
+		Page:    page,
+		PerPage: perPage,
+		Query:   query,
 	})
 }
 
