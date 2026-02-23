@@ -13,6 +13,7 @@ import (
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/pterm/pterm"
 	"github.com/stretchr/testify/assert"
 )
@@ -44,7 +45,7 @@ func captureProfilesOutput(t *testing.T) *bytes.Buffer {
 // FakeProfilesService implements ProfilesService
 type FakeProfilesService struct {
 	GetFunc      func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*kernel.Profile, error)
-	ListFunc     func(ctx context.Context, opts ...option.RequestOption) (*[]kernel.Profile, error)
+	ListFunc     func(ctx context.Context, query kernel.ProfileListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Profile], error)
 	DeleteFunc   func(ctx context.Context, idOrName string, opts ...option.RequestOption) error
 	NewFunc      func(ctx context.Context, body kernel.ProfileNewParams, opts ...option.RequestOption) (*kernel.Profile, error)
 	DownloadFunc func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*http.Response, error)
@@ -56,12 +57,11 @@ func (f *FakeProfilesService) Get(ctx context.Context, idOrName string, opts ...
 	}
 	return &kernel.Profile{ID: idOrName, CreatedAt: time.Unix(0, 0), UpdatedAt: time.Unix(0, 0)}, nil
 }
-func (f *FakeProfilesService) List(ctx context.Context, opts ...option.RequestOption) (*[]kernel.Profile, error) {
+func (f *FakeProfilesService) List(ctx context.Context, query kernel.ProfileListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Profile], error) {
 	if f.ListFunc != nil {
-		return f.ListFunc(ctx, opts...)
+		return f.ListFunc(ctx, query, opts...)
 	}
-	empty := []kernel.Profile{}
-	return &empty, nil
+	return &pagination.OffsetPagination[kernel.Profile]{Items: []kernel.Profile{}}, nil
 }
 func (f *FakeProfilesService) Delete(ctx context.Context, idOrName string, opts ...option.RequestOption) error {
 	if f.DeleteFunc != nil {
@@ -94,7 +94,9 @@ func TestProfilesList_WithRows(t *testing.T) {
 	buf := captureProfilesOutput(t)
 	created := time.Unix(0, 0)
 	rows := []kernel.Profile{{ID: "p1", Name: "alpha", CreatedAt: created, UpdatedAt: created}, {ID: "p2", Name: "", CreatedAt: created, UpdatedAt: created}}
-	fake := &FakeProfilesService{ListFunc: func(ctx context.Context, opts ...option.RequestOption) (*[]kernel.Profile, error) { return &rows, nil }}
+	fake := &FakeProfilesService{ListFunc: func(ctx context.Context, query kernel.ProfileListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Profile], error) {
+		return &pagination.OffsetPagination[kernel.Profile]{Items: rows}, nil
+	}}
 	p := ProfilesCmd{profiles: fake}
 	_ = p.List(context.Background(), ProfilesListInput{})
 	out := buf.String()

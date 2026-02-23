@@ -12,6 +12,7 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -19,7 +20,7 @@ import (
 // ProfilesService defines the subset of the Kernel SDK profile client that we use.
 type ProfilesService interface {
 	Get(ctx context.Context, idOrName string, opts ...option.RequestOption) (res *kernel.Profile, err error)
-	List(ctx context.Context, opts ...option.RequestOption) (res *[]kernel.Profile, err error)
+	List(ctx context.Context, query kernel.ProfileListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.Profile], err error)
 	Delete(ctx context.Context, idOrName string, opts ...option.RequestOption) (err error)
 	New(ctx context.Context, body kernel.ProfileNewParams, opts ...option.RequestOption) (res *kernel.Profile, err error)
 	Download(ctx context.Context, idOrName string, opts ...option.RequestOption) (res *http.Response, err error)
@@ -32,6 +33,9 @@ type ProfilesGetInput struct {
 
 type ProfilesListInput struct {
 	Output string
+	Limit  int
+	Offset int
+	Query  string
 }
 
 type ProfilesCreateInput struct {
@@ -63,25 +67,42 @@ func (p ProfilesCmd) List(ctx context.Context, in ProfilesListInput) error {
 	if in.Output != "json" {
 		pterm.Info.Println("Fetching profiles...")
 	}
-	items, err := p.profiles.List(ctx)
+
+	params := kernel.ProfileListParams{}
+	if in.Limit > 0 {
+		params.Limit = kernel.Opt(int64(in.Limit))
+	}
+	if in.Offset > 0 {
+		params.Offset = kernel.Opt(int64(in.Offset))
+	}
+	if in.Query != "" {
+		params.Query = kernel.Opt(in.Query)
+	}
+
+	page, err := p.profiles.List(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
+	var items []kernel.Profile
+	if page != nil {
+		items = page.Items
+	}
+
 	if in.Output == "json" {
-		if items == nil || len(*items) == 0 {
+		if len(items) == 0 {
 			fmt.Println("[]")
 			return nil
 		}
-		return util.PrintPrettyJSONSlice(*items)
+		return util.PrintPrettyJSONSlice(items)
 	}
 
-	if items == nil || len(*items) == 0 {
+	if len(items) == 0 {
 		pterm.Info.Println("No profiles found")
 		return nil
 	}
 	rows := pterm.TableData{{"Profile ID", "Name", "Created At", "Updated At", "Last Used At"}}
-	for _, prof := range *items {
+	for _, prof := range items {
 		name := prof.Name
 		if name == "" {
 			name = "-"
@@ -299,6 +320,9 @@ func init() {
 	profilesCmd.AddCommand(profilesDownloadCmd)
 
 	profilesListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	profilesListCmd.Flags().Int("limit", 0, "Maximum number of results to return")
+	profilesListCmd.Flags().Int("offset", 0, "Number of results to skip")
+	profilesListCmd.Flags().String("query", "", "Search profiles by name or ID")
 	profilesGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	profilesCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	profilesCreateCmd.Flags().String("name", "", "Optional unique profile name")
@@ -310,9 +334,17 @@ func init() {
 func runProfilesList(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	output, _ := cmd.Flags().GetString("output")
+	limit, _ := cmd.Flags().GetInt("limit")
+	offset, _ := cmd.Flags().GetInt("offset")
+	query, _ := cmd.Flags().GetString("query")
 	svc := client.Profiles
 	p := ProfilesCmd{profiles: &svc}
-	return p.List(cmd.Context(), ProfilesListInput{Output: output})
+	return p.List(cmd.Context(), ProfilesListInput{
+		Output: output,
+		Limit:  limit,
+		Offset: offset,
+		Query:  query,
+	})
 }
 
 func runProfilesGet(cmd *cobra.Command, args []string) error {
