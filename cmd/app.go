@@ -9,6 +9,7 @@ import (
 	"github.com/pterm/pterm"
 	"github.com/samber/lo"
 	"github.com/spf13/cobra"
+	"golang.org/x/sync/errgroup"
 )
 
 var appCmd = &cobra.Command{
@@ -25,7 +26,14 @@ var appListCmd = &cobra.Command{
 	RunE:  runAppList,
 }
 
-// --- app history subcommand (scaffold)
+var appDeleteCmd = &cobra.Command{
+	Use:   "delete <app_name>",
+	Short: "Delete an app and all its deployments",
+	Long:  "Deletes all deployments for an application. Use --version to scope deletion to a specific version.",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runAppDelete,
+}
+
 var appHistoryCmd = &cobra.Command{
 	Use:   "history <app_name>",
 	Short: "Show deployment history for an application",
@@ -36,7 +44,12 @@ var appHistoryCmd = &cobra.Command{
 func init() {
 	// register subcommands under app
 	appCmd.AddCommand(appListCmd)
+	appCmd.AddCommand(appDeleteCmd)
 	appCmd.AddCommand(appHistoryCmd)
+
+	// Flags for delete
+	appDeleteCmd.Flags().String("version", "", "Only delete deployments for this version (default: all versions)")
+	appDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 
 	// Add optional filters for list
 	appListCmd.Flags().String("name", "", "Filter by application name")
@@ -203,6 +216,76 @@ func runAppList(cmd *cobra.Command, args []string) error {
 			pterm.Warning.Println("Requested --page <1; using page=1.")
 		}
 	}
+	return nil
+}
+
+func runAppDelete(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	appName := args[0]
+	version, _ := cmd.Flags().GetString("version")
+	skipConfirm, _ := cmd.Flags().GetBool("yes")
+
+	params := kernel.DeploymentListParams{
+		AppName: kernel.Opt(appName),
+		Limit:   kernel.Opt(int64(100)),
+		Offset:  kernel.Opt(int64(0)),
+	}
+	if version != "" {
+		params.AppVersion = kernel.Opt(version)
+	}
+
+	initial, err := client.Deployments.List(cmd.Context(), params)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	if initial == nil || len(initial.Items) == 0 {
+		pterm.Info.Printf("No deployments found for app '%s'\n", appName)
+		return nil
+	}
+
+	if !skipConfirm {
+		scope := "all versions"
+		if version != "" {
+			scope = fmt.Sprintf("version '%s'", version)
+		}
+		msg := fmt.Sprintf("Delete all deployments for app '%s' (%s)? This cannot be undone.", appName, scope)
+		pterm.DefaultInteractiveConfirm.DefaultText = msg
+		ok, _ := pterm.DefaultInteractiveConfirm.Show()
+		if !ok {
+			pterm.Info.Println("Deletion cancelled")
+			return nil
+		}
+	}
+
+	spinner, _ := pterm.DefaultSpinner.Start(fmt.Sprintf("Deleting deployments for app '%s'...", appName))
+	deleted := 0
+
+	for {
+		page, err := client.Deployments.List(cmd.Context(), params)
+		if err != nil {
+			spinner.Fail("Failed to list deployments")
+			return util.CleanedUpSdkError{Err: err}
+		}
+		items := page.Items
+		if len(items) == 0 {
+			break
+		}
+
+		g, gctx := errgroup.WithContext(cmd.Context())
+		for _, dep := range items {
+			g.Go(func() error {
+				return client.Deployments.Delete(gctx, dep.ID)
+			})
+		}
+		if err := g.Wait(); err != nil {
+			spinner.Fail("Failed to delete deployments")
+			return util.CleanedUpSdkError{Err: err}
+		}
+		deleted += len(items)
+		spinner.UpdateText(fmt.Sprintf("Deleted %d deployment(s) so far...", deleted))
+	}
+
+	spinner.Success(fmt.Sprintf("Deleted %d deployment(s) for app '%s'", deleted, appName))
 	return nil
 }
 

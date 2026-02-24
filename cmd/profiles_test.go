@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/pterm/pterm"
 	"github.com/stretchr/testify/assert"
 )
@@ -44,7 +46,7 @@ func captureProfilesOutput(t *testing.T) *bytes.Buffer {
 // FakeProfilesService implements ProfilesService
 type FakeProfilesService struct {
 	GetFunc      func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*kernel.Profile, error)
-	ListFunc     func(ctx context.Context, opts ...option.RequestOption) (*[]kernel.Profile, error)
+	ListFunc     func(ctx context.Context, query kernel.ProfileListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Profile], error)
 	DeleteFunc   func(ctx context.Context, idOrName string, opts ...option.RequestOption) error
 	NewFunc      func(ctx context.Context, body kernel.ProfileNewParams, opts ...option.RequestOption) (*kernel.Profile, error)
 	DownloadFunc func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*http.Response, error)
@@ -56,12 +58,11 @@ func (f *FakeProfilesService) Get(ctx context.Context, idOrName string, opts ...
 	}
 	return &kernel.Profile{ID: idOrName, CreatedAt: time.Unix(0, 0), UpdatedAt: time.Unix(0, 0)}, nil
 }
-func (f *FakeProfilesService) List(ctx context.Context, opts ...option.RequestOption) (*[]kernel.Profile, error) {
+func (f *FakeProfilesService) List(ctx context.Context, query kernel.ProfileListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Profile], error) {
 	if f.ListFunc != nil {
-		return f.ListFunc(ctx, opts...)
+		return f.ListFunc(ctx, query, opts...)
 	}
-	empty := []kernel.Profile{}
-	return &empty, nil
+	return &pagination.OffsetPagination[kernel.Profile]{Items: []kernel.Profile{}}, nil
 }
 func (f *FakeProfilesService) Delete(ctx context.Context, idOrName string, opts ...option.RequestOption) error {
 	if f.DeleteFunc != nil {
@@ -86,7 +87,7 @@ func TestProfilesList_Empty(t *testing.T) {
 	buf := captureProfilesOutput(t)
 	fake := &FakeProfilesService{}
 	p := ProfilesCmd{profiles: fake}
-	_ = p.List(context.Background(), ProfilesListInput{})
+	_ = p.List(context.Background(), ProfilesListInput{Page: 1, PerPage: 20})
 	assert.Contains(t, buf.String(), "No profiles found")
 }
 
@@ -94,13 +95,69 @@ func TestProfilesList_WithRows(t *testing.T) {
 	buf := captureProfilesOutput(t)
 	created := time.Unix(0, 0)
 	rows := []kernel.Profile{{ID: "p1", Name: "alpha", CreatedAt: created, UpdatedAt: created}, {ID: "p2", Name: "", CreatedAt: created, UpdatedAt: created}}
-	fake := &FakeProfilesService{ListFunc: func(ctx context.Context, opts ...option.RequestOption) (*[]kernel.Profile, error) { return &rows, nil }}
+	fake := &FakeProfilesService{ListFunc: func(ctx context.Context, query kernel.ProfileListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Profile], error) {
+		return &pagination.OffsetPagination[kernel.Profile]{Items: rows}, nil
+	}}
 	p := ProfilesCmd{profiles: fake}
-	_ = p.List(context.Background(), ProfilesListInput{})
+	_ = p.List(context.Background(), ProfilesListInput{Page: 1, PerPage: 20})
 	out := buf.String()
 	assert.Contains(t, out, "p1")
 	assert.Contains(t, out, "alpha")
 	assert.Contains(t, out, "p2")
+	assert.Contains(t, out, "Has more: no")
+}
+
+func TestProfilesList_HasMore(t *testing.T) {
+	buf := captureProfilesOutput(t)
+	created := time.Unix(0, 0)
+	perPage := 2
+	items := make([]kernel.Profile, perPage+1)
+	for i := range items {
+		items[i] = kernel.Profile{ID: fmt.Sprintf("p%d", i), CreatedAt: created, UpdatedAt: created}
+	}
+	fake := &FakeProfilesService{ListFunc: func(ctx context.Context, query kernel.ProfileListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Profile], error) {
+		return &pagination.OffsetPagination[kernel.Profile]{Items: items}, nil
+	}}
+	p := ProfilesCmd{profiles: fake}
+	_ = p.List(context.Background(), ProfilesListInput{Page: 1, PerPage: perPage})
+	out := buf.String()
+	assert.Contains(t, out, "Has more: yes")
+	assert.Contains(t, out, "Next: kernel profile list --page 2 --per-page 2")
+	assert.Contains(t, out, "p0")
+	assert.Contains(t, out, "p1")
+	assert.NotContains(t, out, "p2")
+}
+
+func TestProfilesList_QueryInNextHint(t *testing.T) {
+	buf := captureProfilesOutput(t)
+	created := time.Unix(0, 0)
+	items := make([]kernel.Profile, 3)
+	for i := range items {
+		items[i] = kernel.Profile{ID: fmt.Sprintf("p%d", i), CreatedAt: created, UpdatedAt: created}
+	}
+	fake := &FakeProfilesService{ListFunc: func(ctx context.Context, query kernel.ProfileListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Profile], error) {
+		return &pagination.OffsetPagination[kernel.Profile]{Items: items}, nil
+	}}
+	p := ProfilesCmd{profiles: fake}
+	_ = p.List(context.Background(), ProfilesListInput{Page: 1, PerPage: 2, Query: "my-bot"})
+	out := buf.String()
+	assert.Contains(t, out, `--query "my-bot"`)
+}
+
+func TestProfilesList_QueryWithSpacesQuoted(t *testing.T) {
+	buf := captureProfilesOutput(t)
+	created := time.Unix(0, 0)
+	items := make([]kernel.Profile, 3)
+	for i := range items {
+		items[i] = kernel.Profile{ID: fmt.Sprintf("p%d", i), CreatedAt: created, UpdatedAt: created}
+	}
+	fake := &FakeProfilesService{ListFunc: func(ctx context.Context, query kernel.ProfileListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Profile], error) {
+		return &pagination.OffsetPagination[kernel.Profile]{Items: items}, nil
+	}}
+	p := ProfilesCmd{profiles: fake}
+	_ = p.List(context.Background(), ProfilesListInput{Page: 1, PerPage: 2, Query: "my bot"})
+	out := buf.String()
+	assert.Contains(t, out, `--query "my bot"`)
 }
 
 func TestProfilesGet_Success(t *testing.T) {
