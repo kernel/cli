@@ -59,5 +59,3 @@ require (
 	golang.org/x/text v0.33.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/kernel/kernel-go-sdk => github.com/stainless-sdks/kernel-go v0.0.0-20260224215530-ad9db9bc2e84

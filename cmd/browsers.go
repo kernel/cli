@@ -299,10 +299,21 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 		}
 
 		pool := "-"
-		if browser.Pool.Name != "" {
-			pool = browser.Pool.Name
-		} else if browser.Pool.ID != "" {
-			pool = browser.Pool.ID
+		if poolField, ok := browser.JSON.ExtraFields["pool"]; ok && poolField.Valid() {
+			raw := poolField.Raw()
+			if nameIdx := strings.Index(raw, `"name":"`); nameIdx != -1 {
+				start := nameIdx + len(`"name":"`)
+				end := strings.Index(raw[start:], `"`)
+				if end > 0 {
+					pool = raw[start : start+end]
+				}
+			} else if idIdx := strings.Index(raw, `"id":"`); idIdx != -1 {
+				start := idIdx + len(`"id":"`)
+				end := strings.Index(raw[start:], `"`)
+				if end > 0 {
+					pool = raw[start : start+end]
+				}
+			}
 		}
 
 		row := []string{
