@@ -298,9 +298,11 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 			profile = browser.Profile.ID
 		}
 
-		poolID := "-"
-		if browser.PoolID != "" {
-			poolID = browser.PoolID
+		pool := "-"
+		if browser.Pool.Name != "" {
+			pool = browser.Pool.Name
+		} else if browser.Pool.ID != "" {
+			pool = browser.Pool.ID
 		}
 
 		row := []string{
@@ -308,7 +310,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 			util.FormatLocal(browser.CreatedAt),
 			persistentID,
 			profile,
-			poolID,
+			pool,
 			truncateURL(browser.CdpWsURL, 50),
 			truncateURL(browser.BrowserLiveViewURL, 50),
 		}
