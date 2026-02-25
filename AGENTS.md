@@ -8,6 +8,17 @@ This is a Go CLI application (no long-running services). Development commands ar
 - **Test:** `make test` → runs `go vet` + `go test ./...`
 - **Lint:** `make lint` → runs `golangci-lint run` (requires `golangci-lint` on `PATH`)
 
+### Testing against production
+
+When `KERNEL_API_KEY` is set (provided as a secret), the CLI hits the **production** Kernel API. After `make build`, test with `./bin/kernel`. Useful smoke-test sequence:
+
+1. `./bin/kernel auth status` — verify auth
+2. `./bin/kernel app list` — list deployed apps
+3. `./bin/kernel browsers create` — create a browser session (remember to delete it after)
+4. `./bin/kernel browsers delete <session_id>` — clean up
+
+Be mindful that these operations affect production resources.
+
 ### Gotchas
 
 - `golangci-lint` is installed via `go install` to `$(go env GOPATH)/bin`. This directory must be on `PATH` (the update script handles this via `.bashrc`).
