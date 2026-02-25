@@ -40,12 +40,14 @@ export async function createResponse(
   }
 }
 
-export function checkBlocklistedUrl(url: string): boolean {
+export function checkBlocklistedUrl(url: string): void {
   try {
     const host = new URL(url).hostname;
-    return BLOCKED_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
-  } catch {
-    return false;
+    if (BLOCKED_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))) {
+      throw new Error(`Blocked URL: ${url}`);
+    }
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith('Blocked URL:')) throw e;
   }
 }
 

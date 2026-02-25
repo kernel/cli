@@ -74,12 +74,22 @@ def _normalize_button(button) -> str:
 def _translate_cua_action(action: Dict[str, Any]) -> Dict[str, Any]:
     action_type = action.get("type", "")
     if action_type == "click":
+        button = action.get("button")
+        if button == "back":
+            return {"type": "press_key", "press_key": {"keys": ["Alt_L", "Left"]}}
+        if button == "forward":
+            return {"type": "press_key", "press_key": {"keys": ["Alt_L", "Right"]}}
+        if button == "wheel":
+            return {
+                "type": "scroll",
+                "scroll": {"x": action.get("x", 0), "y": action.get("y", 0), "delta_x": 0, "delta_y": 0},
+            }
         return {
             "type": "click_mouse",
             "click_mouse": {
                 "x": action.get("x", 0),
                 "y": action.get("y", 0),
-                "button": _normalize_button(action.get("button")),
+                "button": _normalize_button(button),
             },
         }
     elif action_type == "double_click":
@@ -134,6 +144,15 @@ class KernelComputer:
         return base64.b64encode(resp.read()).decode("utf-8")
 
     def click(self, x: int, y: int, button="left") -> None:
+        if button == "back":
+            self.back()
+            return
+        if button == "forward":
+            self.forward()
+            return
+        if button == "wheel":
+            self.scroll(x, y, 0, 0)
+            return
         self.client.browsers.computer.click_mouse(self.session_id, x=x, y=y, button=_normalize_button(button))
 
     def double_click(self, x: int, y: int) -> None:

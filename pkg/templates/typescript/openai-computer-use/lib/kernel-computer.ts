@@ -105,11 +105,18 @@ function normalizeButton(button?: string | number): string {
 
 function translateCuaAction(action: CuaAction): BatchAction {
   switch (action.type) {
-    case 'click':
+    case 'click': {
+      if (action.button === 'back')
+        return { type: 'press_key', press_key: { keys: ['Alt_L', 'Left'] } };
+      if (action.button === 'forward')
+        return { type: 'press_key', press_key: { keys: ['Alt_L', 'Right'] } };
+      if (action.button === 'wheel')
+        return { type: 'scroll', scroll: { x: action.x ?? 0, y: action.y ?? 0, delta_x: 0, delta_y: 0 } };
       return {
         type: 'click_mouse',
         click_mouse: { x: action.x ?? 0, y: action.y ?? 0, button: normalizeButton(action.button) },
       };
+    }
     case 'double_click':
       return {
         type: 'click_mouse',
@@ -168,6 +175,9 @@ export class KernelComputer {
   }
 
   async click(x: number, y: number, button: string | number = 'left'): Promise<void> {
+    if (button === 'back') { await this.back(); return; }
+    if (button === 'forward') { await this.forward(); return; }
+    if (button === 'wheel') { await this.scroll(x, y, 0, 0); return; }
     await this.client.browsers.computer.clickMouse(this.sessionId, {
       x,
       y,
