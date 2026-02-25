@@ -58,6 +58,11 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		pterm.Error.Println("Could not reach Kernel API. Check https://status.kernel.sh for updates.")
+		return fmt.Errorf("status request failed: %s", resp.Status)
+	}
+
 	var status statusResponse
 	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
 		return fmt.Errorf("invalid response: %w", err)
