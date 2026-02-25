@@ -3,6 +3,7 @@ package proxies
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/kernel/cli/pkg/table"
 	"github.com/kernel/cli/pkg/util"
@@ -39,6 +40,9 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 
 	if in.Name != "" {
 		params.Name = kernel.Opt(in.Name)
+	}
+	if len(in.BypassHosts) > 0 {
+		params.BypassHosts = normalizeBypassHosts(in.BypassHosts)
 	}
 
 	// Build config based on type
@@ -189,6 +193,7 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 	}
 	rows = append(rows, []string{"Name", name})
 	rows = append(rows, []string{"Type", string(proxy.Type)})
+	rows = append(rows, []string{"Bypass Hosts", formatBypassHosts(proxy.BypassHosts)})
 
 	// Display protocol (default to https if not set)
 	protocol := string(proxy.Protocol)
@@ -219,26 +224,40 @@ func runProxiesCreate(cmd *cobra.Command, args []string) error {
 	port, _ := cmd.Flags().GetInt("port")
 	username, _ := cmd.Flags().GetString("username")
 	password, _ := cmd.Flags().GetString("password")
+	bypassHosts, _ := cmd.Flags().GetStringSlice("bypass-host")
 
 	output, _ := cmd.Flags().GetString("output")
 
 	svc := client.Proxies
 	p := ProxyCmd{proxies: &svc}
 	return p.Create(cmd.Context(), ProxyCreateInput{
-		Name:     name,
-		Type:     proxyType,
-		Protocol: protocol,
-		Country:  country,
-		City:     city,
-		State:    state,
-		Zip:      zip,
-		ASN:      asn,
-		OS:       os,
-		Carrier:  carrier,
-		Host:     host,
-		Port:     port,
-		Username: username,
-		Password: password,
-		Output:   output,
+		Name:        name,
+		Type:        proxyType,
+		Protocol:    protocol,
+		BypassHosts: bypassHosts,
+		Country:     country,
+		City:        city,
+		State:       state,
+		Zip:         zip,
+		ASN:         asn,
+		OS:          os,
+		Carrier:     carrier,
+		Host:        host,
+		Port:        port,
+		Username:    username,
+		Password:    password,
+		Output:      output,
 	})
+}
+
+func normalizeBypassHosts(hosts []string) []string {
+	normalized := make([]string, 0, len(hosts))
+	for _, host := range hosts {
+		trimmed := strings.TrimSpace(host)
+		if trimmed != "" {
+			normalized = append(normalized, trimmed)
+		}
+	}
+
+	return normalized
 }

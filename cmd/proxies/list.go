@@ -41,7 +41,7 @@ func (p ProxyCmd) List(ctx context.Context, in ProxyListInput) error {
 
 	// Prepare table data
 	tableData := pterm.TableData{
-		{"ID", "Name", "Type", "Protocol", "Config", "Status", "Last Checked"},
+		{"ID", "Name", "Type", "Protocol", "Bypass Hosts", "Config", "Status", "Last Checked"},
 	}
 
 	for _, proxy := range *items {
@@ -77,6 +77,7 @@ func (p ProxyCmd) List(ctx context.Context, in ProxyListInput) error {
 			name,
 			string(proxy.Type),
 			protocol,
+			formatBypassHosts(proxy.BypassHosts),
 			configStr,
 			status,
 			lastChecked,
