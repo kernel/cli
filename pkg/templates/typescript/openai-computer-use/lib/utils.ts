@@ -1,5 +1,4 @@
 import 'dotenv/config';
-import sharp from 'sharp';
 import OpenAI from 'openai';
 import { type ResponseItem } from 'openai/resources/responses/responses';
 const openai = new OpenAI();
@@ -13,13 +12,6 @@ const BLOCKED_DOMAINS: readonly string[] = [
   'ilanbigio.com',
 ] as const;
 
-export async function calculateImageDimensions(
-  base64Image: string,
-): Promise<{ width: number; height: number }> {
-  const buf = Buffer.from(base64Image, 'base64');
-  const meta = await sharp(buf).metadata();
-  return { width: meta.width ?? 0, height: meta.height ?? 0 };
-}
 export function sanitizeMessage(msg: ResponseItem): ResponseItem {
   const sanitizedMsg = { ...msg } as ResponseItem;
   if (
@@ -49,12 +41,15 @@ export async function createResponse(
 }
 
 export function checkBlocklistedUrl(url: string): boolean {
-  const host = new URL(url).hostname;
-  return BLOCKED_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
+  try {
+    const host = new URL(url).hostname;
+    return BLOCKED_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
+  } catch {
+    return false;
+  }
 }
 
 export default {
-  calculateImageDimensions,
   sanitizeMessage,
   createResponse,
   checkBlocklistedUrl,

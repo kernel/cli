@@ -2,7 +2,7 @@ import { Kernel, type KernelContext } from '@onkernel/sdk';
 import 'dotenv/config';
 import type { ResponseItem, ResponseOutputMessage } from 'openai/resources/responses/responses';
 import { Agent } from './lib/agent';
-import computers from './lib/computers';
+import { KernelComputer } from './lib/kernel-computer';
 
 interface CuaInput {
   task: string;
@@ -42,10 +42,9 @@ app.action<CuaInput, CuaOutput>(
     const kb = await kernel.browsers.create({ invocation_id: ctx.invocation_id });
     console.log('> Kernel browser live view url:', kb.browser_live_view_url);
 
-    try {
-      const { computer } = await computers.create({ type: 'kernel', cdp_ws_url: kb.cdp_ws_url });
+    const computer = new KernelComputer(kernel, kb.session_id);
 
-      // Navigate to DuckDuckGo as starting page (less likely to trigger captchas than Google)
+    try {
       await computer.goto('https://duckduckgo.com');
 
       const agent = new Agent({
@@ -58,7 +57,6 @@ app.action<CuaInput, CuaOutput>(
         },
       });
 
-      // run agent and get response
       const logs = await agent.runFullTurn({
         messages: [
           {
@@ -81,7 +79,6 @@ app.action<CuaInput, CuaOutput>(
 
       const elapsed = parseFloat(((Date.now() - start) / 1000).toFixed(2));
 
-      // filter only LLM messages
       const messages = logs.filter(
         (item): item is ResponseOutputMessage =>
           item.type === 'message' &&
@@ -93,18 +90,11 @@ app.action<CuaInput, CuaOutput>(
       const lastContent = lastContentIndex >= 0 ? assistant?.content?.[lastContentIndex] : null;
       const answer = lastContent && 'text' in lastContent ? lastContent.text : null;
 
-      return {
-        // logs, // optionally, get the full agent run messages logs
-        elapsed,
-        answer,
-      };
+      return { elapsed, answer };
     } catch (error) {
       const elapsed = parseFloat(((Date.now() - start) / 1000).toFixed(2));
       console.error('Error in cua-task:', error);
-      return {
-        elapsed,
-        answer: null,
-      };
+      return { elapsed, answer: null };
     } finally {
       await kernel.browsers.deleteByID(kb.session_id);
     }
