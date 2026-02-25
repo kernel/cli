@@ -5,7 +5,7 @@
   "private": true,
   "dependencies": {
     "@google/genai": "^1.0.0",
-    "@onkernel/sdk": "^0.23.0"
+    "@onkernel/sdk": "^0.35.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.17",

@@ -23,6 +23,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var deployDeleteCmd = &cobra.Command{
+	Use:   "delete <deployment_id>",
+	Short: "Delete a deployment",
+	Long:  "Stops a running deployment and marks it for deletion. If already stopped or failed, deletes immediately.",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runDeployDelete,
+}
+
 var deployLogsCmd = &cobra.Command{
 	Use:   "logs <deployment_id>",
 	Short: "Stream logs for a deployment",
@@ -64,6 +72,9 @@ func init() {
 	deployLogsCmd.Flags().StringP("since", "s", "", "How far back to retrieve logs. Supports duration formats: ns, us, ms, s, m, h (e.g., 5m, 2h, 1h30m). Note: 'd' not supported; use hours instead. Can also specify timestamps: 2006-01-02, 2006-01-02T15:04, 2006-01-02T15:04:05, 2006-01-02T15:04:05.000. Max lookback ~167h.")
 	deployLogsCmd.Flags().BoolP("with-timestamps", "t", false, "Include timestamps in each log line")
 	deployCmd.AddCommand(deployLogsCmd)
+
+	deployDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+	deployCmd.AddCommand(deployDeleteCmd)
 
 	deployHistoryCmd.Flags().Int("limit", 20, "Max deployments to return (default 20)")
 	deployHistoryCmd.Flags().Int("per-page", 20, "Items per page (alias of --limit)")
@@ -304,6 +315,33 @@ func quoteIfNeeded(s string) string {
 		return fmt.Sprintf("\"%s\"", s)
 	}
 	return s
+}
+
+func runDeployDelete(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	deploymentID := args[0]
+	skipConfirm, _ := cmd.Flags().GetBool("yes")
+
+	if !skipConfirm {
+		msg := fmt.Sprintf("Are you sure you want to delete deployment '%s'? This cannot be undone.", deploymentID)
+		pterm.DefaultInteractiveConfirm.DefaultText = msg
+		ok, _ := pterm.DefaultInteractiveConfirm.Show()
+		if !ok {
+			pterm.Info.Println("Deletion cancelled")
+			return nil
+		}
+	}
+
+	if err := client.Deployments.Delete(cmd.Context(), deploymentID); err != nil {
+		if util.IsNotFound(err) {
+			pterm.Warning.Printf("Deployment '%s' not found\n", deploymentID)
+			return nil
+		}
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	pterm.Success.Printf("Deleted deployment %s\n", deploymentID)
+	return nil
 }
 
 func runDeployLogs(cmd *cobra.Command, args []string) error {

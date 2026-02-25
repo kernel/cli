@@ -8,6 +8,8 @@
 import type { Kernel } from '@onkernel/sdk';
 
 export interface SessionOptions {
+  /** Invocation ID to link browser session to the action invocation */
+  invocationId?: string;
   /** Enable stealth mode to avoid bot detection */
   stealth?: boolean;
   /** Browser session timeout in seconds */
@@ -31,7 +33,9 @@ export interface SessionInfo {
   viewportHeight: number;
 }
 
-const DEFAULT_OPTIONS: Required<SessionOptions> = {
+type SessionOptionsWithDefaults = Required<Omit<SessionOptions, 'invocationId'>> & Pick<SessionOptions, 'invocationId'>;
+
+const DEFAULT_OPTIONS: Required<Omit<SessionOptions, 'invocationId'>> = {
   stealth: true,
   timeoutSeconds: 300,
   recordReplay: false,
@@ -56,8 +60,8 @@ const DEFAULT_OPTIONS: Required<SessionOptions> = {
  */
 export class KernelBrowserSession {
   private kernel: Kernel;
-  private options: Required<SessionOptions>;
-  
+  private options: SessionOptionsWithDefaults;
+
   // Session state
   private _sessionId: string | null = null;
   private _liveViewUrl: string | null = null;
@@ -109,6 +113,7 @@ export class KernelBrowserSession {
   async start(): Promise<SessionInfo> {
     // Create browser with specified settings
     const browser = await this.kernel.browsers.create({
+      invocation_id: this.options.invocationId,
       stealth: this.options.stealth,
       timeout_seconds: this.options.timeoutSeconds,
       viewport: {
