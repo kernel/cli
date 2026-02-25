@@ -35,6 +35,9 @@ class KernelBrowserSession:
     replay_framerate: int = 30
     replay_grace_period: float = 5.0  # Seconds to wait before stopping replay
 
+    # Invocation ID to link browser session to the action invocation
+    invocation_id: str | None = None
+
     # Set after browser creation
     session_id: str | None = None
     live_view_url: str | None = None
@@ -48,6 +51,7 @@ class KernelBrowserSession:
 
         # Create browser with specified settings
         browser = self._kernel.browsers.create(
+            invocation_id=self.invocation_id,
             stealth=self.stealth,
             timeout_seconds=self.timeout_seconds,
         )

@@ -290,6 +290,45 @@ const (
 	InstallMethodUnknown InstallMethod = "unknown"
 )
 
+type installRule struct {
+	check   func(string) bool
+	envKeys []string
+	method  InstallMethod
+}
+
+func normalizePath(p string) string { return strings.ToLower(filepath.ToSlash(p)) }
+
+func pathMatchesHomebrew(p string) bool {
+	p = normalizePath(p)
+	return strings.Contains(p, "homebrew") || strings.Contains(p, "/cellar/")
+}
+
+func pathMatchesBun(p string) bool {
+	return strings.Contains(normalizePath(p), "/.bun/")
+}
+
+func pathMatchesPNPM(p string) bool {
+	p = normalizePath(p)
+	return strings.Contains(p, "/pnpm/") || strings.Contains(p, "/.pnpm/")
+}
+
+func pathMatchesNPM(p string) bool {
+	p = normalizePath(p)
+	return strings.Contains(p, "/npm/") ||
+		strings.Contains(p, "/node_modules/.bin/") ||
+		strings.Contains(p, "/.npm-global/") ||
+		strings.Contains(p, "/.npm/")
+}
+
+func installMethodRules() []installRule {
+	return []installRule{
+		{pathMatchesHomebrew, nil, InstallMethodBrew},
+		{pathMatchesBun, []string{"BUN_INSTALL"}, InstallMethodBun},
+		{pathMatchesPNPM, []string{"PNPM_HOME"}, InstallMethodPNPM},
+		{pathMatchesNPM, []string{"NPM_CONFIG_PREFIX", "npm_config_prefix", "VOLTA_HOME"}, InstallMethodNPM},
+	}
+}
+
 // DetectInstallMethod detects how kernel was installed and returns the method
 // along with the path to the kernel binary.
 func DetectInstallMethod() (InstallMethod, string) {
@@ -311,34 +350,7 @@ func DetectInstallMethod() (InstallMethod, string) {
 		}
 	}
 
-	// Helpers
-	norm := func(p string) string { return strings.ToLower(filepath.ToSlash(p)) }
-	hasHomebrew := func(p string) bool {
-		p = norm(p)
-		return strings.Contains(p, "homebrew") || strings.Contains(p, "/cellar/")
-	}
-	hasBun := func(p string) bool { p = norm(p); return strings.Contains(p, "/.bun/") }
-	hasPNPM := func(p string) bool {
-		p = norm(p)
-		return strings.Contains(p, "/pnpm/") || strings.Contains(p, "/.pnpm/")
-	}
-	hasNPM := func(p string) bool {
-		p = norm(p)
-		return strings.Contains(p, "/npm/") || strings.Contains(p, "/node_modules/.bin/")
-	}
-
-	type rule struct {
-		check   func(string) bool
-		envKeys []string
-		method  InstallMethod
-	}
-
-	rules := []rule{
-		{hasHomebrew, nil, InstallMethodBrew},
-		{hasBun, []string{"BUN_INSTALL"}, InstallMethodBun},
-		{hasPNPM, []string{"PNPM_HOME"}, InstallMethodPNPM},
-		{hasNPM, []string{"NPM_CONFIG_PREFIX", "npm_config_prefix", "VOLTA_HOME"}, InstallMethodNPM},
-	}
+	rules := installMethodRules()
 
 	// Path-based detection first
 	for _, c := range candidates {
@@ -374,7 +386,10 @@ func DetectInstallMethod() (InstallMethod, string) {
 // returns a tailored upgrade command. Falls back to default brew command on unknown.
 func SuggestUpgradeCommand() string {
 	method, _ := DetectInstallMethod()
+	return suggestUpgradeCommandForMethod(method)
+}
 
+func suggestUpgradeCommandForMethod(method InstallMethod) string {
 	switch method {
 	case InstallMethodBrew:
 		return "brew upgrade kernel/tap/kernel"
@@ -385,7 +400,6 @@ func SuggestUpgradeCommand() string {
 	case InstallMethodBun:
 		return "bun add -g @onkernel/cli@latest"
 	default:
-		// Default suggestion when unknown
 		return "brew upgrade kernel/tap/kernel"
 	}
 }

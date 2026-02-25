@@ -35,6 +35,7 @@ app.action<QueryInput, QueryOutput>(
     // Create browser session with optional replay recording and kiosk mode
     const kioskMode = payload.kiosk ?? false;
     const session = new KernelBrowserSession(kernel, {
+      invocationId: ctx.invocation_id,
       stealth: true,
       recordReplay: payload.record_replay ?? false,
       kioskMode,

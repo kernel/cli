@@ -103,7 +103,10 @@ async def oagi_default_task(
     model = payload.get("model", "lux-actor-1")
     record_replay = payload.get("record_replay", False)
 
-    async with KernelBrowserSession(record_replay=record_replay) as session:
+    async with KernelBrowserSession(
+        record_replay=record_replay,
+        invocation_id=ctx.invocation_id,
+    ) as session:
         print("Kernel browser live view url:", session.live_view_url)
 
         provider = KernelScreenshotProvider(session)
@@ -155,7 +158,10 @@ async def oagi_tasker_task(
     todos = payload["todos"]
     record_replay = payload.get("record_replay", False)
 
-    async with KernelBrowserSession(record_replay=record_replay) as session:
+    async with KernelBrowserSession(
+        record_replay=record_replay,
+        invocation_id=ctx.invocation_id,
+    ) as session:
         print("Kernel browser live view url:", session.live_view_url)
 
         provider = KernelScreenshotProvider(session)
