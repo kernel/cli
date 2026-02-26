@@ -9,7 +9,7 @@ require (
 	github.com/charmbracelet/lipgloss/v2 v2.0.0-beta.1
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/joho/godotenv v1.5.1
-	github.com/kernel/kernel-go-sdk v0.37.0
+	github.com/kernel/kernel-go-sdk v0.40.0
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/pterm/pterm v0.12.80
 	github.com/samber/lo v1.51.0
@@ -59,5 +59,3 @@ require (
 	golang.org/x/text v0.33.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/kernel/kernel-go-sdk => github.com/stainless-sdks/kernel-go v0.0.0-20260224215530-ad9db9bc2e84
