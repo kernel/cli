@@ -102,6 +102,8 @@ type BrowserComputerService interface {
 	Scroll(ctx context.Context, id string, body kernel.BrowserComputerScrollParams, opts ...option.RequestOption) (err error)
 	SetCursorVisibility(ctx context.Context, id string, body kernel.BrowserComputerSetCursorVisibilityParams, opts ...option.RequestOption) (res *kernel.BrowserComputerSetCursorVisibilityResponse, err error)
 	TypeText(ctx context.Context, id string, body kernel.BrowserComputerTypeTextParams, opts ...option.RequestOption) (err error)
+	ReadClipboard(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.BrowserComputerReadClipboardResponse, err error)
+	WriteClipboard(ctx context.Context, id string, body kernel.BrowserComputerWriteClipboardParams, opts ...option.RequestOption) (err error)
 }
 
 // BoolFlag captures whether a boolean flag was set explicitly and its value.
@@ -399,8 +401,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	if in.Viewport != "" {
 		width, height, refreshRate, err := parseViewport(in.Viewport)
 		if err != nil {
-			pterm.Error.Printf("Invalid viewport format: %v\n", err)
-			return nil
+			return fmt.Errorf("invalid viewport format: %w", err)
 		}
 		params.Viewport = kernel.BrowserViewportParam{
 			Width:  width,
@@ -765,6 +766,16 @@ type BrowsersComputerBatchInput struct {
 	ActionsJSON string
 }
 
+type BrowsersComputerReadClipboardInput struct {
+	Identifier string
+	Output     string
+}
+
+type BrowsersComputerWriteClipboardInput struct {
+	Identifier string
+	Text       string
+}
+
 func (b BrowsersCmd) ComputerClickMouse(ctx context.Context, in BrowsersComputerClickMouseInput) error {
 	if b.computer == nil {
 		pterm.Error.Println("computer service not available")
@@ -1021,6 +1032,53 @@ func (b BrowsersCmd) ComputerBatch(ctx context.Context, in BrowsersComputerBatch
 		return util.CleanedUpSdkError{Err: err}
 	}
 	pterm.Success.Println("Batch actions executed")
+	return nil
+}
+
+func (b BrowsersCmd) ComputerReadClipboard(ctx context.Context, in BrowsersComputerReadClipboardInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+	if b.computer == nil {
+		pterm.Error.Println("computer service not available")
+		return nil
+	}
+	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	res, err := b.computer.ReadClipboard(ctx, br.SessionID)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	if res == nil {
+		return fmt.Errorf("unexpected empty response from clipboard API")
+	}
+	if in.Output == "json" {
+		data, err := json.MarshalIndent(map[string]string{"text": res.Text}, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+	fmt.Print(res.Text)
+	return nil
+}
+
+func (b BrowsersCmd) ComputerWriteClipboard(ctx context.Context, in BrowsersComputerWriteClipboardInput) error {
+	if b.computer == nil {
+		pterm.Error.Println("computer service not available")
+		return nil
+	}
+	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	if err := b.computer.WriteClipboard(ctx, br.SessionID, kernel.BrowserComputerWriteClipboardParams{Text: in.Text}); err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	pterm.Success.Println("Text written to clipboard")
 	return nil
 }
 
@@ -2377,7 +2435,14 @@ func init() {
 	computerBatch.Flags().String("actions", "", "JSON object with actions array (e.g., {\"actions\":[{\"type\":\"click_mouse\",...}]})")
 	_ = computerBatch.MarkFlagRequired("actions")
 
-	computerRoot.AddCommand(computerClick, computerMove, computerScreenshot, computerType, computerPressKey, computerScroll, computerDrag, computerSetCursor, computerGetMousePosition, computerBatch)
+	computerReadClipboard := &cobra.Command{Use: "read-clipboard <id>", Short: "Read text from the clipboard", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerReadClipboard}
+	computerReadClipboard.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+
+	computerWriteClipboard := &cobra.Command{Use: "write-clipboard <id>", Short: "Write text to the clipboard", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerWriteClipboard}
+	computerWriteClipboard.Flags().String("text", "", "Text to write to the clipboard")
+	_ = computerWriteClipboard.MarkFlagRequired("text")
+
+	computerRoot.AddCommand(computerClick, computerMove, computerScreenshot, computerType, computerPressKey, computerScroll, computerDrag, computerSetCursor, computerGetMousePosition, computerBatch, computerReadClipboard, computerWriteClipboard)
 	browsersCmd.AddCommand(computerRoot)
 
 	// playwright
@@ -3097,6 +3162,22 @@ func runBrowsersComputerBatch(cmd *cobra.Command, args []string) error {
 
 	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
 	return b.ComputerBatch(cmd.Context(), BrowsersComputerBatchInput{Identifier: args[0], ActionsJSON: actionsJSON})
+}
+
+func runBrowsersComputerReadClipboard(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	output, _ := cmd.Flags().GetString("output")
+	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
+	return b.ComputerReadClipboard(cmd.Context(), BrowsersComputerReadClipboardInput{Identifier: args[0], Output: output})
+}
+
+func runBrowsersComputerWriteClipboard(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	text, _ := cmd.Flags().GetString("text")
+	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
+	return b.ComputerWriteClipboard(cmd.Context(), BrowsersComputerWriteClipboardInput{Identifier: args[0], Text: text})
 }
 
 func truncateURL(url string, maxLen int) string {
