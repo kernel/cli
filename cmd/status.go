@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
+	"github.com/kernel/cli/pkg/util"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -28,8 +28,6 @@ type statusResponse struct {
 	Groups []statusGroup `json:"groups"`
 }
 
-const defaultBaseURL = "https://api.onkernel.com"
-
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Check the operational status of Kernel services",
@@ -40,27 +38,20 @@ func init() {
 	statusCmd.Flags().StringP("output", "o", "", "Output format (json)")
 }
 
-func getBaseURL() string {
-	if u := os.Getenv("KERNEL_BASE_URL"); strings.TrimSpace(u) != "" {
-		return strings.TrimRight(u, "/")
-	}
-	return defaultBaseURL
-}
-
 func runStatus(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(getBaseURL() + "/status")
+	resp, err := client.Get(util.GetBaseURL() + "/status")
 	if err != nil {
 		pterm.Error.Println("Could not reach Kernel API. Check https://status.kernel.sh for updates.")
-		return fmt.Errorf("request failed: %w", err)
+		return nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		pterm.Error.Println("Could not reach Kernel API. Check https://status.kernel.sh for updates.")
-		return fmt.Errorf("status request failed: %s", resp.Status)
+		return nil
 	}
 
 	var status statusResponse
