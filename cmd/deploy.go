@@ -147,10 +147,7 @@ func runDeployGithub(cmd *cobra.Command, args []string) error {
 	if strings.TrimSpace(apiKey) == "" {
 		return fmt.Errorf("KERNEL_API_KEY is required for github deploy")
 	}
-	baseURL := os.Getenv("KERNEL_BASE_URL")
-	if strings.TrimSpace(baseURL) == "" {
-		baseURL = "https://api.onkernel.com"
-	}
+	baseURL := util.GetBaseURL()
 
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
@@ -561,22 +558,22 @@ func followDeployment(ctx context.Context, client kernel.Client, deploymentID st
 			if err == nil {
 				fmt.Println(string(bs))
 			}
-		// Check for terminal states
-		if data.Event == "deployment_state" {
-			deploymentState := data.AsDeploymentState()
-			status := deploymentState.Deployment.Status
-			if status == string(kernel.DeploymentGetResponseStatusFailed) ||
-				status == string(kernel.DeploymentGetResponseStatusStopped) {
-				return fmt.Errorf("deployment %s: %s", status, deploymentState.Deployment.StatusReason)
+			// Check for terminal states
+			if data.Event == "deployment_state" {
+				deploymentState := data.AsDeploymentState()
+				status := deploymentState.Deployment.Status
+				if status == string(kernel.DeploymentGetResponseStatusFailed) ||
+					status == string(kernel.DeploymentGetResponseStatusStopped) {
+					return fmt.Errorf("deployment %s: %s", status, deploymentState.Deployment.StatusReason)
+				}
+				if status == string(kernel.DeploymentGetResponseStatusRunning) {
+					return nil
+				}
 			}
-			if status == string(kernel.DeploymentGetResponseStatusRunning) {
-				return nil
+			if data.Event == "error" {
+				errorEv := data.AsErrorEvent()
+				return fmt.Errorf("%s: %s", errorEv.Error.Code, errorEv.Error.Message)
 			}
-		}
-		if data.Event == "error" {
-			errorEv := data.AsErrorEvent()
-			return fmt.Errorf("%s: %s", errorEv.Error.Code, errorEv.Error.Message)
-		}
 			continue
 		}
 
