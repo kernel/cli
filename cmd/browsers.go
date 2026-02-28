@@ -228,6 +228,7 @@ type BrowsersListInput struct {
 	Status         string
 	Limit          int
 	Offset         int
+	Query          string
 }
 
 func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
@@ -257,6 +258,9 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	if in.Offset > 0 {
 		params.Offset = kernel.Opt(int64(in.Offset))
 	}
+	if in.Query != "" {
+		params.Query = kernel.Opt(in.Query)
+	}
 
 	page, err := b.browsers.List(ctx, params)
 	if err != nil {
@@ -278,7 +282,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	}
 
 	// Prepare table data
-	headers := []string{"Browser ID", "Created At", "Persistent ID", "Profile", "CDP WS URL", "Live View URL"}
+	headers := []string{"Browser ID", "Created At", "Persistent ID", "Profile", "Pool", "CDP WS URL", "Live View URL"}
 	showDeletedAt := in.IncludeDeleted || in.Status == "deleted" || in.Status == "all"
 	if showDeletedAt {
 		headers = append(headers, "Deleted At")
@@ -298,11 +302,19 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 			profile = browser.Profile.ID
 		}
 
+		pool := "-"
+		if browser.Pool.Name != "" {
+			pool = browser.Pool.Name
+		} else if browser.Pool.ID != "" {
+			pool = browser.Pool.ID
+		}
+
 		row := []string{
 			browser.SessionID,
 			util.FormatLocal(browser.CreatedAt),
 			persistentID,
 			profile,
+			pool,
 			truncateURL(browser.CdpWsURL, 50),
 			truncateURL(browser.BrowserLiveViewURL, 50),
 		}
@@ -2131,6 +2143,7 @@ func init() {
 	browsersListCmd.Flags().String("status", "", "Filter by status: 'active' (default), 'deleted', or 'all'")
 	browsersListCmd.Flags().Int("limit", 0, "Maximum number of results to return (default 20, max 100)")
 	browsersListCmd.Flags().Int("offset", 0, "Number of results to skip (for pagination)")
+	browsersListCmd.Flags().String("query", "", "Search browsers by session ID, profile ID, or proxy ID")
 
 	// get flags
 	browsersGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
@@ -2410,12 +2423,14 @@ func runBrowsersList(cmd *cobra.Command, args []string) error {
 	status, _ := cmd.Flags().GetString("status")
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
+	query, _ := cmd.Flags().GetString("query")
 	return b.List(cmd.Context(), BrowsersListInput{
 		Output:         out,
 		IncludeDeleted: includeDeleted,
 		Status:         status,
 		Limit:          limit,
 		Offset:         offset,
+		Query:          query,
 	})
 }
 

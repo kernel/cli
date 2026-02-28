@@ -34,9 +34,10 @@ func TestProxyList_WithProxies(t *testing.T) {
 		createResidentialProxy("res-1", "SF Residential", "US", "sanfrancisco", "CA"),
 		createCustomProxy("custom-1", "My Proxy", "proxy.example.com", 8080),
 		{
-			ID:   "mobile-1",
-			Name: "Mobile Proxy",
-			Type: kernel.ProxyListResponseTypeMobile,
+			ID:          "mobile-1",
+			Name:        "Mobile Proxy",
+			Type:        kernel.ProxyListResponseTypeMobile,
+			BypassHosts: []string{"abc"},
 			Config: kernel.ProxyListResponseConfigUnion{
 				Country: "US",
 				Carrier: "verizon",
@@ -85,6 +86,7 @@ func TestProxyList_WithProxies(t *testing.T) {
 
 	assert.Contains(t, output, "mobile-1")
 	assert.Contains(t, output, "mobile")
+	assert.Contains(t, output, "abc")
 
 	assert.Contains(t, output, "isp-1")
 	assert.Contains(t, output, "-") // Empty name shows as "-"
