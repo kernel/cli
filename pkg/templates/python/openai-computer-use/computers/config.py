@@ -1,7 +1,5 @@
-from .default import *
-from .contrib import *
+from .kernel_computer import KernelComputer
 
 computers_config = {
-    "local-playwright": LocalPlaywrightBrowser,
-    "kernel": KernelPlaywrightBrowser,
+    "kernel": KernelComputer,
 }
