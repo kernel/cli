@@ -311,7 +311,7 @@ func TestSubmit_MfaOptionGetErrorSurfaced(t *testing.T) {
 		Output:      "json",
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to fetch connection for MFA option resolution")
+	assert.Contains(t, err.Error(), "connection not found")
 }
 
 func TestSubmit_MfaOptionRejectsUnknown(t *testing.T) {

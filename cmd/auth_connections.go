@@ -457,7 +457,7 @@ func (c AuthConnectionCmd) Submit(ctx context.Context, in AuthConnectionSubmitIn
 	if hasMfaOption {
 		conn, err := c.svc.Get(ctx, in.ID)
 		if err != nil {
-			return fmt.Errorf("failed to fetch connection for MFA option resolution: %w", err)
+			return util.CleanedUpSdkError{Err: fmt.Errorf("failed to fetch connection for MFA option resolution: %w", err)}
 		}
 		if len(conn.MfaOptions) > 0 {
 			resolved := false
