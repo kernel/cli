@@ -42,7 +42,7 @@ class KernelActionHandler:
         self,
         session: "KernelBrowserSession",
         action_pause: float = 0.1,
-        scroll_amount: int = 100,
+        scroll_amount: int = 3,
         wait_duration: float = 1.0,
         type_delay: int = 50,
     ):
@@ -52,7 +52,7 @@ class KernelActionHandler:
         Args:
             session: The Kernel browser session to control
             action_pause: Pause between actions in seconds
-            scroll_amount: Amount to scroll (pixels)
+            scroll_amount: Amount to scroll (wheel units / notches)
             wait_duration: Duration for wait actions in seconds
             type_delay: Delay between keystrokes in milliseconds
         """
@@ -241,19 +241,24 @@ class KernelActionHandler:
 
     def _execute_scroll(self, x: int, y: int, direction: str):
         """Execute a scroll action."""
-        # Move to position first
-        self.session.kernel.browsers.computer.move_mouse(
-            id=self.session.session_id,
-            x=x,
-            y=y,
-        )
-        # Scroll in the specified direction
-        delta_y = self.scroll_amount if direction == "up" else -self.scroll_amount
+        # Backend (kernel-images) uses delta_x/delta_y as wheel-event repeat count (notches), not pixels.
+        notches = max(self.scroll_amount, 1)
+        delta_x = 0
+        delta_y = 0
+        if direction == "up":
+            delta_y = -notches
+        elif direction == "down":
+            delta_y = notches
+        elif direction == "left":
+            delta_x = -notches
+        elif direction == "right":
+            delta_x = notches
+
         self.session.kernel.browsers.computer.scroll(
             id=self.session.session_id,
             x=x,
             y=y,
-            delta_x=0,
+            delta_x=delta_x,
             delta_y=delta_y,
         )
 
