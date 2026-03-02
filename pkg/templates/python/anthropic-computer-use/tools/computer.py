@@ -370,21 +370,18 @@ class ComputerTool20250124(BaseComputerTool, BaseAnthropicTool):
             else:
                 x, y = self._last_mouse_position
 
-            # Each scroll_amount unit = 1 scroll wheel click ≈ 120 pixels (matches Anthropic's xdotool behavior)
-            scroll_factor = scroll_amount * 120
-            
+            # Backend (kernel-images) uses delta_x/delta_y as wheel-event repeat count (notches), not pixels.
+            notches = max(scroll_amount or 1, 1)
             delta_x = 0
             delta_y = 0
             if scroll_direction == "up":
-                delta_y = -scroll_factor
+                delta_y = -notches
             elif scroll_direction == "down":
-                delta_y = scroll_factor
+                delta_y = notches
             elif scroll_direction == "left":
-                delta_x = -scroll_factor
+                delta_x = -notches
             elif scroll_direction == "right":
-                delta_x = scroll_factor
-
-            print(f"Scrolling {abs(delta_x) if delta_x != 0 else abs(delta_y)} pixels {scroll_direction}")
+                delta_x = notches
 
             self.kernel.browsers.computer.scroll(
                 id=self.session_id,
@@ -393,7 +390,12 @@ class ComputerTool20250124(BaseComputerTool, BaseAnthropicTool):
                 delta_x=delta_x,
                 delta_y=delta_y,
             )
-            return await self.screenshot()
+
+            await asyncio.sleep(0.2)
+            screenshot_result = await self.screenshot()
+            return screenshot_result.replace(
+                output=f"Scrolled {notches} wheel unit(s) {scroll_direction}."
+            )
 
         if action in ("hold_key", "wait"):
             if duration is None or not isinstance(duration, (int, float)):
