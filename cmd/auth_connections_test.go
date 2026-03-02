@@ -297,6 +297,23 @@ func TestSubmit_MfaOptionResolvesLabelCaseInsensitive(t *testing.T) {
 	assert.Equal(t, "sms", submittedID)
 }
 
+func TestSubmit_MfaOptionGetErrorSurfaced(t *testing.T) {
+	fake := &FakeAuthConnectionService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			return nil, errors.New("connection not found")
+		},
+	}
+
+	c := AuthConnectionCmd{svc: fake}
+	err := c.Submit(context.Background(), AuthConnectionSubmitInput{
+		ID:          "conn-1",
+		MfaOptionID: "sms",
+		Output:      "json",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to fetch connection for MFA option resolution")
+}
+
 func TestSubmit_MfaOptionRejectsUnknown(t *testing.T) {
 	fake := newFakeWithMfaOptions([]kernel.ManagedAuthMfaOption{
 		{Label: "Get a text", Type: "sms"},

@@ -456,7 +456,10 @@ func (c AuthConnectionCmd) Submit(ctx context.Context, in AuthConnectionSubmitIn
 	// whatever the user provided to the correct type value.
 	if hasMfaOption {
 		conn, err := c.svc.Get(ctx, in.ID)
-		if err == nil && len(conn.MfaOptions) > 0 {
+		if err != nil {
+			return fmt.Errorf("failed to fetch connection for MFA option resolution: %w", err)
+		}
+		if len(conn.MfaOptions) > 0 {
 			resolved := false
 			for _, opt := range conn.MfaOptions {
 				displayName := fmt.Sprintf("%s (%s)", opt.Label, opt.Type)
