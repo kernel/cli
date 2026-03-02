@@ -295,41 +295,35 @@ export class ComputerTool implements BaseAnthropicTool {
       const scrollDirection = scrollDirectionParam || kwargs.scroll_direction;
       const scrollAmountValue = scrollAmount || scroll_amount;
 
-      if (!scrollDirection || !['up', 'down', 'left', 'right'].includes(scrollDirection)) {
-        throw new ToolError(`Scroll direction "${scrollDirection}" must be 'up', 'down', 'left', or 'right'`);
+      const dir = scrollDirection && typeof scrollDirection === 'string' && ['up', 'down', 'left', 'right'].includes(scrollDirection) ? scrollDirection : null;
+      if (!dir) {
+        throw new ToolError(`Scroll direction "${String(scrollDirection)}" must be 'up', 'down', 'left', or 'right'`);
       }
       if (typeof scrollAmountValue !== 'number' || scrollAmountValue < 0) {
         throw new ToolError(`Scroll amount "${scrollAmountValue}" must be a non-negative number`);
       }
 
-      const [x, y] = coordinate 
+      const [x, y] = coordinate
         ? ActionValidator.validateAndGetCoordinates(coordinate)
         : this.lastMousePosition;
 
+      // Backend (kernel-images) uses delta_x/delta_y as wheel-event repeat count (notches), not pixels.
+      const notches = Math.max(scrollAmountValue ?? 1, 1);
       let delta_x = 0;
       let delta_y = 0;
-      // Each scroll_amount unit = 1 scroll wheel click ≈ 120 pixels (matches Anthropic's xdotool behavior)
-      const scrollDelta = (scrollAmountValue ?? 1) * 120;
+      if (dir === 'down') delta_y = notches;
+      if (dir === 'up') delta_y = -notches;
+      if (dir === 'right') delta_x = notches;
+      if (dir === 'left') delta_x = -notches;
 
-      if (scrollDirection === 'down') {
-        delta_y = scrollDelta;
-      } else if (scrollDirection === 'up') {
-        delta_y = -scrollDelta;
-      } else if (scrollDirection === 'right') {
-        delta_x = scrollDelta;
-      } else if (scrollDirection === 'left') {
-        delta_x = -scrollDelta;
-      }
+      await this.kernel.browsers.computer.scroll(this.sessionId, { x, y, delta_x, delta_y });
 
-      await this.kernel.browsers.computer.scroll(this.sessionId, {
-        x,
-        y,
-        delta_x,
-        delta_y,
-      });
-
-      await new Promise(resolve => setTimeout(resolve, 500));
-      return await this.screenshot();
+      await new Promise(resolve => setTimeout(resolve, 200));
+      const screenshotResult = await this.screenshot();
+      return {
+        ...screenshotResult,
+        output: `Scrolled ${notches} wheel unit(s) ${dir}.`,
+      };
     }
 
     if (action === Action.WAIT) {
