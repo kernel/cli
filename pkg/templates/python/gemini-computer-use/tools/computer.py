@@ -131,21 +131,21 @@ class ComputerTool:
             elif action_name == GeminiAction.SCROLL_DOCUMENT:
                 if "direction" not in args:
                     return ToolResult(error="scroll_document requires direction")
-                # Scroll at center of viewport
                 center_x = self.screen_size.width // 2
                 center_y = self.screen_size.height // 2
-                scroll_delta = 500
 
+                # Backend (kernel-images) uses delta_x/delta_y as wheel-event repeat count (notches), not pixels.
+                doc_notches = 3
                 delta_x, delta_y = 0, 0
                 direction = args["direction"]
                 if direction == "down":
-                    delta_y = scroll_delta
+                    delta_y = doc_notches
                 elif direction == "up":
-                    delta_y = -scroll_delta
+                    delta_y = -doc_notches
                 elif direction == "right":
-                    delta_x = scroll_delta
+                    delta_x = doc_notches
                 elif direction == "left":
-                    delta_x = -scroll_delta
+                    delta_x = -doc_notches
 
                 self.kernel.browsers.computer.scroll(
                     self.session_id,
@@ -164,23 +164,19 @@ class ComputerTool:
                 x = self.denormalize_x(args["x"])
                 y = self.denormalize_y(args["y"])
 
-                # Denormalize magnitude if provided
-                magnitude = args.get("magnitude", 800)
+                # Backend (kernel-images) uses delta as notch count; treat magnitude as notches (default 3).
+                notches = args.get("magnitude", 3)
                 direction = args["direction"]
-                if direction in ("up", "down"):
-                    magnitude = self.denormalize_y(magnitude)
-                else:
-                    magnitude = self.denormalize_x(magnitude)
 
                 delta_x, delta_y = 0, 0
                 if direction == "down":
-                    delta_y = magnitude
+                    delta_y = notches
                 elif direction == "up":
-                    delta_y = -magnitude
+                    delta_y = -notches
                 elif direction == "right":
-                    delta_x = magnitude
+                    delta_x = notches
                 elif direction == "left":
-                    delta_x = -magnitude
+                    delta_x = -notches
 
                 self.kernel.browsers.computer.scroll(
                     self.session_id,
