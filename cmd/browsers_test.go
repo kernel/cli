@@ -193,6 +193,26 @@ func TestBrowsersList_PrintsErrorOnFailure(t *testing.T) {
 	assert.Contains(t, err.Error(), "list failed")
 }
 
+func TestBrowsersList_WithQuery_PassesParam(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserListParams
+	fake := &FakeBrowsersService{
+		ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
+			captured = query
+			return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: []kernel.BrowserListResponse{
+				{SessionID: "sess-matched"},
+			}}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+	err := b.List(context.Background(), BrowsersListInput{Query: "sess-matched"})
+
+	assert.NoError(t, err)
+	assert.True(t, captured.Query.Valid())
+	assert.Equal(t, "sess-matched", captured.Query.Value)
+}
+
 func TestBrowsersCreate_PrintsResponse(t *testing.T) {
 	setupStdoutCapture(t)
 

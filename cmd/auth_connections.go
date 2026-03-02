@@ -219,11 +219,73 @@ func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) e
 	if auth.FlowStep != "" {
 		tableData = append(tableData, []string{"Flow Step", string(auth.FlowStep)})
 	}
+	if len(auth.DiscoveredFields) > 0 {
+		discoveredFields := make([]string, 0, len(auth.DiscoveredFields))
+		for _, field := range auth.DiscoveredFields {
+			fieldName := field.Name
+			if fieldName == "" {
+				fieldName = field.Label
+			} else if field.Label != "" && field.Label != field.Name {
+				fieldName = fmt.Sprintf("%s (%s)", field.Name, field.Label)
+			}
+
+			fieldMeta := make([]string, 0, 2)
+			if field.Type != "" {
+				fieldMeta = append(fieldMeta, field.Type)
+			}
+			if field.Required {
+				fieldMeta = append(fieldMeta, "required")
+			}
+			if len(fieldMeta) > 0 {
+				fieldName = fmt.Sprintf("%s [%s]", fieldName, strings.Join(fieldMeta, ", "))
+			}
+			discoveredFields = append(discoveredFields, fieldName)
+		}
+		tableData = append(tableData, []string{"Discovered Fields", strings.Join(discoveredFields, "; ")})
+	}
+	if len(auth.MfaOptions) > 0 {
+		mfaOptions := make([]string, 0, len(auth.MfaOptions))
+		for _, option := range auth.MfaOptions {
+			optionName := option.Label
+			if optionName == "" {
+				optionName = option.Type
+			} else if option.Type != "" {
+				optionName = fmt.Sprintf("%s (%s)", option.Label, option.Type)
+			}
+			mfaOptions = append(mfaOptions, optionName)
+		}
+		tableData = append(tableData, []string{"MFA Options", strings.Join(mfaOptions, "; ")})
+	}
+	if len(auth.PendingSSOButtons) > 0 {
+		pendingSSOButtons := make([]string, 0, len(auth.PendingSSOButtons))
+		for _, button := range auth.PendingSSOButtons {
+			buttonLabel := button.Label
+			if buttonLabel == "" {
+				buttonLabel = button.Provider
+			} else if button.Provider != "" {
+				buttonLabel = fmt.Sprintf("%s (%s)", button.Label, button.Provider)
+			}
+			pendingSSOButtons = append(pendingSSOButtons, buttonLabel)
+		}
+		tableData = append(tableData, []string{"Pending SSO Buttons", strings.Join(pendingSSOButtons, "; ")})
+	}
+	if auth.ExternalActionMessage != "" {
+		tableData = append(tableData, []string{"External Action", auth.ExternalActionMessage})
+	}
 	if auth.HostedURL != "" {
 		tableData = append(tableData, []string{"Hosted URL", auth.HostedURL})
 	}
 	if auth.LiveViewURL != "" {
 		tableData = append(tableData, []string{"Live View URL", auth.LiveViewURL})
+	}
+	if auth.WebsiteError != "" {
+		tableData = append(tableData, []string{"Website Error", auth.WebsiteError})
+	}
+	if !auth.FlowExpiresAt.IsZero() {
+		tableData = append(tableData, []string{"Flow Expires At", util.FormatLocal(auth.FlowExpiresAt)})
+	}
+	if auth.ErrorCode != "" {
+		tableData = append(tableData, []string{"Error Code", auth.ErrorCode})
 	}
 	if auth.ErrorMessage != "" {
 		tableData = append(tableData, []string{"Error Message", auth.ErrorMessage})
@@ -272,6 +334,13 @@ func (c AuthConnectionCmd) List(ctx context.Context, in AuthConnectionListInput)
 	}
 
 	if in.Output == "json" {
+		if page == nil {
+			fmt.Println("[]")
+			return nil
+		}
+		if page.RawJSON() != "" {
+			return util.PrintPrettyJSON(page)
+		}
 		if len(auths) == 0 {
 			fmt.Println("[]")
 			return nil
@@ -379,6 +448,37 @@ func (c AuthConnectionCmd) Submit(ctx context.Context, in AuthConnectionSubmitIn
 
 	if !hasFields && !hasMfaOption && !hasSSOButton {
 		return fmt.Errorf("must provide at least one of: --field, --mfa-option-id, or --sso-button-selector")
+	}
+
+	// Resolve MFA option: the user may pass the label (e.g. "Get a text"), the
+	// type (e.g. "sms"), or the display string ("Get a text (sms)"). The API
+	// expects the type, so look up the connection's available options and map
+	// whatever the user provided to the correct type value.
+	if hasMfaOption {
+		conn, err := c.svc.Get(ctx, in.ID)
+		if err != nil {
+			return util.CleanedUpSdkError{Err: fmt.Errorf("failed to fetch connection for MFA option resolution: %w", err)}
+		}
+		if len(conn.MfaOptions) > 0 {
+			resolved := false
+			for _, opt := range conn.MfaOptions {
+				displayName := fmt.Sprintf("%s (%s)", opt.Label, opt.Type)
+				if strings.EqualFold(in.MfaOptionID, opt.Type) ||
+					strings.EqualFold(in.MfaOptionID, opt.Label) ||
+					strings.EqualFold(in.MfaOptionID, displayName) {
+					in.MfaOptionID = opt.Type
+					resolved = true
+					break
+				}
+			}
+			if !resolved {
+				available := make([]string, 0, len(conn.MfaOptions))
+				for _, opt := range conn.MfaOptions {
+					available = append(available, fmt.Sprintf("%s (%s)", opt.Label, opt.Type))
+				}
+				return fmt.Errorf("unknown MFA option %q; available: %s", in.MfaOptionID, strings.Join(available, ", "))
+			}
+		}
 	}
 
 	params := kernel.AuthConnectionSubmitParams{
