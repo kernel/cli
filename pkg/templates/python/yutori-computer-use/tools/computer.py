@@ -140,24 +140,23 @@ class ComputerTool:
     async def _handle_scroll(self, action: N1Action) -> ToolResult:
         coords = self._get_coordinates(action.get("coordinates"))
         direction = action.get("direction")
-        amount = action.get("amount", 3)
+        notches = max(action.get("amount", 3), 1)
 
         if direction not in ("up", "down", "left", "right"):
             raise ToolError(f"Invalid scroll direction: {direction}")
 
-        scroll_delta = amount * 100
-
+        # Backend (kernel-images) uses delta_x/delta_y as wheel-event repeat count (notches), not pixels.
         delta_x = 0
         delta_y = 0
 
         if direction == "up":
-            delta_y = -scroll_delta
+            delta_y = -notches
         elif direction == "down":
-            delta_y = scroll_delta
+            delta_y = notches
         elif direction == "left":
-            delta_x = -scroll_delta
+            delta_x = -notches
         elif direction == "right":
-            delta_x = scroll_delta
+            delta_x = notches
 
         self.kernel.browsers.computer.scroll(
             self.session_id,
@@ -168,7 +167,9 @@ class ComputerTool:
         )
 
         await asyncio.sleep(SCREENSHOT_DELAY_S)
-        return await self.screenshot()
+        screenshot_result = await self.screenshot()
+        screenshot_result["output"] = f"Scrolled {notches} wheel unit(s) {direction}."
+        return screenshot_result
 
     async def _handle_type(self, action: N1Action) -> ToolResult:
         text = action.get("text")
