@@ -146,23 +146,23 @@ export class ComputerTool {
           if (!args.direction) {
             return { error: 'scroll_document requires direction' };
           }
-          // Scroll at center of viewport
           const centerX = Math.round(this.screenSize.width / 2);
           const centerY = Math.round(this.screenSize.height / 2);
-          const scrollDelta = 500;
 
-          let deltaX = 0;
-          let deltaY = 0;
-          if (args.direction === 'down') deltaY = scrollDelta;
-          else if (args.direction === 'up') deltaY = -scrollDelta;
-          else if (args.direction === 'right') deltaX = scrollDelta;
-          else if (args.direction === 'left') deltaX = -scrollDelta;
+          // Backend (kernel-images) uses delta_x/delta_y as wheel-event repeat count (notches), not pixels.
+          const docNotches = 3;
+          let docDx = 0;
+          let docDy = 0;
+          if (args.direction === 'down') docDy = docNotches;
+          else if (args.direction === 'up') docDy = -docNotches;
+          else if (args.direction === 'right') docDx = docNotches;
+          else if (args.direction === 'left') docDx = -docNotches;
 
           await this.kernel.browsers.computer.scroll(this.sessionId, {
             x: centerX,
             y: centerY,
-            delta_x: deltaX,
-            delta_y: deltaY,
+            delta_x: docDx,
+            delta_y: docDy,
           });
           break;
         }
@@ -178,26 +178,20 @@ export class ComputerTool {
           const x = this.denormalizeX(args.x);
           const y = this.denormalizeY(args.y);
 
-          // Denormalize magnitude if provided
-          let magnitude = args.magnitude ?? 800;
-          if (args.direction === 'up' || args.direction === 'down') {
-            magnitude = this.denormalizeY(magnitude);
-          } else {
-            magnitude = this.denormalizeX(magnitude);
-          }
-
-          let deltaX = 0;
-          let deltaY = 0;
-          if (args.direction === 'down') deltaY = magnitude;
-          else if (args.direction === 'up') deltaY = -magnitude;
-          else if (args.direction === 'right') deltaX = magnitude;
-          else if (args.direction === 'left') deltaX = -magnitude;
+          // Backend (kernel-images) uses delta as notch count; treat magnitude as notches (default 3).
+          const notches = args.magnitude ?? 3;
+          let atDx = 0;
+          let atDy = 0;
+          if (args.direction === 'down') atDy = notches;
+          else if (args.direction === 'up') atDy = -notches;
+          else if (args.direction === 'right') atDx = notches;
+          else if (args.direction === 'left') atDx = -notches;
 
           await this.kernel.browsers.computer.scroll(this.sessionId, {
             x,
             y,
-            delta_x: deltaX,
-            delta_y: deltaY,
+            delta_x: atDx,
+            delta_y: atDy,
           });
           break;
         }
