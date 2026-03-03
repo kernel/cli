@@ -244,8 +244,7 @@ class KernelActionHandler:
         )
 
     def _execute_scroll(self, x: int, y: int, direction: str, notches: int = 1):
-        """Execute a scroll action. One Lux scroll event = 1 notch (OpenAGI often calls scroll N times for amount N)."""
-        # Backend (kernel-images) uses delta_x/delta_y as wheel-event repeat count (notches), not pixels.
+        """Execute a scroll action."""
         notches = max(notches, 1)
         delta_x = 0
         delta_y = 0
@@ -258,10 +257,6 @@ class KernelActionHandler:
         elif direction == "right":
             delta_x = notches
 
-        print(
-            f"[cua-scroll] SCROLL API call id={self.session.session_id} x={x} y={y} delta_x={delta_x} delta_y={delta_y} (notches={notches})",
-            flush=True,
-        )
         self.session.kernel.browsers.computer.scroll(
             id=self.session.session_id,
             x=x,

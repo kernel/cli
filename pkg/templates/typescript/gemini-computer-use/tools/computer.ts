@@ -17,9 +17,7 @@ import {
 
 const TYPING_DELAY_MS = 12;
 const SCREENSHOT_DELAY_MS = 500;
-/** Higher = more conservative (fewer notches). 60–80 avoids overscroll on heavy sites. */
 const PX_PER_NOTCH = 60;
-/** Cap total notches per action so large magnitudes don't overscroll. */
 const MAX_NOTCHES_PER_ACTION = 17;
 
 /**
@@ -153,7 +151,6 @@ export class ComputerTool {
           const centerX = Math.round(this.screenSize.width / 2);
           const centerY = Math.round(this.screenSize.height / 2);
 
-          // Backend uses notches; chunk to avoid per-request cap.
           const magnitudePx = args.magnitude ?? 400;
           const docNotches = Math.min(MAX_NOTCHES_PER_ACTION, Math.max(1, Math.round(magnitudePx / PX_PER_NOTCH)));
           let docDx = 0;
@@ -162,7 +159,6 @@ export class ComputerTool {
           else if (args.direction === 'up') docDy = -docNotches;
           else if (args.direction === 'right') docDx = docNotches;
           else if (args.direction === 'left') docDx = -docNotches;
-          console.info('[cua-scroll] SCROLL_DOCUMENT direction=%s magnitude_px=%d notches=%d x=%d y=%d', args.direction, magnitudePx, docNotches, centerX, centerY);
           await this.kernel.browsers.computer.scroll(this.sessionId, {
             x: centerX,
             y: centerY,
@@ -183,7 +179,6 @@ export class ComputerTool {
           const x = this.denormalizeX(args.x);
           const y = this.denormalizeY(args.y);
 
-          // Chunk to avoid per-request cap.
           const magnitudePx = args.magnitude ?? 400;
           const notches = Math.min(MAX_NOTCHES_PER_ACTION, Math.max(1, Math.round(magnitudePx / PX_PER_NOTCH)));
           let atDx = 0;
@@ -192,7 +187,6 @@ export class ComputerTool {
           else if (args.direction === 'up') atDy = -notches;
           else if (args.direction === 'right') atDx = notches;
           else if (args.direction === 'left') atDx = -notches;
-          console.info('[cua-scroll] SCROLL_AT magnitude_px=%s notches=%d x=%d y=%d direction=%s', magnitudePx, notches, x, y, args.direction);
           await this.kernel.browsers.computer.scroll(this.sessionId, {
             x,
             y,

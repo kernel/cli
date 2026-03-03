@@ -370,7 +370,6 @@ class ComputerTool20250124(BaseComputerTool, BaseAnthropicTool):
             else:
                 x, y = self._last_mouse_position
 
-            # Backend (kernel-images) uses delta_x/delta_y as wheel-event repeat count (notches), not pixels.
             notches = max(scroll_amount or 1, 1)
             delta_x = 0
             delta_y = 0

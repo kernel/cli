@@ -166,7 +166,6 @@ export class ComputerTool {
       throw new ToolError(`Invalid scroll direction: ${direction}`);
     }
 
-    // Backend (kernel-images) uses delta_x/delta_y as wheel-event repeat count (notches), not pixels.
     let delta_x = 0;
     let delta_y = 0;
 

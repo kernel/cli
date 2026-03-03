@@ -21,9 +21,7 @@ from .types import (
 
 TYPING_DELAY_MS = 12
 SCREENSHOT_DELAY_SECS = 0.5
-# Pixels per notch: higher = more conservative (fewer notches). 60–80 avoids overscroll on heavy sites.
 PX_PER_NOTCH = 60
-# Cap total notches per action so large magnitudes don't overscroll on any site.
 MAX_NOTCHES_PER_ACTION = 17
 
 
@@ -138,7 +136,6 @@ class ComputerTool:
                 center_x = self.screen_size.width // 2
                 center_y = self.screen_size.height // 2
 
-                # Backend uses notches; Gemini sends magnitude in pixels (default 400). Chunk to avoid per-request cap.
                 magnitude_px = args.get("magnitude", 400)
                 doc_notches = min(MAX_NOTCHES_PER_ACTION, max(1, round(magnitude_px / PX_PER_NOTCH)))
                 direction = args["direction"]
@@ -151,7 +148,6 @@ class ComputerTool:
                     delta_x = doc_notches
                 elif direction == "left":
                     delta_x = -doc_notches
-                print(f"[cua-scroll] SCROLL_DOCUMENT direction={direction} magnitude_px={magnitude_px} notches={doc_notches} center=({center_x},{center_y})", flush=True)
                 self.kernel.browsers.computer.scroll(
                     self.session_id,
                     x=center_x,
@@ -169,7 +165,6 @@ class ComputerTool:
                 x = self.denormalize_x(args["x"])
                 y = self.denormalize_y(args["y"])
 
-                # Gemini uses magnitude in pixels (default 400). Chunk to avoid per-request cap.
                 magnitude_px = args.get("magnitude", 400)
                 notches = min(MAX_NOTCHES_PER_ACTION, max(1, round(magnitude_px / PX_PER_NOTCH)))
                 direction = args["direction"]
@@ -182,7 +177,6 @@ class ComputerTool:
                     delta_x = notches
                 elif direction == "left":
                     delta_x = -notches
-                print(f"[cua-scroll] SCROLL_AT magnitude_px={magnitude_px} notches={notches} x={x} y={y} direction={direction}", flush=True)
                 self.kernel.browsers.computer.scroll(
                     self.session_id,
                     x=x,

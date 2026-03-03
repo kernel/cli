@@ -190,7 +190,7 @@ export async function samplingLoop({
               name: fc.name,
               response: responseData,
               // Include screenshot as inline data
-              ...(result.base64Image && fc.name && isPredefinedFunction(fc.name) ? {
+              ...(result.base64Image && isPredefinedFunction(fc.name) ? {
                 parts: [{
                   inlineData: {
                     mimeType: 'image/png',
