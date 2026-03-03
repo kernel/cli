@@ -58,7 +58,7 @@ Here are all valid language + template combinations:
 | typescript | openai-computer-use    | ts-openai-cua     | ts-openai-cua         | Yes            | OPENAI_API_KEY                 |
 | typescript | gemini-computer-use    | ts-gemini-cua     | ts-gemini-cua         | Yes            | GOOGLE_API_KEY                 |
 | typescript | claude-agent-sdk       | ts-claude-agent-sdk | ts-claude-agent-sdk | Yes            | ANTHROPIC_API_KEY              |
-| typescript | yutori-computer-use    | ts-yutori-cua     | ts-yutori-cua         | Yes            | YUTORI_API_KEY                 |
+| typescript | yutori                 | ts-yutori-cua     | ts-yutori-cua         | Yes            | YUTORI_API_KEY                 |
 
 | python     | sample-app             | py-sample-app     | python-basic          | No             | -                              |
 | python     | gemini-computer-use    | py-gemini-cua     | python-gemini-cua     | Yes            | GOOGLE_API_KEY                 |
@@ -68,7 +68,7 @@ Here are all valid language + template combinations:
 | python     | openai-computer-use    | py-openai-cua     | python-openai-cua     | Yes            | OPENAI_API_KEY                 |
 | python     | openagi-computer-use   | py-openagi-cua    | python-openagi-cua    | Yes            | OAGI_API_KEY                   |
 | python     | claude-agent-sdk       | py-claude-agent-sdk | py-claude-agent-sdk | Yes            | ANTHROPIC_API_KEY              |
-| python     | yutori-computer-use    | py-yutori-cua     | python-yutori-cua     | Yes            | YUTORI_API_KEY                 |
+| python     | yutori                 | py-yutori-cua     | python-yutori-cua     | Yes            | YUTORI_API_KEY                 |
 
 > **Yutori:** Test both default browser and `"kiosk": true` (uses Playwright for goto_url when kiosk is enabled).
 
@@ -86,7 +86,7 @@ Run each of these (they are non-interactive when all flags are provided):
 ../bin/kernel create -n ts-openai-cua -l typescript -t openai-computer-use
 ../bin/kernel create -n ts-gemini-cua -l typescript -t gemini-computer-use
 ../bin/kernel create -n ts-claude-agent-sdk -l typescript -t claude-agent-sdk
-../bin/kernel create -n ts-yutori-cua -l typescript -t yutori-computer-use
+../bin/kernel create -n ts-yutori-cua -l typescript -t yutori
 
 # Python templates
 ../bin/kernel create -n py-sample-app -l python -t sample-app
@@ -97,7 +97,7 @@ Run each of these (they are non-interactive when all flags are provided):
 ../bin/kernel create -n py-openagi-cua -l python -t openagi-computer-use
 ../bin/kernel create -n py-claude-agent-sdk -l python -t claude-agent-sdk
 ../bin/kernel create -n py-gemini-cua -l python -t gemini-computer-use
-../bin/kernel create -n py-yutori-cua -l python -t yutori-computer-use
+../bin/kernel create -n py-yutori-cua -l python -t yutori
 ```
 
 ## Step 5: Deploy Each Template
