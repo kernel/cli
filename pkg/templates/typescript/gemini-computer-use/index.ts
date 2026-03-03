@@ -73,9 +73,9 @@ app.action<QueryInput, QueryOutput>(
   },
 );
 
-// Run locally if executed directly (not imported as a module)
+// Run locally if executed directly and not in Kernel (no KERNEL_INVOCATION)
 // Execute via: npx tsx index.ts
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (!process.env.KERNEL_INVOCATION && import.meta.url === `file://${process.argv[1]}`) {
   const testQuery = "Navigate to https://www.google.com and describe what you see";
   
   console.log('Running local test with query:', testQuery);
