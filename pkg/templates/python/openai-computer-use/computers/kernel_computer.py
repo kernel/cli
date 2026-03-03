@@ -148,6 +148,8 @@ def _describe_action(action_type: str, action_args: Dict[str, Any]) -> str:
         return "drag(...)"
     if action_type == "wait":
         return f"wait({int(action_args.get('ms', 1000))}ms)"
+    if action_type == "screenshot":
+        return "screenshot()"
     return action_type
 
 

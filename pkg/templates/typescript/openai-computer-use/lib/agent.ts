@@ -189,9 +189,6 @@ export class Agent {
         if (!this.ackCb(msg)) throw new Error(`Safety check failed: ${msg}`);
       }
 
-      const currentUrl = await this.computer.getCurrentUrl();
-      utils.checkBlocklistedUrl(currentUrl);
-
       const out: Omit<ResponseComputerToolCallOutputItem, 'id'> = {
         type: 'computer_call_output',
         call_id: cc.call_id,
@@ -201,6 +198,11 @@ export class Agent {
           image_url: `data:image/png;base64,${screenshot}`,
         },
       };
+      if (this.computer.getEnvironment() === 'browser') {
+        const currentUrl = await this.computer.getCurrentUrl();
+        utils.checkBlocklistedUrl(currentUrl);
+        (out.output as { current_url?: string }).current_url = currentUrl;
+      }
       return [out as ResponseItem];
     }
 
