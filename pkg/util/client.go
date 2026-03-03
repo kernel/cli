@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"sync/atomic"
 
 	"github.com/kernel/cli/pkg/update"
@@ -82,6 +83,15 @@ func showUpgradeMessage() {
 	} else {
 		pterm.Info.Println("Please upgrade using your package manager.")
 	}
+}
+
+// GetBaseURL returns the Kernel API base URL, falling back to production.
+// KERNEL_BASE_URL is never set in .env; it exists solely for internal dev/staging overrides.
+func GetBaseURL() string {
+	if u := os.Getenv("KERNEL_BASE_URL"); strings.TrimSpace(u) != "" {
+		return u
+	}
+	return "https://api.onkernel.com"
 }
 
 // IsNotFound returns true if the error is a Kernel API error with HTTP 404.

@@ -18,6 +18,7 @@ const SYSTEM_PROMPT = `<SYSTEM_CAPABILITY>
 * As the initial step click on the search bar.
 * When viewing a page it can be helpful to zoom out so that you can see everything on the page.
 * Either that, or make sure you scroll down to see everything before deciding something isn't available.
+* Scroll action: scroll_amount and the tool result are in wheel units (not pixels).
 * When using your computer function calls, they take a while to run and send back to you.
 * Where possible/feasible, try to chain multiple of these calls all into one function calls request.
 * The current date is ${DateTime.now().toFormat('EEEE, MMMM d, yyyy')}.
