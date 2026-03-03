@@ -1,11 +1,18 @@
 import { Kernel, type KernelContext } from '@onkernel/sdk';
-import 'dotenv/config';
+import * as dotenv from 'dotenv';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { ResponseItem, ResponseOutputMessage } from 'openai/resources/responses/responses';
 import { Agent } from './lib/agent';
 import { KernelComputer } from './lib/kernel-computer';
+import { createEventLogger } from './lib/logging';
+import type { OutputMode } from './lib/log-events';
+
+dotenv.config({ override: true, quiet: true });
 
 interface CuaInput {
   task: string;
+  output?: OutputMode;
 }
 interface CuaOutput {
   elapsed: number;
@@ -38,11 +45,26 @@ app.action<CuaInput, CuaOutput>(
   async (ctx: KernelContext, payload?: CuaInput): Promise<CuaOutput> => {
     const start = Date.now();
     if (!payload?.task) throw new Error('task is required');
+    const outputMode: OutputMode = payload.output === 'jsonl' ? 'jsonl' : 'text';
+    const onEvent = createEventLogger({ output: outputMode });
 
+    onEvent({ event: 'backend', data: { op: 'browsers.new' } });
+    const browserCreateStartedAt = Date.now();
     const kb = await kernel.browsers.create({ invocation_id: ctx.invocation_id });
-    console.log('> Kernel browser live view url:', kb.browser_live_view_url);
+    onEvent({
+      event: 'backend',
+      data: {
+        op: 'browsers.new.done',
+        detail: kb.browser_live_view_url ?? '',
+        elapsed_ms: Date.now() - browserCreateStartedAt,
+      },
+    });
+    onEvent({
+      event: 'session_state',
+      data: { session_id: kb.session_id, live_view_url: kb.browser_live_view_url ?? '' },
+    });
 
-    const computer = new KernelComputer(kernel, kb.session_id);
+    const computer = new KernelComputer(kernel, kb.session_id, onEvent);
 
     try {
       await computer.goto('https://duckduckgo.com');
@@ -73,8 +95,9 @@ app.action<CuaInput, CuaOutput>(
           },
         ],
         print_steps: true,
-        debug: true,
+        debug: false,
         show_images: false,
+        onEvent,
       });
 
       const elapsed = parseFloat(((Date.now() - start) / 1000).toFixed(2));
@@ -96,7 +119,34 @@ app.action<CuaInput, CuaOutput>(
       console.error('Error in cua-task:', error);
       return { elapsed, answer: null };
     } finally {
-      await kernel.browsers.deleteByID(kb.session_id);
+      onEvent({ event: 'backend', data: { op: 'browsers.delete' } });
+      const browserDeleteStartedAt = Date.now();
+      try {
+        await kernel.browsers.deleteByID(kb.session_id);
+      } finally {
+        onEvent({
+          event: 'backend',
+          data: {
+            op: 'browsers.delete.done',
+            elapsed_ms: Date.now() - browserDeleteStartedAt,
+          },
+        });
+      }
     }
   },
 );
+
+function isDirectRun(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return resolve(entry) === resolve(fileURLToPath(import.meta.url));
+}
+
+if (isDirectRun()) {
+  void import('./run_local')
+    .then(({ runLocalTest }) => runLocalTest(process.argv.slice(2)))
+    .catch((error: unknown) => {
+      console.error(error);
+      process.exit(1);
+    });
+}

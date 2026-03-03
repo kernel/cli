@@ -11,14 +11,20 @@ You can test against a remote Kernel browser without deploying:
 ```bash
 cp .env.example .env
 # Fill in OPENAI_API_KEY and KERNEL_API_KEY in .env
-uv run test_local.py
+uv run run_local.py
+# JSONL event output
+uv run run_local.py --output jsonl
 ```
+
+The local runner defaults to concise CUA-style logs (`text`), including `kernel>` backend SDK call lines with elapsed timing and `agent>` model output lines. Use `--output jsonl` for one structured event per line (including backend events). Add `--debug` to include verbose in-flight events.
 
 ## Deploy to Kernel
 
 ```bash
 kernel deploy main.py --env-file .env
 kernel invoke python-openai-cua cua-task -p '{"task":"go to https://news.ycombinator.com and list top 5 articles"}'
+# JSONL logs for invocation
+kernel invoke python-openai-cua cua-task -p '{"task":"go to https://news.ycombinator.com and list top 5 articles","output":"jsonl"}'
 ```
 
 See the [docs](https://www.kernel.sh/docs/quickstart) for more information.

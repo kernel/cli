@@ -1,6 +1,9 @@
-import 'dotenv/config';
+import * as dotenv from 'dotenv';
 import OpenAI from 'openai';
 import { type ResponseItem } from 'openai/resources/responses/responses';
+
+dotenv.config({ override: true, quiet: true });
+
 const openai = new OpenAI();
 
 const BLOCKED_DOMAINS: readonly string[] = [

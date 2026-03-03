@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "build": "tsc",
-    "test:local": "npx tsx test.local.ts"
+    "test:local": "npx tsx run_local.ts"
   },
   "dependencies": {
     "@onkernel/sdk": "^0.38.0",

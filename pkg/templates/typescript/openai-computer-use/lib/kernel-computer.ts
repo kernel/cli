@@ -1,4 +1,5 @@
 import { Kernel } from '@onkernel/sdk';
+import { describeAction, describeBatchActions, type AgentEvent } from './log-events';
 
 // CUA model key names -> X11 keysym names for the Kernel computer API
 const KEYSYM_MAP: Record<string, string> = {
@@ -147,10 +148,12 @@ export class KernelComputer {
   private sessionId: string;
   private width = 1024;
   private height = 768;
+  private onEvent: ((event: AgentEvent) => void) | null;
 
-  constructor(client: Kernel, sessionId: string) {
+  constructor(client: Kernel, sessionId: string, onEvent?: (event: AgentEvent) => void) {
     this.client = client;
     this.sessionId = sessionId;
+    this.onEvent = onEvent ?? null;
   }
 
   getEnvironment(): 'browser' {
@@ -161,48 +164,104 @@ export class KernelComputer {
     return [this.width, this.height];
   }
 
+  private emitBackend(op: string, detail?: string, elapsedMs?: number): void {
+    const data: Record<string, unknown> = { op };
+    if (detail) data.detail = detail;
+    if (typeof elapsedMs === 'number') data.elapsed_ms = elapsedMs;
+    this.onEvent?.({ event: 'backend', data });
+  }
+
+  private async traceCall<T>(
+    op: string,
+    fn: () => Promise<T>,
+    detail?: string | ((result: T) => string | undefined),
+  ): Promise<T> {
+    this.emitBackend(op);
+    const started = Date.now();
+    let result!: T;
+    let completed = false;
+    try {
+      result = await fn();
+      completed = true;
+      return result;
+    } finally {
+      const elapsedMs = Date.now() - started;
+      let resolvedDetail: string | undefined;
+      if (completed) {
+        resolvedDetail =
+          typeof detail === 'function' ? detail(result) : detail;
+      }
+      this.emitBackend(`${op}.done`, resolvedDetail, elapsedMs);
+    }
+  }
+
   async screenshot(): Promise<string> {
-    const resp = await this.client.browsers.computer.captureScreenshot(this.sessionId);
-    const buf = Buffer.from(await resp.arrayBuffer());
-    return buf.toString('base64');
+    return this.traceCall('screenshot', async () => {
+      const resp = await this.client.browsers.computer.captureScreenshot(this.sessionId);
+      const buf = Buffer.from(await resp.arrayBuffer());
+      return buf.toString('base64');
+    });
   }
 
   async click(x: number, y: number, button: string | number = 'left'): Promise<void> {
-    await this.client.browsers.computer.clickMouse(this.sessionId, {
-      x,
-      y,
-      button: normalizeButton(button) as 'left' | 'right' | 'middle',
+    const normalizedButton = normalizeButton(button) as 'left' | 'right' | 'middle';
+    const op = describeAction('click', { x, y, button: normalizedButton });
+    await this.traceCall(op, async () => {
+      await this.client.browsers.computer.clickMouse(this.sessionId, {
+        x,
+        y,
+        button: normalizedButton,
+      });
     });
   }
 
   async doubleClick(x: number, y: number): Promise<void> {
-    await this.client.browsers.computer.clickMouse(this.sessionId, { x, y, num_clicks: 2 });
+    const op = describeAction('double_click', { x, y });
+    await this.traceCall(op, async () => {
+      await this.client.browsers.computer.clickMouse(this.sessionId, { x, y, num_clicks: 2 });
+    });
   }
 
   async type(text: string): Promise<void> {
-    await this.client.browsers.computer.typeText(this.sessionId, { text });
+    const op = describeAction('type', { text });
+    await this.traceCall(op, async () => {
+      await this.client.browsers.computer.typeText(this.sessionId, { text });
+    });
   }
 
   async keypress(keys: string[]): Promise<void> {
-    await this.client.browsers.computer.pressKey(this.sessionId, { keys: translateKeys(keys) });
+    const translatedKeys = translateKeys(keys);
+    const op = describeAction('keypress', { keys: translatedKeys });
+    await this.traceCall(op, async () => {
+      await this.client.browsers.computer.pressKey(this.sessionId, { keys: translatedKeys });
+    });
   }
 
   async scroll(x: number, y: number, scrollX: number, scrollY: number): Promise<void> {
-    await this.client.browsers.computer.scroll(this.sessionId, {
-      x,
-      y,
-      delta_x: scrollX,
-      delta_y: scrollY,
+    const op = describeAction('scroll', { x, y, scroll_x: scrollX, scroll_y: scrollY });
+    await this.traceCall(op, async () => {
+      await this.client.browsers.computer.scroll(this.sessionId, {
+        x,
+        y,
+        delta_x: scrollX,
+        delta_y: scrollY,
+      });
     });
   }
 
   async move(x: number, y: number): Promise<void> {
-    await this.client.browsers.computer.moveMouse(this.sessionId, { x, y });
+    const op = describeAction('move', { x, y });
+    await this.traceCall(op, async () => {
+      await this.client.browsers.computer.moveMouse(this.sessionId, { x, y });
+    });
   }
 
   async drag(path: Array<{ x: number; y: number }>): Promise<void> {
-    const p = path.map((pt) => [pt.x, pt.y]);
-    await this.client.browsers.computer.dragMouse(this.sessionId, { path: p });
+    const op = describeAction('drag', { path });
+    await this.traceCall(op, async () => {
+      const p = path.map((pt) => [pt.x, pt.y]);
+      await this.client.browsers.computer.dragMouse(this.sessionId, { path: p });
+    });
   }
 
   async wait(ms = 1000): Promise<void> {
@@ -210,34 +269,47 @@ export class KernelComputer {
   }
 
   async batchActions(actions: CuaAction[]): Promise<void> {
-    const translated = actions.map(translateCuaAction);
-    await this.client.browsers.computer.batch(this.sessionId, {
-      actions: translated as Parameters<typeof this.client.browsers.computer.batch>[1]['actions'],
+    const actionRecords = actions.map((action) => ({ ...action })) as Array<Record<string, unknown>>;
+    const op = describeBatchActions(actionRecords);
+    await this.traceCall(op, async () => {
+      const translated = actions.map(translateCuaAction);
+      await this.client.browsers.computer.batch(this.sessionId, {
+        actions: translated as Parameters<typeof this.client.browsers.computer.batch>[1]['actions'],
+      });
     });
   }
 
   async goto(url: string): Promise<void> {
-    await this.client.browsers.playwright.execute(this.sessionId, {
-      code: `await page.goto(${JSON.stringify(url)})`,
+    const op = `goto(${JSON.stringify(url)})`;
+    await this.traceCall(op, async () => {
+      await this.client.browsers.playwright.execute(this.sessionId, {
+        code: `await page.goto(${JSON.stringify(url)})`,
+      });
     });
   }
 
   async back(): Promise<void> {
-    await this.client.browsers.playwright.execute(this.sessionId, {
-      code: 'await page.goBack()',
+    await this.traceCall('back()', async () => {
+      await this.client.browsers.playwright.execute(this.sessionId, {
+        code: 'await page.goBack()',
+      });
     });
   }
 
   async forward(): Promise<void> {
-    await this.client.browsers.playwright.execute(this.sessionId, {
-      code: 'await page.goForward()',
+    await this.traceCall('forward()', async () => {
+      await this.client.browsers.playwright.execute(this.sessionId, {
+        code: 'await page.goForward()',
+      });
     });
   }
 
   async getCurrentUrl(): Promise<string> {
-    const result = await this.client.browsers.playwright.execute(this.sessionId, {
-      code: 'return page.url()',
+    return this.traceCall('get_current_url()', async () => {
+      const result = await this.client.browsers.playwright.execute(this.sessionId, {
+        code: 'return page.url()',
+      });
+      return (result.result as string) ?? '';
     });
-    return (result.result as string) ?? '';
   }
 }

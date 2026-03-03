@@ -11,6 +11,8 @@ import {
 } from 'openai/resources/responses/responses';
 
 import * as utils from './utils';
+import type { AgentEvent } from './log-events';
+import { describeAction, describeBatchActions } from './log-events';
 import { batchInstructions, batchComputerTool, navigationTools } from './toolset';
 import type { KernelComputer } from './kernel-computer';
 
@@ -24,6 +26,8 @@ export class Agent {
   private debug = false;
   private show_images = false;
   private ackCb: (msg: string) => boolean;
+  private onEvent: ((event: AgentEvent) => void) | null = null;
+  private modelRequestStartedAt: number | null = null;
 
   constructor(opts: {
     model?: string;
@@ -51,7 +55,6 @@ export class Agent {
 
   private debugPrint(...args: unknown[]): void {
     if (this.debug) {
-      console.warn('--- debug:agent:debugPrint');
       try {
         console.dir(
           args.map((msg) => utils.sanitizeMessage(msg as ResponseItem)),
@@ -63,18 +66,86 @@ export class Agent {
     }
   }
 
+  private emit(event: AgentEvent['event'], data: Record<string, unknown>): void {
+    if (this.print_steps) this.onEvent?.({ event, data });
+  }
+
+  private currentModelElapsedMs(): number | null {
+    return this.modelRequestStartedAt === null ? null : Date.now() - this.modelRequestStartedAt;
+  }
+
+  private extractReasoningText(item: Record<string, unknown>): string {
+    const summary = item.summary;
+    if (!Array.isArray(summary)) return '';
+    const chunks = summary
+      .map((part) => {
+        if (!part || typeof part !== 'object') return '';
+        const text = (part as { text?: unknown }).text;
+        return typeof text === 'string' ? text : '';
+      })
+      .filter(Boolean);
+    return chunks.join(' ').trim();
+  }
+
+  private extractUserPrompt(item: ResponseInputItem): string | null {
+    const message = item as unknown as { role?: unknown; content?: unknown };
+    if (message.role !== 'user') return null;
+    if (typeof message.content === 'string') return message.content;
+    if (!Array.isArray(message.content)) return null;
+    const pieces = message.content
+      .map((entry) => {
+        if (!entry || typeof entry !== 'object') return '';
+        const text = (entry as { text?: unknown }).text;
+        return typeof text === 'string' ? text : '';
+      })
+      .filter(Boolean);
+    return pieces.length > 0 ? pieces.join(' ') : null;
+  }
+
   private async handleItem(item: ResponseItem): Promise<ResponseItem[]> {
-    if (item.type === 'message' && this.print_steps) {
+    const itemType = (item as { type?: string }).type;
+    if (itemType === 'reasoning') {
+      const text = this.extractReasoningText(item as unknown as Record<string, unknown>);
+      if (text) this.emit('reasoning_delta', { text });
+    }
+
+    if (item.type === 'message') {
       const msg = item as ResponseOutputMessage;
       const c = msg.content;
-      if (Array.isArray(c) && c[0] && 'text' in c[0] && typeof c[0].text === 'string')
-        console.log(c[0].text);
+      if (msg.role === 'assistant' && Array.isArray(c)) {
+        for (const part of c) {
+          if (part && typeof part === 'object' && 'text' in part && typeof part.text === 'string') {
+            this.emit('text_delta', { text: part.text });
+          }
+        }
+        this.emit('text_done', {});
+      }
     }
 
     if (item.type === 'function_call') {
       const fc = item as ResponseFunctionToolCallItem;
       const argsObj = JSON.parse(fc.arguments) as Record<string, unknown>;
-      if (this.print_steps) console.log(`${fc.name}(${JSON.stringify(argsObj)})`);
+      if (fc.name === BATCH_FUNC_NAME && Array.isArray(argsObj.actions)) {
+        const actions = argsObj.actions.filter(
+          (action): action is Record<string, unknown> =>
+            typeof action === 'object' && action !== null,
+        );
+        const elapsedMs = this.currentModelElapsedMs();
+        this.emit('action', {
+          action_type: 'batch',
+          description: describeBatchActions(actions),
+          action: { type: 'batch', actions },
+          ...(elapsedMs === null ? {} : { elapsed_ms: elapsedMs }),
+        });
+      } else {
+        const elapsedMs = this.currentModelElapsedMs();
+        this.emit('action', {
+          action_type: fc.name,
+          description: `${fc.name}(${JSON.stringify(argsObj)})`,
+          action: argsObj,
+          ...(elapsedMs === null ? {} : { elapsed_ms: elapsedMs }),
+        });
+      }
 
       if (fc.name === BATCH_FUNC_NAME) {
         return this.handleBatchCall(fc.call_id, argsObj);
@@ -100,10 +171,17 @@ export class Agent {
     if (item.type === 'computer_call') {
       const cc = item as ResponseComputerToolCall;
       const { type: actionType, ...actionArgs } = cc.action;
-      if (this.print_steps) console.log(`${actionType}(${JSON.stringify(actionArgs)})`);
+      const elapsedMs = this.currentModelElapsedMs();
+      this.emit('action', {
+        action_type: actionType,
+        description: describeAction(actionType as string, actionArgs),
+        action: cc.action as unknown as Record<string, unknown>,
+        ...(elapsedMs === null ? {} : { elapsed_ms: elapsedMs }),
+      });
 
       await this.executeComputerAction(actionType as string, cc.action as unknown as Record<string, unknown>);
       const screenshot = await this.computer.screenshot();
+      this.emit('screenshot', { captured: true, bytes_base64: screenshot.length });
 
       const pending = cc.pending_safety_checks ?? [];
       for (const check of pending) {
@@ -199,42 +277,61 @@ export class Agent {
     print_steps?: boolean;
     debug?: boolean;
     show_images?: boolean;
+    onEvent?: (event: AgentEvent) => void;
   }): Promise<ResponseItem[]> {
     this.print_steps = opts.print_steps ?? true;
     this.debug = opts.debug ?? false;
     this.show_images = opts.show_images ?? false;
+    this.onEvent = opts.onEvent ?? null;
     const newItems: ResponseItem[] = [];
+    let turns = 0;
 
-    while (
-      newItems.length === 0 ||
-      (newItems[newItems.length - 1] as ResponseItem & { role?: string }).role !== 'assistant'
-    ) {
-      const inputMessages = [...opts.messages];
-
-      // Append current URL context to system message
-      const currentUrl = await this.computer.getCurrentUrl();
-      const sysIndex = inputMessages.findIndex((msg) => 'role' in msg && msg.role === 'system');
-      if (sysIndex >= 0) {
-        const msg = inputMessages[sysIndex];
-        const urlInfo = `\n- Current URL: ${currentUrl}`;
-        if (msg && 'content' in msg && typeof msg.content === 'string') {
-          inputMessages[sysIndex] = { ...msg, content: msg.content + urlInfo } as typeof msg;
-        }
-      }
-
-      this.debugPrint(...inputMessages, ...newItems);
-      const response = await utils.createResponse({
-        model: this.model,
-        input: [...inputMessages, ...newItems],
-        tools: this.tools,
-        truncation: 'auto',
-        instructions: batchInstructions,
-      });
-      if (!response.output) throw new Error('No output from model');
-      for (const msg of response.output as ResponseItem[]) {
-        newItems.push(msg, ...(await this.handleItem(msg)));
-      }
+    for (const message of opts.messages) {
+      const prompt = this.extractUserPrompt(message);
+      if (prompt) this.emit('prompt', { text: prompt });
     }
+
+    try {
+      while (
+        newItems.length === 0 ||
+        (newItems[newItems.length - 1] as ResponseItem & { role?: string }).role !== 'assistant'
+      ) {
+        turns += 1;
+        const inputMessages = [...opts.messages];
+
+        // Append current URL context to system message
+        const currentUrl = await this.computer.getCurrentUrl();
+        const sysIndex = inputMessages.findIndex((msg) => 'role' in msg && msg.role === 'system');
+        if (sysIndex >= 0) {
+          const msg = inputMessages[sysIndex];
+          const urlInfo = `\n- Current URL: ${currentUrl}`;
+          if (msg && 'content' in msg && typeof msg.content === 'string') {
+            inputMessages[sysIndex] = { ...msg, content: msg.content + urlInfo } as typeof msg;
+          }
+        }
+
+        this.debugPrint(...inputMessages, ...newItems);
+        this.modelRequestStartedAt = Date.now();
+        const response = await utils.createResponse({
+          model: this.model,
+          input: [...inputMessages, ...newItems],
+          tools: this.tools,
+          truncation: 'auto',
+          instructions: batchInstructions,
+        });
+        if (!response.output) throw new Error('No output from model');
+        for (const msg of response.output as ResponseItem[]) {
+          newItems.push(msg, ...(await this.handleItem(msg)));
+        }
+        this.modelRequestStartedAt = null;
+        this.emit('turn_done', { turn: turns });
+      }
+    } catch (error) {
+      this.modelRequestStartedAt = null;
+      this.emit('error', { message: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
+    this.emit('run_complete', { turns });
 
     return !this.show_images
       ? newItems.map((msg) => utils.sanitizeMessage(msg) as ResponseItem)

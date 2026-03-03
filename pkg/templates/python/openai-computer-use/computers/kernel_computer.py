@@ -1,7 +1,7 @@
 import base64
 import json
 import time
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Callable
 
 from kernel import Kernel
 
@@ -116,12 +116,62 @@ def _translate_cua_action(action: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError(f"Unknown CUA action type: {action_type}")
 
 
+def _truncate(text: str, max_len: int = 60) -> str:
+    if len(text) <= max_len:
+        return text
+    return f"{text[: max_len - 3]}..."
+
+
+def _describe_action(action_type: str, action_args: Dict[str, Any]) -> str:
+    if action_type == "click":
+        x = int(action_args.get("x", 0))
+        y = int(action_args.get("y", 0))
+        button = str(action_args.get("button", "left"))
+        if button in ("", "left"):
+            return f"click({x}, {y})"
+        return f"click({x}, {y}, {button})"
+    if action_type == "double_click":
+        return f"double_click({int(action_args.get('x', 0))}, {int(action_args.get('y', 0))})"
+    if action_type == "type":
+        text = _truncate(str(action_args.get("text", "")))
+        return f"type({text!r})"
+    if action_type == "keypress":
+        return f"keypress({action_args.get('keys', [])})"
+    if action_type == "scroll":
+        return (
+            f"scroll({int(action_args.get('x', 0))}, {int(action_args.get('y', 0))}, "
+            f"dx={int(action_args.get('scroll_x', 0))}, dy={int(action_args.get('scroll_y', 0))})"
+        )
+    if action_type == "move":
+        return f"move({int(action_args.get('x', 0))}, {int(action_args.get('y', 0))})"
+    if action_type == "drag":
+        return "drag(...)"
+    if action_type == "wait":
+        return f"wait({int(action_args.get('ms', 1000))}ms)"
+    return action_type
+
+
+def _describe_batch_actions(actions: List[Dict[str, Any]]) -> str:
+    pieces = []
+    for action in actions:
+        action_type = str(action.get("type", "unknown"))
+        action_args = {k: v for k, v in action.items() if k != "type"}
+        pieces.append(_describe_action(action_type, action_args))
+    return "batch[" + " -> ".join(pieces) + "]"
+
+
 class KernelComputer:
     """Wraps Kernel's native computer control API for browser automation."""
 
-    def __init__(self, client: Kernel, session_id: str):
+    def __init__(
+        self,
+        client: Kernel,
+        session_id: str,
+        on_event: Callable[[dict], None] | None = None,
+    ):
         self.client = client
         self.session_id = session_id
+        self.on_event = on_event
 
     def get_environment(self):
         return "browser"
@@ -129,50 +179,155 @@ class KernelComputer:
     def get_dimensions(self):
         return (1024, 768)
 
+    def _emit_backend(
+        self, op: str, detail: str | None = None, elapsed_ms: int | None = None
+    ) -> None:
+        if not self.on_event:
+            return
+        data: Dict[str, Any] = {"op": op}
+        if detail:
+            data["detail"] = detail
+        if elapsed_ms is not None:
+            data["elapsed_ms"] = elapsed_ms
+        self.on_event({"event": "backend", "data": data})
+
+    def _trace_backend(
+        self,
+        op: str,
+        fn: Callable[[], Any],
+        detail: str | Callable[[Any], str | None] | None = None,
+    ) -> Any:
+        self._emit_backend(op)
+        started_at = time.time()
+        completed = False
+        result = None
+        try:
+            result = fn()
+            completed = True
+            return result
+        finally:
+            resolved_detail = None
+            if completed:
+                if callable(detail):
+                    try:
+                        resolved_detail = detail(result)
+                    except Exception:
+                        resolved_detail = None
+                elif isinstance(detail, str):
+                    resolved_detail = detail
+            elapsed_ms = int((time.time() - started_at) * 1000)
+            self._emit_backend(f"{op}.done", resolved_detail, elapsed_ms)
+
     def screenshot(self) -> str:
-        resp = self.client.browsers.computer.capture_screenshot(self.session_id)
-        return base64.b64encode(resp.read()).decode("utf-8")
+        def _do() -> str:
+            resp = self.client.browsers.computer.capture_screenshot(self.session_id)
+            return base64.b64encode(resp.read()).decode("utf-8")
+
+        return self._trace_backend("screenshot", _do)
 
     def click(self, x: int, y: int, button="left") -> None:
-        self.client.browsers.computer.click_mouse(self.session_id, x=x, y=y, button=_normalize_button(button))
+        normalized_button = _normalize_button(button)
+        op = _describe_action("click", {"x": x, "y": y, "button": normalized_button})
+        self._trace_backend(
+            op,
+            lambda: self.client.browsers.computer.click_mouse(
+                self.session_id, x=x, y=y, button=normalized_button
+            ),
+        )
 
     def double_click(self, x: int, y: int) -> None:
-        self.client.browsers.computer.click_mouse(self.session_id, x=x, y=y, num_clicks=2)
+        op = _describe_action("double_click", {"x": x, "y": y})
+        self._trace_backend(
+            op,
+            lambda: self.client.browsers.computer.click_mouse(
+                self.session_id, x=x, y=y, num_clicks=2
+            ),
+        )
 
     def type(self, text: str) -> None:
-        self.client.browsers.computer.type_text(self.session_id, text=text)
+        op = _describe_action("type", {"text": text})
+        self._trace_backend(
+            op, lambda: self.client.browsers.computer.type_text(self.session_id, text=text)
+        )
 
     def keypress(self, keys: List[str]) -> None:
-        self.client.browsers.computer.press_key(self.session_id, keys=_translate_keys(keys))
+        translated_keys = _translate_keys(keys)
+        op = _describe_action("keypress", {"keys": translated_keys})
+        self._trace_backend(
+            op,
+            lambda: self.client.browsers.computer.press_key(
+                self.session_id, keys=translated_keys
+            ),
+        )
 
     def scroll(self, x: int, y: int, scroll_x: int, scroll_y: int) -> None:
-        self.client.browsers.computer.scroll(self.session_id, x=x, y=y, delta_x=scroll_x, delta_y=scroll_y)
+        op = _describe_action(
+            "scroll", {"x": x, "y": y, "scroll_x": scroll_x, "scroll_y": scroll_y}
+        )
+        self._trace_backend(
+            op,
+            lambda: self.client.browsers.computer.scroll(
+                self.session_id, x=x, y=y, delta_x=scroll_x, delta_y=scroll_y
+            ),
+        )
 
     def move(self, x: int, y: int) -> None:
-        self.client.browsers.computer.move_mouse(self.session_id, x=x, y=y)
+        op = _describe_action("move", {"x": x, "y": y})
+        self._trace_backend(
+            op, lambda: self.client.browsers.computer.move_mouse(self.session_id, x=x, y=y)
+        )
 
     def drag(self, path: List[Dict[str, int]]) -> None:
-        p = [[pt["x"], pt["y"]] for pt in path]
-        self.client.browsers.computer.drag_mouse(self.session_id, path=p)
+        op = _describe_action("drag", {"path": path})
+
+        def _do() -> None:
+            p = [[pt["x"], pt["y"]] for pt in path]
+            self.client.browsers.computer.drag_mouse(self.session_id, path=p)
+
+        self._trace_backend(op, _do)
 
     def wait(self, ms: int = 1000) -> None:
         time.sleep(ms / 1000)
 
     def batch_actions(self, actions: List[Dict[str, Any]]) -> None:
-        translated = [_translate_cua_action(a) for a in actions]
-        self.client.browsers.computer.batch(self.session_id, actions=translated)
+        op = _describe_batch_actions(actions)
+
+        def _do() -> None:
+            translated = [_translate_cua_action(a) for a in actions]
+            self.client.browsers.computer.batch(self.session_id, actions=translated)
+
+        self._trace_backend(op, _do)
 
     def goto(self, url: str) -> None:
-        self.client.browsers.playwright.execute(
-            self.session_id, code=f"await page.goto({json.dumps(url)})"
+        op = f"goto({json.dumps(url)})"
+        self._trace_backend(
+            op,
+            lambda: self.client.browsers.playwright.execute(
+                self.session_id, code=f"await page.goto({json.dumps(url)})"
+            ),
         )
 
     def back(self) -> None:
-        self.client.browsers.playwright.execute(self.session_id, code="await page.goBack()")
+        self._trace_backend(
+            "back()",
+            lambda: self.client.browsers.playwright.execute(
+                self.session_id, code="await page.goBack()"
+            ),
+        )
 
     def forward(self) -> None:
-        self.client.browsers.playwright.execute(self.session_id, code="await page.goForward()")
+        self._trace_backend(
+            "forward()",
+            lambda: self.client.browsers.playwright.execute(
+                self.session_id, code="await page.goForward()"
+            ),
+        )
 
     def get_current_url(self) -> str:
-        result = self.client.browsers.playwright.execute(self.session_id, code="return page.url()")
-        return result.result if result.result else ""
+        def _do() -> str:
+            result = self.client.browsers.playwright.execute(
+                self.session_id, code="return page.url()"
+            )
+            return result.result if result.result else ""
+
+        return self._trace_backend("get_current_url()", _do)
