@@ -75,9 +75,9 @@ async def cua_task(
     }
 
 
-# Run locally if executed directly (not imported as a module)
+# Run locally if executed directly and not in Kernel (no KERNEL_INVOCATION)
 # Execute via: uv run main.py
-if __name__ == "__main__":
+if __name__ == "__main__" and not os.getenv("KERNEL_INVOCATION"):
     import asyncio
 
     async def main():
