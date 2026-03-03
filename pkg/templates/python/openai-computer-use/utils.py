@@ -2,10 +2,6 @@ import os
 import requests
 from dotenv import load_dotenv
 import json
-import base64
-from PIL import Image
-from io import BytesIO
-import io
 from urllib.parse import urlparse
 
 load_dotenv(override=True)
@@ -21,19 +17,19 @@ BLOCKED_DOMAINS = [
 
 
 def pp(obj):
-    print(json.dumps(obj, indent=4))
+    print(json.dumps(obj, indent=4, default=str))
 
 
 def show_image(base_64_image):
-    image_data = base64.b64decode(base_64_image)
-    image = Image.open(BytesIO(image_data))
-    image.show()
-
-
-def calculate_image_dimensions(base_64_image):
-    image_data = base64.b64decode(base_64_image)
-    image = Image.open(io.BytesIO(image_data))
-    return image.size
+    import base64
+    from io import BytesIO
+    try:
+        from PIL import Image
+        image_data = base64.b64decode(base_64_image)
+        image = Image.open(BytesIO(image_data))
+        image.show()
+    except ImportError:
+        print("[show_image] PIL not installed, skipping image display")
 
 
 def sanitize_message(msg: dict) -> dict:
@@ -68,7 +64,10 @@ def create_response(**kwargs):
 
 def check_blocklisted_url(url: str) -> None:
     """Raise ValueError if the given URL (including subdomains) is in the blocklist."""
-    hostname = urlparse(url).hostname or ""
+    try:
+        hostname = urlparse(url).hostname or ""
+    except Exception:
+        return
     if any(
         hostname == blocked or hostname.endswith(f".{blocked}")
         for blocked in BLOCKED_DOMAINS
