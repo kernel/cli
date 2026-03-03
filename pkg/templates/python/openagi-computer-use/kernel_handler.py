@@ -302,9 +302,7 @@ class KernelActionHandler:
                 self._execute_type(text, press_enter=press_enter)
 
             case ActionType.SCROLL:
-                print(f"[cua-scroll] SCROLL action raw_arg={arg!r}", flush=True)
                 x, y, direction = self._parse_scroll(arg)
-                print(f"[cua-scroll] SCROLL parsed x={x} y={y} direction={direction}", flush=True)
                 self._execute_scroll(x, y, direction, notches=1)
 
             case ActionType.FINISH:

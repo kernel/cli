@@ -158,10 +158,6 @@ class ComputerTool:
         elif direction == "right":
             delta_x = notches
 
-        print(
-            f"[cua-scroll] scroll amount={action.get('amount')} notches={notches} direction={direction} x={coords['x']} y={coords['y']} delta_x={delta_x} delta_y={delta_y}",
-            flush=True,
-        )
         self.kernel.browsers.computer.scroll(
             self.session_id,
             x=coords["x"],
