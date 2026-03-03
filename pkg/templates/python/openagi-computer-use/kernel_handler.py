@@ -46,7 +46,6 @@ class KernelActionHandler:
         self,
         session: "KernelBrowserSession",
         action_pause: float = 0.1,
-        scroll_amount: int = 3,
         wait_duration: float = 1.0,
         type_delay: int = 50,
     ):
@@ -56,13 +55,11 @@ class KernelActionHandler:
         Args:
             session: The Kernel browser session to control
             action_pause: Pause between actions in seconds
-            scroll_amount: Amount to scroll (wheel units / notches)
             wait_duration: Duration for wait actions in seconds
             type_delay: Delay between keystrokes in milliseconds
         """
         self.session = session
         self.action_pause = action_pause
-        self.scroll_amount = scroll_amount
         self.wait_duration = wait_duration
         self.type_delay = type_delay
 
