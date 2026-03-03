@@ -36,6 +36,10 @@ class KernelActionHandler:
     - HOTKEY -> press_key(keys=[...])
     - TYPE -> type_text(text=...)
     - SCROLL -> scroll(x, y, delta_y=...)
+
+    Note: OpenAGI/Lux tends to emit scroll N times for "scroll by N" (e.g. 3 identical
+    [scroll] actions for "scroll down with amount 3"). We treat each scroll event as
+    one scroll unit (1 notch), so N events in a row = N notches without fighting the model.
     """
 
     def __init__(
@@ -239,10 +243,10 @@ class KernelActionHandler:
             keys=keys,
         )
 
-    def _execute_scroll(self, x: int, y: int, direction: str):
-        """Execute a scroll action."""
+    def _execute_scroll(self, x: int, y: int, direction: str, notches: int = 1):
+        """Execute a scroll action. One Lux scroll event = 1 notch (OpenAGI often calls scroll N times for amount N)."""
         # Backend (kernel-images) uses delta_x/delta_y as wheel-event repeat count (notches), not pixels.
-        notches = max(self.scroll_amount, 1)
+        notches = max(notches, 1)
         delta_x = 0
         delta_y = 0
         if direction == "up":
@@ -254,6 +258,10 @@ class KernelActionHandler:
         elif direction == "right":
             delta_x = notches
 
+        print(
+            f"[cua-scroll] SCROLL API call id={self.session.session_id} x={x} y={y} delta_x={delta_x} delta_y={delta_y} (notches={notches})",
+            flush=True,
+        )
         self.session.kernel.browsers.computer.scroll(
             id=self.session.session_id,
             x=x,
@@ -302,8 +310,10 @@ class KernelActionHandler:
                 self._execute_type(text, press_enter=press_enter)
 
             case ActionType.SCROLL:
+                print(f"[cua-scroll] SCROLL action raw_arg={arg!r}", flush=True)
                 x, y, direction = self._parse_scroll(arg)
-                self._execute_scroll(x, y, direction)
+                print(f"[cua-scroll] SCROLL parsed x={x} y={y} direction={direction}", flush=True)
+                self._execute_scroll(x, y, direction, notches=1)
 
             case ActionType.FINISH:
                 # Task completion - nothing to do
@@ -321,32 +331,23 @@ class KernelActionHandler:
                 print(f"Unknown action type: {action.type}")
 
     def _execute_action(self, action: Action) -> None:
-        """Execute an action, potentially multiple times."""
+        """Execute an action, potentially multiple times. SCROLL: each event = 1 notch."""
         count = action.count or 1
-
         for _ in range(count):
             self._execute_single_action(action)
-            # Small pause between repeated actions
             if count > 1:
                 time.sleep(self.action_pause)
 
     async def __call__(self, actions: list[Action]) -> None:
-        """
-        Execute a list of actions.
-
-        Args:
-            actions: List of Action objects to execute
-        """
+        """Execute a list of actions."""
         if not self.session.session_id:
             raise RuntimeError("Browser session not initialized")
 
         for action in actions:
             try:
-                # Run the synchronous action execution in a thread pool
                 await asyncio.get_event_loop().run_in_executor(
                     None, self._execute_action, action
                 )
-                # Pause between actions
                 await asyncio.sleep(self.action_pause)
             except Exception as e:
                 print(f"Error executing action {action.type}: {e}")
