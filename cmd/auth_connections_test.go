@@ -196,3 +196,138 @@ func TestAuthConnectionsList_JSONOutput_PrintsRawResponse(t *testing.T) {
 	assert.Contains(t, out, "\"profile_name\"")
 	assert.Contains(t, out, "\"raf-leaseweb\"")
 }
+
+func newFakeWithMfaOptions(options []kernel.ManagedAuthMfaOption) *FakeAuthConnectionService {
+	return &FakeAuthConnectionService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			return &kernel.ManagedAuth{
+				ID:         id,
+				MfaOptions: options,
+			}, nil
+		},
+		SubmitFunc: func(ctx context.Context, id string, body kernel.AuthConnectionSubmitParams, opts ...option.RequestOption) (*kernel.SubmitFieldsResponse, error) {
+			return &kernel.SubmitFieldsResponse{Accepted: true}, nil
+		},
+	}
+}
+
+func TestSubmit_MfaOptionResolvesType(t *testing.T) {
+	fake := newFakeWithMfaOptions([]kernel.ManagedAuthMfaOption{
+		{Label: "Get a text", Type: "sms"},
+		{Label: "Have us call you", Type: "call"},
+	})
+
+	var submittedID string
+	fake.SubmitFunc = func(ctx context.Context, id string, body kernel.AuthConnectionSubmitParams, opts ...option.RequestOption) (*kernel.SubmitFieldsResponse, error) {
+		submittedID = body.SubmitFieldsRequest.MfaOptionID.Value
+		return &kernel.SubmitFieldsResponse{Accepted: true}, nil
+	}
+
+	c := AuthConnectionCmd{svc: fake}
+	err := c.Submit(context.Background(), AuthConnectionSubmitInput{
+		ID:          "conn-1",
+		MfaOptionID: "sms",
+		Output:      "json",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "sms", submittedID)
+}
+
+func TestSubmit_MfaOptionResolvesLabel(t *testing.T) {
+	fake := newFakeWithMfaOptions([]kernel.ManagedAuthMfaOption{
+		{Label: "Get a text", Type: "sms"},
+		{Label: "Have us call you", Type: "call"},
+	})
+
+	var submittedID string
+	fake.SubmitFunc = func(ctx context.Context, id string, body kernel.AuthConnectionSubmitParams, opts ...option.RequestOption) (*kernel.SubmitFieldsResponse, error) {
+		submittedID = body.SubmitFieldsRequest.MfaOptionID.Value
+		return &kernel.SubmitFieldsResponse{Accepted: true}, nil
+	}
+
+	c := AuthConnectionCmd{svc: fake}
+	err := c.Submit(context.Background(), AuthConnectionSubmitInput{
+		ID:          "conn-1",
+		MfaOptionID: "Get a text",
+		Output:      "json",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "sms", submittedID)
+}
+
+func TestSubmit_MfaOptionResolvesDisplayString(t *testing.T) {
+	fake := newFakeWithMfaOptions([]kernel.ManagedAuthMfaOption{
+		{Label: "Get a text", Type: "sms"},
+	})
+
+	var submittedID string
+	fake.SubmitFunc = func(ctx context.Context, id string, body kernel.AuthConnectionSubmitParams, opts ...option.RequestOption) (*kernel.SubmitFieldsResponse, error) {
+		submittedID = body.SubmitFieldsRequest.MfaOptionID.Value
+		return &kernel.SubmitFieldsResponse{Accepted: true}, nil
+	}
+
+	c := AuthConnectionCmd{svc: fake}
+	err := c.Submit(context.Background(), AuthConnectionSubmitInput{
+		ID:          "conn-1",
+		MfaOptionID: "Get a text (sms)",
+		Output:      "json",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "sms", submittedID)
+}
+
+func TestSubmit_MfaOptionResolvesLabelCaseInsensitive(t *testing.T) {
+	fake := newFakeWithMfaOptions([]kernel.ManagedAuthMfaOption{
+		{Label: "Get a text", Type: "sms"},
+	})
+
+	var submittedID string
+	fake.SubmitFunc = func(ctx context.Context, id string, body kernel.AuthConnectionSubmitParams, opts ...option.RequestOption) (*kernel.SubmitFieldsResponse, error) {
+		submittedID = body.SubmitFieldsRequest.MfaOptionID.Value
+		return &kernel.SubmitFieldsResponse{Accepted: true}, nil
+	}
+
+	c := AuthConnectionCmd{svc: fake}
+	err := c.Submit(context.Background(), AuthConnectionSubmitInput{
+		ID:          "conn-1",
+		MfaOptionID: "get a TEXT",
+		Output:      "json",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "sms", submittedID)
+}
+
+func TestSubmit_MfaOptionGetErrorSurfaced(t *testing.T) {
+	fake := &FakeAuthConnectionService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			return nil, errors.New("connection not found")
+		},
+	}
+
+	c := AuthConnectionCmd{svc: fake}
+	err := c.Submit(context.Background(), AuthConnectionSubmitInput{
+		ID:          "conn-1",
+		MfaOptionID: "sms",
+		Output:      "json",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connection not found")
+}
+
+func TestSubmit_MfaOptionRejectsUnknown(t *testing.T) {
+	fake := newFakeWithMfaOptions([]kernel.ManagedAuthMfaOption{
+		{Label: "Get a text", Type: "sms"},
+		{Label: "Have us call you", Type: "call"},
+	})
+
+	c := AuthConnectionCmd{svc: fake}
+	err := c.Submit(context.Background(), AuthConnectionSubmitInput{
+		ID:          "conn-1",
+		MfaOptionID: "carrier pigeon",
+		Output:      "json",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown MFA option")
+	assert.Contains(t, err.Error(), "carrier pigeon")
+	assert.Contains(t, err.Error(), "Get a text (sms)")
+}

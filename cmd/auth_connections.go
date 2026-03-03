@@ -450,6 +450,37 @@ func (c AuthConnectionCmd) Submit(ctx context.Context, in AuthConnectionSubmitIn
 		return fmt.Errorf("must provide at least one of: --field, --mfa-option-id, or --sso-button-selector")
 	}
 
+	// Resolve MFA option: the user may pass the label (e.g. "Get a text"), the
+	// type (e.g. "sms"), or the display string ("Get a text (sms)"). The API
+	// expects the type, so look up the connection's available options and map
+	// whatever the user provided to the correct type value.
+	if hasMfaOption {
+		conn, err := c.svc.Get(ctx, in.ID)
+		if err != nil {
+			return util.CleanedUpSdkError{Err: fmt.Errorf("failed to fetch connection for MFA option resolution: %w", err)}
+		}
+		if len(conn.MfaOptions) > 0 {
+			resolved := false
+			for _, opt := range conn.MfaOptions {
+				displayName := fmt.Sprintf("%s (%s)", opt.Label, opt.Type)
+				if strings.EqualFold(in.MfaOptionID, opt.Type) ||
+					strings.EqualFold(in.MfaOptionID, opt.Label) ||
+					strings.EqualFold(in.MfaOptionID, displayName) {
+					in.MfaOptionID = opt.Type
+					resolved = true
+					break
+				}
+			}
+			if !resolved {
+				available := make([]string, 0, len(conn.MfaOptions))
+				for _, opt := range conn.MfaOptions {
+					available = append(available, fmt.Sprintf("%s (%s)", opt.Label, opt.Type))
+				}
+				return fmt.Errorf("unknown MFA option %q; available: %s", in.MfaOptionID, strings.Join(available, ", "))
+			}
+		}
+	}
+
 	params := kernel.AuthConnectionSubmitParams{
 		SubmitFieldsRequest: kernel.SubmitFieldsRequestParam{
 			Fields: in.FieldValues,
