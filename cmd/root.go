@@ -90,7 +90,7 @@ func isAuthExempt(cmd *cobra.Command) bool {
 
 	// Check if the top-level command is in the exempt list
 	switch topLevel.Name() {
-	case "login", "logout", "help", "completion", "create", "mcp", "upgrade":
+	case "login", "logout", "help", "completion", "create", "mcp", "upgrade", "status":
 		return true
 	case "auth":
 		// Only exempt the auth command itself (status display), not its subcommands
@@ -147,6 +147,7 @@ func init() {
 	rootCmd.AddCommand(createCmd)
 	rootCmd.AddCommand(mcp.MCPCmd)
 	rootCmd.AddCommand(upgradeCmd)
+	rootCmd.AddCommand(statusCmd)
 
 	rootCmd.PersistentPostRunE = func(cmd *cobra.Command, args []string) error {
 		// running synchronously so we never slow the command
