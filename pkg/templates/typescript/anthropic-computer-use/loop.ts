@@ -1,5 +1,4 @@
 import { Anthropic } from '@anthropic-ai/sdk';
-import { DateTime } from 'luxon';
 import type { Kernel } from '@onkernel/sdk';
 import { DEFAULT_TOOL_VERSION, TOOL_GROUPS_BY_VERSION, ToolCollection, type ToolVersion } from './tools/collection';
 import { ComputerTool20241022, ComputerTool20250124 } from './tools/computer';
@@ -8,6 +7,13 @@ import { Action } from './tools/types/computer';
 import type { BetaMessageParam, BetaTextBlock } from './types/beta';
 import { injectPromptCaching, maybeFilterToNMostRecentImages, PROMPT_CACHING_BETA_FLAG, responseToParams } from './utils/message-processing';
 import { makeApiToolResult } from './utils/tool-results';
+
+const CURRENT_DATE = new Intl.DateTimeFormat('en-US', {
+  weekday: 'long',
+  month: 'long',
+  day: 'numeric',
+  year: 'numeric',
+}).format(new Date());
 
 // System prompt optimized for the environment
 const SYSTEM_PROMPT = `<SYSTEM_CAPABILITY>
@@ -21,7 +27,7 @@ const SYSTEM_PROMPT = `<SYSTEM_CAPABILITY>
 * Scroll action: scroll_amount and the tool result are in wheel units (not pixels).
 * When using your computer function calls, they take a while to run and send back to you.
 * Where possible/feasible, try to chain multiple of these calls all into one function calls request.
-* The current date is ${DateTime.now().toFormat('EEEE, MMMM d, yyyy')}.
+* The current date is ${CURRENT_DATE}.
 * After each step, take a screenshot and carefully evaluate if you have achieved the right outcome.
 * Explicitly show your thinking: "I have evaluated step X..." If not correct, try again.
 * Only when you confirm a step was executed correctly should you move on to the next one.
