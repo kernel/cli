@@ -11,7 +11,7 @@ export class ComputerTool implements BaseAnthropicTool {
   protected kernel: Kernel;
   protected sessionId: string;
   protected _screenshotDelay = 2.0;
-  protected version: '20241022' | '20250124';
+  protected version: '20241022' | '20250124' | '20251124';
   protected width: number;
   protected height: number;
   
@@ -41,7 +41,7 @@ export class ComputerTool implements BaseAnthropicTool {
     Action.WAIT,
   ]);
 
-  constructor(kernel: Kernel, sessionId: string, version: '20241022' | '20250124' = '20250124', width = 1280, height = 800) {
+  constructor(kernel: Kernel, sessionId: string, version: '20241022' | '20250124' | '20251124' = '20250124', width = 1280, height = 800) {
     this.kernel = kernel;
     this.sessionId = sessionId;
     this.version = version;
@@ -49,8 +49,14 @@ export class ComputerTool implements BaseAnthropicTool {
     this.height = height;
   }
 
-  get apiType(): 'computer_20241022' | 'computer_20250124' {
-    return this.version === '20241022' ? 'computer_20241022' : 'computer_20250124';
+  get apiType(): 'computer_20241022' | 'computer_20250124' | 'computer_20251124' {
+    if (this.version === '20241022') {
+      return 'computer_20241022';
+    }
+    if (this.version === '20250124') {
+      return 'computer_20250124';
+    }
+    return 'computer_20251124';
   }
 
   toParams(): ComputerToolParams {
@@ -288,8 +294,8 @@ export class ComputerTool implements BaseAnthropicTool {
     }
 
     if (action === Action.SCROLL) {
-      if (this.version !== '20250124') {
-        throw new ToolError(`${action} is only available in version 20250124`);
+      if (this.version === '20241022') {
+        throw new ToolError(`${action} is only available in versions 20250124 and 20251124`);
       }
 
       const scrollDirection = scrollDirectionParam || kwargs.scroll_direction;
@@ -327,8 +333,8 @@ export class ComputerTool implements BaseAnthropicTool {
     }
 
     if (action === Action.WAIT) {
-      if (this.version !== '20250124') {
-        throw new ToolError(`${action} is only available in version 20250124`);
+      if (this.version === '20241022') {
+        throw new ToolError(`${action} is only available in versions 20250124 and 20251124`);
       }
       await new Promise(resolve => setTimeout(resolve, duration! * 1000));
       return await this.screenshot();
@@ -386,5 +392,11 @@ export class ComputerTool20241022 extends ComputerTool {
 export class ComputerTool20250124 extends ComputerTool {
   constructor(kernel: Kernel, sessionId: string, width = 1280, height = 800) {
     super(kernel, sessionId, '20250124', width, height);
+  }
+}
+
+export class ComputerTool20251124 extends ComputerTool {
+  constructor(kernel: Kernel, sessionId: string, width = 1280, height = 800) {
+    super(kernel, sessionId, '20251124', width, height);
   }
 }

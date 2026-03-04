@@ -1,4 +1,8 @@
-import type { BetaToolComputerUse20241022, BetaToolComputerUse20250124 } from '@anthropic-ai/sdk/resources/beta/messages/messages';
+import type {
+  BetaToolComputerUse20241022,
+  BetaToolComputerUse20250124,
+  BetaToolComputerUse20251124,
+} from '@anthropic-ai/sdk/resources/beta/messages/messages';
 
 export enum Action {
   // Mouse actions
@@ -45,7 +49,10 @@ export interface ActionParams {
   [key: string]: Action | string | Coordinate | ScrollDirection | number | Duration | undefined;
 }
 
-export type ComputerToolParams = BetaToolComputerUse20241022 | BetaToolComputerUse20250124;
+export type ComputerToolParams =
+  | BetaToolComputerUse20241022
+  | BetaToolComputerUse20250124
+  | BetaToolComputerUse20251124;
 
 export interface ToolResult {
   output?: string;

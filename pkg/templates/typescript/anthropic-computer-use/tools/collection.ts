@@ -1,14 +1,14 @@
-import { ComputerTool20241022, ComputerTool20250124 } from './computer';
+import { ComputerTool20241022, ComputerTool20250124, ComputerTool20251124 } from './computer';
 import { Action } from './types/computer';
 import type { ActionParams, ComputerToolParams, ToolResult } from './types/computer';
 
-export type ToolVersion = 'computer_use_20250124' | 'computer_use_20241022' | 'computer_use_20250429';
+export type ToolVersion = 'computer_use_20250124' | 'computer_use_20241022' | 'computer_use_20250429' | 'computer_use_20251124';
 
-export const DEFAULT_TOOL_VERSION: ToolVersion = 'computer_use_20250429';
+export const DEFAULT_TOOL_VERSION: ToolVersion = 'computer_use_20251124';
 
 interface ToolGroup {
   readonly version: ToolVersion;
-  readonly tools: (typeof ComputerTool20241022 | typeof ComputerTool20250124)[];
+  readonly tools: (typeof ComputerTool20241022 | typeof ComputerTool20250124 | typeof ComputerTool20251124)[];
   readonly beta_flag: string;
 }
 
@@ -23,6 +23,11 @@ export const TOOL_GROUPS: ToolGroup[] = [
     tools: [ComputerTool20250124],
     beta_flag: 'computer-use-2025-01-24',
   },
+  {
+    version: 'computer_use_20251124',
+    tools: [ComputerTool20251124],
+    beta_flag: 'computer-use-2025-11-24',
+  },
   // 20250429 version inherits from 20250124
   {
     version: 'computer_use_20250429',
@@ -36,9 +41,9 @@ export const TOOL_GROUPS_BY_VERSION: Record<ToolVersion, ToolGroup> = Object.fro
 ) as Record<ToolVersion, ToolGroup>;
 
 export class ToolCollection {
-  private tools: Map<string, ComputerTool20241022 | ComputerTool20250124>;
+  private tools: Map<string, ComputerTool20241022 | ComputerTool20250124 | ComputerTool20251124>;
 
-  constructor(...tools: (ComputerTool20241022 | ComputerTool20250124)[]) {
+  constructor(...tools: (ComputerTool20241022 | ComputerTool20250124 | ComputerTool20251124)[]) {
     this.tools = new Map(tools.map(tool => [tool.name, tool]));
   }
 

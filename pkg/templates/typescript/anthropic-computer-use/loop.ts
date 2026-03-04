@@ -1,7 +1,7 @@
 import { Anthropic } from '@anthropic-ai/sdk';
 import type { Kernel } from '@onkernel/sdk';
 import { DEFAULT_TOOL_VERSION, TOOL_GROUPS_BY_VERSION, ToolCollection, type ToolVersion } from './tools/collection';
-import { ComputerTool20241022, ComputerTool20250124 } from './tools/computer';
+import { ComputerTool20241022, ComputerTool20250124, ComputerTool20251124 } from './tools/computer';
 import type { ActionParams } from './tools/types/computer';
 import { Action } from './tools/types/computer';
 import type { BetaMessageParam, BetaTextBlock } from './types/beta';
@@ -52,6 +52,17 @@ interface ToolUseInput extends Record<string, unknown> {
   action: Action;
 }
 
+function getToolVersionForModel(model: string): ToolVersion {
+  if (
+    model.includes('claude-sonnet-4-6')
+    || model.includes('claude-opus-4-6')
+    || model.includes('claude-opus-4-5')
+  ) {
+    return 'computer_use_20251124';
+  }
+  return 'computer_use_20250124';
+}
+
 export async function samplingLoop({
   model,
   systemPromptSuffix,
@@ -81,9 +92,9 @@ export async function samplingLoop({
   viewportWidth?: number;
   viewportHeight?: number;
 }): Promise<BetaMessageParam[]> {
-  const selectedVersion = toolVersion || DEFAULT_TOOL_VERSION;
+  const selectedVersion = toolVersion || getToolVersionForModel(model) || DEFAULT_TOOL_VERSION;
   const toolGroup = TOOL_GROUPS_BY_VERSION[selectedVersion];
-  const toolCollection = new ToolCollection(...toolGroup.tools.map((Tool: typeof ComputerTool20241022 | typeof ComputerTool20250124) => new Tool(kernel, sessionId, viewportWidth, viewportHeight)));
+  const toolCollection = new ToolCollection(...toolGroup.tools.map((Tool: typeof ComputerTool20241022 | typeof ComputerTool20250124 | typeof ComputerTool20251124) => new Tool(kernel, sessionId, viewportWidth, viewportHeight)));
 
   const system: BetaTextBlock = {
     type: 'text',
