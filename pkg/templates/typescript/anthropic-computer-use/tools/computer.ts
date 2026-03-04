@@ -1,6 +1,6 @@
 import { Buffer } from 'buffer';
 import type { Kernel } from '@onkernel/sdk';
-import type { ActionParams, BaseAnthropicTool, ToolResult } from './types/computer';
+import type { ActionParams, BaseAnthropicTool, ComputerToolParams, ToolResult } from './types/computer';
 import { Action, ToolError } from './types/computer';
 import { ActionValidator } from './utils/validator';
 
@@ -53,7 +53,7 @@ export class ComputerTool implements BaseAnthropicTool {
     return this.version === '20241022' ? 'computer_20241022' : 'computer_20250124';
   }
 
-  toParams(): ActionParams {
+  toParams(): ComputerToolParams {
     const params = {
       name: this.name,
       type: this.apiType,

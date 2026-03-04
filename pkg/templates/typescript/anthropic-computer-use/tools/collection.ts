@@ -1,6 +1,6 @@
 import { ComputerTool20241022, ComputerTool20250124 } from './computer';
 import { Action } from './types/computer';
-import type { ActionParams, ToolResult } from './types/computer';
+import type { ActionParams, ComputerToolParams, ToolResult } from './types/computer';
 
 export type ToolVersion = 'computer_use_20250124' | 'computer_use_20241022' | 'computer_use_20250429';
 
@@ -42,7 +42,7 @@ export class ToolCollection {
     this.tools = new Map(tools.map(tool => [tool.name, tool]));
   }
 
-  toParams(): ActionParams[] {
+  toParams(): ComputerToolParams[] {
     return Array.from(this.tools.values()).map(tool => tool.toParams());
   }
 

@@ -123,7 +123,7 @@ export class KernelBrowserSession {
     });
 
     this._sessionId = browser.session_id;
-    this._liveViewUrl = browser.browser_live_view_url;
+    this._liveViewUrl = browser.browser_live_view_url ?? null;
 
     console.log(`Kernel browser created: ${this._sessionId}`);
     console.log(`Live view URL: ${this._liveViewUrl}`);
@@ -182,7 +182,7 @@ export class KernelBrowserSession {
         const replays = await this.kernel.browsers.replays.list(this._sessionId);
         for (const replay of replays) {
           if (replay.replay_id === this._replayId) {
-            this._replayViewUrl = replay.replay_view_url;
+            this._replayViewUrl = replay.replay_view_url ?? null;
             replayReady = true;
             break;
           }
