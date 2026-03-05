@@ -622,9 +622,11 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		if err != nil {
 			return fmt.Errorf("invalid viewport format: %v", err)
 		}
-		params.Viewport = shared.BrowserViewportParam{
-			Width:  width,
-			Height: height,
+		params.Viewport = kernel.BrowserUpdateParamsViewport{
+			BrowserViewportParam: shared.BrowserViewportParam{
+				Width:  width,
+				Height: height,
+			},
 		}
 		if refreshRate > 0 {
 			params.Viewport.RefreshRate = kernel.Opt(refreshRate)
