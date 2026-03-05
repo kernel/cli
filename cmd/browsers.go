@@ -207,6 +207,7 @@ type BrowsersUpdateInput struct {
 	ProfileName        string
 	ProfileSaveChanges BoolFlag
 	Viewport           string
+	Force              bool
 	Output             string
 }
 
@@ -589,6 +590,11 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("--save-changes requires --profile-id or --profile-name")
 	}
 
+	// Validate --force is only used with a viewport change
+	if in.Force && !hasViewportChange {
+		return fmt.Errorf("--force requires --viewport")
+	}
+
 	// Validate that at least one update option is provided
 	if !hasProxyChange && !hasProfileChange && !hasViewportChange {
 		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --profile-id, --profile-name, or --viewport")
@@ -622,12 +628,17 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		if err != nil {
 			return fmt.Errorf("invalid viewport format: %v", err)
 		}
-		params.Viewport = shared.BrowserViewportParam{
-			Width:  width,
-			Height: height,
+		params.Viewport = kernel.BrowserUpdateParamsViewport{
+			BrowserViewportParam: shared.BrowserViewportParam{
+				Width:  width,
+				Height: height,
+			},
 		}
 		if refreshRate > 0 {
 			params.Viewport.RefreshRate = kernel.Opt(refreshRate)
+		}
+		if in.Force {
+			params.Viewport.Force = kernel.Opt(true)
 		}
 	}
 
@@ -2122,6 +2133,7 @@ Supported operations:
   - Change or remove proxy (--proxy-id or --clear-proxy)
   - Load a profile into a session that doesn't have one (--profile-id or --profile-name)
   - Change viewport dimensions (--viewport)
+  - Force viewport resize during active live view or recording (--force with --viewport)
 
 Note: Profiles can only be loaded into sessions that don't already have a profile.`,
 	Args: func(cmd *cobra.Command, args []string) error {
@@ -2159,6 +2171,7 @@ func init() {
 	browsersUpdateCmd.Flags().String("profile-name", "", "Profile name to load into the browser session (mutually exclusive with --profile-id)")
 	browsersUpdateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
 	browsersUpdateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
+	browsersUpdateCmd.Flags().Bool("force", false, "Force viewport resize even when a live view or recording/replay is active")
 
 	browsersCmd.AddCommand(browsersListCmd)
 	browsersCmd.AddCommand(browsersCreateCmd)
@@ -2619,6 +2632,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	saveChanges, _ := cmd.Flags().GetBool("save-changes")
 	viewport, _ := cmd.Flags().GetString("viewport")
+	force, _ := cmd.Flags().GetBool("force")
 
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
@@ -2630,6 +2644,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 		ProfileName:        profileName,
 		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
 		Viewport:           viewport,
+		Force:              force,
 		Output:             out,
 	})
 }

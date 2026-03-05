@@ -1242,3 +1242,77 @@ func TestBrowsersCreate_WithInvalidViewport(t *testing.T) {
 	out := outBuf.String()
 	assert.Contains(t, out, "Invalid viewport format")
 }
+
+func TestBrowsersUpdate_WithViewportAndForce(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserUpdateParams
+	fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+		captured = body
+		return &kernel.BrowserUpdateResponse{SessionID: "session123"}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Viewport:   "1920x1080@25",
+		Force:      true,
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1920), captured.Viewport.Width)
+	assert.Equal(t, int64(1080), captured.Viewport.Height)
+	assert.True(t, captured.Viewport.RefreshRate.Valid())
+	assert.Equal(t, int64(25), captured.Viewport.RefreshRate.Value)
+	assert.True(t, captured.Viewport.Force.Valid())
+	assert.True(t, captured.Viewport.Force.Value)
+}
+
+func TestBrowsersUpdate_WithViewportNoForce(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserUpdateParams
+	fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+		captured = body
+		return &kernel.BrowserUpdateResponse{SessionID: "session123"}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Viewport:   "1920x1080@25",
+		Force:      false,
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1920), captured.Viewport.Width)
+	assert.Equal(t, int64(1080), captured.Viewport.Height)
+	assert.False(t, captured.Viewport.Force.Valid())
+}
+
+func TestBrowsersUpdate_ForceWithoutViewport_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Force:      true,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "--force requires --viewport")
+}
+
+func TestBrowsersUpdate_ForceWithProxyButNoViewport_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		ProxyID:    "proxy-123",
+		Force:      true,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "--force requires --viewport")
+}
