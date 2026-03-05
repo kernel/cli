@@ -6,8 +6,7 @@ export function responseToParams(response: BetaMessage): BetaContentBlock[] {
       return { type: 'text', text: block.text };
     }
     if (block.type === 'thinking') {
-      const { thinking, signature, ...rest } = block;
-      return { ...rest, thinking, ...(signature && { signature }) };
+      return { type: 'thinking', thinking: block.thinking, signature: block.signature };
     }
     return block as BetaContentBlock;
   });
@@ -63,12 +62,14 @@ export function injectPromptCaching(messages: BetaMessageParam[]): void {
         breakpointsRemaining--;
         const lastContent = message.content[message.content.length - 1];
         if (lastContent) {
-          (lastContent as BetaLocalContentBlock).cache_control = { type: 'ephemeral' };
+          const cacheable = lastContent as BetaLocalContentBlock & { cache_control?: { type: 'ephemeral' } | null };
+          cacheable.cache_control = { type: 'ephemeral' };
         }
       } else {
         const lastContent = message.content[message.content.length - 1];
         if (lastContent) {
-          delete (lastContent as BetaLocalContentBlock).cache_control;
+          const cacheable = lastContent as BetaLocalContentBlock & { cache_control?: { type: 'ephemeral' } | null };
+          delete cacheable.cache_control;
         }
         break;
       }

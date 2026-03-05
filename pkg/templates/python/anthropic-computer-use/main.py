@@ -55,7 +55,7 @@ async def cua_task(
         print("Kernel browser live view url:", session.live_view_url)
 
         final_messages = await sampling_loop(
-            model="claude-sonnet-4-5-20250929",
+            model="claude-sonnet-4-6",
             messages=[
                 {
                     "role": "user",
