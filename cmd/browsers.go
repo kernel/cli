@@ -590,6 +590,11 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("--save-changes requires --profile-id or --profile-name")
 	}
 
+	// Validate --force is only used with a viewport change
+	if in.Force && !hasViewportChange {
+		return fmt.Errorf("--force requires --viewport")
+	}
+
 	// Validate that at least one update option is provided
 	if !hasProxyChange && !hasProfileChange && !hasViewportChange {
 		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --profile-id, --profile-name, or --viewport")

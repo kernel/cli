@@ -1299,5 +1299,20 @@ func TestBrowsersUpdate_ForceWithoutViewport_Errors(t *testing.T) {
 	})
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "must specify at least one of")
+	assert.Contains(t, err.Error(), "--force requires --viewport")
+}
+
+func TestBrowsersUpdate_ForceWithProxyButNoViewport_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		ProxyID:    "proxy-123",
+		Force:      true,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "--force requires --viewport")
 }
