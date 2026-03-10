@@ -1053,6 +1053,109 @@ func TestBrowsersComputerMoveMouse_PrintsSuccess(t *testing.T) {
 	assert.Contains(t, out, "Moved mouse to (5,6)")
 }
 
+func TestBrowsersComputerMoveMouse_SmoothFalse(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	var capturedBody kernel.BrowserComputerMoveMouseParams
+	fakeComp := &FakeComputerService{
+		MoveMouseFunc: func(ctx context.Context, id string, body kernel.BrowserComputerMoveMouseParams, opts ...option.RequestOption) error {
+			capturedBody = body
+			return nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
+	smooth := false
+	_ = b.ComputerMoveMouse(context.Background(), BrowsersComputerMoveMouseInput{Identifier: "id", X: 100, Y: 200, Smooth: &smooth})
+	extras := capturedBody.ExtraFields()
+	assert.Contains(t, extras, "smooth")
+	assert.Equal(t, false, extras["smooth"])
+}
+
+func TestBrowsersComputerMoveMouse_DurationMs(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	var capturedBody kernel.BrowserComputerMoveMouseParams
+	fakeComp := &FakeComputerService{
+		MoveMouseFunc: func(ctx context.Context, id string, body kernel.BrowserComputerMoveMouseParams, opts ...option.RequestOption) error {
+			capturedBody = body
+			return nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
+	smooth := true
+	dur := int64(1500)
+	_ = b.ComputerMoveMouse(context.Background(), BrowsersComputerMoveMouseInput{Identifier: "id", X: 100, Y: 200, Smooth: &smooth, DurationMs: &dur})
+	extras := capturedBody.ExtraFields()
+	assert.Contains(t, extras, "smooth")
+	assert.Equal(t, true, extras["smooth"])
+	assert.Contains(t, extras, "duration_ms")
+	assert.Equal(t, int64(1500), extras["duration_ms"])
+}
+
+func TestBrowsersComputerMoveMouse_NoSmoothFlag(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	var capturedBody kernel.BrowserComputerMoveMouseParams
+	fakeComp := &FakeComputerService{
+		MoveMouseFunc: func(ctx context.Context, id string, body kernel.BrowserComputerMoveMouseParams, opts ...option.RequestOption) error {
+			capturedBody = body
+			return nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
+	_ = b.ComputerMoveMouse(context.Background(), BrowsersComputerMoveMouseInput{Identifier: "id", X: 100, Y: 200})
+	extras := capturedBody.ExtraFields()
+	assert.Empty(t, extras)
+}
+
+func TestBrowsersComputerDragMouse_SmoothFalse(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	var capturedBody kernel.BrowserComputerDragMouseParams
+	fakeComp := &FakeComputerService{
+		DragMouseFunc: func(ctx context.Context, id string, body kernel.BrowserComputerDragMouseParams, opts ...option.RequestOption) error {
+			capturedBody = body
+			return nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
+	smooth := false
+	_ = b.ComputerDragMouse(context.Background(), BrowsersComputerDragMouseInput{
+		Identifier: "id",
+		Path:       [][]int64{{100, 200}, {300, 400}},
+		Smooth:     &smooth,
+	})
+	extras := capturedBody.ExtraFields()
+	assert.Contains(t, extras, "smooth")
+	assert.Equal(t, false, extras["smooth"])
+}
+
+func TestBrowsersComputerDragMouse_DurationMs(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	var capturedBody kernel.BrowserComputerDragMouseParams
+	fakeComp := &FakeComputerService{
+		DragMouseFunc: func(ctx context.Context, id string, body kernel.BrowserComputerDragMouseParams, opts ...option.RequestOption) error {
+			capturedBody = body
+			return nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
+	smooth := true
+	dur := int64(3000)
+	_ = b.ComputerDragMouse(context.Background(), BrowsersComputerDragMouseInput{
+		Identifier: "id",
+		Path:       [][]int64{{100, 200}, {300, 400}},
+		Smooth:     &smooth,
+		DurationMs: &dur,
+	})
+	extras := capturedBody.ExtraFields()
+	assert.Contains(t, extras, "smooth")
+	assert.Equal(t, true, extras["smooth"])
+	assert.Contains(t, extras, "duration_ms")
+	assert.Equal(t, int64(3000), extras["duration_ms"])
+}
+
 func TestBrowsersComputerScreenshot_SavesFile(t *testing.T) {
 	setupStdoutCapture(t)
 	dir := t.TempDir()
