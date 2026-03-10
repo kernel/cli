@@ -719,6 +719,8 @@ type BrowsersComputerMoveMouseInput struct {
 	X          int64
 	Y          int64
 	HoldKeys   []string
+	Smooth     *bool
+	DurationMs *int64
 }
 
 type BrowsersComputerScreenshotInput struct {
@@ -763,6 +765,8 @@ type BrowsersComputerDragMouseInput struct {
 	StepsPerSegment int64
 	Button          string
 	HoldKeys        []string
+	Smooth          *bool
+	DurationMs      *int64
 }
 
 type BrowsersComputerSetCursorInput struct {
@@ -821,6 +825,16 @@ func (b BrowsersCmd) ComputerMoveMouse(ctx context.Context, in BrowsersComputerM
 	body := kernel.BrowserComputerMoveMouseParams{X: in.X, Y: in.Y}
 	if len(in.HoldKeys) > 0 {
 		body.HoldKeys = in.HoldKeys
+	}
+	extras := map[string]any{}
+	if in.Smooth != nil {
+		extras["smooth"] = *in.Smooth
+	}
+	if in.DurationMs != nil {
+		extras["duration_ms"] = *in.DurationMs
+	}
+	if len(extras) > 0 {
+		body.SetExtraFields(extras)
 	}
 	if err := b.computer.MoveMouse(ctx, br.SessionID, body); err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -966,6 +980,16 @@ func (b BrowsersCmd) ComputerDragMouse(ctx context.Context, in BrowsersComputerD
 	}
 	if len(in.HoldKeys) > 0 {
 		body.HoldKeys = in.HoldKeys
+	}
+	extras := map[string]any{}
+	if in.Smooth != nil {
+		extras["smooth"] = *in.Smooth
+	}
+	if in.DurationMs != nil {
+		extras["duration_ms"] = *in.DurationMs
+	}
+	if len(extras) > 0 {
+		body.SetExtraFields(extras)
 	}
 	if err := b.computer.DragMouse(ctx, br.SessionID, body); err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -2341,6 +2365,8 @@ func init() {
 	_ = computerMove.MarkFlagRequired("x")
 	_ = computerMove.MarkFlagRequired("y")
 	computerMove.Flags().StringSlice("hold-key", []string{}, "Modifier keys to hold (repeatable)")
+	computerMove.Flags().Bool("smooth", true, "Use human-like Bezier curve path instead of instant teleport")
+	computerMove.Flags().Int64("duration-ms", 0, "Target duration in ms for smooth movement (50-5000, 0 for auto)")
 
 	computerScreenshot := &cobra.Command{Use: "screenshot <id>", Short: "Capture a screenshot (optionally of a region)", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerScreenshot}
 	computerScreenshot.Flags().Int64("x", 0, "Top-left X")
@@ -2380,6 +2406,8 @@ func init() {
 	computerDrag.Flags().Int64("steps-per-segment", 0, "Number of move steps per path segment")
 	computerDrag.Flags().String("button", "left", "Mouse button: left,middle,right")
 	computerDrag.Flags().StringSlice("hold-key", []string{}, "Modifier keys to hold (repeatable)")
+	computerDrag.Flags().Bool("smooth", true, "Use human-like Bezier curves between waypoints")
+	computerDrag.Flags().Int64("duration-ms", 0, "Target duration in ms for smooth drag (50-10000, 0 for auto)")
 
 	// computer set-cursor
 	computerSetCursor := &cobra.Command{Use: "set-cursor <id>", Short: "Hide or show the cursor", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerSetCursor}
@@ -2984,8 +3012,17 @@ func runBrowsersComputerMoveMouse(cmd *cobra.Command, args []string) error {
 	x, _ := cmd.Flags().GetInt64("x")
 	y, _ := cmd.Flags().GetInt64("y")
 	holdKeys, _ := cmd.Flags().GetStringSlice("hold-key")
+	in := BrowsersComputerMoveMouseInput{Identifier: args[0], X: x, Y: y, HoldKeys: holdKeys}
+	if cmd.Flags().Changed("smooth") {
+		v, _ := cmd.Flags().GetBool("smooth")
+		in.Smooth = &v
+	}
+	if cmd.Flags().Changed("duration-ms") {
+		v, _ := cmd.Flags().GetInt64("duration-ms")
+		in.DurationMs = &v
+	}
 	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
-	return b.ComputerMoveMouse(cmd.Context(), BrowsersComputerMoveMouseInput{Identifier: args[0], X: x, Y: y, HoldKeys: holdKeys})
+	return b.ComputerMoveMouse(cmd.Context(), in)
 }
 
 func runBrowsersComputerScreenshot(cmd *cobra.Command, args []string) error {
@@ -3079,8 +3116,17 @@ func runBrowsersComputerDragMouse(cmd *cobra.Command, args []string) error {
 		path = append(path, []int64{x, y})
 	}
 
+	in := BrowsersComputerDragMouseInput{Identifier: args[0], Path: path, Delay: delay, StepDelayMs: stepDelayMs, StepsPerSegment: stepsPerSegment, Button: button, HoldKeys: holdKeys}
+	if cmd.Flags().Changed("smooth") {
+		v, _ := cmd.Flags().GetBool("smooth")
+		in.Smooth = &v
+	}
+	if cmd.Flags().Changed("duration-ms") {
+		v, _ := cmd.Flags().GetInt64("duration-ms")
+		in.DurationMs = &v
+	}
 	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
-	return b.ComputerDragMouse(cmd.Context(), BrowsersComputerDragMouseInput{Identifier: args[0], Path: path, Delay: delay, StepDelayMs: stepDelayMs, StepsPerSegment: stepsPerSegment, Button: button, HoldKeys: holdKeys})
+	return b.ComputerDragMouse(cmd.Context(), in)
 }
 
 func runBrowsersComputerSetCursor(cmd *cobra.Command, args []string) error {
