@@ -36,13 +36,16 @@ class KernelActionHandler:
     - HOTKEY -> press_key(keys=[...])
     - TYPE -> type_text(text=...)
     - SCROLL -> scroll(x, y, delta_y=...)
+
+    Note: OpenAGI/Lux tends to emit scroll N times for "scroll by N" (e.g. 3 identical
+    [scroll] actions for "scroll down with amount 3"). We treat each scroll event as
+    one scroll unit (1 notch), so N events in a row = N notches without fighting the model.
     """
 
     def __init__(
         self,
         session: "KernelBrowserSession",
         action_pause: float = 0.1,
-        scroll_amount: int = 100,
         wait_duration: float = 1.0,
         type_delay: int = 50,
     ):
@@ -52,13 +55,11 @@ class KernelActionHandler:
         Args:
             session: The Kernel browser session to control
             action_pause: Pause between actions in seconds
-            scroll_amount: Amount to scroll (pixels)
             wait_duration: Duration for wait actions in seconds
             type_delay: Delay between keystrokes in milliseconds
         """
         self.session = session
         self.action_pause = action_pause
-        self.scroll_amount = scroll_amount
         self.wait_duration = wait_duration
         self.type_delay = type_delay
 
@@ -239,21 +240,25 @@ class KernelActionHandler:
             keys=keys,
         )
 
-    def _execute_scroll(self, x: int, y: int, direction: str):
+    def _execute_scroll(self, x: int, y: int, direction: str, notches: int = 1):
         """Execute a scroll action."""
-        # Move to position first
-        self.session.kernel.browsers.computer.move_mouse(
-            id=self.session.session_id,
-            x=x,
-            y=y,
-        )
-        # Scroll in the specified direction
-        delta_y = self.scroll_amount if direction == "up" else -self.scroll_amount
+        notches = max(notches, 1)
+        delta_x = 0
+        delta_y = 0
+        if direction == "up":
+            delta_y = -notches
+        elif direction == "down":
+            delta_y = notches
+        elif direction == "left":
+            delta_x = -notches
+        elif direction == "right":
+            delta_x = notches
+
         self.session.kernel.browsers.computer.scroll(
             id=self.session.session_id,
             x=x,
             y=y,
-            delta_x=0,
+            delta_x=delta_x,
             delta_y=delta_y,
         )
 
@@ -298,7 +303,7 @@ class KernelActionHandler:
 
             case ActionType.SCROLL:
                 x, y, direction = self._parse_scroll(arg)
-                self._execute_scroll(x, y, direction)
+                self._execute_scroll(x, y, direction, notches=1)
 
             case ActionType.FINISH:
                 # Task completion - nothing to do
@@ -316,32 +321,23 @@ class KernelActionHandler:
                 print(f"Unknown action type: {action.type}")
 
     def _execute_action(self, action: Action) -> None:
-        """Execute an action, potentially multiple times."""
+        """Execute an action, potentially multiple times. SCROLL: each event = 1 notch."""
         count = action.count or 1
-
         for _ in range(count):
             self._execute_single_action(action)
-            # Small pause between repeated actions
             if count > 1:
                 time.sleep(self.action_pause)
 
     async def __call__(self, actions: list[Action]) -> None:
-        """
-        Execute a list of actions.
-
-        Args:
-            actions: List of Action objects to execute
-        """
+        """Execute a list of actions."""
         if not self.session.session_id:
             raise RuntimeError("Browser session not initialized")
 
         for action in actions:
             try:
-                # Run the synchronous action execution in a thread pool
                 await asyncio.get_event_loop().run_in_executor(
                     None, self._execute_action, action
                 )
-                # Pause between actions
                 await asyncio.sleep(self.action_pause)
             except Exception as e:
                 print(f"Error executing action {action.type}: {e}")

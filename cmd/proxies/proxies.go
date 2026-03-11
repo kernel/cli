@@ -43,13 +43,16 @@ Proxy types (from best to worst for bot detection):
 
 Examples:
   # Create a datacenter proxy
-  kernel beta proxies create --type datacenter --country US --name "US Datacenter"
+  kernel proxies create --type datacenter --country US --name "US Datacenter"
 
   # Create a custom proxy
-  kernel beta proxies create --type custom --host proxy.example.com --port 8080 --username myuser --password mypass
+  kernel proxies create --type custom --host proxy.example.com --port 8080 --username myuser --password mypass
 
   # Create a residential proxy with location
-  kernel beta proxies create --type residential --country US --city sanfrancisco --state CA`,
+  kernel proxies create --type residential --country US --city sanfrancisco --state CA
+
+  # Create a proxy with bypass hosts
+  kernel proxies create --type datacenter --country US --bypass-host localhost,internal.service.local`,
 	RunE: runProxiesCreate,
 }
 
@@ -105,6 +108,7 @@ func init() {
 	proxiesCreateCmd.Flags().Int("port", 0, "Proxy port")
 	proxiesCreateCmd.Flags().String("username", "", "Username for proxy authentication")
 	proxiesCreateCmd.Flags().String("password", "", "Password for proxy authentication")
+	proxiesCreateCmd.Flags().StringSlice("bypass-host", nil, "Hostname(s) to bypass proxy and connect directly (repeat or comma-separated)")
 
 	// Delete flags
 	proxiesDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")

@@ -1,13 +1,19 @@
 import { Anthropic } from '@anthropic-ai/sdk';
-import { DateTime } from 'luxon';
 import type { Kernel } from '@onkernel/sdk';
 import { DEFAULT_TOOL_VERSION, TOOL_GROUPS_BY_VERSION, ToolCollection, type ToolVersion } from './tools/collection';
-import { ComputerTool20241022, ComputerTool20250124 } from './tools/computer';
+import { ComputerTool20241022, ComputerTool20250124, ComputerTool20251124 } from './tools/computer';
 import type { ActionParams } from './tools/types/computer';
 import { Action } from './tools/types/computer';
 import type { BetaMessageParam, BetaTextBlock } from './types/beta';
 import { injectPromptCaching, maybeFilterToNMostRecentImages, PROMPT_CACHING_BETA_FLAG, responseToParams } from './utils/message-processing';
 import { makeApiToolResult } from './utils/tool-results';
+
+const CURRENT_DATE = new Intl.DateTimeFormat('en-US', {
+  weekday: 'long',
+  month: 'long',
+  day: 'numeric',
+  year: 'numeric',
+}).format(new Date());
 
 // System prompt optimized for the environment
 const SYSTEM_PROMPT = `<SYSTEM_CAPABILITY>
@@ -18,9 +24,10 @@ const SYSTEM_PROMPT = `<SYSTEM_CAPABILITY>
 * As the initial step click on the search bar.
 * When viewing a page it can be helpful to zoom out so that you can see everything on the page.
 * Either that, or make sure you scroll down to see everything before deciding something isn't available.
+* Scroll action: scroll_amount and the tool result are in wheel units (not pixels).
 * When using your computer function calls, they take a while to run and send back to you.
 * Where possible/feasible, try to chain multiple of these calls all into one function calls request.
-* The current date is ${DateTime.now().toFormat('EEEE, MMMM d, yyyy')}.
+* The current date is ${CURRENT_DATE}.
 * After each step, take a screenshot and carefully evaluate if you have achieved the right outcome.
 * Explicitly show your thinking: "I have evaluated step X..." If not correct, try again.
 * Only when you confirm a step was executed correctly should you move on to the next one.
@@ -43,6 +50,17 @@ interface ExtraBodyConfig {
 
 interface ToolUseInput extends Record<string, unknown> {
   action: Action;
+}
+
+function getToolVersionForModel(model: string): ToolVersion {
+  if (
+    model.includes('claude-sonnet-4-6')
+    || model.includes('claude-opus-4-6')
+    || model.includes('claude-opus-4-5')
+  ) {
+    return 'computer_use_20251124';
+  }
+  return 'computer_use_20250124';
 }
 
 export async function samplingLoop({
@@ -74,9 +92,9 @@ export async function samplingLoop({
   viewportWidth?: number;
   viewportHeight?: number;
 }): Promise<BetaMessageParam[]> {
-  const selectedVersion = toolVersion || DEFAULT_TOOL_VERSION;
+  const selectedVersion = toolVersion || getToolVersionForModel(model) || DEFAULT_TOOL_VERSION;
   const toolGroup = TOOL_GROUPS_BY_VERSION[selectedVersion];
-  const toolCollection = new ToolCollection(...toolGroup.tools.map((Tool: typeof ComputerTool20241022 | typeof ComputerTool20250124) => new Tool(kernel, sessionId, viewportWidth, viewportHeight)));
+  const toolCollection = new ToolCollection(...toolGroup.tools.map((Tool: typeof ComputerTool20241022 | typeof ComputerTool20250124 | typeof ComputerTool20251124) => new Tool(kernel, sessionId, viewportWidth, viewportHeight)));
 
   const system: BetaTextBlock = {
     type: 'text',

@@ -5,6 +5,7 @@
 
 import {
   GoogleGenAI,
+  Environment,
   type Content,
   type FunctionCall,
   type Part,
@@ -103,7 +104,7 @@ export async function samplingLoop({
           tools: [
             {
               computerUse: {
-                environment: 'ENVIRONMENT_BROWSER',
+                environment: Environment.ENVIRONMENT_BROWSER,
               },
             },
           ],
@@ -119,7 +120,7 @@ export async function samplingLoop({
       }
 
       const candidate = response.candidates[0];
-      if (!candidate.content) {
+      if (!candidate?.content) {
         console.log('No content in candidate');
         break;
       }
@@ -155,6 +156,7 @@ export async function samplingLoop({
       // Execute function calls and collect results
       const functionResponses: Part[] = [];
       for (const fc of functionCalls) {
+        if (!fc.name) continue;
         const args = fc.args as GeminiFunctionArgs || {};
 
         // Handle safety decisions if present
@@ -262,7 +264,7 @@ function pruneOldScreenshots(contents: Content[]): void {
   // Iterate in reverse to find recent turns with screenshots
   for (let i = contents.length - 1; i >= 0; i--) {
     const content = contents[i];
-    if (content.role !== 'user' || !content.parts) continue;
+    if (!content || content.role !== 'user' || !content.parts) continue;
 
     // Check if this turn has screenshots from predefined functions
     let hasScreenshot = false;

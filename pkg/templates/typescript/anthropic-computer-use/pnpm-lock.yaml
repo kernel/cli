@@ -12,14 +12,8 @@ importers:
         specifier: ^0.71.2
         version: 0.71.2
       '@onkernel/sdk':
-        specifier: ^0.23.0
-        version: 0.23.0
-      luxon:
-        specifier: ^3.7.2
-        version: 3.7.2
-      playwright-core:
-        specifier: ^1.57.0
-        version: 1.57.0
+        specifier: ^0.35.0
+        version: 0.35.0
     devDependencies:
       '@types/node':
         specifier: ^22.15.17
@@ -43,8 +37,8 @@ packages:
     resolution: {integrity: sha512-Q/N6JNWvIvPnLDvjlE1OUBLPQHH6l3CltCEsHIujp45zQUSSh8K+gHnaEX45yAT1nyngnINhvWtzN+Nb9D8RAQ==}
     engines: {node: '>=6.9.0'}
 
-  '@onkernel/sdk@0.23.0':
-    resolution: {integrity: sha512-P/ez6HU8sO2QvqWATkvC+Wdv+fgto4KfBCHLl2T6EUpoU3LhgOZ/sJP2ZRf/vh5Vh7QR2Vf05RgMaFcIGBGD9Q==}
+  '@onkernel/sdk@0.35.0':
+    resolution: {integrity: sha512-EnTEyTm85WwOOXZziDTySNHl46ZO+DSJjVDJDJNarwkD+kv623TzXDLpgH7vwy4LfQjQ4DzOQe0hHKgCYrAv5A==}
 
   '@types/node@22.19.3':
     resolution: {integrity: sha512-1N9SBnWYOJTrNZCdh/yJE+t910Y128BoyY+zBLWhL3r0TYzlTmFdXrPwHL9DyFZmlEXNQQolTZh3KHV31QDhyA==}
@@ -52,15 +46,6 @@ packages:
   json-schema-to-ts@3.1.1:
     resolution: {integrity: sha512-+DWg8jCJG2TEnpy7kOm/7/AxaYoaRbjVB4LFZLySZlWn8exGs3A4OLJR966cVvU26N7X9TWxl+Jsw7dzAqKT6g==}
     engines: {node: '>=16'}
-
-  luxon@3.7.2:
-    resolution: {integrity: sha512-vtEhXh/gNjI9Yg1u4jX/0YVPMvxzHuGgCm6tC5kZyb08yjGWGnqAjGJvcXbqQR2P3MyMEFnRbpcdFS6PBcLqew==}
-    engines: {node: '>=12'}
-
-  playwright-core@1.57.0:
-    resolution: {integrity: sha512-agTcKlMw/mjBWOnD6kFZttAAGHgi/Nw0CZ2o6JqWSbMlI219lAFLZZCyqByTsvVAJq5XA5H8cA6PrvBRpBWEuQ==}
-    engines: {node: '>=18'}
-    hasBin: true
 
   ts-algebra@2.0.0:
     resolution: {integrity: sha512-FPAhNPFMrkwz76P7cdjdmiShwMynZYN6SgOujD1urY4oNm80Ou9oMdmbR45LotcKOXoy7wSmHkRFE6Mxbrhefw==}
@@ -81,7 +66,7 @@ snapshots:
 
   '@babel/runtime@7.28.4': {}
 
-  '@onkernel/sdk@0.23.0': {}
+  '@onkernel/sdk@0.35.0': {}
 
   '@types/node@22.19.3':
     dependencies:
@@ -91,10 +76,6 @@ snapshots:
     dependencies:
       '@babel/runtime': 7.28.4
       ts-algebra: 2.0.0
-
-  luxon@3.7.2: {}
-
-  playwright-core@1.57.0: {}
 
   ts-algebra@2.0.0: {}
 

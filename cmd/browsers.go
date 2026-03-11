@@ -207,6 +207,7 @@ type BrowsersUpdateInput struct {
 	ProfileName        string
 	ProfileSaveChanges BoolFlag
 	Viewport           string
+	Force              bool
 	Output             string
 }
 
@@ -228,6 +229,7 @@ type BrowsersListInput struct {
 	Status         string
 	Limit          int
 	Offset         int
+	Query          string
 }
 
 func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
@@ -257,6 +259,9 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	if in.Offset > 0 {
 		params.Offset = kernel.Opt(int64(in.Offset))
 	}
+	if in.Query != "" {
+		params.Query = kernel.Opt(in.Query)
+	}
 
 	page, err := b.browsers.List(ctx, params)
 	if err != nil {
@@ -278,7 +283,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	}
 
 	// Prepare table data
-	headers := []string{"Browser ID", "Created At", "Persistent ID", "Profile", "CDP WS URL", "Live View URL"}
+	headers := []string{"Browser ID", "Created At", "Persistent ID", "Profile", "Pool", "CDP WS URL", "Live View URL"}
 	showDeletedAt := in.IncludeDeleted || in.Status == "deleted" || in.Status == "all"
 	if showDeletedAt {
 		headers = append(headers, "Deleted At")
@@ -298,11 +303,19 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 			profile = browser.Profile.ID
 		}
 
+		pool := "-"
+		if browser.Pool.Name != "" {
+			pool = browser.Pool.Name
+		} else if browser.Pool.ID != "" {
+			pool = browser.Pool.ID
+		}
+
 		row := []string{
 			browser.SessionID,
 			util.FormatLocal(browser.CreatedAt),
 			persistentID,
 			profile,
+			pool,
 			truncateURL(browser.CdpWsURL, 50),
 			truncateURL(browser.BrowserLiveViewURL, 50),
 		}
@@ -577,6 +590,11 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("--save-changes requires --profile-id or --profile-name")
 	}
 
+	// Validate --force is only used with a viewport change
+	if in.Force && !hasViewportChange {
+		return fmt.Errorf("--force requires --viewport")
+	}
+
 	// Validate that at least one update option is provided
 	if !hasProxyChange && !hasProfileChange && !hasViewportChange {
 		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --profile-id, --profile-name, or --viewport")
@@ -610,12 +628,17 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		if err != nil {
 			return fmt.Errorf("invalid viewport format: %v", err)
 		}
-		params.Viewport = shared.BrowserViewportParam{
-			Width:  width,
-			Height: height,
+		params.Viewport = kernel.BrowserUpdateParamsViewport{
+			BrowserViewportParam: shared.BrowserViewportParam{
+				Width:  width,
+				Height: height,
+			},
 		}
 		if refreshRate > 0 {
 			params.Viewport.RefreshRate = kernel.Opt(refreshRate)
+		}
+		if in.Force {
+			params.Viewport.Force = kernel.Opt(true)
 		}
 	}
 
@@ -696,6 +719,8 @@ type BrowsersComputerMoveMouseInput struct {
 	X          int64
 	Y          int64
 	HoldKeys   []string
+	Smooth     *bool
+	DurationMs *int64
 }
 
 type BrowsersComputerScreenshotInput struct {
@@ -740,6 +765,8 @@ type BrowsersComputerDragMouseInput struct {
 	StepsPerSegment int64
 	Button          string
 	HoldKeys        []string
+	Smooth          *bool
+	DurationMs      *int64
 }
 
 type BrowsersComputerSetCursorInput struct {
@@ -798,6 +825,16 @@ func (b BrowsersCmd) ComputerMoveMouse(ctx context.Context, in BrowsersComputerM
 	body := kernel.BrowserComputerMoveMouseParams{X: in.X, Y: in.Y}
 	if len(in.HoldKeys) > 0 {
 		body.HoldKeys = in.HoldKeys
+	}
+	extras := map[string]any{}
+	if in.Smooth != nil {
+		extras["smooth"] = *in.Smooth
+	}
+	if in.DurationMs != nil {
+		extras["duration_ms"] = *in.DurationMs
+	}
+	if len(extras) > 0 {
+		body.SetExtraFields(extras)
 	}
 	if err := b.computer.MoveMouse(ctx, br.SessionID, body); err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -943,6 +980,16 @@ func (b BrowsersCmd) ComputerDragMouse(ctx context.Context, in BrowsersComputerD
 	}
 	if len(in.HoldKeys) > 0 {
 		body.HoldKeys = in.HoldKeys
+	}
+	extras := map[string]any{}
+	if in.Smooth != nil {
+		extras["smooth"] = *in.Smooth
+	}
+	if in.DurationMs != nil {
+		extras["duration_ms"] = *in.DurationMs
+	}
+	if len(extras) > 0 {
+		body.SetExtraFields(extras)
 	}
 	if err := b.computer.DragMouse(ctx, br.SessionID, body); err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -2110,6 +2157,7 @@ Supported operations:
   - Change or remove proxy (--proxy-id or --clear-proxy)
   - Load a profile into a session that doesn't have one (--profile-id or --profile-name)
   - Change viewport dimensions (--viewport)
+  - Force viewport resize during active live view or recording (--force with --viewport)
 
 Note: Profiles can only be loaded into sessions that don't already have a profile.`,
 	Args: func(cmd *cobra.Command, args []string) error {
@@ -2131,6 +2179,7 @@ func init() {
 	browsersListCmd.Flags().String("status", "", "Filter by status: 'active' (default), 'deleted', or 'all'")
 	browsersListCmd.Flags().Int("limit", 0, "Maximum number of results to return (default 20, max 100)")
 	browsersListCmd.Flags().Int("offset", 0, "Number of results to skip (for pagination)")
+	browsersListCmd.Flags().String("query", "", "Search browsers by session ID, profile ID, or proxy ID")
 
 	// get flags
 	browsersGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
@@ -2146,6 +2195,7 @@ func init() {
 	browsersUpdateCmd.Flags().String("profile-name", "", "Profile name to load into the browser session (mutually exclusive with --profile-id)")
 	browsersUpdateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
 	browsersUpdateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
+	browsersUpdateCmd.Flags().Bool("force", false, "Force viewport resize even when a live view or recording/replay is active")
 
 	browsersCmd.AddCommand(browsersListCmd)
 	browsersCmd.AddCommand(browsersCreateCmd)
@@ -2315,6 +2365,8 @@ func init() {
 	_ = computerMove.MarkFlagRequired("x")
 	_ = computerMove.MarkFlagRequired("y")
 	computerMove.Flags().StringSlice("hold-key", []string{}, "Modifier keys to hold (repeatable)")
+	computerMove.Flags().Bool("smooth", true, "Use human-like Bezier curve path instead of instant teleport")
+	computerMove.Flags().Int64("duration-ms", 0, "Target duration in ms for smooth movement (50-5000, 0 for auto)")
 
 	computerScreenshot := &cobra.Command{Use: "screenshot <id>", Short: "Capture a screenshot (optionally of a region)", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerScreenshot}
 	computerScreenshot.Flags().Int64("x", 0, "Top-left X")
@@ -2354,6 +2406,8 @@ func init() {
 	computerDrag.Flags().Int64("steps-per-segment", 0, "Number of move steps per path segment")
 	computerDrag.Flags().String("button", "left", "Mouse button: left,middle,right")
 	computerDrag.Flags().StringSlice("hold-key", []string{}, "Modifier keys to hold (repeatable)")
+	computerDrag.Flags().Bool("smooth", true, "Use human-like Bezier curves between waypoints")
+	computerDrag.Flags().Int64("duration-ms", 0, "Target duration in ms for smooth drag (50-10000, 0 for auto)")
 
 	// computer set-cursor
 	computerSetCursor := &cobra.Command{Use: "set-cursor <id>", Short: "Hide or show the cursor", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerSetCursor}
@@ -2410,12 +2464,14 @@ func runBrowsersList(cmd *cobra.Command, args []string) error {
 	status, _ := cmd.Flags().GetString("status")
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
+	query, _ := cmd.Flags().GetString("query")
 	return b.List(cmd.Context(), BrowsersListInput{
 		Output:         out,
 		IncludeDeleted: includeDeleted,
 		Status:         status,
 		Limit:          limit,
 		Offset:         offset,
+		Query:          query,
 	})
 }
 
@@ -2604,6 +2660,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	saveChanges, _ := cmd.Flags().GetBool("save-changes")
 	viewport, _ := cmd.Flags().GetString("viewport")
+	force, _ := cmd.Flags().GetBool("force")
 
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
@@ -2615,6 +2672,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 		ProfileName:        profileName,
 		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
 		Viewport:           viewport,
+		Force:              force,
 		Output:             out,
 	})
 }
@@ -2954,8 +3012,17 @@ func runBrowsersComputerMoveMouse(cmd *cobra.Command, args []string) error {
 	x, _ := cmd.Flags().GetInt64("x")
 	y, _ := cmd.Flags().GetInt64("y")
 	holdKeys, _ := cmd.Flags().GetStringSlice("hold-key")
+	in := BrowsersComputerMoveMouseInput{Identifier: args[0], X: x, Y: y, HoldKeys: holdKeys}
+	if cmd.Flags().Changed("smooth") {
+		v, _ := cmd.Flags().GetBool("smooth")
+		in.Smooth = &v
+	}
+	if cmd.Flags().Changed("duration-ms") {
+		v, _ := cmd.Flags().GetInt64("duration-ms")
+		in.DurationMs = &v
+	}
 	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
-	return b.ComputerMoveMouse(cmd.Context(), BrowsersComputerMoveMouseInput{Identifier: args[0], X: x, Y: y, HoldKeys: holdKeys})
+	return b.ComputerMoveMouse(cmd.Context(), in)
 }
 
 func runBrowsersComputerScreenshot(cmd *cobra.Command, args []string) error {
@@ -3049,8 +3116,17 @@ func runBrowsersComputerDragMouse(cmd *cobra.Command, args []string) error {
 		path = append(path, []int64{x, y})
 	}
 
+	in := BrowsersComputerDragMouseInput{Identifier: args[0], Path: path, Delay: delay, StepDelayMs: stepDelayMs, StepsPerSegment: stepsPerSegment, Button: button, HoldKeys: holdKeys}
+	if cmd.Flags().Changed("smooth") {
+		v, _ := cmd.Flags().GetBool("smooth")
+		in.Smooth = &v
+	}
+	if cmd.Flags().Changed("duration-ms") {
+		v, _ := cmd.Flags().GetInt64("duration-ms")
+		in.DurationMs = &v
+	}
 	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
-	return b.ComputerDragMouse(cmd.Context(), BrowsersComputerDragMouseInput{Identifier: args[0], Path: path, Delay: delay, StepDelayMs: stepDelayMs, StepsPerSegment: stepsPerSegment, Button: button, HoldKeys: holdKeys})
+	return b.ComputerDragMouse(cmd.Context(), in)
 }
 
 func runBrowsersComputerSetCursor(cmd *cobra.Command, args []string) error {

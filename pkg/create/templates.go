@@ -18,7 +18,7 @@ const (
 	TemplateStagehand            = "stagehand"
 	TemplateOpenAGIComputerUse   = "openagi-computer-use"
 	TemplateClaudeAgentSDK       = "claude-agent-sdk"
-	TemplateYutoriComputerUse    = "yutori-computer-use"
+	TemplateYutoriComputerUse    = "yutori"
 )
 
 type TemplateInfo struct {

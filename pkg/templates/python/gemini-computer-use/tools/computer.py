@@ -21,6 +21,8 @@ from .types import (
 
 TYPING_DELAY_MS = 12
 SCREENSHOT_DELAY_SECS = 0.5
+PX_PER_NOTCH = 60
+MAX_NOTCHES_PER_ACTION = 17
 
 
 class ComputerTool:
@@ -131,22 +133,21 @@ class ComputerTool:
             elif action_name == GeminiAction.SCROLL_DOCUMENT:
                 if "direction" not in args:
                     return ToolResult(error="scroll_document requires direction")
-                # Scroll at center of viewport
                 center_x = self.screen_size.width // 2
                 center_y = self.screen_size.height // 2
-                scroll_delta = 500
 
-                delta_x, delta_y = 0, 0
+                magnitude_px = args.get("magnitude", 400)
+                doc_notches = min(MAX_NOTCHES_PER_ACTION, max(1, round(magnitude_px / PX_PER_NOTCH)))
                 direction = args["direction"]
+                delta_x = delta_y = 0
                 if direction == "down":
-                    delta_y = scroll_delta
+                    delta_y = doc_notches
                 elif direction == "up":
-                    delta_y = -scroll_delta
+                    delta_y = -doc_notches
                 elif direction == "right":
-                    delta_x = scroll_delta
+                    delta_x = doc_notches
                 elif direction == "left":
-                    delta_x = -scroll_delta
-
+                    delta_x = -doc_notches
                 self.kernel.browsers.computer.scroll(
                     self.session_id,
                     x=center_x,
@@ -164,24 +165,18 @@ class ComputerTool:
                 x = self.denormalize_x(args["x"])
                 y = self.denormalize_y(args["y"])
 
-                # Denormalize magnitude if provided
-                magnitude = args.get("magnitude", 800)
+                magnitude_px = args.get("magnitude", 400)
+                notches = min(MAX_NOTCHES_PER_ACTION, max(1, round(magnitude_px / PX_PER_NOTCH)))
                 direction = args["direction"]
-                if direction in ("up", "down"):
-                    magnitude = self.denormalize_y(magnitude)
-                else:
-                    magnitude = self.denormalize_x(magnitude)
-
-                delta_x, delta_y = 0, 0
+                delta_x = delta_y = 0
                 if direction == "down":
-                    delta_y = magnitude
+                    delta_y = notches
                 elif direction == "up":
-                    delta_y = -magnitude
+                    delta_y = -notches
                 elif direction == "right":
-                    delta_x = magnitude
+                    delta_x = notches
                 elif direction == "left":
-                    delta_x = -magnitude
-
+                    delta_x = -notches
                 self.kernel.browsers.computer.scroll(
                     self.session_id,
                     x=x,

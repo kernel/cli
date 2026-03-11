@@ -160,29 +160,27 @@ export class ComputerTool {
   private async handleScroll(action: N1Action): Promise<ToolResult> {
     const coords = this.getCoordinates(action.coordinates);
     const direction = action.direction;
-    const amount = action.amount ?? 3;
+    const notches = Math.max(action.amount ?? 3, 1);
 
     if (!direction || !['up', 'down', 'left', 'right'].includes(direction)) {
       throw new ToolError(`Invalid scroll direction: ${direction}`);
     }
-
-    const scrollDelta = amount * 100;
 
     let delta_x = 0;
     let delta_y = 0;
 
     switch (direction) {
       case 'up':
-        delta_y = -scrollDelta;
+        delta_y = -notches;
         break;
       case 'down':
-        delta_y = scrollDelta;
+        delta_y = notches;
         break;
       case 'left':
-        delta_x = -scrollDelta;
+        delta_x = -notches;
         break;
       case 'right':
-        delta_x = scrollDelta;
+        delta_x = notches;
         break;
     }
 
@@ -194,7 +192,11 @@ export class ComputerTool {
     });
 
     await this.sleep(SCREENSHOT_DELAY_MS);
-    return this.screenshot();
+    const screenshotResult = await this.screenshot();
+    return {
+      ...screenshotResult,
+      output: `Scrolled ${notches} wheel unit(s) ${direction}.`,
+    };
   }
 
   private async handleType(action: N1Action): Promise<ToolResult> {

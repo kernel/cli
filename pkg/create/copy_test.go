@@ -189,6 +189,21 @@ func TestCopyTemplateFiles_PreservesDirectoryStructure(t *testing.T) {
 	}
 }
 
+func TestCopyTemplateFiles_SkipsArtifactDirectories(t *testing.T) {
+	tmpDir := t.TempDir()
+	appPath := filepath.Join(tmpDir, "test-app")
+
+	err := os.MkdirAll(appPath, testDirPerm)
+	require.NoError(t, err)
+
+	err = CopyTemplateFiles(appPath, LanguageTypeScript, TemplateAnthropicComputerUse)
+	require.NoError(t, err)
+
+	assert.NoDirExists(t, filepath.Join(appPath, "node_modules"))
+	assert.NoDirExists(t, filepath.Join(appPath, ".venv"))
+	assert.NoDirExists(t, filepath.Join(appPath, "__pycache__"))
+}
+
 func TestCopyTemplateFiles_OverwritesExistingFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	appPath := filepath.Join(tmpDir, "test-app")

@@ -193,6 +193,26 @@ func TestBrowsersList_PrintsErrorOnFailure(t *testing.T) {
 	assert.Contains(t, err.Error(), "list failed")
 }
 
+func TestBrowsersList_WithQuery_PassesParam(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserListParams
+	fake := &FakeBrowsersService{
+		ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
+			captured = query
+			return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: []kernel.BrowserListResponse{
+				{SessionID: "sess-matched"},
+			}}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+	err := b.List(context.Background(), BrowsersListInput{Query: "sess-matched"})
+
+	assert.NoError(t, err)
+	assert.True(t, captured.Query.Valid())
+	assert.Equal(t, "sess-matched", captured.Query.Value)
+}
+
 func TestBrowsersCreate_PrintsResponse(t *testing.T) {
 	setupStdoutCapture(t)
 
@@ -1066,6 +1086,109 @@ func TestBrowsersComputerMoveMouse_PrintsSuccess(t *testing.T) {
 	assert.Contains(t, out, "Moved mouse to (5,6)")
 }
 
+func TestBrowsersComputerMoveMouse_SmoothFalse(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	var capturedBody kernel.BrowserComputerMoveMouseParams
+	fakeComp := &FakeComputerService{
+		MoveMouseFunc: func(ctx context.Context, id string, body kernel.BrowserComputerMoveMouseParams, opts ...option.RequestOption) error {
+			capturedBody = body
+			return nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
+	smooth := false
+	_ = b.ComputerMoveMouse(context.Background(), BrowsersComputerMoveMouseInput{Identifier: "id", X: 100, Y: 200, Smooth: &smooth})
+	extras := capturedBody.ExtraFields()
+	assert.Contains(t, extras, "smooth")
+	assert.Equal(t, false, extras["smooth"])
+}
+
+func TestBrowsersComputerMoveMouse_DurationMs(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	var capturedBody kernel.BrowserComputerMoveMouseParams
+	fakeComp := &FakeComputerService{
+		MoveMouseFunc: func(ctx context.Context, id string, body kernel.BrowserComputerMoveMouseParams, opts ...option.RequestOption) error {
+			capturedBody = body
+			return nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
+	smooth := true
+	dur := int64(1500)
+	_ = b.ComputerMoveMouse(context.Background(), BrowsersComputerMoveMouseInput{Identifier: "id", X: 100, Y: 200, Smooth: &smooth, DurationMs: &dur})
+	extras := capturedBody.ExtraFields()
+	assert.Contains(t, extras, "smooth")
+	assert.Equal(t, true, extras["smooth"])
+	assert.Contains(t, extras, "duration_ms")
+	assert.Equal(t, int64(1500), extras["duration_ms"])
+}
+
+func TestBrowsersComputerMoveMouse_NoSmoothFlag(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	var capturedBody kernel.BrowserComputerMoveMouseParams
+	fakeComp := &FakeComputerService{
+		MoveMouseFunc: func(ctx context.Context, id string, body kernel.BrowserComputerMoveMouseParams, opts ...option.RequestOption) error {
+			capturedBody = body
+			return nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
+	_ = b.ComputerMoveMouse(context.Background(), BrowsersComputerMoveMouseInput{Identifier: "id", X: 100, Y: 200})
+	extras := capturedBody.ExtraFields()
+	assert.Empty(t, extras)
+}
+
+func TestBrowsersComputerDragMouse_SmoothFalse(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	var capturedBody kernel.BrowserComputerDragMouseParams
+	fakeComp := &FakeComputerService{
+		DragMouseFunc: func(ctx context.Context, id string, body kernel.BrowserComputerDragMouseParams, opts ...option.RequestOption) error {
+			capturedBody = body
+			return nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
+	smooth := false
+	_ = b.ComputerDragMouse(context.Background(), BrowsersComputerDragMouseInput{
+		Identifier: "id",
+		Path:       [][]int64{{100, 200}, {300, 400}},
+		Smooth:     &smooth,
+	})
+	extras := capturedBody.ExtraFields()
+	assert.Contains(t, extras, "smooth")
+	assert.Equal(t, false, extras["smooth"])
+}
+
+func TestBrowsersComputerDragMouse_DurationMs(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	var capturedBody kernel.BrowserComputerDragMouseParams
+	fakeComp := &FakeComputerService{
+		DragMouseFunc: func(ctx context.Context, id string, body kernel.BrowserComputerDragMouseParams, opts ...option.RequestOption) error {
+			capturedBody = body
+			return nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
+	smooth := true
+	dur := int64(3000)
+	_ = b.ComputerDragMouse(context.Background(), BrowsersComputerDragMouseInput{
+		Identifier: "id",
+		Path:       [][]int64{{100, 200}, {300, 400}},
+		Smooth:     &smooth,
+		DurationMs: &dur,
+	})
+	extras := capturedBody.ExtraFields()
+	assert.Contains(t, extras, "smooth")
+	assert.Equal(t, true, extras["smooth"])
+	assert.Contains(t, extras, "duration_ms")
+	assert.Equal(t, int64(3000), extras["duration_ms"])
+}
+
 func TestBrowsersComputerScreenshot_SavesFile(t *testing.T) {
 	setupStdoutCapture(t)
 	dir := t.TempDir()
@@ -1221,4 +1344,78 @@ func TestBrowsersCreate_WithInvalidViewport(t *testing.T) {
 	assert.NoError(t, err)
 	out := outBuf.String()
 	assert.Contains(t, out, "Invalid viewport format")
+}
+
+func TestBrowsersUpdate_WithViewportAndForce(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserUpdateParams
+	fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+		captured = body
+		return &kernel.BrowserUpdateResponse{SessionID: "session123"}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Viewport:   "1920x1080@25",
+		Force:      true,
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1920), captured.Viewport.Width)
+	assert.Equal(t, int64(1080), captured.Viewport.Height)
+	assert.True(t, captured.Viewport.RefreshRate.Valid())
+	assert.Equal(t, int64(25), captured.Viewport.RefreshRate.Value)
+	assert.True(t, captured.Viewport.Force.Valid())
+	assert.True(t, captured.Viewport.Force.Value)
+}
+
+func TestBrowsersUpdate_WithViewportNoForce(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserUpdateParams
+	fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+		captured = body
+		return &kernel.BrowserUpdateResponse{SessionID: "session123"}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Viewport:   "1920x1080@25",
+		Force:      false,
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1920), captured.Viewport.Width)
+	assert.Equal(t, int64(1080), captured.Viewport.Height)
+	assert.False(t, captured.Viewport.Force.Valid())
+}
+
+func TestBrowsersUpdate_ForceWithoutViewport_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Force:      true,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "--force requires --viewport")
+}
+
+func TestBrowsersUpdate_ForceWithProxyButNoViewport_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		ProxyID:    "proxy-123",
+		Force:      true,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "--force requires --viewport")
 }

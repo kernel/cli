@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/kernel/cli/pkg/templates"
 )
@@ -13,6 +14,25 @@ const (
 	DIR_PERM  = 0755 // rwxr-xr-x
 	FILE_PERM = 0644 // rw-r--r--
 )
+
+var skippedTemplateDirs = map[string]struct{}{
+	"node_modules": {},
+	".venv":        {},
+	"__pycache__":  {},
+}
+
+func shouldSkipTemplatePath(relPath string) bool {
+	if relPath == "." {
+		return false
+	}
+	parts := strings.Split(filepath.ToSlash(relPath), "/")
+	for _, part := range parts {
+		if _, ok := skippedTemplateDirs[part]; ok {
+			return true
+		}
+	}
+	return false
+}
 
 // CopyTemplateFiles copies all files and directories from the specified embedded template
 // into the target application path. It uses the given language and template names
@@ -54,6 +74,14 @@ func CopyTemplateFiles(appPath, language, template string) error {
 
 		// Skip the template root directory itself
 		if relPath == "." {
+			return nil
+		}
+
+		// Skip environment/build artifacts that should never be scaffolded.
+		if shouldSkipTemplatePath(relPath) {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
 			return nil
 		}
 

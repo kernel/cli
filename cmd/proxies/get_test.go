@@ -17,9 +17,10 @@ func TestProxyGet_Datacenter(t *testing.T) {
 	fake := &FakeProxyService{
 		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ProxyGetResponse, error) {
 			return &kernel.ProxyGetResponse{
-				ID:   "dc-1",
-				Name: "US Datacenter",
-				Type: kernel.ProxyGetResponseTypeDatacenter,
+				ID:          "dc-1",
+				Name:        "US Datacenter",
+				Type:        kernel.ProxyGetResponseTypeDatacenter,
+				BypassHosts: []string{"localhost", "internal.service.local"},
 				Config: kernel.ProxyGetResponseConfigUnion{
 					Country: "US",
 				},
@@ -40,6 +41,9 @@ func TestProxyGet_Datacenter(t *testing.T) {
 	assert.Contains(t, output, "US Datacenter")
 	assert.Contains(t, output, "Type")
 	assert.Contains(t, output, "datacenter")
+	assert.Contains(t, output, "Bypass Hosts")
+	assert.Contains(t, output, "localhost")
+	assert.Contains(t, output, "internal.service.local")
 	assert.Contains(t, output, "Country")
 	assert.Contains(t, output, "US")
 }

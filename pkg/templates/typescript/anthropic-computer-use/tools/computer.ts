@@ -1,6 +1,6 @@
 import { Buffer } from 'buffer';
 import type { Kernel } from '@onkernel/sdk';
-import type { ActionParams, BaseAnthropicTool, ToolResult } from './types/computer';
+import type { ActionParams, BaseAnthropicTool, ComputerToolParams, ToolResult } from './types/computer';
 import { Action, ToolError } from './types/computer';
 import { ActionValidator } from './utils/validator';
 
@@ -11,7 +11,7 @@ export class ComputerTool implements BaseAnthropicTool {
   protected kernel: Kernel;
   protected sessionId: string;
   protected _screenshotDelay = 2.0;
-  protected version: '20241022' | '20250124';
+  protected version: '20241022' | '20250124' | '20251124';
   protected width: number;
   protected height: number;
   
@@ -41,7 +41,7 @@ export class ComputerTool implements BaseAnthropicTool {
     Action.WAIT,
   ]);
 
-  constructor(kernel: Kernel, sessionId: string, version: '20241022' | '20250124' = '20250124', width = 1280, height = 800) {
+  constructor(kernel: Kernel, sessionId: string, version: '20241022' | '20250124' | '20251124' = '20250124', width = 1280, height = 800) {
     this.kernel = kernel;
     this.sessionId = sessionId;
     this.version = version;
@@ -49,11 +49,17 @@ export class ComputerTool implements BaseAnthropicTool {
     this.height = height;
   }
 
-  get apiType(): 'computer_20241022' | 'computer_20250124' {
-    return this.version === '20241022' ? 'computer_20241022' : 'computer_20250124';
+  get apiType(): 'computer_20241022' | 'computer_20250124' | 'computer_20251124' {
+    if (this.version === '20241022') {
+      return 'computer_20241022';
+    }
+    if (this.version === '20250124') {
+      return 'computer_20250124';
+    }
+    return 'computer_20251124';
   }
 
-  toParams(): ActionParams {
+  toParams(): ComputerToolParams {
     const params = {
       name: this.name,
       type: this.apiType,
@@ -288,53 +294,47 @@ export class ComputerTool implements BaseAnthropicTool {
     }
 
     if (action === Action.SCROLL) {
-      if (this.version !== '20250124') {
-        throw new ToolError(`${action} is only available in version 20250124`);
+      if (this.version === '20241022') {
+        throw new ToolError(`${action} is only available in versions 20250124 and 20251124`);
       }
 
       const scrollDirection = scrollDirectionParam || kwargs.scroll_direction;
       const scrollAmountValue = scrollAmount || scroll_amount;
 
-      if (!scrollDirection || !['up', 'down', 'left', 'right'].includes(scrollDirection)) {
-        throw new ToolError(`Scroll direction "${scrollDirection}" must be 'up', 'down', 'left', or 'right'`);
+      const dir = scrollDirection && typeof scrollDirection === 'string' && ['up', 'down', 'left', 'right'].includes(scrollDirection) ? scrollDirection : null;
+      if (!dir) {
+        throw new ToolError(`Scroll direction "${String(scrollDirection)}" must be 'up', 'down', 'left', or 'right'`);
       }
       if (typeof scrollAmountValue !== 'number' || scrollAmountValue < 0) {
         throw new ToolError(`Scroll amount "${scrollAmountValue}" must be a non-negative number`);
       }
 
-      const [x, y] = coordinate 
+      const [x, y] = coordinate
         ? ActionValidator.validateAndGetCoordinates(coordinate)
         : this.lastMousePosition;
 
+      // Backend (kernel-images) uses delta_x/delta_y as wheel-event repeat count (notches), not pixels.
+      const notches = Math.max(scrollAmountValue ?? 1, 1);
       let delta_x = 0;
       let delta_y = 0;
-      // Each scroll_amount unit = 1 scroll wheel click ≈ 120 pixels (matches Anthropic's xdotool behavior)
-      const scrollDelta = (scrollAmountValue ?? 1) * 120;
+      if (dir === 'down') delta_y = notches;
+      if (dir === 'up') delta_y = -notches;
+      if (dir === 'right') delta_x = notches;
+      if (dir === 'left') delta_x = -notches;
 
-      if (scrollDirection === 'down') {
-        delta_y = scrollDelta;
-      } else if (scrollDirection === 'up') {
-        delta_y = -scrollDelta;
-      } else if (scrollDirection === 'right') {
-        delta_x = scrollDelta;
-      } else if (scrollDirection === 'left') {
-        delta_x = -scrollDelta;
-      }
+      await this.kernel.browsers.computer.scroll(this.sessionId, { x, y, delta_x, delta_y });
 
-      await this.kernel.browsers.computer.scroll(this.sessionId, {
-        x,
-        y,
-        delta_x,
-        delta_y,
-      });
-
-      await new Promise(resolve => setTimeout(resolve, 500));
-      return await this.screenshot();
+      await new Promise(resolve => setTimeout(resolve, 200));
+      const screenshotResult = await this.screenshot();
+      return {
+        ...screenshotResult,
+        output: `Scrolled ${notches} wheel unit(s) ${dir}.`,
+      };
     }
 
     if (action === Action.WAIT) {
-      if (this.version !== '20250124') {
-        throw new ToolError(`${action} is only available in version 20250124`);
+      if (this.version === '20241022') {
+        throw new ToolError(`${action} is only available in versions 20250124 and 20251124`);
       }
       await new Promise(resolve => setTimeout(resolve, duration! * 1000));
       return await this.screenshot();
@@ -392,5 +392,11 @@ export class ComputerTool20241022 extends ComputerTool {
 export class ComputerTool20250124 extends ComputerTool {
   constructor(kernel: Kernel, sessionId: string, width = 1280, height = 800) {
     super(kernel, sessionId, '20250124', width, height);
+  }
+}
+
+export class ComputerTool20251124 extends ComputerTool {
+  constructor(kernel: Kernel, sessionId: string, width = 1280, height = 800) {
+    super(kernel, sessionId, '20251124', width, height);
   }
 }

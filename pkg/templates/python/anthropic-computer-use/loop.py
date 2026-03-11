@@ -50,6 +50,7 @@ SYSTEM_PROMPT = f"""<SYSTEM_CAPABILITY>
 * As the initial step click on the search bar.
 * When viewing a page it can be helpful to zoom out so that you can see everything on the page.
 * Either that, or make sure you scroll down to see everything before deciding something isn't available.
+* Scroll action: scroll_amount and the tool result are in wheel units (not pixels).
 * When using your computer function calls, they take a while to run and send back to you.
 * Where possible/feasible, try to chain multiple of these calls all into one function calls request.
 * The current date is {datetime.now().strftime("%A, %B %d, %Y")}.
@@ -75,7 +76,7 @@ async def sampling_loop(
     system_prompt_suffix: str = "",
     only_n_most_recent_images: int | None = None,
     max_tokens: int = 4096,
-    tool_version: ToolVersion = "computer_use_20250124",
+    tool_version: ToolVersion | None = None,
     thinking_budget: int | None = None,
     token_efficient_tools_beta: bool = False,
     viewport_width: int = 1280,
@@ -94,11 +95,12 @@ async def sampling_loop(
         system_prompt_suffix: Additional system prompt text (defaults to empty string)
         only_n_most_recent_images: Optional limit on number of recent images to keep
         max_tokens: Maximum tokens for the response (defaults to 4096)
-        tool_version: Version of tools to use (defaults to V20250124)
+        tool_version: Optional explicit tool version override
         thinking_budget: Optional token budget for thinking
         token_efficient_tools_beta: Whether to use token efficient tools beta
     """
-    tool_group = TOOL_GROUPS_BY_VERSION[tool_version]
+    selected_tool_version = tool_version or _tool_version_for_model(model)
+    tool_group = TOOL_GROUPS_BY_VERSION[selected_tool_version]
     tool_collection = ToolCollection(
         *(
             ToolCls(kernel=kernel, session_id=session_id, width=viewport_width, height=viewport_height) if ToolCls.__name__.startswith("ComputerTool") else ToolCls()
@@ -191,6 +193,16 @@ async def sampling_loop(
             return messages
 
         messages.append({"content": tool_result_content, "role": "user"})
+
+
+def _tool_version_for_model(model: str) -> ToolVersion:
+    if (
+        "claude-sonnet-4-6" in model
+        or "claude-opus-4-6" in model
+        or "claude-opus-4-5" in model
+    ):
+        return "computer_use_20251124"
+    return "computer_use_20250124"
 
 
 def _maybe_filter_to_n_most_recent_images(

@@ -36,6 +36,7 @@ func (p ProxyCmd) Get(ctx context.Context, in ProxyGetInput) error {
 	}
 	rows = append(rows, []string{"Name", name})
 	rows = append(rows, []string{"Type", string(item.Type)})
+	rows = append(rows, []string{"Bypass Hosts", formatBypassHosts(item.BypassHosts)})
 
 	// Display protocol (default to https if not set)
 	protocol := string(item.Protocol)
