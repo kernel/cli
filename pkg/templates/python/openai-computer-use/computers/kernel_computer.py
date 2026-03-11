@@ -263,6 +263,10 @@ def _current_url_batch_actions() -> List[Dict[str, Any]]:
             "type": "press_key",
             "press_key": {"hold_keys": ["Ctrl"], "keys": ["c"]},
         },
+        {
+            "type": "press_key",
+            "press_key": {"keys": ["Escape"]},
+        },
     ]
 
 

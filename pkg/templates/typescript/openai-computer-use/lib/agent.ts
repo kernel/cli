@@ -325,17 +325,6 @@ export class Agent {
         turns += 1;
         const inputMessages = [...opts.messages];
 
-        // Append current URL context to system message
-        const currentUrl = await this.computer.getCurrentUrl();
-        const sysIndex = inputMessages.findIndex((msg) => 'role' in msg && msg.role === 'system');
-        if (sysIndex >= 0) {
-          const msg = inputMessages[sysIndex];
-          const urlInfo = `\n- Current URL: ${currentUrl}`;
-          if (msg && 'content' in msg && typeof msg.content === 'string') {
-            inputMessages[sysIndex] = { ...msg, content: msg.content + urlInfo } as typeof msg;
-          }
-        }
-
         this.debugPrint(...inputMessages, ...newItems);
         this.modelRequestStartedAt = Date.now();
         const response = await utils.createResponse({

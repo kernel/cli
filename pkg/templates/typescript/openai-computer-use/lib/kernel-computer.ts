@@ -263,6 +263,7 @@ function currentUrlBatchActions(): BatchAction[] {
     { type: 'press_key', press_key: { hold_keys: ['Ctrl'], keys: ['l'] } },
     { type: 'press_key', press_key: { hold_keys: ['Ctrl'], keys: ['a'] } },
     { type: 'press_key', press_key: { hold_keys: ['Ctrl'], keys: ['c'] } },
+    { type: 'press_key', press_key: { keys: ['Escape'] } },
   ];
 }
 
