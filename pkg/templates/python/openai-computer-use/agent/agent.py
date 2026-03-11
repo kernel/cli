@@ -1,7 +1,11 @@
 import json
 import time
 from typing import Any, Callable
-from computers.kernel_computer import KernelComputer
+from computers.kernel_computer import (
+    KernelComputer,
+    _describe_action,
+    _describe_batch_actions,
+)
 from utils import (
     create_response,
     show_image,
@@ -186,56 +190,6 @@ class Agent:
                 parts.append(text)
         return " ".join(parts) if parts else None
 
-    def _describe_action(self, action_type: str, action_args: dict[str, Any]) -> str:
-        if action_type == "click":
-            x = int(action_args.get("x", 0))
-            y = int(action_args.get("y", 0))
-            button = action_args.get("button", "left")
-            if button in ("", "left"):
-                return f"click({x}, {y})"
-            return f"click({x}, {y}, {button})"
-        if action_type == "double_click":
-            return f"double_click({int(action_args.get('x', 0))}, {int(action_args.get('y', 0))})"
-        if action_type == "type":
-            text = str(action_args.get("text", ""))
-            if len(text) > 60:
-                text = f"{text[:57]}..."
-            return f"type({text!r})"
-        if action_type == "keypress":
-            keys = action_args.get("keys", [])
-            hold_keys = action_args.get("hold_keys", [])
-            if hold_keys:
-                return f"keypress(hold={hold_keys}, keys={keys})"
-            return f"keypress({keys})"
-        if action_type == "scroll":
-            return (
-                f"scroll({int(action_args.get('x', 0))}, {int(action_args.get('y', 0))}, "
-                f"dx={int(action_args.get('scroll_x', 0))}, dy={int(action_args.get('scroll_y', 0))})"
-            )
-        if action_type == "move":
-            return f"move({int(action_args.get('x', 0))}, {int(action_args.get('y', 0))})"
-        if action_type == "drag":
-            return "drag(...)"
-        if action_type == "wait":
-            return f"wait({int(action_args.get('ms', 1000))}ms)"
-        if action_type == "goto":
-            return f"goto({action_args.get('url', '')!r})"
-        if action_type == "back":
-            return "back()"
-        if action_type == "url":
-            return "url()"
-        if action_type == "screenshot":
-            return "screenshot()"
-        return action_type
-
-    def _describe_batch_actions(self, actions: list[dict[str, Any]]) -> str:
-        pieces: list[str] = []
-        for action in actions:
-            action_type = str(action.get("type", "unknown"))
-            action_args = {k: v for k, v in action.items() if k != "type"}
-            pieces.append(self._describe_action(action_type, action_args))
-        return "batch[" + " -> ".join(pieces) + "]"
-
     def _batch_terminal_read_action(self, actions: list[dict[str, Any]]) -> str:
         if not actions:
             return ""
@@ -269,7 +223,7 @@ class Agent:
                     typed_actions = [a for a in actions if isinstance(a, dict)]
                     payload = {
                         "action_type": "batch",
-                        "description": self._describe_batch_actions(typed_actions),
+                        "description": _describe_batch_actions(typed_actions),
                         "action": {"type": "batch", "actions": typed_actions},
                     }
                     if elapsed_ms is not None:
@@ -315,14 +269,14 @@ class Agent:
             if len(typed_actions) == 1:
                 action_type = str(typed_actions[0].get("type", "unknown"))
                 action_payload: dict[str, Any] = typed_actions[0]
-                description = self._describe_action(
+                description = _describe_action(
                     action_type,
                     {k: v for k, v in typed_actions[0].items() if k != "type"},
                 )
             else:
                 action_type = "batch"
                 action_payload = {"type": "batch", "actions": typed_actions}
-                description = self._describe_batch_actions(typed_actions)
+                description = _describe_batch_actions(typed_actions)
 
             payload = {
                 "action_type": action_type,
@@ -363,6 +317,7 @@ class Agent:
             if self.computer.get_environment() == "browser":
                 current_url = self.computer.get_current_url()
                 check_blocklisted_url(current_url)
+                call_output["output"]["current_url"] = current_url
 
             return [call_output]
         return []

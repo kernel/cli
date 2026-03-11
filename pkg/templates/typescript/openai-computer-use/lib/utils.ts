@@ -92,12 +92,16 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function checkBlocklistedUrl(url: string): boolean {
+export function checkBlocklistedUrl(url: string): void {
   try {
     const host = new URL(url).hostname;
-    return BLOCKED_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
-  } catch {
-    return false;
+    if (BLOCKED_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))) {
+      throw new Error(`Blocked URL: ${url}`);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('Blocked URL:')) {
+      throw error;
+    }
   }
 }
 

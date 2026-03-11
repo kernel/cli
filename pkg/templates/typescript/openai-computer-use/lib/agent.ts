@@ -203,6 +203,7 @@ export class Agent {
         type: 'computer_screenshot',
         image_url: `data:image/png;base64,${screenshot}`,
       } as unknown as ResponseComputerToolCallOutputItem['output'];
+      (screenshotOutput as { current_url?: string }).current_url = currentUrl;
 
       const out: Omit<ResponseComputerToolCallOutputItem, 'id'> = {
         type: 'computer_call_output',

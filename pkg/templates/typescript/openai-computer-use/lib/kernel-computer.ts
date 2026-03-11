@@ -167,11 +167,29 @@ function normalizeButton(button?: string | number): string {
 
 function translateCuaAction(action: CuaAction): BatchAction {
   switch (action.type) {
-    case 'click':
+    case 'click': {
+      if (action.button === 'back') {
+        return { type: 'press_key', press_key: { hold_keys: ['Alt'], keys: ['Left'] } };
+      }
+      if (action.button === 'forward') {
+        return { type: 'press_key', press_key: { hold_keys: ['Alt'], keys: ['Right'] } };
+      }
+      if (action.button === 'wheel') {
+        return {
+          type: 'scroll',
+          scroll: {
+            x: action.x ?? 0,
+            y: action.y ?? 0,
+            delta_x: pixelsToScrollTicks(action.scroll_x),
+            delta_y: pixelsToScrollTicks(action.scroll_y),
+          },
+        };
+      }
       return {
         type: 'click_mouse',
         click_mouse: { x: action.x ?? 0, y: action.y ?? 0, button: normalizeButton(action.button) },
       };
+    }
     case 'double_click':
       return {
         type: 'click_mouse',
@@ -386,6 +404,18 @@ export class KernelComputer {
   }
 
   async click(x: number, y: number, button: string | number = 'left'): Promise<void> {
+    if (button === 'back') {
+      await this.back();
+      return;
+    }
+    if (button === 'forward') {
+      await this.forward();
+      return;
+    }
+    if (button === 'wheel') {
+      await this.scroll(x, y, 0, 0);
+      return;
+    }
     const normalizedButton = normalizeButton(button) as 'left' | 'right' | 'middle';
     const op = describeAction('click', { x, y, button: normalizedButton });
     await this.traceCall(op, async () => {
