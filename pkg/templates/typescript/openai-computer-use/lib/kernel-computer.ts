@@ -234,6 +234,20 @@ function backBatchActions(): BatchAction[] {
   ];
 }
 
+function forwardBatchActions(): BatchAction[] {
+  return [
+    { type: 'press_key', press_key: { hold_keys: ['Alt'], keys: ['Right'] } },
+  ];
+}
+
+function currentUrlBatchActions(): BatchAction[] {
+  return [
+    { type: 'press_key', press_key: { hold_keys: ['Ctrl'], keys: ['l'] } },
+    { type: 'press_key', press_key: { hold_keys: ['Ctrl'], keys: ['a'] } },
+    { type: 'press_key', press_key: { hold_keys: ['Ctrl'], keys: ['c'] } },
+  ];
+}
+
 function validateBatchTerminalReadActions(actions: CuaAction[]): void {
   let readIdx = -1;
   let readType = '';
@@ -468,19 +482,28 @@ export class KernelComputer {
   }
 
   async forward(): Promise<void> {
-    await this.traceCall('forward()', async () => {
-      await this.client.browsers.playwright.execute(this.sessionId, {
-        code: 'await page.goForward()',
+    const forwardActions = forwardBatchActions();
+    await this.traceCall(describeTranslatedBatch(forwardActions), async () => {
+      await this.client.browsers.computer.batch(this.sessionId, {
+        actions: forwardActions as Parameters<typeof this.client.browsers.computer.batch>[1]['actions'],
       });
     });
   }
 
   async getCurrentUrl(): Promise<string> {
     return this.traceCall('get_current_url()', async () => {
-      const result = await this.client.browsers.playwright.execute(this.sessionId, {
-        code: 'return page.url()',
+      const copyActions = currentUrlBatchActions();
+      await this.traceCall(describeTranslatedBatch(copyActions), async () => {
+        await this.client.browsers.computer.batch(this.sessionId, {
+          actions: copyActions as Parameters<typeof this.client.browsers.computer.batch>[1]['actions'],
+        });
       });
-      return (result.result as string) ?? '';
+      const result = await this.client.browsers.computer.readClipboard(this.sessionId);
+      const currentUrl = (result.text ?? '').trim();
+      if (!currentUrl) {
+        throw new Error('clipboard URL was empty');
+      }
+      return currentUrl;
     });
   }
 }

@@ -2,7 +2,7 @@
 
 This is a Kernel application that demonstrates using the Computer Use Agent (CUA) from OpenAI with Kernel's native browser control API.
 
-It uses Kernel's computer control endpoints (screenshot, click, type, scroll, batch, etc.) instead of Playwright, and includes a `batch_computer_actions` tool that executes multiple actions in a single API call for lower latency.
+It uses Kernel's computer control endpoints (screenshot, click, type, scroll, batch, etc.) and includes a `batch_computer_actions` tool that executes multiple actions in a single API call for lower latency.
 
 ## Local testing
 
@@ -16,7 +16,7 @@ uv run run_local.py
 uv run run_local.py --output jsonl
 ```
 
-The local runner defaults to concise CUA-style logs (`text`), including `kernel>` backend SDK call lines with elapsed timing and `agent>` model output lines. Use `--output jsonl` for one structured event per line (including backend events). Add `--debug` to include verbose in-flight events.
+The local runner defaults to human-readable logs (`text`). Use `--output jsonl` for one structured event per line (including backend events). Add `--debug` to include verbose in-flight events.
 
 ## Deploy to Kernel
 

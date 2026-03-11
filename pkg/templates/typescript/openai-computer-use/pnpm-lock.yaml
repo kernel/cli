@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@onkernel/sdk':
-        specifier: ^0.38.0
-        version: 0.38.0
+        specifier: ^0.43.0
+        version: 0.43.0
       dotenv:
         specifier: ^17.2.3
         version: 17.3.1
@@ -186,8 +186,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@onkernel/sdk@0.38.0':
-    resolution: {integrity: sha512-BwbC3OkUg9xhdTshyyUi7+vqwC6gjsHpfpFsDAlVe/rzzledBsL3Usf5rrYfk1Bpk72P+OfF2NtUt5HLaVrjvQ==}
+  '@onkernel/sdk@0.43.0':
+    resolution: {integrity: sha512-pvveMdVCzjtVqNeLI+yk+VBTMaIvRe/jevvKJqnHl2svlDxvT7Z0mNFeiAWsDLeh1TQL92aWEKZoyEVxRniO9w==}
 
   '@types/node@22.19.11':
     resolution: {integrity: sha512-BH7YwL6rA93ReqeQS1c4bsPpcfOmJasG+Fkr6Y59q83f9M1WcBRHR2vM+P9eOisYRcN3ujQoiZY8uk5W+1WL8w==}
@@ -317,7 +317,7 @@ snapshots:
   '@esbuild/win32-x64@0.27.3':
     optional: true
 
-  '@onkernel/sdk@0.38.0': {}
+  '@onkernel/sdk@0.43.0': {}
 
   '@types/node@22.19.11':
     dependencies:

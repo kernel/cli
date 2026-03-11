@@ -163,7 +163,7 @@ wheels = [
 
 [[package]]
 name = "kernel"
-version = "0.38.0"
+version = "0.43.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -173,9 +173,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/90/77/2b2430c9b017d50dc1b4bad2c394cb862d4e504dfd5868de5634ec2129df/kernel-0.38.0.tar.gz", hash = "sha256:6eb8bf6abc35c43c96a69ef6efe4235e2007393dd12dbb95f084595bef234453", size = 193498, upload-time = "2026-02-25T18:54:51.895Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/29/99/639401caa99d752ce430e85d2aacbf1e0da3e748d0b7cff8758b4e49f62f/kernel-0.43.0.tar.gz", hash = "sha256:f3a4c8959eb26e783ece943507871f12ae5b884c841dc81d640a2f46f22b6ed2", size = 196586, upload-time = "2026-03-10T17:30:39.461Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4c/4d/c7b95eeac08fed24d15f11fee11c4807e154fbec7ad5cc99c7943e4a9e06/kernel-0.38.0-py3-none-any.whl", hash = "sha256:8548d34980034a1e9300a5bec51730a38729115355d86a7cd3e2680095f15bd6", size = 225184, upload-time = "2026-02-25T18:54:50.454Z" },
+    { url = "https://files.pythonhosted.org/packages/94/fb/519de9d31f1eb5b0c5bb374e31584af5a8191e25dfa05ca4014e7bd38dba/kernel-0.43.0-py3-none-any.whl", hash = "sha256:c5a1b311e318d04ec7f1bd5b7400fc38fefe72ca1d248f48ebf921a49ee3f608", size = 229540, upload-time = "2026-03-10T17:30:37.775Z" },
 ]
 
 [[package]]
@@ -313,7 +313,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "kernel", specifier = ">=0.38.0" },
+    { name = "kernel", specifier = ">=0.43.0" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "requests", specifier = ">=2.32.5" },
 ]

@@ -219,6 +219,32 @@ def _back_batch_actions() -> List[Dict[str, Any]]:
     ]
 
 
+def _forward_batch_actions() -> List[Dict[str, Any]]:
+    return [
+        {
+            "type": "press_key",
+            "press_key": {"hold_keys": ["Alt"], "keys": ["Right"]},
+        }
+    ]
+
+
+def _current_url_batch_actions() -> List[Dict[str, Any]]:
+    return [
+        {
+            "type": "press_key",
+            "press_key": {"hold_keys": ["Ctrl"], "keys": ["l"]},
+        },
+        {
+            "type": "press_key",
+            "press_key": {"hold_keys": ["Ctrl"], "keys": ["a"]},
+        },
+        {
+            "type": "press_key",
+            "press_key": {"hold_keys": ["Ctrl"], "keys": ["c"]},
+        },
+    ]
+
+
 def _validate_batch_terminal_read_actions(actions: List[Dict[str, Any]]) -> None:
     read_idx = -1
     read_type = ""
@@ -512,18 +538,29 @@ class KernelComputer:
         self.batch_actions([{"type": "back"}])
 
     def forward(self) -> None:
+        actions = _forward_batch_actions()
+        op = _describe_translated_batch(actions)
         self._trace_backend(
-            "forward()",
-            lambda: self.client.browsers.playwright.execute(
-                self.session_id, code="await page.goForward()"
+            op,
+            lambda: self.client.browsers.computer.batch(
+                self.session_id, actions=actions
             ),
         )
 
     def get_current_url(self) -> str:
         def _do() -> str:
-            result = self.client.browsers.playwright.execute(
-                self.session_id, code="return page.url()"
+            copy_actions = _current_url_batch_actions()
+            copy_op = _describe_translated_batch(copy_actions)
+            self._trace_backend(
+                copy_op,
+                lambda: self.client.browsers.computer.batch(
+                    self.session_id, actions=copy_actions
+                ),
             )
-            return result.result if result.result else ""
+            result = self.client.browsers.computer.read_clipboard(self.session_id)
+            current_url = (result.text or "").strip()
+            if not current_url:
+                raise ValueError("clipboard URL was empty")
+            return current_url
 
         return self._trace_backend("get_current_url()", _do)
