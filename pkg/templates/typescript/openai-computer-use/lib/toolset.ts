@@ -1,11 +1,20 @@
-export const batchInstructions = `You have two ways to perform actions:
+export const batchInstructions = `You have three ways to perform actions:
 1. The standard computer tool — use for single actions when you need screenshot feedback after each step.
 2. batch_computer_actions — use to execute multiple actions at once when you can predict the outcome.
+3. computer_use_extra — use high-level browser actions: goto, back, and url.
 
 ALWAYS prefer batch_computer_actions when performing predictable sequences like:
 - Clicking a text field, typing text, and pressing Enter
-- Typing a URL and pressing Enter
-- Any sequence where you don't need to see intermediate results`;
+- Any sequence where you don't need to see intermediate results
+
+Use computer_use_extra for:
+- action="goto" only when changing the page URL
+- action="back" to go back in history
+- action="url" to read the exact current URL
+
+When interacting with page content (search boxes, forms, chat inputs):
+- Click the target input first, then type.
+- Do not use URL-navigation actions for in-page text entry.`;
 
 export const batchComputerTool = {
   type: 'function' as const,
@@ -18,7 +27,9 @@ export const batchComputerTool = {
     'PREFER this over individual computer actions when:\n' +
     '- Typing text followed by pressing Enter\n' +
     '- Clicking a field and then typing into it\n' +
-    '- Any sequence where intermediate screenshots are not needed',
+    "- Any sequence where intermediate screenshots aren't needed\n\n" +
+    'Constraint: return-value actions (url, screenshot) can appear at most once ' +
+    'and only as the final action in the batch.',
   parameters: {
     type: 'object',
     properties: {
@@ -30,12 +41,27 @@ export const batchComputerTool = {
           properties: {
             type: {
               type: 'string',
-              enum: ['click', 'double_click', 'type', 'keypress', 'scroll', 'move', 'drag', 'wait'],
+              enum: [
+                'click',
+                'double_click',
+                'type',
+                'keypress',
+                'scroll',
+                'move',
+                'drag',
+                'wait',
+                'goto',
+                'back',
+                'url',
+                'screenshot',
+              ],
             },
             x: { type: 'number' },
             y: { type: 'number' },
             text: { type: 'string' },
+            url: { type: 'string' },
             keys: { type: 'array', items: { type: 'string' } },
+            hold_keys: { type: 'array', items: { type: 'string' } },
             button: { type: 'string' },
             scroll_x: { type: 'number' },
             scroll_y: { type: 'number' },
@@ -49,44 +75,24 @@ export const batchComputerTool = {
   strict: false,
 };
 
-export const navigationTools = [
-  {
-    type: 'function' as const,
-    name: 'goto',
-    description: 'Go to a specific URL.',
-    parameters: {
-      type: 'object',
-      properties: {
-        url: {
-          type: 'string',
-          description: 'Fully qualified URL to navigate to.',
-        },
+export const computerUseExtraTool = {
+  type: 'function' as const,
+  name: 'computer_use_extra',
+  description: 'High-level browser actions for navigation and URL retrieval.',
+  parameters: {
+    type: 'object',
+    properties: {
+      action: {
+        type: 'string',
+        enum: ['goto', 'back', 'url'],
+        description: 'Action to perform: goto, back, or url.',
       },
-      additionalProperties: false,
-      required: ['url'],
+      url: {
+        type: 'string',
+        description: 'Required when action is goto. Fully qualified URL to navigate to.',
+      },
     },
-    strict: false,
+    required: ['action'],
   },
-  {
-    type: 'function' as const,
-    name: 'back',
-    description: 'Navigate back in the browser history.',
-    parameters: {
-      type: 'object',
-      properties: {},
-      additionalProperties: false,
-    },
-    strict: false,
-  },
-  {
-    type: 'function' as const,
-    name: 'forward',
-    description: 'Navigate forward in the browser history.',
-    parameters: {
-      type: 'object',
-      properties: {},
-      additionalProperties: false,
-    },
-    strict: false,
-  },
-];
+  strict: false,
+};

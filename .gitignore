@@ -44,3 +44,6 @@ kernel
 
 # QA testing directories
 qa-*
+
+
+__pycache__

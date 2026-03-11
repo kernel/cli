@@ -87,15 +87,17 @@ async def cua_task(
         computer = KernelComputer(client, kernel_browser.session_id, on_event=on_event)
         computer.goto("https://duckduckgo.com")
 
+        now_utc = datetime.datetime.now(datetime.UTC)
         items = [
             {
                 "role": "system",
-                "content": f"- Current date and time: {datetime.datetime.utcnow().isoformat()} ({datetime.datetime.utcnow().strftime('%A')})",
+                "content": f"- Current date and time: {now_utc.isoformat()} ({now_utc.strftime('%A')})",
             },
             {"role": "user", "content": payload["task"]},
         ]
 
         agent = Agent(
+            model="gpt-5.4",
             computer=computer,
             tools=[],
             acknowledge_safety_check_callback=lambda message: (

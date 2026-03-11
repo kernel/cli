@@ -43,7 +43,12 @@ export function describeAction(actionType: string, actionArgs: Record<string, un
     }
     case 'keypress': {
       const keys = Array.isArray(actionArgs.keys) ? actionArgs.keys : [];
+      const holdKeys = Array.isArray(actionArgs.hold_keys) ? actionArgs.hold_keys : [];
       const serializedKeys = keys.filter((k): k is string => typeof k === 'string');
+      const serializedHoldKeys = holdKeys.filter((k): k is string => typeof k === 'string');
+      if (serializedHoldKeys.length > 0) {
+        return `keypress(hold=${JSON.stringify(serializedHoldKeys)}, keys=${JSON.stringify(serializedKeys)})`;
+      }
       return `keypress(${JSON.stringify(serializedKeys)})`;
     }
     case 'scroll':
@@ -56,6 +61,14 @@ export function describeAction(actionType: string, actionArgs: Record<string, un
       const ms = typeof actionArgs.ms === 'number' ? Math.trunc(actionArgs.ms) : 1000;
       return `wait(${ms}ms)`;
     }
+    case 'goto': {
+      const url = typeof actionArgs.url === 'string' ? actionArgs.url : '';
+      return `goto(${JSON.stringify(url)})`;
+    }
+    case 'back':
+      return 'back()';
+    case 'url':
+      return 'url()';
     case 'screenshot':
       return 'screenshot()';
     default:

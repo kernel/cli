@@ -19,6 +19,12 @@ function truncateOneLine(text: string, max = 90): string {
   return singleLine.length > max ? `${singleLine.slice(0, max - 3)}...` : singleLine;
 }
 
+function formatKernelOp(op: string): string {
+  if (!op) return op;
+  if (op.includes('(') || op.includes('[')) return op;
+  return `${op}()`;
+}
+
 class ThinkingSpinner {
   private active = false;
   private timer: NodeJS.Timeout | null = null;
@@ -103,6 +109,7 @@ export function createEventLogger(opts?: {
   }
 
   let inText = false;
+  let lastLiveViewUrl = '';
   const spinner = new ThinkingSpinner(process.stdout.isTTY);
 
   return (event: AgentEvent): void => {
@@ -110,7 +117,10 @@ export function createEventLogger(opts?: {
     switch (event.event) {
       case 'session_state': {
         const liveUrl = asString(data.live_view_url);
-        if (liveUrl) process.stdout.write(`${timestamp()} kernel> live view: ${liveUrl}\n`);
+        if (liveUrl && liveUrl !== lastLiveViewUrl) {
+          process.stdout.write(`${timestamp()} kernel> live view: ${liveUrl}\n`);
+          lastLiveViewUrl = liveUrl;
+        }
         break;
       }
       case 'backend': {
@@ -124,19 +134,25 @@ export function createEventLogger(opts?: {
 
         if (op === 'live_url') {
           const detail = asString(data.detail);
-          if (detail) process.stdout.write(`${timestamp()} kernel> live view: ${detail}\n`);
+          if (detail && detail !== lastLiveViewUrl) {
+            process.stdout.write(`${timestamp()} kernel> live view: ${detail}\n`);
+            lastLiveViewUrl = detail;
+          }
           break;
         }
 
         if (op.endsWith('.done')) {
           const baseOp = op.slice(0, -'.done'.length);
-          if (baseOp.startsWith('get_current_url') && !verbose) break;
+          const displayOp = formatKernelOp(baseOp);
           const detail = asString(data.detail);
           const elapsedMs = asNumber(data.elapsed_ms);
           const elapsed = elapsedMs === null ? '' : `[${(elapsedMs / 1000).toFixed(3)}s] `;
           process.stdout.write(
-            `${timestamp()} kernel> ${elapsed}${baseOp}${detail ? ` ${detail}` : ''}\n`,
+            `${timestamp()} kernel> ${elapsed}${displayOp}${detail ? ` ${detail}` : ''}\n`,
           );
+          if (baseOp === 'browsers.new' && detail) {
+            lastLiveViewUrl = detail;
+          }
           break;
         }
 

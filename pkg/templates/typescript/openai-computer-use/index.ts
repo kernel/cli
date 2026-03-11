@@ -70,7 +70,7 @@ app.action<CuaInput, CuaOutput>(
       await computer.goto('https://duckduckgo.com');
 
       const agent = new Agent({
-        model: 'computer-use-preview',
+        model: 'gpt-5.4',
         computer,
         tools: [],
         acknowledge_safety_check_callback: (m: string): boolean => {

@@ -11,15 +11,25 @@ from utils import (
 )
 
 BATCH_FUNC_NAME = "batch_computer_actions"
+EXTRA_FUNC_NAME = "computer_use_extra"
 
-BATCH_INSTRUCTIONS = """You have two ways to perform actions:
+BATCH_INSTRUCTIONS = """You have three ways to perform actions:
 1. The standard computer tool — use for single actions when you need screenshot feedback after each step.
 2. batch_computer_actions — use to execute multiple actions at once when you can predict the outcome.
+3. computer_use_extra — use high-level browser actions: goto, back, and url.
 
 ALWAYS prefer batch_computer_actions when performing predictable sequences like:
 - Clicking a text field, typing text, and pressing Enter
-- Typing a URL and pressing Enter
-- Any sequence where you don't need to see intermediate results"""
+- Any sequence where you don't need to see intermediate results
+
+Use computer_use_extra for:
+- action="goto" only when changing the page URL
+- action="back" to go back in history
+- action="url" to read the exact current URL
+
+When interacting with page content (search boxes, forms, chat inputs):
+- Click the target input first, then type.
+- Do not use URL-navigation actions for in-page text entry."""
 
 BATCH_TOOL = {
     "type": "function",
@@ -32,7 +42,9 @@ BATCH_TOOL = {
         "PREFER this over individual computer actions when:\n"
         "- Typing text followed by pressing Enter\n"
         "- Clicking a field and then typing into it\n"
-        "- Any sequence where intermediate screenshots are not needed"
+        "- Any sequence where intermediate screenshots aren't needed\n\n"
+        "Constraint: return-value actions (url, screenshot) can appear at most once "
+        "and only as the final action in the batch."
     ),
     "parameters": {
         "type": "object",
@@ -45,12 +57,27 @@ BATCH_TOOL = {
                     "properties": {
                         "type": {
                             "type": "string",
-                            "enum": ["click", "double_click", "type", "keypress", "scroll", "move", "drag", "wait"],
+                            "enum": [
+                                "click",
+                                "double_click",
+                                "type",
+                                "keypress",
+                                "scroll",
+                                "move",
+                                "drag",
+                                "wait",
+                                "goto",
+                                "back",
+                                "url",
+                                "screenshot",
+                            ],
                         },
                         "x": {"type": "number"},
                         "y": {"type": "number"},
                         "text": {"type": "string"},
+                        "url": {"type": "string"},
                         "keys": {"type": "array", "items": {"type": "string"}},
+                        "hold_keys": {"type": "array", "items": {"type": "string"}},
                         "button": {"type": "string"},
                         "scroll_x": {"type": "number"},
                         "scroll_y": {"type": "number"},
@@ -64,13 +91,35 @@ BATCH_TOOL = {
     "strict": False,
 }
 
+EXTRA_TOOL = {
+    "type": "function",
+    "name": EXTRA_FUNC_NAME,
+    "description": "High-level browser actions for navigation and URL retrieval.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["goto", "back", "url"],
+                "description": "Action to perform: goto, back, or url.",
+            },
+            "url": {
+                "type": "string",
+                "description": "Required when action is goto. Fully qualified URL to navigate to.",
+            },
+        },
+        "required": ["action"],
+    },
+    "strict": False,
+}
+
 
 class Agent:
     """An agent that uses OpenAI CUA with Kernel's native computer control API."""
 
     def __init__(
         self,
-        model="computer-use-preview",
+        model="gpt-5.4",
         computer: KernelComputer = None,
         tools: list[dict] = [],
         acknowledge_safety_check_callback: Callable = lambda message: False,
@@ -86,43 +135,12 @@ class Agent:
         self.acknowledge_safety_check_callback = acknowledge_safety_check_callback
 
         if computer:
-            dimensions = computer.get_dimensions()
             self.tools += [
                 {
-                    "type": "computer_use_preview",
-                    "display_width": dimensions[0],
-                    "display_height": dimensions[1],
-                    "environment": computer.get_environment(),
+                    "type": "computer",
                 },
                 BATCH_TOOL,
-                {
-                    "type": "function",
-                    "name": "back",
-                    "description": "Go back to the previous page.",
-                    "parameters": {},
-                },
-                {
-                    "type": "function",
-                    "name": "goto",
-                    "description": "Go to a specific URL.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "url": {
-                                "type": "string",
-                                "description": "Fully qualified URL to navigate to.",
-                            },
-                        },
-                        "additionalProperties": False,
-                        "required": ["url"],
-                    },
-                },
-                {
-                    "type": "function",
-                    "name": "forward",
-                    "description": "Go forward to the next page.",
-                    "parameters": {},
-                },
+                EXTRA_TOOL,
             ]
 
     def debug_print(self, *args):
@@ -185,6 +203,9 @@ class Agent:
             return f"type({text!r})"
         if action_type == "keypress":
             keys = action_args.get("keys", [])
+            hold_keys = action_args.get("hold_keys", [])
+            if hold_keys:
+                return f"keypress(hold={hold_keys}, keys={keys})"
             return f"keypress({keys})"
         if action_type == "scroll":
             return (
@@ -197,6 +218,12 @@ class Agent:
             return "drag(...)"
         if action_type == "wait":
             return f"wait({int(action_args.get('ms', 1000))}ms)"
+        if action_type == "goto":
+            return f"goto({action_args.get('url', '')!r})"
+        if action_type == "back":
+            return "back()"
+        if action_type == "url":
+            return "url()"
         if action_type == "screenshot":
             return "screenshot()"
         return action_type
@@ -209,27 +236,13 @@ class Agent:
             pieces.append(self._describe_action(action_type, action_args))
         return "batch[" + " -> ".join(pieces) + "]"
 
-    def _execute_computer_action(self, action_type, action_args):
-        if action_type == "click":
-            self.computer.click(**action_args)
-        elif action_type == "double_click":
-            self.computer.double_click(**action_args)
-        elif action_type == "type":
-            self.computer.type(**action_args)
-        elif action_type == "keypress":
-            self.computer.keypress(**action_args)
-        elif action_type == "scroll":
-            self.computer.scroll(**action_args)
-        elif action_type == "move":
-            self.computer.move(**action_args)
-        elif action_type == "drag":
-            self.computer.drag(**action_args)
-        elif action_type == "wait":
-            self.computer.wait(**action_args)
-        elif action_type == "screenshot":
-            pass
-        else:
-            print(f"Warning: unknown action type: {action_type}")
+    def _batch_terminal_read_action(self, actions: list[dict[str, Any]]) -> str:
+        if not actions:
+            return ""
+        action_type = str(actions[-1].get("type", ""))
+        if action_type in ("url", "screenshot"):
+            return action_type
+        return ""
 
     def handle_item(self, item):
         """Handle each item; may cause a computer action + screenshot."""
@@ -280,36 +293,46 @@ class Agent:
 
             if name == BATCH_FUNC_NAME:
                 return self._handle_batch_call(item["call_id"], args)
+            if name == EXTRA_FUNC_NAME:
+                return self._handle_extra_call(item["call_id"], args)
 
-            if hasattr(self.computer, name):
-                method = getattr(self.computer, name)
-                method(**args)
             return [
                 {
                     "type": "function_call_output",
                     "call_id": item["call_id"],
-                    "output": "success",
+                    "output": f"Unsupported function call: {name}",
                 }
             ]
 
         if item["type"] == "computer_call":
-            action = item["action"]
-            action_type = action["type"]
-            action_args = {k: v for k, v in action.items() if k != "type"}
             elapsed_ms = self._current_model_elapsed_ms()
+            actions = item.get("actions")
+            if not isinstance(actions, list):
+                single = item.get("action")
+                actions = [single] if isinstance(single, dict) else []
+            typed_actions = [a for a in actions if isinstance(a, dict)]
+
+            if len(typed_actions) == 1:
+                action_type = str(typed_actions[0].get("type", "unknown"))
+                action_payload: dict[str, Any] = typed_actions[0]
+                description = self._describe_action(
+                    action_type,
+                    {k: v for k, v in typed_actions[0].items() if k != "type"},
+                )
+            else:
+                action_type = "batch"
+                action_payload = {"type": "batch", "actions": typed_actions}
+                description = self._describe_batch_actions(typed_actions)
+
             payload = {
                 "action_type": action_type,
-                "description": self._describe_action(action_type, action_args),
-                "action": action,
+                "description": description,
+                "action": action_payload,
             }
             if elapsed_ms is not None:
                 payload["elapsed_ms"] = elapsed_ms
-            self._emit_event(
-                "action",
-                payload,
-            )
-
-            self._execute_computer_action(action_type, action_args)
+            self._emit_event("action", payload)
+            self.computer.batch_actions(typed_actions)
 
             screenshot_base64 = self.computer.screenshot()
             self._emit_event(
@@ -332,7 +355,7 @@ class Agent:
                 "call_id": item["call_id"],
                 "acknowledged_safety_checks": pending_checks,
                 "output": {
-                    "type": "input_image",
+                    "type": "computer_screenshot",
                     "image_url": f"data:image/png;base64,{screenshot_base64}",
                 },
             }
@@ -340,7 +363,6 @@ class Agent:
             if self.computer.get_environment() == "browser":
                 current_url = self.computer.get_current_url()
                 check_blocklisted_url(current_url)
-                call_output["output"]["current_url"] = current_url
 
             return [call_output]
         return []
@@ -348,15 +370,61 @@ class Agent:
     def _handle_batch_call(self, call_id, args):
         actions = args.get("actions", [])
         self.computer.batch_actions(actions)
-        screenshot_base64 = self.computer.screenshot()
+        status_text = "Actions executed successfully."
+        terminal_action = self._batch_terminal_read_action(actions if isinstance(actions, list) else [])
+        if terminal_action == "url":
+            try:
+                current_url = self.computer.get_current_url()
+                status_text = f"Actions executed successfully. Current URL: {current_url}"
+            except Exception as exc:
+                status_text = f"Actions executed, but url() failed: {exc}"
+        output_items: list[dict[str, Any]] = [{"type": "text", "text": status_text}]
+        if terminal_action != "url":
+            screenshot_base64 = self.computer.screenshot()
+            output_items.append(
+                {
+                    "type": "image_url",
+                    "image_url": f"data:image/png;base64,{screenshot_base64}",
+                    "detail": "original",
+                }
+            )
         return [
             {
                 "type": "function_call_output",
                 "call_id": call_id,
-                "output": json.dumps([
-                    {"type": "text", "text": "Actions executed successfully."},
-                    {"type": "image_url", "image_url": f"data:image/png;base64,{screenshot_base64}"},
-                ]),
+                "output": json.dumps(output_items),
+            }
+        ]
+
+    def _handle_extra_call(self, call_id, args):
+        action = args.get("action", "")
+        url = args.get("url", "")
+        if action == "goto":
+            self.computer.batch_actions([{"type": "goto", "url": url}])
+            status_text = "goto executed successfully."
+        elif action == "back":
+            self.computer.batch_actions([{"type": "back"}])
+            status_text = "back executed successfully."
+        elif action == "url":
+            status_text = f"Current URL: {self.computer.get_current_url()}"
+        else:
+            status_text = f"unknown {EXTRA_FUNC_NAME} action: {action}"
+
+        output_items: list[dict[str, Any]] = [{"type": "text", "text": status_text}]
+        if action != "url":
+            screenshot_base64 = self.computer.screenshot()
+            output_items.append(
+                {
+                    "type": "image_url",
+                    "image_url": f"data:image/png;base64,{screenshot_base64}",
+                    "detail": "original",
+                }
+            )
+        return [
+            {
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": json.dumps(output_items),
             }
         ]
 
@@ -392,6 +460,10 @@ class Agent:
                     input=input_items + new_items,
                     tools=self.tools,
                     truncation="auto",
+                    reasoning={
+                        "effort": "low",
+                        "summary": "concise",
+                    },
                     instructions=BATCH_INSTRUCTIONS,
                 )
                 self.debug_print(response)

@@ -20,6 +20,14 @@ def _truncate_one_line(text: str, max_len: int = 90) -> str:
     return f"{one_line[: max_len - 3]}..."
 
 
+def _format_kernel_op(op: str) -> str:
+    if not op:
+        return op
+    if "(" in op or "[" in op:
+        return op
+    return f"{op}()"
+
+
 class _ThinkingSpinner:
     def __init__(self, enabled: bool):
         self.enabled = enabled
@@ -124,9 +132,10 @@ def create_event_logger(
 
     spinner = _ThinkingSpinner(sys.stdout.isatty())
     in_text = False
+    last_live_view_url = ""
 
     def render_text(event: dict) -> None:
-        nonlocal in_text
+        nonlocal in_text, last_live_view_url
 
         event_name = event.get("event", "")
         data = event.get("data", {})
@@ -135,9 +144,14 @@ def create_event_logger(
 
         if event_name == "session_state":
             live_url = data.get("live_view_url")
-            if isinstance(live_url, str) and live_url:
+            if (
+                isinstance(live_url, str)
+                and live_url
+                and live_url != last_live_view_url
+            ):
                 sys.stdout.write(f"{_timestamp()} kernel> live view: {live_url}\n")
                 sys.stdout.flush()
+                last_live_view_url = live_url
             return
 
         if event_name == "backend":
@@ -152,15 +166,19 @@ def create_event_logger(
 
             if op == "live_url":
                 detail = data.get("detail")
-                if isinstance(detail, str) and detail:
+                if (
+                    isinstance(detail, str)
+                    and detail
+                    and detail != last_live_view_url
+                ):
                     sys.stdout.write(f"{_timestamp()} kernel> live view: {detail}\n")
                     sys.stdout.flush()
+                    last_live_view_url = detail
                 return
 
             if op.endswith(".done"):
                 base_op = op[: -len(".done")]
-                if base_op.startswith("get_current_url") and not verbose:
-                    return
+                display_op = _format_kernel_op(base_op)
                 detail = data.get("detail")
                 detail_text = detail if isinstance(detail, str) else ""
                 elapsed_ms = data.get("elapsed_ms")
@@ -169,9 +187,11 @@ def create_event_logger(
                     elapsed_prefix = f"[{float(elapsed_ms) / 1000:.3f}s] "
                 suffix = f" {detail_text}" if detail_text else ""
                 sys.stdout.write(
-                    f"{_timestamp()} kernel> {elapsed_prefix}{base_op}{suffix}\n"
+                    f"{_timestamp()} kernel> {elapsed_prefix}{display_op}{suffix}\n"
                 )
                 sys.stdout.flush()
+                if base_op == "browsers.new" and detail_text:
+                    last_live_view_url = detail_text
                 return
 
             if verbose:

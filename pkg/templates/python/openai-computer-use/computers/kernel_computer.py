@@ -1,5 +1,4 @@
 import base64
-import json
 import time
 from typing import List, Dict, Any, Callable
 
@@ -57,10 +56,61 @@ KEYSYM_MAP = {
     "PAUSE": "Pause",
     "NUMLOCK": "Num_Lock",
 }
+MODIFIER_KEYSYMS = {
+    "Control_L",
+    "Control_R",
+    "Alt_L",
+    "Alt_R",
+    "Shift_L",
+    "Shift_R",
+    "Super_L",
+    "Super_R",
+    "Meta_L",
+    "Meta_R",
+}
+GOTO_CHORD_DELAY_MS = 200
 
 
 def _translate_keys(keys: List[str]) -> List[str]:
     return [KEYSYM_MAP.get(k, k) for k in keys]
+
+
+def _expand_combo_keys(keys: List[str]) -> List[str]:
+    out: List[str] = []
+    for raw in keys:
+        if not isinstance(raw, str):
+            continue
+        parts = raw.split("+") if "+" in raw else [raw]
+        for part in parts:
+            token = part.strip()
+            if token:
+                out.append(token)
+    return out
+
+
+def _normalize_keypress_payload(
+    keys: List[str] | None = None, hold_keys: List[str] | None = None
+) -> Dict[str, List[str]]:
+    translated_hold = _translate_keys(_expand_combo_keys(hold_keys or []))
+    translated_keys = _translate_keys(_expand_combo_keys(keys or []))
+
+    hold_from_keys: List[str] = []
+    primary_keys: List[str] = []
+    for key in translated_keys:
+        if key in MODIFIER_KEYSYMS:
+            hold_from_keys.append(key)
+        else:
+            primary_keys.append(key)
+
+    if not primary_keys:
+        return {"keys": translated_keys, "hold_keys": translated_hold}
+
+    merged_hold = translated_hold + hold_from_keys
+    deduped_hold: List[str] = []
+    for key in merged_hold:
+        if key not in deduped_hold:
+            deduped_hold.append(key)
+    return {"keys": primary_keys, "hold_keys": deduped_hold}
 
 
 def _normalize_button(button) -> str:
@@ -94,15 +144,21 @@ def _translate_cua_action(action: Dict[str, Any]) -> Dict[str, Any]:
     elif action_type == "type":
         return {"type": "type_text", "type_text": {"text": action.get("text", "")}}
     elif action_type == "keypress":
-        return {"type": "press_key", "press_key": {"keys": _translate_keys(action.get("keys", []))}}
+        normalized = _normalize_keypress_payload(
+            action.get("keys", []), action.get("hold_keys", [])
+        )
+        payload: Dict[str, Any] = {"keys": normalized["keys"]}
+        if normalized["hold_keys"]:
+            payload["hold_keys"] = normalized["hold_keys"]
+        return {"type": "press_key", "press_key": payload}
     elif action_type == "scroll":
         return {
             "type": "scroll",
             "scroll": {
                 "x": action.get("x", 0),
                 "y": action.get("y", 0),
-                "delta_x": action.get("scroll_x", 0),
-                "delta_y": action.get("scroll_y", 0),
+                "delta_x": int(action.get("scroll_x", 0)),
+                "delta_y": int(action.get("scroll_y", 0)),
             },
         }
     elif action_type == "move":
@@ -114,6 +170,135 @@ def _translate_cua_action(action: Dict[str, Any]) -> Dict[str, Any]:
         return {"type": "sleep", "sleep": {"duration_ms": action.get("ms", 1000)}}
     else:
         raise ValueError(f"Unknown CUA action type: {action_type}")
+
+
+def _is_batch_computer_action_type(action_type: str) -> bool:
+    return action_type in {
+        "click",
+        "double_click",
+        "type",
+        "keypress",
+        "scroll",
+        "move",
+        "drag",
+        "wait",
+    }
+
+
+def _goto_batch_actions(url: str) -> List[Dict[str, Any]]:
+    return [
+        {
+            "type": "press_key",
+            "press_key": {"hold_keys": ["Ctrl"], "keys": ["l"]},
+        },
+        {
+            "type": "sleep",
+            "sleep": {"duration_ms": GOTO_CHORD_DELAY_MS},
+        },
+        {
+            "type": "press_key",
+            "press_key": {"hold_keys": ["Ctrl"], "keys": ["a"]},
+        },
+        {
+            "type": "type_text",
+            "type_text": {"text": url},
+        },
+        {
+            "type": "press_key",
+            "press_key": {"keys": ["Return"]},
+        },
+    ]
+
+
+def _back_batch_actions() -> List[Dict[str, Any]]:
+    return [
+        {
+            "type": "press_key",
+            "press_key": {"hold_keys": ["Alt"], "keys": ["Left"]},
+        }
+    ]
+
+
+def _validate_batch_terminal_read_actions(actions: List[Dict[str, Any]]) -> None:
+    read_idx = -1
+    read_type = ""
+    for idx, action in enumerate(actions):
+        action_type = str(action.get("type", ""))
+        if action_type not in ("url", "screenshot"):
+            continue
+        if read_idx >= 0:
+            raise ValueError(
+                f"batch can include at most one return-value action ({read_type} or {action_type}); "
+                f"found {read_type} at index {read_idx} and {action_type} at index {idx}"
+            )
+        if idx != len(actions) - 1:
+            raise ValueError(f'return-value action "{action_type}" must be last in batch')
+        read_idx = idx
+        read_type = action_type
+
+
+def _build_pending_batch(actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    pending: List[Dict[str, Any]] = []
+    for action in actions:
+        action_type = str(action.get("type", ""))
+        if _is_batch_computer_action_type(action_type):
+            pending.append(_translate_cua_action(action))
+            continue
+        if action_type == "goto":
+            pending.extend(_goto_batch_actions(str(action.get("url", ""))))
+            continue
+        if action_type == "back":
+            pending.extend(_back_batch_actions())
+            continue
+        if action_type in ("url", "screenshot"):
+            continue
+        raise ValueError(f"Unknown CUA action type: {action_type}")
+    return pending
+
+
+def _describe_translated_batch(actions: List[Dict[str, Any]]) -> str:
+    parts: List[str] = []
+    for action in actions:
+        action_type = str(action.get("type", ""))
+        if action_type == "click_mouse":
+            click = action.get("click_mouse", {})
+            if not isinstance(click, dict):
+                parts.append(action_type)
+                continue
+            if int(click.get("num_clicks", 0)) > 1:
+                parts.append(f"double_click({int(click.get('x', 0))},{int(click.get('y', 0))})")
+            else:
+                parts.append(f"click({int(click.get('x', 0))},{int(click.get('y', 0))})")
+            continue
+        if action_type == "type_text":
+            type_text = action.get("type_text", {})
+            text = str(type_text.get("text", "")) if isinstance(type_text, dict) else ""
+            parts.append(f"type({_truncate(text, 30)!r})")
+            continue
+        if action_type == "press_key":
+            press_key = action.get("press_key", {})
+            keys = press_key.get("keys", []) if isinstance(press_key, dict) else []
+            hold_keys = (
+                press_key.get("hold_keys", []) if isinstance(press_key, dict) else []
+            )
+            parts.append(f"key(hold={hold_keys}, keys={keys})")
+            continue
+        if action_type == "scroll":
+            parts.append("scroll")
+            continue
+        if action_type == "move_mouse":
+            parts.append("move")
+            continue
+        if action_type == "drag_mouse":
+            parts.append("drag")
+            continue
+        if action_type == "sleep":
+            sleep = action.get("sleep", {})
+            duration = int(sleep.get("duration_ms", 0)) if isinstance(sleep, dict) else 0
+            parts.append(f"sleep({duration}ms)")
+            continue
+        parts.append(action_type)
+    return "batch[" + " -> ".join(parts) + "]"
 
 
 def _truncate(text: str, max_len: int = 60) -> str:
@@ -136,7 +321,11 @@ def _describe_action(action_type: str, action_args: Dict[str, Any]) -> str:
         text = _truncate(str(action_args.get("text", "")))
         return f"type({text!r})"
     if action_type == "keypress":
-        return f"keypress({action_args.get('keys', [])})"
+        hold_keys = action_args.get("hold_keys", [])
+        keys = action_args.get("keys", [])
+        if hold_keys:
+            return f"keypress(hold={hold_keys}, keys={keys})"
+        return f"keypress({keys})"
     if action_type == "scroll":
         return (
             f"scroll({int(action_args.get('x', 0))}, {int(action_args.get('y', 0))}, "
@@ -148,6 +337,14 @@ def _describe_action(action_type: str, action_args: Dict[str, Any]) -> str:
         return "drag(...)"
     if action_type == "wait":
         return f"wait({int(action_args.get('ms', 1000))}ms)"
+    if action_type == "goto":
+        return f"goto({action_args.get('url', '')!r})"
+    if action_type == "back":
+        return "back()"
+    if action_type == "url":
+        return "url()"
+    if action_type == "screenshot":
+        return "screenshot()"
     return action_type
 
 
@@ -177,7 +374,7 @@ class KernelComputer:
         return "browser"
 
     def get_dimensions(self):
-        return (1024, 768)
+        return (1920, 1080)
 
     def _emit_backend(
         self, op: str, detail: str | None = None, elapsed_ms: int | None = None
@@ -250,13 +447,21 @@ class KernelComputer:
             op, lambda: self.client.browsers.computer.type_text(self.session_id, text=text)
         )
 
-    def keypress(self, keys: List[str]) -> None:
-        translated_keys = _translate_keys(keys)
-        op = _describe_action("keypress", {"keys": translated_keys})
+    def keypress(self, keys: List[str], hold_keys: List[str] | None = None) -> None:
+        normalized = _normalize_keypress_payload(keys, hold_keys or [])
+        op = _describe_action(
+            "keypress",
+            {
+                "keys": normalized["keys"],
+                **({"hold_keys": normalized["hold_keys"]} if normalized["hold_keys"] else {}),
+            },
+        )
         self._trace_backend(
             op,
             lambda: self.client.browsers.computer.press_key(
-                self.session_id, keys=translated_keys
+                self.session_id,
+                keys=normalized["keys"],
+                **({"hold_keys": normalized["hold_keys"]} if normalized["hold_keys"] else {}),
             ),
         )
 
@@ -290,30 +495,21 @@ class KernelComputer:
         time.sleep(ms / 1000)
 
     def batch_actions(self, actions: List[Dict[str, Any]]) -> None:
-        op = _describe_batch_actions(actions)
+        _validate_batch_terminal_read_actions(actions)
+        pending = _build_pending_batch(actions)
+        op = _describe_translated_batch(pending)
 
         def _do() -> None:
-            translated = [_translate_cua_action(a) for a in actions]
-            self.client.browsers.computer.batch(self.session_id, actions=translated)
+            if pending:
+                self.client.browsers.computer.batch(self.session_id, actions=pending)
 
         self._trace_backend(op, _do)
 
     def goto(self, url: str) -> None:
-        op = f"goto({json.dumps(url)})"
-        self._trace_backend(
-            op,
-            lambda: self.client.browsers.playwright.execute(
-                self.session_id, code=f"await page.goto({json.dumps(url)})"
-            ),
-        )
+        self.batch_actions([{"type": "goto", "url": url}])
 
     def back(self) -> None:
-        self._trace_backend(
-            "back()",
-            lambda: self.client.browsers.playwright.execute(
-                self.session_id, code="await page.goBack()"
-            ),
-        )
+        self.batch_actions([{"type": "back"}])
 
     def forward(self) -> None:
         self._trace_backend(

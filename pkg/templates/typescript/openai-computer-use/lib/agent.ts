@@ -6,17 +6,17 @@ import {
   type ResponseFunctionToolCallOutputItem,
   type ResponseComputerToolCall,
   type ResponseComputerToolCallOutputItem,
-  type ComputerTool,
   type Tool,
 } from 'openai/resources/responses/responses';
 
 import * as utils from './utils';
 import type { AgentEvent } from './log-events';
 import { describeAction, describeBatchActions } from './log-events';
-import { batchInstructions, batchComputerTool, navigationTools } from './toolset';
-import type { KernelComputer } from './kernel-computer';
+import { batchInstructions, batchComputerTool, computerUseExtraTool } from './toolset';
+import type { CuaAction, KernelComputer } from './kernel-computer';
 
 const BATCH_FUNC_NAME = 'batch_computer_actions';
+const EXTRA_FUNC_NAME = 'computer_use_extra';
 
 export class Agent {
   private model: string;
@@ -35,21 +35,17 @@ export class Agent {
     tools?: Tool[];
     acknowledge_safety_check_callback?: (msg: string) => boolean;
   }) {
-    this.model = opts.model ?? 'computer-use-preview';
+    this.model = opts.model ?? 'gpt-5.4';
     this.computer = opts.computer;
     this.ackCb = opts.acknowledge_safety_check_callback ?? ((): boolean => true);
 
-    const [w, h] = this.computer.getDimensions();
     this.tools = [
-      ...navigationTools,
-      batchComputerTool,
-      ...(opts.tools ?? []),
       {
-        type: 'computer_use_preview',
-        display_width: w,
-        display_height: h,
-        environment: this.computer.getEnvironment(),
-      } as ComputerTool,
+        type: 'computer',
+      } as unknown as Tool,
+      batchComputerTool,
+      computerUseExtraTool,
+      ...(opts.tools ?? []),
     ];
   }
 
@@ -150,36 +146,47 @@ export class Agent {
       if (fc.name === BATCH_FUNC_NAME) {
         return this.handleBatchCall(fc.call_id, argsObj);
       }
-
-      // Navigation tools (goto, back, forward)
-      const navFn = (this.computer as unknown as Record<string, unknown>)[fc.name];
-      if (typeof navFn === 'function') {
-        await (navFn as (...a: unknown[]) => unknown).call(
-          this.computer,
-          ...Object.values(argsObj),
-        );
+      if (fc.name === EXTRA_FUNC_NAME) {
+        return this.handleExtraCall(fc.call_id, argsObj);
       }
+
       return [
         {
           type: 'function_call_output',
           call_id: fc.call_id,
-          output: 'success',
+          output: `Unsupported function call: ${fc.name}`,
         } as unknown as ResponseFunctionToolCallOutputItem,
       ];
     }
 
     if (item.type === 'computer_call') {
-      const cc = item as ResponseComputerToolCall;
-      const { type: actionType, ...actionArgs } = cc.action;
+      const cc = item as ResponseComputerToolCall & {
+        action?: Record<string, unknown>;
+        actions?: Array<Record<string, unknown>>;
+      };
+      const actionList = Array.isArray(cc.actions)
+        ? cc.actions
+        : cc.action
+          ? [cc.action]
+          : [];
+
       const elapsedMs = this.currentModelElapsedMs();
+      const actionType =
+        actionList.length === 1 ? String(actionList[0]?.type ?? 'unknown') : 'batch';
+      const description =
+        actionList.length === 1
+          ? describeAction(actionType, actionList[0] ?? {})
+          : describeBatchActions(actionList);
+      const actionPayload =
+        actionList.length === 1 ? (actionList[0] ?? {}) : { type: 'batch', actions: actionList };
       this.emit('action', {
         action_type: actionType,
-        description: describeAction(actionType as string, actionArgs),
-        action: cc.action as unknown as Record<string, unknown>,
+        description,
+        action: actionPayload,
         ...(elapsedMs === null ? {} : { elapsed_ms: elapsedMs }),
       });
+      await this.computer.batchActions(actionList as CuaAction[]);
 
-      await this.executeComputerAction(actionType as string, cc.action as unknown as Record<string, unknown>);
       const screenshot = await this.computer.screenshot();
       this.emit('screenshot', { captured: true, bytes_base64: screenshot.length });
 
@@ -192,14 +199,16 @@ export class Agent {
       const currentUrl = await this.computer.getCurrentUrl();
       utils.checkBlocklistedUrl(currentUrl);
 
+      const screenshotOutput = {
+        type: 'computer_screenshot',
+        image_url: `data:image/png;base64,${screenshot}`,
+      } as unknown as ResponseComputerToolCallOutputItem['output'];
+
       const out: Omit<ResponseComputerToolCallOutputItem, 'id'> = {
         type: 'computer_call_output',
         call_id: cc.call_id,
         acknowledged_safety_checks: pending,
-        output: {
-          type: 'computer_screenshot',
-          image_url: `data:image/png;base64,${screenshot}`,
-        },
+        output: screenshotOutput,
       };
       return [out as ResponseItem];
     }
@@ -207,69 +216,85 @@ export class Agent {
     return [];
   }
 
-  private async executeComputerAction(
-    actionType: string,
-    action: Record<string, unknown>,
-  ): Promise<void> {
-    switch (actionType) {
-      case 'click':
-        await this.computer.click(
-          action.x as number,
-          action.y as number,
-          (action.button as string) ?? 'left',
-        );
-        break;
-      case 'double_click':
-        await this.computer.doubleClick(action.x as number, action.y as number);
-        break;
-      case 'type':
-        await this.computer.type(action.text as string);
-        break;
-      case 'keypress':
-        await this.computer.keypress(action.keys as string[]);
-        break;
-      case 'scroll':
-        await this.computer.scroll(
-          action.x as number,
-          action.y as number,
-          (action.scroll_x as number) ?? 0,
-          (action.scroll_y as number) ?? 0,
-        );
-        break;
-      case 'move':
-        await this.computer.move(action.x as number, action.y as number);
-        break;
-      case 'drag':
-        await this.computer.drag(action.path as Array<{ x: number; y: number }>);
-        break;
-      case 'wait':
-        await this.computer.wait((action.ms as number) ?? 1000);
-        break;
-      case 'screenshot':
-        break;
-      default:
-        console.warn(`Unknown computer action: ${actionType}`);
-    }
-  }
-
   private async handleBatchCall(
     callId: string,
     argsObj: Record<string, unknown>,
   ): Promise<ResponseItem[]> {
-    const actions = argsObj.actions as unknown as Parameters<typeof this.computer.batchActions>[0];
+    const actions = argsObj.actions as unknown as CuaAction[];
     await this.computer.batchActions(actions);
 
-    const screenshot = await this.computer.screenshot();
+    let statusText = 'Actions executed successfully.';
+    const terminalReadAction = this.batchTerminalReadAction(actions);
+    if (terminalReadAction === 'url') {
+      try {
+        const currentUrl = await this.computer.getCurrentUrl();
+        statusText = `Actions executed successfully. Current URL: ${currentUrl}`;
+      } catch (error) {
+        statusText = `Actions executed, but url() failed: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
+
+    const outputItems: Array<Record<string, unknown>> = [{ type: 'text', text: statusText }];
+    if (terminalReadAction !== 'url') {
+      const screenshot = await this.computer.screenshot();
+      outputItems.push({
+        type: 'image_url',
+        image_url: `data:image/png;base64,${screenshot}`,
+        detail: 'original',
+      });
+    }
     return [
       {
         type: 'function_call_output',
         call_id: callId,
-        output: JSON.stringify([
-          { type: 'text', text: 'Actions executed successfully.' },
-          { type: 'image_url', image_url: `data:image/png;base64,${screenshot}` },
-        ]),
+        output: JSON.stringify(outputItems),
       } as unknown as ResponseFunctionToolCallOutputItem,
     ];
+  }
+
+  private async handleExtraCall(
+    callId: string,
+    argsObj: Record<string, unknown>,
+  ): Promise<ResponseItem[]> {
+    const action = typeof argsObj.action === 'string' ? argsObj.action : '';
+    const url = typeof argsObj.url === 'string' ? argsObj.url : '';
+    let statusText = '';
+    if (action === 'goto') {
+      await this.computer.batchActions([{ type: 'goto', url }]);
+      statusText = 'goto executed successfully.';
+    } else if (action === 'back') {
+      await this.computer.batchActions([{ type: 'back' }]);
+      statusText = 'back executed successfully.';
+    } else if (action === 'url') {
+      const currentUrl = await this.computer.getCurrentUrl();
+      statusText = `Current URL: ${currentUrl}`;
+    } else {
+      statusText = `unknown ${EXTRA_FUNC_NAME} action: ${action}`;
+    }
+
+    const outputItems: Array<Record<string, unknown>> = [{ type: 'text', text: statusText }];
+    if (action !== 'url') {
+      const screenshot = await this.computer.screenshot();
+      outputItems.push({
+        type: 'image_url',
+        image_url: `data:image/png;base64,${screenshot}`,
+        detail: 'original',
+      });
+    }
+    return [
+      {
+        type: 'function_call_output',
+        call_id: callId,
+        output: JSON.stringify(outputItems),
+      } as unknown as ResponseFunctionToolCallOutputItem,
+    ];
+  }
+
+  private batchTerminalReadAction(actions: CuaAction[]): '' | 'url' | 'screenshot' {
+    if (actions.length === 0) return '';
+    const lastType = actions[actions.length - 1]?.type;
+    if (lastType === 'url' || lastType === 'screenshot') return lastType;
+    return '';
   }
 
   async runFullTurn(opts: {
@@ -317,6 +342,10 @@ export class Agent {
           input: [...inputMessages, ...newItems],
           tools: this.tools,
           truncation: 'auto',
+          reasoning: {
+            effort: 'low',
+            summary: 'concise',
+          },
           instructions: batchInstructions,
         });
         if (!response.output) throw new Error('No output from model');
