@@ -340,8 +340,14 @@ class Agent:
             }
 
             if self.computer.get_environment() == "browser":
-                current_url = self.computer.get_current_url()
-                check_blocklisted_url(current_url)
+                try:
+                    current_url = self.computer.get_current_url()
+                    check_blocklisted_url(current_url)
+                except Exception as exc:
+                    self._emit_event(
+                        "backend",
+                        {"op": "get_current_url.skipped", "detail": str(exc)},
+                    )
 
             return [call_output]
         return []

@@ -345,6 +345,10 @@ function buildPendingBatch(actions: CuaAction[]): BatchAction[] {
       pending.push(...backBatchActions());
       continue;
     }
+    if (actionType === 'forward') {
+      pending.push(...forwardBatchActions());
+      continue;
+    }
     if (actionType === 'url' || actionType === 'screenshot') {
       continue;
     }

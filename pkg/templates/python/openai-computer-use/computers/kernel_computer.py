@@ -312,6 +312,9 @@ def _build_pending_batch(actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if action_type == "back":
             pending.extend(_back_batch_actions())
             continue
+        if action_type == "forward":
+            pending.extend(_forward_batch_actions())
+            continue
         if action_type in ("url", "screenshot"):
             continue
         raise ValueError(f"Unknown CUA action type: {action_type}")

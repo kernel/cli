@@ -202,8 +202,17 @@ export class Agent {
         if (!this.ackCb(msg)) throw new Error(`Safety check failed: ${msg}`);
       }
 
-      const currentUrl = await this.computer.getCurrentUrl();
-      utils.checkBlocklistedUrl(currentUrl);
+      if (this.computer.getEnvironment() === 'browser') {
+        try {
+          const currentUrl = await this.computer.getCurrentUrl();
+          utils.checkBlocklistedUrl(currentUrl);
+        } catch (error) {
+          this.emit('backend', {
+            op: 'get_current_url.skipped',
+            detail: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
 
       const screenshotOutput = {
         type: 'computer_screenshot',
