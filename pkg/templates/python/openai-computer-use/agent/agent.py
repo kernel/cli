@@ -117,6 +117,9 @@ EXTRA_TOOL = {
     "strict": False,
 }
 
+# Keep this shape aligned with CUA and current OpenAI Responses API.
+OPENAI_COMPUTER_TOOL = {"type": "computer"}
+
 
 class Agent:
     """An agent that uses OpenAI CUA with Kernel's native computer control API."""
@@ -140,9 +143,7 @@ class Agent:
 
         if computer:
             self.tools += [
-                {
-                    "type": "computer",
-                },
+                dict(OPENAI_COMPUTER_TOOL),
                 BATCH_TOOL,
                 EXTRA_TOOL,
             ]

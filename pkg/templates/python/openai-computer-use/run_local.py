@@ -3,7 +3,7 @@ Local test script that creates a remote Kernel browser and runs the CUA agent.
 No Kernel app deployment needed.
 
 Usage:
-    KERNEL_API_KEY=... OPENAI_API_KEY=... uv run run_local.py --output text
+    KERNEL_API_KEY=... OPENAI_API_KEY=... uv run run_local.py --task "go to example.com and summarize it"
 """
 
 import argparse
@@ -26,6 +26,8 @@ from agent.logging import (
 )
 from computers.kernel_computer import KernelComputer
 
+DEFAULT_TASK = "go to example.com and summarize what the page says"
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run OpenAI CUA local test")
@@ -39,6 +41,11 @@ def parse_args():
         "--debug",
         action="store_true",
         help="Enable verbose debug payload logging",
+    )
+    parser.add_argument(
+        "--task",
+        default=DEFAULT_TASK,
+        help="User task prompt to run in the browser session",
     )
     return parser.parse_args()
 
@@ -74,7 +81,7 @@ def main():
             },
             {
                 "role": "user",
-                "content": "go to ebay.com and look up oberheim ob-x prices and give me a report",
+                "content": args.task,
             },
         ]
 

@@ -17,6 +17,8 @@ import type { CuaAction, KernelComputer } from './kernel-computer';
 
 const BATCH_FUNC_NAME = 'batch_computer_actions';
 const EXTRA_FUNC_NAME = 'computer_use_extra';
+// Keep this shape aligned with CUA and current OpenAI Responses API.
+const OPENAI_COMPUTER_TOOL = { type: 'computer' } as unknown as Tool;
 
 export class Agent {
   private model: string;
@@ -40,9 +42,7 @@ export class Agent {
     this.ackCb = opts.acknowledge_safety_check_callback ?? ((): boolean => true);
 
     this.tools = [
-      {
-        type: 'computer',
-      } as unknown as Tool,
+      OPENAI_COMPUTER_TOOL,
       batchComputerTool,
       computerUseExtraTool,
       ...(opts.tools ?? []),

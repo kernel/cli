@@ -21,8 +21,10 @@ dotenv.config({ override: true, quiet: true });
  * No Kernel app deployment needed.
  *
  * Usage:
- *   KERNEL_API_KEY=... OPENAI_API_KEY=... npx tsx run_local.ts
+ *   KERNEL_API_KEY=... OPENAI_API_KEY=... npx tsx run_local.ts --task "go to example.com and summarize it"
  */
+
+const DEFAULT_TASK = 'go to example.com and summarize what the page says';
 
 export async function runLocalTest(args: string[] = process.argv.slice(2)): Promise<void> {
   if (!process.env.KERNEL_API_KEY) throw new Error('KERNEL_API_KEY is not set');
@@ -30,6 +32,7 @@ export async function runLocalTest(args: string[] = process.argv.slice(2)): Prom
 
   const client = new Kernel({ apiKey: process.env.KERNEL_API_KEY });
   const outputMode = parseOutputMode(args);
+  const task = parseTask(args);
   const debug = args.includes('--debug');
   const onEvent = createEventLogger({ output: outputMode, verbose: debug });
 
@@ -69,7 +72,7 @@ export async function runLocalTest(args: string[] = process.argv.slice(2)): Prom
           content: [
             {
               type: 'input_text',
-              text: 'go to ebay.com and look up oberheim ob-x prices and give me a report',
+                  text: task,
             },
           ],
         },
@@ -98,6 +101,15 @@ function parseOutputMode(args: string[]): OutputMode {
   const outputFromNext = outputFlagIndex >= 0 ? args[outputFlagIndex + 1] : undefined;
   const output = outputFromEquals ?? outputFromNext;
   return output === 'jsonl' ? 'jsonl' : 'text';
+}
+
+function parseTask(args: string[]): string {
+  const taskFromEquals = args.find((arg) => arg.startsWith('--task='))?.slice('--task='.length).trim();
+  const taskFlagIndex = args.findIndex((arg) => arg === '--task');
+  const nextArg = taskFlagIndex >= 0 ? args[taskFlagIndex + 1] : undefined;
+  const taskFromNext = nextArg && !nextArg.startsWith('--') ? nextArg.trim() : undefined;
+  const task = taskFromEquals || taskFromNext;
+  return task && task.length > 0 ? task : DEFAULT_TASK;
 }
 
 function isDirectRun(): boolean {
