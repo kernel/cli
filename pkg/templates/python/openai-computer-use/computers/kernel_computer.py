@@ -125,6 +125,16 @@ def _normalize_drag_path(path: Any) -> List[List[int]]:
     points: List[List[int]] = []
     if isinstance(path, list):
         for point in path:
+            if isinstance(point, (list, tuple)) and len(point) >= 2:
+                x, y = point[0], point[1]
+                if (
+                    isinstance(x, (int, float))
+                    and not isinstance(x, bool)
+                    and isinstance(y, (int, float))
+                    and not isinstance(y, bool)
+                ):
+                    points.append([int(x), int(y)])
+                continue
             if not isinstance(point, dict):
                 continue
             x = point.get("x")
@@ -136,16 +146,13 @@ def _normalize_drag_path(path: Any) -> List[List[int]]:
                 and not isinstance(y, bool)
             ):
                 points.append([int(x), int(y)])
-    if not points:
-        return []
-    if len(points) == 1:
-        x, y = points[0]
-        return [[x, y], [x + 1, y]]
     return points
 
 
-def _drag_noop_action() -> Dict[str, Any]:
-    return {"type": "sleep", "sleep": {"duration_ms": 1}}
+def _validate_drag_path(path: List[List[int]]) -> None:
+    if len(path) >= 2:
+        return
+    raise ValueError(f"drag action requires path with at least two points; got {path!r}")
 
 
 def _translate_cua_action(action: Dict[str, Any]) -> Dict[str, Any]:
@@ -213,8 +220,7 @@ def _translate_cua_action(action: Dict[str, Any]) -> Dict[str, Any]:
         return {"type": "move_mouse", "move_mouse": {"x": action.get("x", 0), "y": action.get("y", 0)}}
     elif action_type == "drag":
         path = _normalize_drag_path(action.get("path", []))
-        if len(path) < 2:
-            return _drag_noop_action()
+        _validate_drag_path(path)
         return {"type": "drag_mouse", "drag_mouse": {"path": path}}
     elif action_type == "wait":
         return {"type": "sleep", "sleep": {"duration_ms": action.get("ms", 1000)}}
@@ -552,9 +558,7 @@ class KernelComputer:
 
         def _do() -> None:
             normalized_path = _normalize_drag_path(path)
-            if len(normalized_path) < 2:
-                time.sleep(0.001)
-                return
+            _validate_drag_path(normalized_path)
             self.client.browsers.computer.drag_mouse(self.session_id, path=normalized_path)
 
         self._trace_backend(op, _do)

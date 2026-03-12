@@ -1,7 +1,7 @@
 import asyncio
 import datetime
 import os
-from typing import NotRequired, TypedDict
+from typing import TypedDict
 
 import kernel
 from agent import Agent
@@ -32,7 +32,6 @@ Invoke this via CLI:
 
 class CuaInput(TypedDict):
     task: str
-    output: NotRequired[str]
 
 
 class CuaOutput(TypedDict):
@@ -55,10 +54,7 @@ async def cua_task(
     if not payload or not payload.get("task"):
         raise ValueError("task is required")
 
-    output_mode = payload.get("output", "text")
-    if output_mode not in ("text", "jsonl"):
-        output_mode = "text"
-    on_event = create_event_logger(output=output_mode)
+    on_event = create_event_logger()
 
     browser_create_started_at = datetime.datetime.now()
     emit_browser_new_started(on_event)

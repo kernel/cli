@@ -32,12 +32,6 @@ DEFAULT_TASK = "go to example.com and summarize what the page says"
 def parse_args():
     parser = argparse.ArgumentParser(description="Run OpenAI CUA local test")
     parser.add_argument(
-        "--output",
-        choices=["text", "jsonl"],
-        default="text",
-        help="Log output mode",
-    )
-    parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable verbose debug payload logging",
@@ -58,7 +52,7 @@ def main():
         raise ValueError("OPENAI_API_KEY is not set")
 
     client = Kernel(api_key=os.getenv("KERNEL_API_KEY"))
-    on_event = create_event_logger(output=args.output, verbose=args.debug)
+    on_event = create_event_logger(verbose=args.debug)
 
     browser_create_started_at = datetime.datetime.now()
     emit_browser_new_started(on_event)

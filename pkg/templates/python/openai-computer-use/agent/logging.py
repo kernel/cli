@@ -1,11 +1,9 @@
-import json
 import sys
 import threading
 import time
 from datetime import datetime
-from typing import Callable, Literal
+from typing import Callable
 
-OutputMode = Literal["text", "jsonl"]
 MAX_LINE_WIDTH = 120
 
 
@@ -119,17 +117,7 @@ class _ThinkingSpinner:
                 sys.stdout.flush()
 
 
-def create_event_logger(
-    output: OutputMode = "text", verbose: bool = False
-) -> Callable[[dict], None]:
-    if output == "jsonl":
-        def render_jsonl(event: dict) -> None:
-            payload = {"event": event.get("event"), "data": event.get("data", {})}
-            sys.stdout.write(json.dumps(payload, default=str) + "\n")
-            sys.stdout.flush()
-
-        return render_jsonl
-
+def create_event_logger(verbose: bool = False) -> Callable[[dict], None]:
     spinner = _ThinkingSpinner(sys.stdout.isatty())
     in_text = False
     last_live_view_url = ""

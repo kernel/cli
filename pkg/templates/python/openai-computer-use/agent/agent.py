@@ -16,6 +16,7 @@ from utils import (
 
 BATCH_FUNC_NAME = "batch_computer_actions"
 EXTRA_FUNC_NAME = "computer_use_extra"
+POST_ACTION_SETTLE_SECONDS = 0.3
 
 BATCH_INSTRUCTIONS = """You have three ways to perform actions:
 1. The standard computer tool — use for single actions when you need screenshot feedback after each step.
@@ -33,7 +34,12 @@ Use computer_use_extra for:
 
 When interacting with page content (search boxes, forms, chat inputs):
 - Click the target input first, then type.
-- Do not use URL-navigation actions for in-page text entry."""
+- Do not use URL-navigation actions for in-page text entry.
+
+For drag actions in batch_computer_actions:
+- Always include a path field.
+- path must be an array of at least two points.
+- Each point must be an object like {"x": 123, "y": 456}."""
 
 BATCH_TOOL = {
     "type": "function",
@@ -85,6 +91,18 @@ BATCH_TOOL = {
                         "button": {"type": "string"},
                         "scroll_x": {"type": "number"},
                         "scroll_y": {"type": "number"},
+                        "path": {
+                            "type": "array",
+                            "description": "Required for drag actions. Provide at least two points as objects with x/y coordinates.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "x": {"type": "number"},
+                                    "y": {"type": "number"},
+                                },
+                                "required": ["x", "y"],
+                            },
+                        },
                     },
                     "required": ["type"],
                 },
@@ -160,6 +178,10 @@ class Agent:
         if self._model_request_started_at is None:
             return None
         return int((time.time() - self._model_request_started_at) * 1000)
+
+    def _capture_post_action_screenshot(self) -> str:
+        time.sleep(POST_ACTION_SETTLE_SECONDS)
+        return self.computer.screenshot()
 
     def _extract_reasoning_text(self, item: dict[str, Any]) -> str:
         summary = item.get("summary")
@@ -289,7 +311,7 @@ class Agent:
             self._emit_event("action", payload)
             self.computer.batch_actions(typed_actions)
 
-            screenshot_base64 = self.computer.screenshot()
+            screenshot_base64 = self._capture_post_action_screenshot()
             self._emit_event(
                 "screenshot",
                 {"captured": True, "bytes_base64": len(screenshot_base64)},
@@ -318,7 +340,6 @@ class Agent:
             if self.computer.get_environment() == "browser":
                 current_url = self.computer.get_current_url()
                 check_blocklisted_url(current_url)
-                call_output["output"]["current_url"] = current_url
 
             return [call_output]
         return []
@@ -336,21 +357,20 @@ class Agent:
                 status_text = f"Actions executed successfully. Current URL: {current_url}"
             except Exception as exc:
                 status_text = f"Actions executed, but url() failed: {exc}"
-        output_items: list[dict[str, Any]] = [{"type": "text", "text": status_text}]
-        if terminal_action != "url":
-            screenshot_base64 = self.computer.screenshot()
-            output_items.append(
-                {
-                    "type": "image_url",
-                    "image_url": f"data:image/png;base64,{screenshot_base64}",
-                    "detail": "original",
-                }
-            )
+        screenshot_base64 = self._capture_post_action_screenshot()
+        output_items: list[dict[str, Any]] = [{"type": "input_text", "text": status_text}]
+        output_items.append(
+            {
+                "type": "input_image",
+                "image_url": f"data:image/png;base64,{screenshot_base64}",
+                "detail": "original",
+            }
+        )
         return [
             {
                 "type": "function_call_output",
                 "call_id": call_id,
-                "output": json.dumps(output_items),
+                "output": output_items,
             }
         ]
 
@@ -368,21 +388,20 @@ class Agent:
         else:
             status_text = f"unknown {EXTRA_FUNC_NAME} action: {action}"
 
-        output_items: list[dict[str, Any]] = [{"type": "text", "text": status_text}]
-        if action != "url":
-            screenshot_base64 = self.computer.screenshot()
-            output_items.append(
-                {
-                    "type": "image_url",
-                    "image_url": f"data:image/png;base64,{screenshot_base64}",
-                    "detail": "original",
-                }
-            )
+        screenshot_base64 = self._capture_post_action_screenshot()
+        output_items: list[dict[str, Any]] = [{"type": "input_text", "text": status_text}]
+        output_items.append(
+            {
+                "type": "input_image",
+                "image_url": f"data:image/png;base64,{screenshot_base64}",
+                "detail": "original",
+            }
+        )
         return [
             {
                 "type": "function_call_output",
                 "call_id": call_id,
-                "output": json.dumps(output_items),
+                "output": output_items,
             }
         ]
 

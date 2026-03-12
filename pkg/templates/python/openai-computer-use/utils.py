@@ -41,6 +41,25 @@ def sanitize_message(msg: dict) -> dict:
             sanitized = msg.copy()
             sanitized["output"] = {**output, "image_url": "[omitted]"}
             return sanitized
+    if msg.get("type") == "function_call_output":
+        output = msg.get("output")
+        if isinstance(output, list):
+            sanitized_items = []
+            changed = False
+            for item in output:
+                if (
+                    isinstance(item, dict)
+                    and item.get("type") == "input_image"
+                    and isinstance(item.get("image_url"), str)
+                ):
+                    sanitized_items.append({**item, "image_url": "[omitted]"})
+                    changed = True
+                else:
+                    sanitized_items.append(item)
+            if changed:
+                sanitized = msg.copy()
+                sanitized["output"] = sanitized_items
+                return sanitized
     return msg
 
 
