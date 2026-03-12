@@ -1,5 +1,3 @@
-export type OutputMode = 'text' | 'jsonl';
-
 export type AgentEventName =
   | 'session_state'
   | 'backend'

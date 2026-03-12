@@ -17,6 +17,7 @@ import type { CuaAction, KernelComputer } from './kernel-computer';
 
 const BATCH_FUNC_NAME = 'batch_computer_actions';
 const EXTRA_FUNC_NAME = 'computer_use_extra';
+const POST_ACTION_SETTLE_MS = 300;
 // Keep this shape aligned with CUA and current OpenAI Responses API.
 const OPENAI_COMPUTER_TOOL = { type: 'computer' } as unknown as Tool;
 
@@ -68,6 +69,11 @@ export class Agent {
 
   private currentModelElapsedMs(): number | null {
     return this.modelRequestStartedAt === null ? null : Date.now() - this.modelRequestStartedAt;
+  }
+
+  private async capturePostActionScreenshot(): Promise<string> {
+    await new Promise((resolve) => setTimeout(resolve, POST_ACTION_SETTLE_MS));
+    return this.computer.screenshot();
   }
 
   private extractReasoningText(item: Record<string, unknown>): string {
@@ -187,7 +193,7 @@ export class Agent {
       });
       await this.computer.batchActions(actionList as CuaAction[]);
 
-      const screenshot = await this.computer.screenshot();
+      const screenshot = await this.capturePostActionScreenshot();
       this.emit('screenshot', { captured: true, bytes_base64: screenshot.length });
 
       const pending = cc.pending_safety_checks ?? [];
@@ -203,7 +209,6 @@ export class Agent {
         type: 'computer_screenshot',
         image_url: `data:image/png;base64,${screenshot}`,
       } as unknown as ResponseComputerToolCallOutputItem['output'];
-      (screenshotOutput as { current_url?: string }).current_url = currentUrl;
 
       const out: Omit<ResponseComputerToolCallOutputItem, 'id'> = {
         type: 'computer_call_output',
@@ -235,20 +240,18 @@ export class Agent {
       }
     }
 
-    const outputItems: Array<Record<string, unknown>> = [{ type: 'text', text: statusText }];
-    if (terminalReadAction !== 'url') {
-      const screenshot = await this.computer.screenshot();
-      outputItems.push({
-        type: 'image_url',
-        image_url: `data:image/png;base64,${screenshot}`,
-        detail: 'original',
-      });
-    }
+    const screenshot = await this.capturePostActionScreenshot();
+    const outputItems: Array<Record<string, unknown>> = [{ type: 'input_text', text: statusText }];
+    outputItems.push({
+      type: 'input_image',
+      image_url: `data:image/png;base64,${screenshot}`,
+      detail: 'original',
+    });
     return [
       {
         type: 'function_call_output',
         call_id: callId,
-        output: JSON.stringify(outputItems),
+        output: outputItems,
       } as unknown as ResponseFunctionToolCallOutputItem,
     ];
   }
@@ -273,20 +276,18 @@ export class Agent {
       statusText = `unknown ${EXTRA_FUNC_NAME} action: ${action}`;
     }
 
-    const outputItems: Array<Record<string, unknown>> = [{ type: 'text', text: statusText }];
-    if (action !== 'url') {
-      const screenshot = await this.computer.screenshot();
-      outputItems.push({
-        type: 'image_url',
-        image_url: `data:image/png;base64,${screenshot}`,
-        detail: 'original',
-      });
-    }
+    const screenshot = await this.capturePostActionScreenshot();
+    const outputItems: Array<Record<string, unknown>> = [{ type: 'input_text', text: statusText }];
+    outputItems.push({
+      type: 'input_image',
+      image_url: `data:image/png;base64,${screenshot}`,
+      detail: 'original',
+    });
     return [
       {
         type: 'function_call_output',
         call_id: callId,
-        output: JSON.stringify(outputItems),
+        output: outputItems,
       } as unknown as ResponseFunctionToolCallOutputItem,
     ];
   }

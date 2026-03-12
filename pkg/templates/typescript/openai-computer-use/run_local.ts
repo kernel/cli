@@ -12,7 +12,6 @@ import {
   emitBrowserNewStarted,
   emitSessionState,
 } from './lib/logging';
-import type { OutputMode } from './lib/log-events';
 
 dotenv.config({ override: true, quiet: true });
 
@@ -31,10 +30,9 @@ export async function runLocalTest(args: string[] = process.argv.slice(2)): Prom
   if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is not set');
 
   const client = new Kernel({ apiKey: process.env.KERNEL_API_KEY });
-  const outputMode = parseOutputMode(args);
   const task = parseTask(args);
   const debug = args.includes('--debug');
-  const onEvent = createEventLogger({ output: outputMode, verbose: debug });
+  const onEvent = createEventLogger({ verbose: debug });
 
   emitBrowserNewStarted(onEvent);
   const browserCreateStartedAt = Date.now();
@@ -72,7 +70,7 @@ export async function runLocalTest(args: string[] = process.argv.slice(2)): Prom
           content: [
             {
               type: 'input_text',
-                  text: task,
+              text: task,
             },
           ],
         },
@@ -92,15 +90,6 @@ export async function runLocalTest(args: string[] = process.argv.slice(2)): Prom
     }
     console.log('> Browser session deleted');
   }
-}
-
-function parseOutputMode(args: string[]): OutputMode {
-  const outputArg = args.find((arg) => arg.startsWith('--output='));
-  const outputFromEquals = outputArg?.split('=')[1];
-  const outputFlagIndex = args.findIndex((arg) => arg === '--output');
-  const outputFromNext = outputFlagIndex >= 0 ? args[outputFlagIndex + 1] : undefined;
-  const output = outputFromEquals ?? outputFromNext;
-  return output === 'jsonl' ? 'jsonl' : 'text';
 }
 
 function parseTask(args: string[]): string {

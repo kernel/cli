@@ -165,26 +165,40 @@ function normalizeButton(button?: string | number): string {
   return button;
 }
 
-function normalizeDragPath(path: Array<{ x: number; y: number }> | undefined): number[][] {
-  const points: Array<[number, number]> = (path ?? [])
-    .filter(
-      (point): point is { x: number; y: number } =>
-        typeof point?.x === 'number' &&
-        Number.isFinite(point.x) &&
-        typeof point?.y === 'number' &&
-        Number.isFinite(point.y),
-    )
-    .map((point): [number, number] => [Math.trunc(point.x), Math.trunc(point.y)]);
-  if (points.length === 0) return [];
-  if (points.length === 1) {
-    const [x, y] = points[0]!;
-    return [[x, y], [x + 1, y]];
+function normalizeDragPath(path: unknown): number[][] {
+  if (!Array.isArray(path)) return [];
+
+  const points: Array<[number, number]> = [];
+  for (const point of path) {
+    if (Array.isArray(point) && point.length >= 2) {
+      const [x, y] = point;
+      if (typeof x === 'number' && Number.isFinite(x) && typeof y === 'number' && Number.isFinite(y)) {
+        points.push([Math.trunc(x), Math.trunc(y)]);
+      }
+      continue;
+    }
+
+    if (
+      point &&
+      typeof point === 'object' &&
+      typeof (point as { x?: unknown }).x === 'number' &&
+      Number.isFinite((point as { x: number }).x) &&
+      typeof (point as { y?: unknown }).y === 'number' &&
+      Number.isFinite((point as { y: number }).y)
+    ) {
+      points.push([
+        Math.trunc((point as { x: number }).x),
+        Math.trunc((point as { y: number }).y),
+      ]);
+    }
   }
+
   return points;
 }
 
-function dragNoopAction(): BatchAction {
-  return { type: 'sleep', sleep: { duration_ms: 1 } };
+function validateDragPath(path: number[][]): void {
+  if (path.length >= 2) return;
+  throw new Error(`drag action requires path with at least two points; got ${JSON.stringify(path)}`);
 }
 
 function translateCuaAction(action: CuaAction): BatchAction {
@@ -243,7 +257,7 @@ function translateCuaAction(action: CuaAction): BatchAction {
       return { type: 'move_mouse', move_mouse: { x: action.x ?? 0, y: action.y ?? 0 } };
     case 'drag': {
       const path = normalizeDragPath(action.path);
-      if (path.length < 2) return dragNoopAction();
+      validateDragPath(path);
       return { type: 'drag_mouse', drag_mouse: { path } };
     }
     case 'wait':
@@ -514,10 +528,7 @@ export class KernelComputer {
     const op = describeAction('drag', { path });
     await this.traceCall(op, async () => {
       const normalizedPath = normalizeDragPath(path);
-      if (normalizedPath.length < 2) {
-        await new Promise((resolve) => setTimeout(resolve, 1));
-        return;
-      }
+      validateDragPath(normalizedPath);
       await this.client.browsers.computer.dragMouse(this.sessionId, { path: normalizedPath });
     });
   }

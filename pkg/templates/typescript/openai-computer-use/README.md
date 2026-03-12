@@ -12,24 +12,17 @@ You can test against a remote Kernel browser without deploying:
 cp .env.example .env
 # Fill in OPENAI_API_KEY and KERNEL_API_KEY in .env
 pnpm install
-pnpm run test:local
-# Equivalent direct run from the app entrypoint:
-pnpm exec tsx index.ts
-# Direct run of the local runner file:
 pnpm exec tsx run_local.ts
-# JSONL event output
-pnpm run test:local -- --output=jsonl
+pnpm exec tsx run_local.ts --task "go to https://news.ycombinator.com and get the top 5 articles"
 ```
 
-The local runner defaults to human-readable logs (`text`). Use `--output=jsonl` for one structured event per line (including backend events). Add `--debug` to include verbose in-flight events.
+The local runner defaults to a built-in sample task. Pass `--task "..."` to run a custom prompt locally, and add `--debug` to include verbose in-flight events.
 
 ## Deploy to Kernel
 
 ```bash
 kernel deploy index.ts --env-file .env
 kernel invoke ts-openai-cua cua-task -p '{"task":"Go to https://news.ycombinator.com and get the top 5 articles"}'
-# JSONL logs for invocation
-kernel invoke ts-openai-cua cua-task -p '{"task":"Go to https://news.ycombinator.com and get the top 5 articles","output":"jsonl"}'
 ```
 
 See the [docs](https://www.kernel.sh/docs/quickstart) for more information.

@@ -1,4 +1,4 @@
-import type { AgentEvent, OutputMode } from './log-events';
+import type { AgentEvent } from './log-events';
 
 const MAX_LINE_WIDTH = 120;
 
@@ -142,18 +142,8 @@ class ThinkingSpinner {
   }
 }
 
-export function createEventLogger(opts?: {
-  output?: OutputMode;
-  verbose?: boolean;
-}): (event: AgentEvent) => void {
-  const output = opts?.output ?? 'text';
+export function createEventLogger(opts?: { verbose?: boolean }): (event: AgentEvent) => void {
   const verbose = opts?.verbose ?? false;
-
-  if (output === 'jsonl') {
-    return (event: AgentEvent): void => {
-      process.stdout.write(`${JSON.stringify({ event: event.event, data: event.data })}\n`);
-    };
-  }
 
   let inText = false;
   let lastLiveViewUrl = '';

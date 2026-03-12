@@ -11,13 +11,11 @@ import {
   emitBrowserNewStarted,
   emitSessionState,
 } from './lib/logging';
-import type { OutputMode } from './lib/log-events';
 
 dotenv.config({ override: true, quiet: true });
 
 interface CuaInput {
   task: string;
-  output?: OutputMode;
 }
 interface CuaOutput {
   elapsed: number;
@@ -50,8 +48,7 @@ app.action<CuaInput, CuaOutput>(
   async (ctx: KernelContext, payload?: CuaInput): Promise<CuaOutput> => {
     const start = Date.now();
     if (!payload?.task) throw new Error('task is required');
-    const outputMode: OutputMode = payload.output === 'jsonl' ? 'jsonl' : 'text';
-    const onEvent = createEventLogger({ output: outputMode });
+    const onEvent = createEventLogger();
 
     emitBrowserNewStarted(onEvent);
     const browserCreateStartedAt = Date.now();

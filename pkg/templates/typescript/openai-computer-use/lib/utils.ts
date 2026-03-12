@@ -28,6 +28,18 @@ export function sanitizeMessage(msg: ResponseItem): ResponseItem {
       output.image_url = '[omitted]';
     }
   }
+  if (
+    sanitizedMsg.type === 'function_call_output' &&
+    Array.isArray((sanitizedMsg as { output?: unknown }).output)
+  ) {
+    const outputItems = (sanitizedMsg as unknown as { output: Array<{ type?: unknown; image_url?: unknown }> }).output;
+    sanitizedMsg.output = outputItems.map((item) => {
+      if (item.type === 'input_image' && typeof item.image_url === 'string') {
+        return { ...item, image_url: '[omitted]' };
+      }
+      return item;
+    }) as typeof sanitizedMsg.output;
+  }
   return sanitizedMsg;
 }
 

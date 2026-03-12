@@ -14,7 +14,12 @@ Use computer_use_extra for:
 
 When interacting with page content (search boxes, forms, chat inputs):
 - Click the target input first, then type.
-- Do not use URL-navigation actions for in-page text entry.`;
+- Do not use URL-navigation actions for in-page text entry.
+
+For drag actions in batch_computer_actions:
+- Always include a path field.
+- path must be an array of at least two points.
+- Each point must be an object like {"x": 123, "y": 456}.`;
 
 export const batchComputerTool = {
   type: 'function' as const,
@@ -65,6 +70,18 @@ export const batchComputerTool = {
             button: { type: 'string' },
             scroll_x: { type: 'number' },
             scroll_y: { type: 'number' },
+            path: {
+              type: 'array',
+              description: 'Required for drag actions. Provide at least two points as objects with x/y coordinates.',
+              items: {
+                type: 'object',
+                properties: {
+                  x: { type: 'number' },
+                  y: { type: 'number' },
+                },
+                required: ['x', 'y'],
+              },
+            },
           },
           required: ['type'],
         },
