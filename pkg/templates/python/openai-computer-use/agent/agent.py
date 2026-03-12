@@ -324,6 +324,8 @@ class Agent:
 
     def _handle_batch_call(self, call_id, args):
         actions = args.get("actions", [])
+        if not isinstance(actions, list):
+            actions = []
         self.computer.batch_actions(actions)
         status_text = "Actions executed successfully."
         terminal_action = self._batch_terminal_read_action(actions if isinstance(actions, list) else [])

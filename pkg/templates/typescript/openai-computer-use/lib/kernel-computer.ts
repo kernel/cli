@@ -259,34 +259,34 @@ function isBatchComputerActionType(actionType: string): boolean {
   );
 }
 
+function pressKeyAction(keys: string[], holdKeys?: string[]): BatchAction {
+  return { type: 'press_key', press_key: normalizeKeypressPayload(keys, holdKeys) };
+}
+
 function gotoBatchActions(url: string): BatchAction[] {
   return [
-    { type: 'press_key', press_key: { hold_keys: ['Ctrl'], keys: ['l'] } },
+    pressKeyAction(['l'], ['Ctrl']),
     { type: 'sleep', sleep: { duration_ms: GOTO_CHORD_DELAY_MS } },
-    { type: 'press_key', press_key: { hold_keys: ['Ctrl'], keys: ['a'] } },
+    pressKeyAction(['a'], ['Ctrl']),
     { type: 'type_text', type_text: { text: url } },
-    { type: 'press_key', press_key: { keys: ['Return'] } },
+    pressKeyAction(['Return']),
   ];
 }
 
 function backBatchActions(): BatchAction[] {
-  return [
-    { type: 'press_key', press_key: { hold_keys: ['Alt'], keys: ['Left'] } },
-  ];
+  return [pressKeyAction(['Left'], ['Alt'])];
 }
 
 function forwardBatchActions(): BatchAction[] {
-  return [
-    { type: 'press_key', press_key: { hold_keys: ['Alt'], keys: ['Right'] } },
-  ];
+  return [pressKeyAction(['Right'], ['Alt'])];
 }
 
 function currentUrlBatchActions(): BatchAction[] {
   return [
-    { type: 'press_key', press_key: { hold_keys: ['Ctrl'], keys: ['l'] } },
-    { type: 'press_key', press_key: { hold_keys: ['Ctrl'], keys: ['a'] } },
-    { type: 'press_key', press_key: { hold_keys: ['Ctrl'], keys: ['c'] } },
-    { type: 'press_key', press_key: { keys: ['Escape'] } },
+    pressKeyAction(['l'], ['Ctrl']),
+    pressKeyAction(['a'], ['Ctrl']),
+    pressKeyAction(['c'], ['Ctrl']),
+    pressKeyAction(['Escape']),
   ];
 }
 

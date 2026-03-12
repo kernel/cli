@@ -221,7 +221,7 @@ export class Agent {
     callId: string,
     argsObj: Record<string, unknown>,
   ): Promise<ResponseItem[]> {
-    const actions = argsObj.actions as unknown as CuaAction[];
+    const actions = Array.isArray(argsObj.actions) ? (argsObj.actions as CuaAction[]) : [];
     await this.computer.batchActions(actions);
 
     let statusText = 'Actions executed successfully.';

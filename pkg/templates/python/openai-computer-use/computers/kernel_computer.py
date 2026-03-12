@@ -235,67 +235,43 @@ def _is_batch_computer_action_type(action_type: str) -> bool:
     }
 
 
+def _press_key_action(
+    keys: List[str], hold_keys: List[str] | None = None
+) -> Dict[str, Any]:
+    payload = _normalize_keypress_payload(keys=keys, hold_keys=hold_keys)
+    return {"type": "press_key", "press_key": payload}
+
+
 def _goto_batch_actions(url: str) -> List[Dict[str, Any]]:
     return [
-        {
-            "type": "press_key",
-            "press_key": {"hold_keys": ["Ctrl"], "keys": ["l"]},
-        },
+        _press_key_action(["l"], hold_keys=["Ctrl"]),
         {
             "type": "sleep",
             "sleep": {"duration_ms": GOTO_CHORD_DELAY_MS},
         },
-        {
-            "type": "press_key",
-            "press_key": {"hold_keys": ["Ctrl"], "keys": ["a"]},
-        },
+        _press_key_action(["a"], hold_keys=["Ctrl"]),
         {
             "type": "type_text",
             "type_text": {"text": url},
         },
-        {
-            "type": "press_key",
-            "press_key": {"keys": ["Return"]},
-        },
+        _press_key_action(["Return"]),
     ]
 
 
 def _back_batch_actions() -> List[Dict[str, Any]]:
-    return [
-        {
-            "type": "press_key",
-            "press_key": {"hold_keys": ["Alt"], "keys": ["Left"]},
-        }
-    ]
+    return [_press_key_action(["Left"], hold_keys=["Alt"])]
 
 
 def _forward_batch_actions() -> List[Dict[str, Any]]:
-    return [
-        {
-            "type": "press_key",
-            "press_key": {"hold_keys": ["Alt"], "keys": ["Right"]},
-        }
-    ]
+    return [_press_key_action(["Right"], hold_keys=["Alt"])]
 
 
 def _current_url_batch_actions() -> List[Dict[str, Any]]:
     return [
-        {
-            "type": "press_key",
-            "press_key": {"hold_keys": ["Ctrl"], "keys": ["l"]},
-        },
-        {
-            "type": "press_key",
-            "press_key": {"hold_keys": ["Ctrl"], "keys": ["a"]},
-        },
-        {
-            "type": "press_key",
-            "press_key": {"hold_keys": ["Ctrl"], "keys": ["c"]},
-        },
-        {
-            "type": "press_key",
-            "press_key": {"keys": ["Escape"]},
-        },
+        _press_key_action(["l"], hold_keys=["Ctrl"]),
+        _press_key_action(["a"], hold_keys=["Ctrl"]),
+        _press_key_action(["c"], hold_keys=["Ctrl"]),
+        _press_key_action(["Escape"]),
     ]
 
 
