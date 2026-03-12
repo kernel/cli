@@ -1,15 +1,28 @@
 import { Kernel, type KernelContext } from '@onkernel/sdk';
-import 'dotenv/config';
+import * as dotenv from 'dotenv';
 import type { ResponseItem, ResponseOutputMessage } from 'openai/resources/responses/responses';
 import { Agent } from './lib/agent';
-import computers from './lib/computers';
+import { KernelComputer } from './lib/kernel-computer';
+import { maybeStartReplay, maybeStopReplay } from './lib/replay';
+import {
+  createEventLogger,
+  emitBrowserDeleteDone,
+  emitBrowserDeleteStarted,
+  emitBrowserNewDone,
+  emitBrowserNewStarted,
+  emitSessionState,
+} from './lib/logging';
+
+dotenv.config({ override: true, quiet: true });
 
 interface CuaInput {
   task: string;
+  replay?: boolean;
 }
 interface CuaOutput {
   elapsed: number;
   answer: string | null;
+  replay_url?: string;
   logs?: ResponseItem[];
 }
 
@@ -38,18 +51,27 @@ app.action<CuaInput, CuaOutput>(
   async (ctx: KernelContext, payload?: CuaInput): Promise<CuaOutput> => {
     const start = Date.now();
     if (!payload?.task) throw new Error('task is required');
+    const onEvent = createEventLogger();
 
+    emitBrowserNewStarted(onEvent);
+    const browserCreateStartedAt = Date.now();
     const kb = await kernel.browsers.create({ invocation_id: ctx.invocation_id });
-    console.log('> Kernel browser live view url:', kb.browser_live_view_url);
+    emitBrowserNewDone(onEvent, browserCreateStartedAt, kb.browser_live_view_url);
+    emitSessionState(onEvent, kb.session_id, kb.browser_live_view_url);
+
+    const computer = new KernelComputer(kernel, kb.session_id, onEvent);
+    const replay = await maybeStartReplay(kernel, kb.session_id, {
+      enabled: payload.replay === true,
+      onEvent,
+    });
+    let answer: string | null = null;
+    let replayUrl: string | null = null;
 
     try {
-      const { computer } = await computers.create({ type: 'kernel', cdp_ws_url: kb.cdp_ws_url });
-
-      // Navigate to DuckDuckGo as starting page (less likely to trigger captchas than Google)
       await computer.goto('https://duckduckgo.com');
 
       const agent = new Agent({
-        model: 'computer-use-preview',
+        model: 'gpt-5.4',
         computer,
         tools: [],
         acknowledge_safety_check_callback: (m: string): boolean => {
@@ -58,7 +80,6 @@ app.action<CuaInput, CuaOutput>(
         },
       });
 
-      // run agent and get response
       const logs = await agent.runFullTurn({
         messages: [
           {
@@ -75,13 +96,13 @@ app.action<CuaInput, CuaOutput>(
           },
         ],
         print_steps: true,
-        debug: true,
+        debug: false,
         show_images: false,
+        onEvent,
       });
 
       const elapsed = parseFloat(((Date.now() - start) / 1000).toFixed(2));
 
-      // filter only LLM messages
       const messages = logs.filter(
         (item): item is ResponseOutputMessage =>
           item.type === 'message' &&
@@ -91,22 +112,22 @@ app.action<CuaInput, CuaOutput>(
       const assistant = messages.find((m) => m.role === 'assistant');
       const lastContentIndex = assistant?.content?.length ? assistant.content.length - 1 : -1;
       const lastContent = lastContentIndex >= 0 ? assistant?.content?.[lastContentIndex] : null;
-      const answer = lastContent && 'text' in lastContent ? lastContent.text : null;
-
-      return {
-        // logs, // optionally, get the full agent run messages logs
-        elapsed,
-        answer,
-      };
+      answer = lastContent && 'text' in lastContent ? lastContent.text : null;
     } catch (error) {
-      const elapsed = parseFloat(((Date.now() - start) / 1000).toFixed(2));
       console.error('Error in cua-task:', error);
-      return {
-        elapsed,
-        answer: null,
-      };
+      answer = null;
     } finally {
-      await kernel.browsers.deleteByID(kb.session_id);
+      emitBrowserDeleteStarted(onEvent);
+      const browserDeleteStartedAt = Date.now();
+      try {
+        replayUrl = await maybeStopReplay(kernel, kb.session_id, replay, { onEvent });
+        await kernel.browsers.deleteByID(kb.session_id);
+      } finally {
+        emitBrowserDeleteDone(onEvent, browserDeleteStartedAt);
+      }
     }
+
+    const elapsed = parseFloat(((Date.now() - start) / 1000).toFixed(2));
+    return replayUrl ? { elapsed, answer, replay_url: replayUrl } : { elapsed, answer };
   },
 );

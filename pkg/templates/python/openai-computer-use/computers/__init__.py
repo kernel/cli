@@ -1,11 +1,7 @@
-from . import default
-from . import contrib
+from .kernel_computer import KernelComputer
 from .computer import Computer
-from .config import computers_config
 
 __all__ = [
-    "default",
-    "contrib",
+    "KernelComputer",
     "Computer",
-    "computers_config",
 ]
