@@ -23,6 +23,7 @@ from agent.logging import (
     emit_browser_new_done,
     emit_browser_new_started,
     emit_session_state,
+    quiet_http_transport_logs,
 )
 from computers.kernel_computer import KernelComputer
 
@@ -51,6 +52,7 @@ def main():
     if not os.getenv("OPENAI_API_KEY"):
         raise ValueError("OPENAI_API_KEY is not set")
 
+    quiet_http_transport_logs()
     client = Kernel(api_key=os.getenv("KERNEL_API_KEY"))
     on_event = create_event_logger(verbose=args.debug)
 

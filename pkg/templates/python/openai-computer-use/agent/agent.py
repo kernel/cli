@@ -39,6 +39,8 @@ When interacting with page content (search boxes, forms, chat inputs):
 For drag actions in batch_computer_actions:
 - Always include a path field.
 - path must be an array of at least two points.
+- If one drag is likely to change the position, order, or layout of other targets, do not batch multiple drags together.
+- In those cases, prefer one drag at a time and inspect the updated screenshot before planning the next drag.
 - Each point must be an object like {"x": 123, "y": 456}."""
 
 BATCH_TOOL = {

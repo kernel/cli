@@ -12,6 +12,7 @@ from agent.logging import (
     emit_browser_new_done,
     emit_browser_new_started,
     emit_session_state,
+    quiet_http_transport_logs,
 )
 from computers.kernel_computer import KernelComputer
 from kernel import Kernel
@@ -42,6 +43,7 @@ api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
     raise ValueError("OPENAI_API_KEY is not set")
 
+quiet_http_transport_logs()
 client = Kernel()
 app = kernel.App("python-openai-cua")
 

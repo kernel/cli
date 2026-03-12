@@ -1,3 +1,4 @@
+import logging
 import sys
 import threading
 import time
@@ -5,6 +6,13 @@ from datetime import datetime
 from typing import Callable
 
 MAX_LINE_WIDTH = 120
+
+
+def quiet_http_transport_logs() -> None:
+    # The Kernel Python SDK uses httpx underneath, and those request logs can
+    # become noisy when the surrounding process configures root logging at INFO.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def _timestamp() -> str:
