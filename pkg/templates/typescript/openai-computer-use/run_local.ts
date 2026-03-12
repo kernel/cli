@@ -4,7 +4,14 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Agent } from './lib/agent';
 import { KernelComputer } from './lib/kernel-computer';
-import { createEventLogger } from './lib/logging';
+import {
+  createEventLogger,
+  emitBrowserDeleteDone,
+  emitBrowserDeleteStarted,
+  emitBrowserNewDone,
+  emitBrowserNewStarted,
+  emitSessionState,
+} from './lib/logging';
 import type { OutputMode } from './lib/log-events';
 
 dotenv.config({ override: true, quiet: true });
@@ -26,21 +33,11 @@ export async function runLocalTest(args: string[] = process.argv.slice(2)): Prom
   const debug = args.includes('--debug');
   const onEvent = createEventLogger({ output: outputMode, verbose: debug });
 
-  onEvent({ event: 'backend', data: { op: 'browsers.new' } });
+  emitBrowserNewStarted(onEvent);
   const browserCreateStartedAt = Date.now();
   const browser = await client.browsers.create({ timeout_seconds: 300 });
-  onEvent({
-    event: 'backend',
-    data: {
-      op: 'browsers.new.done',
-      detail: browser.browser_live_view_url ?? '',
-      elapsed_ms: Date.now() - browserCreateStartedAt,
-    },
-  });
-  onEvent({
-    event: 'session_state',
-    data: { session_id: browser.session_id, live_view_url: browser.browser_live_view_url ?? '' },
-  });
+  emitBrowserNewDone(onEvent, browserCreateStartedAt, browser.browser_live_view_url);
+  emitSessionState(onEvent, browser.session_id, browser.browser_live_view_url);
 
   const computer = new KernelComputer(client, browser.session_id, onEvent);
 
@@ -83,18 +80,12 @@ export async function runLocalTest(args: string[] = process.argv.slice(2)): Prom
       onEvent,
     });
   } finally {
-    onEvent({ event: 'backend', data: { op: 'browsers.delete' } });
+    emitBrowserDeleteStarted(onEvent);
     const browserDeleteStartedAt = Date.now();
     try {
       await client.browsers.deleteByID(browser.session_id);
     } finally {
-      onEvent({
-        event: 'backend',
-        data: {
-          op: 'browsers.delete.done',
-          elapsed_ms: Date.now() - browserDeleteStartedAt,
-        },
-      });
+      emitBrowserDeleteDone(onEvent, browserDeleteStartedAt);
     }
     console.log('> Browser session deleted');
   }

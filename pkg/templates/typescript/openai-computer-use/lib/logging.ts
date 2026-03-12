@@ -25,6 +25,53 @@ function formatKernelOp(op: string): string {
   return `${op}()`;
 }
 
+export function emitBrowserNewStarted(onEvent: (event: AgentEvent) => void): void {
+  onEvent({ event: 'backend', data: { op: 'browsers.new' } });
+}
+
+export function emitBrowserNewDone(
+  onEvent: (event: AgentEvent) => void,
+  startedAtMs: number,
+  liveViewUrl?: string | null,
+): void {
+  onEvent({
+    event: 'backend',
+    data: {
+      op: 'browsers.new.done',
+      detail: liveViewUrl ?? '',
+      elapsed_ms: Date.now() - startedAtMs,
+    },
+  });
+}
+
+export function emitSessionState(
+  onEvent: (event: AgentEvent) => void,
+  sessionId: string,
+  liveViewUrl?: string | null,
+): void {
+  onEvent({
+    event: 'session_state',
+    data: { session_id: sessionId, live_view_url: liveViewUrl ?? '' },
+  });
+}
+
+export function emitBrowserDeleteStarted(onEvent: (event: AgentEvent) => void): void {
+  onEvent({ event: 'backend', data: { op: 'browsers.delete' } });
+}
+
+export function emitBrowserDeleteDone(
+  onEvent: (event: AgentEvent) => void,
+  startedAtMs: number,
+): void {
+  onEvent({
+    event: 'backend',
+    data: {
+      op: 'browsers.delete.done',
+      elapsed_ms: Date.now() - startedAtMs,
+    },
+  });
+}
+
 class ThinkingSpinner {
   private active = false;
   private timer: NodeJS.Timeout | null = null;

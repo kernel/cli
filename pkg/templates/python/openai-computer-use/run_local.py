@@ -16,7 +16,14 @@ load_dotenv(override=True)
 
 from kernel import Kernel
 from agent import Agent
-from agent.logging import create_event_logger
+from agent.logging import (
+    create_event_logger,
+    emit_browser_delete_done,
+    emit_browser_delete_started,
+    emit_browser_new_done,
+    emit_browser_new_started,
+    emit_session_state,
+)
 from computers.kernel_computer import KernelComputer
 
 
@@ -47,30 +54,12 @@ def main():
     on_event = create_event_logger(output=args.output, verbose=args.debug)
 
     browser_create_started_at = datetime.datetime.now()
-    on_event({"event": "backend", "data": {"op": "browsers.new"}})
+    emit_browser_new_started(on_event)
     browser = client.browsers.create(timeout_seconds=300)
-    on_event(
-        {
-            "event": "backend",
-            "data": {
-                "op": "browsers.new.done",
-                "detail": browser.browser_live_view_url or "",
-                "elapsed_ms": int(
-                    (datetime.datetime.now() - browser_create_started_at).total_seconds()
-                    * 1000
-                ),
-            },
-        }
+    emit_browser_new_done(
+        on_event, browser_create_started_at, browser.browser_live_view_url
     )
-    on_event(
-        {
-            "event": "session_state",
-            "data": {
-                "session_id": browser.session_id,
-                "live_view_url": browser.browser_live_view_url or "",
-            },
-        }
-    )
+    emit_session_state(on_event, browser.session_id, browser.browser_live_view_url)
 
     computer = KernelComputer(client, browser.session_id, on_event=on_event)
 
@@ -108,22 +97,11 @@ def main():
             raise ValueError("No response from agent")
     finally:
         browser_delete_started_at = datetime.datetime.now()
-        on_event({"event": "backend", "data": {"op": "browsers.delete"}})
+        emit_browser_delete_started(on_event)
         try:
             client.browsers.delete_by_id(browser.session_id)
         finally:
-            on_event(
-                {
-                    "event": "backend",
-                    "data": {
-                        "op": "browsers.delete.done",
-                        "elapsed_ms": int(
-                            (datetime.datetime.now() - browser_delete_started_at).total_seconds()
-                            * 1000
-                        ),
-                    },
-                }
-            )
+            emit_browser_delete_done(on_event, browser_delete_started_at)
         print("> Browser session deleted")
 
 

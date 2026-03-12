@@ -1,13 +1,18 @@
 import asyncio
 import datetime
 import os
-import subprocess
-import sys
 from typing import NotRequired, TypedDict
 
 import kernel
 from agent import Agent
-from agent.logging import create_event_logger
+from agent.logging import (
+    create_event_logger,
+    emit_browser_delete_done,
+    emit_browser_delete_started,
+    emit_browser_new_done,
+    emit_browser_new_started,
+    emit_session_state,
+)
 from computers.kernel_computer import KernelComputer
 from kernel import Kernel
 
@@ -56,31 +61,15 @@ async def cua_task(
     on_event = create_event_logger(output=output_mode)
 
     browser_create_started_at = datetime.datetime.now()
-    on_event({"event": "backend", "data": {"op": "browsers.new"}})
+    emit_browser_new_started(on_event)
     kernel_browser = await asyncio.to_thread(
         client.browsers.create, invocation_id=ctx.invocation_id, stealth=True
     )
-    on_event(
-        {
-            "event": "backend",
-            "data": {
-                "op": "browsers.new.done",
-                "detail": kernel_browser.browser_live_view_url or "",
-                "elapsed_ms": int(
-                    (datetime.datetime.now() - browser_create_started_at).total_seconds()
-                    * 1000
-                ),
-            },
-        }
+    emit_browser_new_done(
+        on_event, browser_create_started_at, kernel_browser.browser_live_view_url
     )
-    on_event(
-        {
-            "event": "session_state",
-            "data": {
-                "session_id": kernel_browser.session_id,
-                "live_view_url": kernel_browser.browser_live_view_url or "",
-            },
-        }
+    emit_session_state(
+        on_event, kernel_browser.session_id, kernel_browser.browser_live_view_url
     )
 
     def run_agent():
@@ -133,26 +122,10 @@ async def cua_task(
         return await asyncio.to_thread(run_agent)
     finally:
         browser_delete_started_at = datetime.datetime.now()
-        on_event({"event": "backend", "data": {"op": "browsers.delete"}})
+        emit_browser_delete_started(on_event)
         try:
             await asyncio.to_thread(client.browsers.delete_by_id, kernel_browser.session_id)
         finally:
-            on_event(
-                {
-                    "event": "backend",
-                    "data": {
-                        "op": "browsers.delete.done",
-                        "elapsed_ms": int(
-                            (datetime.datetime.now() - browser_delete_started_at).total_seconds()
-                            * 1000
-                        ),
-                    },
-                }
-            )
+            emit_browser_delete_done(on_event, browser_delete_started_at)
 
 
-if __name__ == "__main__":
-    # `main.py` is the deployable Kernel app entrypoint.
-    # For local execution, forward to the existing local harness.
-    command = [sys.executable, "run_local.py", *sys.argv[1:]]
-    raise SystemExit(subprocess.call(command))

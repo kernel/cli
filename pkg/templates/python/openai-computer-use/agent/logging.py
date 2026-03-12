@@ -283,3 +283,54 @@ def create_event_logger(
             sys.stderr.flush()
 
     return render_text
+
+
+def emit_browser_new_started(on_event: Callable[[dict], None]) -> None:
+    on_event({"event": "backend", "data": {"op": "browsers.new"}})
+
+
+def emit_browser_new_done(
+    on_event: Callable[[dict], None], started_at: datetime, live_view_url: str | None
+) -> None:
+    on_event(
+        {
+            "event": "backend",
+            "data": {
+                "op": "browsers.new.done",
+                "detail": live_view_url or "",
+                "elapsed_ms": int((datetime.now() - started_at).total_seconds() * 1000),
+            },
+        }
+    )
+
+
+def emit_session_state(
+    on_event: Callable[[dict], None], session_id: str, live_view_url: str | None
+) -> None:
+    on_event(
+        {
+            "event": "session_state",
+            "data": {
+                "session_id": session_id,
+                "live_view_url": live_view_url or "",
+            },
+        }
+    )
+
+
+def emit_browser_delete_started(on_event: Callable[[dict], None]) -> None:
+    on_event({"event": "backend", "data": {"op": "browsers.delete"}})
+
+
+def emit_browser_delete_done(
+    on_event: Callable[[dict], None], started_at: datetime
+) -> None:
+    on_event(
+        {
+            "event": "backend",
+            "data": {
+                "op": "browsers.delete.done",
+                "elapsed_ms": int((datetime.now() - started_at).total_seconds() * 1000),
+            },
+        }
+    )
