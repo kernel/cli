@@ -260,7 +260,14 @@ function isBatchComputerActionType(actionType: string): boolean {
 }
 
 function pressKeyAction(keys: string[], holdKeys?: string[]): BatchAction {
-  return { type: 'press_key', press_key: normalizeKeypressPayload(keys, holdKeys) };
+  const normalized = normalizeKeypressPayload(keys, holdKeys);
+  return {
+    type: 'press_key',
+    press_key: {
+      keys: normalized.keys,
+      ...(normalized.holdKeys.length > 0 ? { hold_keys: normalized.holdKeys } : {}),
+    },
+  };
 }
 
 function gotoBatchActions(url: string): BatchAction[] {
