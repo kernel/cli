@@ -165,6 +165,28 @@ function normalizeButton(button?: string | number): string {
   return button;
 }
 
+function normalizeDragPath(path: Array<{ x: number; y: number }> | undefined): number[][] {
+  const points: Array<[number, number]> = (path ?? [])
+    .filter(
+      (point): point is { x: number; y: number } =>
+        typeof point?.x === 'number' &&
+        Number.isFinite(point.x) &&
+        typeof point?.y === 'number' &&
+        Number.isFinite(point.y),
+    )
+    .map((point): [number, number] => [Math.trunc(point.x), Math.trunc(point.y)]);
+  if (points.length === 0) return [];
+  if (points.length === 1) {
+    const [x, y] = points[0]!;
+    return [[x, y], [x + 1, y]];
+  }
+  return points;
+}
+
+function dragNoopAction(): BatchAction {
+  return { type: 'sleep', sleep: { duration_ms: 1 } };
+}
+
 function translateCuaAction(action: CuaAction): BatchAction {
   switch (action.type) {
     case 'click': {
@@ -220,7 +242,8 @@ function translateCuaAction(action: CuaAction): BatchAction {
     case 'move':
       return { type: 'move_mouse', move_mouse: { x: action.x ?? 0, y: action.y ?? 0 } };
     case 'drag': {
-      const path = (action.path ?? []).map((p) => [p.x, p.y]);
+      const path = normalizeDragPath(action.path);
+      if (path.length < 2) return dragNoopAction();
       return { type: 'drag_mouse', drag_mouse: { path } };
     }
     case 'wait':
@@ -483,8 +506,12 @@ export class KernelComputer {
   async drag(path: Array<{ x: number; y: number }>): Promise<void> {
     const op = describeAction('drag', { path });
     await this.traceCall(op, async () => {
-      const p = path.map((pt) => [pt.x, pt.y]);
-      await this.client.browsers.computer.dragMouse(this.sessionId, { path: p });
+      const normalizedPath = normalizeDragPath(path);
+      if (normalizedPath.length < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        return;
+      }
+      await this.client.browsers.computer.dragMouse(this.sessionId, { path: normalizedPath });
     });
   }
 

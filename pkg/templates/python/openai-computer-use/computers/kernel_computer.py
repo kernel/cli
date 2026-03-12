@@ -121,6 +121,33 @@ def _normalize_button(button) -> str:
     return str(button)
 
 
+def _normalize_drag_path(path: Any) -> List[List[int]]:
+    points: List[List[int]] = []
+    if isinstance(path, list):
+        for point in path:
+            if not isinstance(point, dict):
+                continue
+            x = point.get("x")
+            y = point.get("y")
+            if (
+                isinstance(x, (int, float))
+                and not isinstance(x, bool)
+                and isinstance(y, (int, float))
+                and not isinstance(y, bool)
+            ):
+                points.append([int(x), int(y)])
+    if not points:
+        return []
+    if len(points) == 1:
+        x, y = points[0]
+        return [[x, y], [x + 1, y]]
+    return points
+
+
+def _drag_noop_action() -> Dict[str, Any]:
+    return {"type": "sleep", "sleep": {"duration_ms": 1}}
+
+
 def _translate_cua_action(action: Dict[str, Any]) -> Dict[str, Any]:
     action_type = action.get("type", "")
     if action_type == "click":
@@ -185,7 +212,9 @@ def _translate_cua_action(action: Dict[str, Any]) -> Dict[str, Any]:
     elif action_type == "move":
         return {"type": "move_mouse", "move_mouse": {"x": action.get("x", 0), "y": action.get("y", 0)}}
     elif action_type == "drag":
-        path = [[p["x"], p["y"]] for p in action.get("path", [])]
+        path = _normalize_drag_path(action.get("path", []))
+        if len(path) < 2:
+            return _drag_noop_action()
         return {"type": "drag_mouse", "drag_mouse": {"path": path}}
     elif action_type == "wait":
         return {"type": "sleep", "sleep": {"duration_ms": action.get("ms", 1000)}}
@@ -546,8 +575,11 @@ class KernelComputer:
         op = _describe_action("drag", {"path": path})
 
         def _do() -> None:
-            p = [[pt["x"], pt["y"]] for pt in path]
-            self.client.browsers.computer.drag_mouse(self.session_id, path=p)
+            normalized_path = _normalize_drag_path(path)
+            if len(normalized_path) < 2:
+                time.sleep(0.001)
+                return
+            self.client.browsers.computer.drag_mouse(self.session_id, path=normalized_path)
 
         self._trace_backend(op, _do)
 
