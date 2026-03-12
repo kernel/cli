@@ -26,6 +26,7 @@ from agent.logging import (
     quiet_http_transport_logs,
 )
 from computers.kernel_computer import KernelComputer
+from replay import maybe_start_replay, maybe_stop_replay
 
 DEFAULT_TASK = "go to example.com and summarize what the page says"
 
@@ -41,6 +42,11 @@ def parse_args():
         "--task",
         default=DEFAULT_TASK,
         help="User task prompt to run in the browser session",
+    )
+    parser.add_argument(
+        "--replay",
+        action="store_true",
+        help="Record a Kernel browser replay for this local run",
     )
     return parser.parse_args()
 
@@ -63,6 +69,7 @@ def main():
         on_event, browser_create_started_at, browser.browser_live_view_url
     )
     emit_session_state(on_event, browser.session_id, browser.browser_live_view_url)
+    replay = maybe_start_replay(client, browser.session_id, args.replay, on_event)
 
     computer = KernelComputer(client, browser.session_id, on_event=on_event)
 
@@ -102,6 +109,9 @@ def main():
         browser_delete_started_at = datetime.datetime.now()
         emit_browser_delete_started(on_event)
         try:
+            replay_url = maybe_stop_replay(client, browser.session_id, replay, on_event)
+            if replay_url:
+                print(f"> Replay URL: {replay_url}")
             client.browsers.delete_by_id(browser.session_id)
         finally:
             emit_browser_delete_done(on_event, browser_delete_started_at)

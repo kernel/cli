@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Agent } from './lib/agent';
 import { KernelComputer } from './lib/kernel-computer';
+import { maybeStartReplay, maybeStopReplay } from './lib/replay';
 import {
   createEventLogger,
   emitBrowserDeleteDone,
@@ -31,6 +32,7 @@ export async function runLocalTest(args: string[] = process.argv.slice(2)): Prom
 
   const client = new Kernel({ apiKey: process.env.KERNEL_API_KEY });
   const task = parseTask(args);
+  const replayEnabled = parseReplay(args);
   const debug = args.includes('--debug');
   const onEvent = createEventLogger({ verbose: debug });
 
@@ -41,6 +43,10 @@ export async function runLocalTest(args: string[] = process.argv.slice(2)): Prom
   emitSessionState(onEvent, browser.session_id, browser.browser_live_view_url);
 
   const computer = new KernelComputer(client, browser.session_id, onEvent);
+  const replay = await maybeStartReplay(client, browser.session_id, {
+    enabled: replayEnabled,
+    onEvent,
+  });
 
   try {
     await computer.goto('https://duckduckgo.com');
@@ -84,6 +90,10 @@ export async function runLocalTest(args: string[] = process.argv.slice(2)): Prom
     emitBrowserDeleteStarted(onEvent);
     const browserDeleteStartedAt = Date.now();
     try {
+      const replayUrl = await maybeStopReplay(client, browser.session_id, replay, { onEvent });
+      if (replayUrl) {
+        console.log(`> Replay URL: ${replayUrl}`);
+      }
       await client.browsers.deleteByID(browser.session_id);
     } finally {
       emitBrowserDeleteDone(onEvent, browserDeleteStartedAt);
@@ -99,6 +109,14 @@ function parseTask(args: string[]): string {
   const taskFromNext = nextArg && !nextArg.startsWith('--') ? nextArg.trim() : undefined;
   const task = taskFromEquals || taskFromNext;
   return task && task.length > 0 ? task : DEFAULT_TASK;
+}
+
+function parseReplay(args: string[]): boolean {
+  const replayFromEquals = args.find((arg) => arg.startsWith('--replay='))?.slice('--replay='.length).trim();
+  if (replayFromEquals) {
+    return !['0', 'false', 'no', 'off'].includes(replayFromEquals.toLowerCase());
+  }
+  return args.includes('--replay');
 }
 
 function isDirectRun(): boolean {

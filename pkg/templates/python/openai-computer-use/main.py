@@ -1,7 +1,7 @@
 import asyncio
 import datetime
 import os
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 import kernel
 from agent import Agent
@@ -16,6 +16,7 @@ from agent.logging import (
 )
 from computers.kernel_computer import KernelComputer
 from kernel import Kernel
+from replay import maybe_start_replay, maybe_stop_replay
 
 """
 Example app that runs an agent using openai CUA
@@ -33,10 +34,12 @@ Invoke this via CLI:
 
 class CuaInput(TypedDict):
     task: str
+    replay: NotRequired[bool]
 
 
 class CuaOutput(TypedDict):
     result: str
+    replay_url: NotRequired[str]
 
 
 api_key = os.getenv("OPENAI_API_KEY")
@@ -69,6 +72,14 @@ async def cua_task(
     emit_session_state(
         on_event, kernel_browser.session_id, kernel_browser.browser_live_view_url
     )
+    replay = await asyncio.to_thread(
+        maybe_start_replay,
+        client,
+        kernel_browser.session_id,
+        bool(payload.get("replay", False)),
+        on_event,
+    )
+    replay_url: str | None = None
 
     def run_agent():
         computer = KernelComputer(client, kernel_browser.session_id, on_event=on_event)
@@ -117,13 +128,24 @@ async def cua_task(
         return {"result": result}
 
     try:
-        return await asyncio.to_thread(run_agent)
+        result = await asyncio.to_thread(run_agent)
     finally:
         browser_delete_started_at = datetime.datetime.now()
         emit_browser_delete_started(on_event)
         try:
+            replay_url = await asyncio.to_thread(
+                maybe_stop_replay,
+                client,
+                kernel_browser.session_id,
+                replay,
+                on_event,
+            )
             await asyncio.to_thread(client.browsers.delete_by_id, kernel_browser.session_id)
         finally:
             emit_browser_delete_done(on_event, browser_delete_started_at)
+
+    if replay_url:
+        result["replay_url"] = replay_url
+    return result
 
 
