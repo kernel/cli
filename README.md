@@ -148,6 +148,7 @@ Commands with JSON output support:
   - `anthropic-computer-use` - Anthropic Computer Use prompt loop
   - `openai-computer-use` - OpenAI Computer Use Agent sample
   - `gemini-computer-use` - Implements a Gemini computer use agent (TypeScript only)
+  - `moondream-groq-computer-use` - Moondream + Groq computer use agent (TypeScript + Python)
   - `openagi-computer-use` - OpenAGI Lux computer-use models (Python only)
   - `magnitude` - Magnitude framework sample (TypeScript only)
   - `claude-agent-sdk` - Claude Agent SDK browser automation agent
@@ -516,6 +517,9 @@ kernel create --name my-agent --language ts --template stagehand
 
 # Create a Python Computer Use app
 kernel create --name my-cu-app --language py --template anthropic-computer-use
+
+# Create a Moondream + Groq Computer Use app (TypeScript or Python)
+kernel create --name my-moondream-cu --language ts --template moondream-groq-computer-use
 
 # Create a Claude Agent SDK app (TypeScript or Python)
 kernel create --name my-claude-agent --language ts --template claude-agent-sdk
