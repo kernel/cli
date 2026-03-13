@@ -1,0 +1,14 @@
+{
+  "name": "ts-tzafon-cua",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@onkernel/sdk": "^0.35.0",
+    "@tzafon/lightcone": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.17",
+    "typescript": "^5.9.3"
+  }
+}
