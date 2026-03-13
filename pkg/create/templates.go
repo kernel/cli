@@ -19,6 +19,7 @@ const (
 	TemplateOpenAGIComputerUse   = "openagi-computer-use"
 	TemplateClaudeAgentSDK       = "claude-agent-sdk"
 	TemplateYutoriComputerUse    = "yutori"
+	TemplateTzafonComputerUse    = "tzafon-computer-use"
 )
 
 type TemplateInfo struct {
@@ -90,6 +91,11 @@ var Templates = map[string]TemplateInfo{
 		Description: "Implements a Yutori n1 computer use agent",
 		Languages:   []string{LanguageTypeScript, LanguagePython},
 	},
+	TemplateTzafonComputerUse: {
+		Name:        "Tzafon Northstar Computer Use",
+		Description: "Implements a Tzafon Northstar CUA Fast computer use agent",
+		Languages:   []string{LanguageTypeScript, LanguagePython},
+	},
 }
 
 // GetSupportedTemplatesForLanguage returns a list of all supported template names for a given language
@@ -116,6 +122,8 @@ func GetSupportedTemplatesForLanguage(language string) TemplateKeyValues {
 				return 2
 			case TemplateYutoriComputerUse:
 				return 3
+			case TemplateTzafonComputerUse:
+				return 4
 			default:
 				return 10
 			}
@@ -213,6 +221,11 @@ var Commands = map[string]map[string]DeployConfig{
 			NeedsEnvFile:  true,
 			InvokeCommand: `kernel invoke ts-yutori-cua cua-task --payload '{"query": "Navigate to https://example.com and describe the page"}'`,
 		},
+		TemplateTzafonComputerUse: {
+			EntryPoint:    "index.ts",
+			NeedsEnvFile:  true,
+			InvokeCommand: `kernel invoke ts-tzafon-cua cua-task --payload '{"query": "Go to wikipedia.org and search for Alan Turing"}'`,
+		},
 	},
 	LanguagePython: {
 		TemplateSampleApp: {
@@ -259,6 +272,11 @@ var Commands = map[string]map[string]DeployConfig{
 			EntryPoint:    "main.py",
 			NeedsEnvFile:  true,
 			InvokeCommand: `kernel invoke python-yutori-cua cua-task --payload '{"query": "Navigate to https://example.com and describe the page"}'`,
+		},
+		TemplateTzafonComputerUse: {
+			EntryPoint:    "main.py",
+			NeedsEnvFile:  true,
+			InvokeCommand: `kernel invoke python-tzafon-cua cua-task --payload '{"query": "Go to wikipedia.org and search for Alan Turing"}'`,
 		},
 	},
 }
