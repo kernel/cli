@@ -15,7 +15,19 @@ from kernel import Kernel
 
 from .base import ToolError
 
-MODIFIER_MAP = {"Control": "Ctrl", "Enter": "Return"}
+MODIFIER_MAP = {
+    "Control": "Ctrl",
+    "control": "Ctrl",
+    "ctrl": "Ctrl",
+    "Enter": "Return",
+    "enter": "Return",
+    "Escape": "Escape",
+    "esc": "Escape",
+    "Shift": "Shift",
+    "shift": "Shift",
+    "Alt": "Alt",
+    "alt": "Alt",
+}
 MODIFIER_NAMES = {"Ctrl", "Shift", "Alt", "Meta", "Super"}
 
 
@@ -65,7 +77,11 @@ class ComputerTool:
         """Map a Tzafon model action to Kernel Computer Controls."""
         t = action.type
 
-        if t == "click":
+        if t == "click" and getattr(action, "button", "left") == "right":
+            self.kernel.browsers.computer.click_mouse(
+                self.session_id, x=self._x(action), y=self._y(action), button="right",
+            )
+        elif t == "click":
             self.kernel.browsers.computer.click_mouse(
                 self.session_id, x=self._x(action), y=self._y(action),
             )
@@ -76,10 +92,6 @@ class ComputerTool:
         elif t == "triple_click":
             self.kernel.browsers.computer.click_mouse(
                 self.session_id, x=self._x(action), y=self._y(action), num_clicks=3,
-            )
-        elif t == "right_click":
-            self.kernel.browsers.computer.click_mouse(
-                self.session_id, x=self._x(action), y=self._y(action), button="right",
             )
         elif t == "type":
             self.kernel.browsers.computer.type_text(self.session_id, text=action.text)
@@ -115,16 +127,19 @@ class ComputerTool:
         elif t == "drag":
             x1 = getattr(action, "x", None)
             if x1 is None:
-                x1 = getattr(action, "x1", 0)
+                x1 = getattr(action, "x1", None)
             y1 = getattr(action, "y", None)
             if y1 is None:
-                y1 = getattr(action, "y1", 0)
+                y1 = getattr(action, "y1", None)
             x2 = getattr(action, "end_x", None)
             if x2 is None:
-                x2 = getattr(action, "x2", 0)
+                x2 = getattr(action, "x2", None)
             y2 = getattr(action, "end_y", None)
             if y2 is None:
-                y2 = getattr(action, "y2", 0)
+                y2 = getattr(action, "y2", None)
+            if any(v is None for v in (x1, y1, x2, y2)):
+                print(f"drag action missing coordinates, skipping: {action}")
+                return
             self.kernel.browsers.computer.drag_mouse(
                 self.session_id,
                 path=[

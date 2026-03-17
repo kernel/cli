@@ -17,7 +17,16 @@ export class ToolError extends Error {
 
 const MODIFIER_MAP: Record<string, string> = {
   Control: 'Ctrl',
+  control: 'Ctrl',
+  ctrl: 'Ctrl',
   Enter: 'Return',
+  enter: 'Return',
+  Escape: 'Escape',
+  esc: 'Escape',
+  Shift: 'Shift',
+  shift: 'Shift',
+  Alt: 'Alt',
+  alt: 'Alt',
 };
 
 const MODIFIER_NAMES = new Set(['Ctrl', 'Shift', 'Alt', 'Meta', 'Super']);
@@ -75,6 +84,13 @@ export class ComputerTool {
   }
 
   async execute(action: any): Promise<void> {
+    if (action.type === 'click' && action.button === 'right') {
+      await this.kernel.browsers.computer.clickMouse(this.sessionId, {
+        x: this.x(action), y: this.y(action), button: 'right',
+      });
+      return;
+    }
+
     switch (action.type) {
       case 'click':
         await this.kernel.browsers.computer.clickMouse(this.sessionId, {
@@ -91,12 +107,6 @@ export class ComputerTool {
       case 'triple_click':
         await this.kernel.browsers.computer.clickMouse(this.sessionId, {
           x: this.x(action), y: this.y(action), num_clicks: 3,
-        });
-        break;
-
-      case 'right_click':
-        await this.kernel.browsers.computer.clickMouse(this.sessionId, {
-          x: this.x(action), y: this.y(action), button: 'right',
         });
         break;
 
@@ -146,20 +156,23 @@ export class ComputerTool {
         });
         break;
 
-      case 'drag':
+      case 'drag': {
+        const x1 = action.x ?? action.x1;
+        const y1 = action.y ?? action.y1;
+        const x2 = action.end_x ?? action.x2;
+        const y2 = action.end_y ?? action.y2;
+        if (x1 == null || y1 == null || x2 == null || y2 == null) {
+          console.warn('drag action missing coordinates, skipping', action);
+          break;
+        }
         await this.kernel.browsers.computer.dragMouse(this.sessionId, {
           path: [
-            [
-              clamp(action.x ?? action.x1, this.width),
-              clamp(action.y ?? action.y1, this.height),
-            ],
-            [
-              clamp(action.end_x ?? action.x2, this.width),
-              clamp(action.end_y ?? action.y2, this.height),
-            ],
+            [clamp(x1, this.width), clamp(y1, this.height)],
+            [clamp(x2, this.width), clamp(y2, this.height)],
           ],
         });
         break;
+      }
 
       case 'wait':
         await new Promise((r) => setTimeout(r, 2000));
