@@ -1,0 +1,9 @@
+[project]
+name = "python-tzafon-cua"
+version = "0.1.0"
+description = "Kernel reference app for Tzafon Northstar Computer Use"
+requires-python = ">=3.11"
+dependencies = [
+    "kernel>=0.35.0",
+    "tzafon",
+]
