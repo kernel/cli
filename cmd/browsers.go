@@ -1092,11 +1092,7 @@ func (b BrowsersCmd) ReplaysList(ctx context.Context, in BrowsersReplaysListInpu
 		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
-	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-	items, err := b.replays.List(ctx, br.SessionID)
+	items, err := b.replays.List(ctx, in.Identifier)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -1165,11 +1161,7 @@ func (b BrowsersCmd) ReplaysStop(ctx context.Context, in BrowsersReplaysStopInpu
 }
 
 func (b BrowsersCmd) ReplaysDownload(ctx context.Context, in BrowsersReplaysDownloadInput) error {
-	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-	res, err := b.replays.Download(ctx, in.ReplayID, kernel.BrowserReplayDownloadParams{ID: br.SessionID})
+	res, err := b.replays.Download(ctx, in.ReplayID, kernel.BrowserReplayDownloadParams{ID: in.Identifier})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
