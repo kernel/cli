@@ -701,6 +701,8 @@ type FakeComputerService struct {
 	DragMouseFunc           func(ctx context.Context, id string, body kernel.BrowserComputerDragMouseParams, opts ...option.RequestOption) error
 	TypeTextFunc            func(ctx context.Context, id string, body kernel.BrowserComputerTypeTextParams, opts ...option.RequestOption) error
 	SetCursorVisibilityFunc func(ctx context.Context, id string, body kernel.BrowserComputerSetCursorVisibilityParams, opts ...option.RequestOption) (*kernel.BrowserComputerSetCursorVisibilityResponse, error)
+	ReadClipboardFunc       func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserComputerReadClipboardResponse, error)
+	WriteClipboardFunc      func(ctx context.Context, id string, body kernel.BrowserComputerWriteClipboardParams, opts ...option.RequestOption) error
 }
 
 func (f *FakeComputerService) Batch(ctx context.Context, id string, body kernel.BrowserComputerBatchParams, opts ...option.RequestOption) error {
@@ -763,6 +765,18 @@ func (f *FakeComputerService) SetCursorVisibility(ctx context.Context, id string
 		return f.SetCursorVisibilityFunc(ctx, id, body, opts...)
 	}
 	return &kernel.BrowserComputerSetCursorVisibilityResponse{}, nil
+}
+func (f *FakeComputerService) ReadClipboard(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserComputerReadClipboardResponse, error) {
+	if f.ReadClipboardFunc != nil {
+		return f.ReadClipboardFunc(ctx, id, opts...)
+	}
+	return &kernel.BrowserComputerReadClipboardResponse{}, nil
+}
+func (f *FakeComputerService) WriteClipboard(ctx context.Context, id string, body kernel.BrowserComputerWriteClipboardParams, opts ...option.RequestOption) error {
+	if f.WriteClipboardFunc != nil {
+		return f.WriteClipboardFunc(ctx, id, body, opts...)
+	}
+	return nil
 }
 
 // --- Tests for Logs ---
