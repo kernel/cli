@@ -1,3 +1,5 @@
+// kernel is the CLI for the Kernel platform — it deploys apps, manages
+// sandboxed browser sessions, handles authentication, and invokes actions.
 package main
 
 import (
