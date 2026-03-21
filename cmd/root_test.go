@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"bytes"
+	"fmt"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIsAuthExempt(t *testing.T) {
@@ -74,6 +77,93 @@ func TestIsAuthExempt(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := isAuthExempt(tt.cmd)
 			assert.Equal(t, tt.expected, result, "isAuthExempt(%s) = %v, want %v", tt.cmd.Name(), result, tt.expected)
+		})
+	}
+}
+
+func TestRootCommandSubcommands(t *testing.T) {
+	expected := []string{
+		"app",
+		"browser-pools",
+		"browsers",
+		"create",
+		"credentials",
+		"deploy",
+		"extensions",
+		"invoke",
+		"login",
+		"logout",
+		"profiles",
+		"proxies",
+	}
+
+	registered := make(map[string]bool)
+	for _, sub := range rootCmd.Commands() {
+		registered[sub.Name()] = true
+	}
+
+	for _, name := range expected {
+		assert.True(t, registered[name], "expected subcommand %q to be registered on rootCmd", name)
+	}
+}
+
+func TestRootCommandHelpOutput(t *testing.T) {
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetErr(&buf)
+	rootCmd.SetArgs([]string{"--help"})
+
+	err := rootCmd.Execute()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "kernel")
+	assert.Contains(t, output, "deploy")
+	assert.Contains(t, output, "invoke")
+	assert.Contains(t, output, "browsers")
+}
+
+func TestLogLevelToPterm(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"trace", "trace"},
+		{"debug", "debug"},
+		{"info", "info"},
+		{"warn", "warn"},
+		{"error", "error"},
+		{"fatal", "fatal"},
+		{"print", "print"},
+		{"garbage", "info"},
+		{"", "info"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := logLevelToPterm(tt.input)
+			expected := logLevelToPterm(tt.expected)
+			assert.Equal(t, expected, got)
+		})
+	}
+}
+
+func TestIsUsageError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      string
+		expected bool
+	}{
+		{"unknown flag", "unknown flag: --foo", true},
+		{"unknown command", "unknown command \"bogus\"", true},
+		{"invalid argument", "invalid argument \"x\" for \"--count\"", true},
+		{"random error", "connection refused", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := fmt.Errorf(tt.err)
+			assert.Equal(t, tt.expected, isUsageError(err))
 		})
 	}
 }
