@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"bytes"
-	"fmt"
+	"errors"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -162,7 +162,7 @@ func TestIsUsageError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := fmt.Errorf(tt.err)
+			err := errors.New(tt.err)
 			assert.Equal(t, tt.expected, isUsageError(err))
 		})
 	}
