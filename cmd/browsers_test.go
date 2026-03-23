@@ -248,6 +248,25 @@ func TestBrowsersCreate_PrintsResponse(t *testing.T) {
 	assert.Contains(t, out, "pid-new")
 }
 
+func TestBrowsersCreate_WithInvocationID(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-new", CdpWsURL: "ws://cdp-new"}, nil
+		},
+	}
+
+	b := BrowsersCmd{browsers: fake}
+	err := b.Create(context.Background(), BrowsersCreateInput{
+		InvocationID: "invocation-123",
+	})
+	assert.NoError(t, err)
+	assert.True(t, captured.InvocationID.Valid())
+	assert.Equal(t, "invocation-123", captured.InvocationID.Value)
+}
+
 func TestBrowsersCreate_PrintsErrorOnFailure(t *testing.T) {
 	setupStdoutCapture(t)
 
@@ -470,6 +489,26 @@ func TestBrowsersGet_Error(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "get failed")
+}
+
+func TestBrowsersGet_WithIncludeDeleted(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserGetParams
+	fake := &FakeBrowsersService{
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			captured = query
+			return &kernel.BrowserGetResponse{SessionID: "sess-123"}, nil
+		},
+	}
+
+	b := BrowsersCmd{browsers: fake}
+	err := b.Get(context.Background(), BrowsersGetInput{
+		Identifier:     "sess-123",
+		IncludeDeleted: true,
+	})
+	assert.NoError(t, err)
+	assert.True(t, captured.IncludeDeleted.Valid())
+	assert.True(t, captured.IncludeDeleted.Value)
 }
 
 // --- Fakes for sub-services ---

@@ -43,23 +43,62 @@ var invocationBrowsersCmd = &cobra.Command{
 	RunE:  runInvocationBrowsers,
 }
 
+var invocationGetCmd = &cobra.Command{
+	Use:   "get <invocation_id>",
+	Short: "Get an invocation",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runInvocationGet,
+}
+
+var invocationUpdateCmd = &cobra.Command{
+	Use:   "update <invocation_id>",
+	Short: "Update an invocation",
+	Long:  "Update an invocation status and optional output payload.",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runInvocationUpdate,
+}
+
+var invocationDeleteBrowsersCmd = &cobra.Command{
+	Use:   "delete-browsers <invocation_id>",
+	Short: "Delete browser sessions for an invocation",
+	Long:  "Delete all browser sessions associated with an invocation.",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runInvocationDeleteBrowsers,
+}
+
 func init() {
 	invokeCmd.Flags().StringP("version", "v", "latest", "Specify a version of the app to invoke (optional, defaults to 'latest')")
 	invokeCmd.Flags().StringP("payload", "p", "", "JSON payload for the invocation (optional)")
 	invokeCmd.Flags().StringP("payload-file", "f", "", "Path to a JSON file containing the payload (use '-' for stdin)")
 	invokeCmd.Flags().BoolP("sync", "s", false, "Invoke synchronously (default false). A synchronous invocation will open a long-lived HTTP POST to the Kernel API to wait for the invocation to complete. This will time out after 60 seconds, so only use this option if you expect your invocation to complete in less than 60 seconds. The default is to invoke asynchronously, in which case the CLI will open an SSE connection to the Kernel API after submitting the invocation and wait for the invocation to complete.")
 	invokeCmd.Flags().Int64("async-timeout", 0, "Timeout in seconds for async invocations (min 10, max 3600). Only applies when async mode is used.")
+	invokeCmd.Flags().String("since", "", "Show invocation events since the given time when following async execution")
 	invokeCmd.Flags().StringP("output", "o", "", "Output format: json for JSONL streaming output")
 	invokeCmd.MarkFlagsMutuallyExclusive("payload", "payload-file")
 
 	invocationHistoryCmd.Flags().Int("limit", 100, "Max invocations to return (default 100)")
+	invocationHistoryCmd.Flags().String("action", "", "Filter by action name")
 	invocationHistoryCmd.Flags().StringP("app", "a", "", "Filter by app name")
+	invocationHistoryCmd.Flags().String("deployment-id", "", "Filter by deployment ID")
+	invocationHistoryCmd.Flags().Int("offset", 0, "Number of results to skip")
+	invocationHistoryCmd.Flags().String("since", "", "Show invocations that started since the given time")
+	invocationHistoryCmd.Flags().String("status", "", "Filter by invocation status: queued, running, succeeded, failed")
 	invocationHistoryCmd.Flags().String("version", "", "Filter by invocation version")
 	invocationHistoryCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	invokeCmd.AddCommand(invocationHistoryCmd)
 
 	invocationBrowsersCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	invokeCmd.AddCommand(invocationBrowsersCmd)
+
+	invocationGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	invokeCmd.AddCommand(invocationGetCmd)
+
+	invocationUpdateCmd.Flags().String("status", "", "New invocation status: succeeded or failed")
+	invocationUpdateCmd.Flags().String("output", "", "Updated invocation output rendered as a JSON string")
+	_ = invocationUpdateCmd.MarkFlagRequired("status")
+	invokeCmd.AddCommand(invocationUpdateCmd)
+
+	invokeCmd.AddCommand(invocationDeleteBrowsersCmd)
 }
 
 func runInvoke(cmd *cobra.Command, args []string) error {
@@ -83,6 +122,7 @@ func runInvoke(cmd *cobra.Command, args []string) error {
 	}
 	isSync, _ := cmd.Flags().GetBool("sync")
 	asyncTimeout, _ := cmd.Flags().GetInt64("async-timeout")
+	since, _ := cmd.Flags().GetString("since")
 	params := kernel.InvocationNewParams{
 		AppName:    appName,
 		ActionName: actionName,
@@ -185,7 +225,9 @@ func runInvoke(cmd *cobra.Command, args []string) error {
 	})
 
 	// Start following events
-	stream := client.Invocations.FollowStreaming(cmd.Context(), resp.ID, kernel.InvocationFollowParams{}, option.WithMaxRetries(0))
+	stream := client.Invocations.FollowStreaming(cmd.Context(), resp.ID, kernel.InvocationFollowParams{
+		Since: kernel.Opt(since),
+	}, option.WithMaxRetries(0))
 	for stream.Next() {
 		ev := stream.Current()
 
@@ -271,24 +313,53 @@ func handleSdkError(err error) error {
 }
 
 func printResult(success bool, output string) {
-	var prettyJSON map[string]interface{}
-	if err := json.Unmarshal([]byte(output), &prettyJSON); err == nil {
-		// Use a custom encoder to prevent escaping &, <, > as \u0026, \u003c, \u003e
-		// which breaks copy/paste of URLs in the invoke output.
-		var buf bytes.Buffer
-		encoder := json.NewEncoder(&buf)
-		encoder.SetEscapeHTML(false)
-		encoder.SetIndent("", "  ")
-		if err := encoder.Encode(prettyJSON); err == nil {
-			output = strings.TrimSuffix(buf.String(), "\n")
-		}
-	}
+	output = formatJSONValue(output)
 	// use pterm.Success if succeeded, pterm.Error if failed
 	if success {
 		pterm.Success.Printf("Result:\n%s\n", output)
 	} else {
 		pterm.Error.Printf("Result:\n%s\n", output)
 	}
+}
+
+func formatJSONValue(value string) string {
+	var prettyJSON interface{}
+	if err := json.Unmarshal([]byte(value), &prettyJSON); err == nil {
+		var buf bytes.Buffer
+		encoder := json.NewEncoder(&buf)
+		encoder.SetEscapeHTML(false)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(prettyJSON); err == nil {
+			return strings.TrimSuffix(buf.String(), "\n")
+		}
+	}
+	return value
+}
+
+func printInvocationDetails(id, appName, actionName, version string, startedAt, finishedAt time.Time, status, statusReason, payload, output string) {
+	table := pterm.TableData{
+		{"Property", "Value"},
+		{"ID", id},
+		{"App Name", appName},
+		{"Action", actionName},
+		{"Version", version},
+		{"Status", status},
+		{"Started At", util.FormatLocal(startedAt)},
+	}
+	if !finishedAt.IsZero() {
+		table = append(table, []string{"Finished At", util.FormatLocal(finishedAt)})
+	}
+	if statusReason != "" {
+		table = append(table, []string{"Status Reason", statusReason})
+	}
+	if payload != "" {
+		table = append(table, []string{"Payload", formatJSONValue(payload)})
+	}
+	if output != "" {
+		table = append(table, []string{"Output", formatJSONValue(output)})
+	}
+
+	PrintTableNoPad(table, true)
 }
 
 // getPayload reads the payload from either --payload flag or --payload-file flag.
@@ -347,7 +418,12 @@ func runInvocationHistory(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 
 	lim, _ := cmd.Flags().GetInt("limit")
+	actionFilter, _ := cmd.Flags().GetString("action")
 	appFilter, _ := cmd.Flags().GetString("app")
+	deploymentID, _ := cmd.Flags().GetString("deployment-id")
+	offset, _ := cmd.Flags().GetInt("offset")
+	since, _ := cmd.Flags().GetString("since")
+	statusFilter, _ := cmd.Flags().GetString("status")
 	versionFilter, _ := cmd.Flags().GetString("version")
 	output, _ := cmd.Flags().GetString("output")
 
@@ -360,14 +436,40 @@ func runInvocationHistory(cmd *cobra.Command, args []string) error {
 		Limit: kernel.Opt(int64(lim)),
 	}
 
+	if actionFilter != "" {
+		params.ActionName = kernel.Opt(actionFilter)
+	}
 	// Only add app filter if specified
 	if appFilter != "" {
 		params.AppName = kernel.Opt(appFilter)
+	}
+	if deploymentID != "" {
+		params.DeploymentID = kernel.Opt(deploymentID)
+	}
+	if offset > 0 {
+		params.Offset = kernel.Opt(int64(offset))
+	}
+	if since != "" {
+		params.Since = kernel.Opt(since)
 	}
 
 	// Only add version filter if specified
 	if versionFilter != "" {
 		params.Version = kernel.Opt(versionFilter)
+	}
+	if statusFilter != "" {
+		switch strings.ToLower(statusFilter) {
+		case "queued":
+			params.Status = kernel.InvocationListParamsStatusQueued
+		case "running":
+			params.Status = kernel.InvocationListParamsStatusRunning
+		case "succeeded":
+			params.Status = kernel.InvocationListParamsStatusSucceeded
+		case "failed":
+			params.Status = kernel.InvocationListParamsStatusFailed
+		default:
+			return fmt.Errorf("invalid --status value: %s (must be queued, running, succeeded, or failed)", statusFilter)
+		}
 	}
 
 	// Build debug message based on filters
@@ -499,5 +601,93 @@ func runInvocationBrowsers(cmd *cobra.Command, args []string) error {
 
 	pterm.Info.Printf("Browsers for invocation %s:\n", invocationID)
 	pterm.DefaultTable.WithHasHeader().WithData(table).Render()
+	return nil
+}
+
+func runInvocationGet(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	output, _ := cmd.Flags().GetString("output")
+
+	if output != "" && output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
+	resp, err := client.Invocations.Get(cmd.Context(), args[0])
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if output == "json" {
+		return util.PrintPrettyJSON(resp)
+	}
+
+	printInvocationDetails(
+		resp.ID,
+		resp.AppName,
+		resp.ActionName,
+		resp.Version,
+		resp.StartedAt,
+		resp.FinishedAt,
+		string(resp.Status),
+		resp.StatusReason,
+		resp.Payload,
+		resp.Output,
+	)
+	return nil
+}
+
+func runInvocationUpdate(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	status, _ := cmd.Flags().GetString("status")
+	output, _ := cmd.Flags().GetString("output")
+
+	var parsedStatus kernel.InvocationUpdateParamsStatus
+	switch strings.ToLower(status) {
+	case "succeeded":
+		parsedStatus = kernel.InvocationUpdateParamsStatusSucceeded
+	case "failed":
+		parsedStatus = kernel.InvocationUpdateParamsStatusFailed
+	default:
+		return fmt.Errorf("invalid --status value: %s (must be succeeded or failed)", status)
+	}
+
+	params := kernel.InvocationUpdateParams{Status: parsedStatus}
+	if cmd.Flags().Changed("output") {
+		if strings.TrimSpace(output) != "" {
+			var parsed interface{}
+			if err := json.Unmarshal([]byte(output), &parsed); err != nil {
+				return fmt.Errorf("invalid JSON for --output: %w", err)
+			}
+		}
+		params.Output = kernel.Opt(output)
+	}
+
+	resp, err := client.Invocations.Update(cmd.Context(), args[0], params)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	printInvocationDetails(
+		resp.ID,
+		resp.AppName,
+		resp.ActionName,
+		resp.Version,
+		resp.StartedAt,
+		resp.FinishedAt,
+		string(resp.Status),
+		resp.StatusReason,
+		resp.Payload,
+		resp.Output,
+	)
+	return nil
+}
+
+func runInvocationDeleteBrowsers(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	if err := client.Invocations.DeleteBrowsers(cmd.Context(), args[0]); err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	pterm.Success.Printf("Deleted browsers for invocation %s\n", args[0])
 	return nil
 }
