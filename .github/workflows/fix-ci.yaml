@@ -102,4 +102,4 @@ jobs:
           - Avoid duplicate comments - update existing bot comments
           - If no actionable fix is possible, make no changes and post no comment
           - PR comments must ONLY include the PR creation link, no manual merge instructions
-          " --model opus-4.5 --force --output-format=text
+          " --model ${{ secrets.CURSOR_PREFERRED_MODEL }} --force --output-format=text
