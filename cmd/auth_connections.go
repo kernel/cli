@@ -19,6 +19,7 @@ import (
 type AuthConnectionService interface {
 	New(ctx context.Context, body kernel.AuthConnectionNewParams, opts ...option.RequestOption) (res *kernel.ManagedAuth, err error)
 	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.ManagedAuth, err error)
+	Update(ctx context.Context, id string, body kernel.AuthConnectionUpdateParams, opts ...option.RequestOption) (res *kernel.ManagedAuth, err error)
 	List(ctx context.Context, query kernel.AuthConnectionListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.ManagedAuth], err error)
 	Delete(ctx context.Context, id string, opts ...option.RequestOption) (err error)
 	Login(ctx context.Context, id string, body kernel.AuthConnectionLoginParams, opts ...option.RequestOption) (res *kernel.LoginResponse, err error)
@@ -53,6 +54,29 @@ type AuthConnectionGetInput struct {
 	Output string
 }
 
+type AuthConnectionUpdateInput struct {
+	ID                     string
+	LoginURL               string
+	LoginURLSet            bool
+	AllowedDomains         []string
+	AllowedDomainsSet      bool
+	CredentialName         string
+	CredentialNameSet      bool
+	CredentialProvider     string
+	CredentialProviderSet  bool
+	CredentialPath         string
+	CredentialPathSet      bool
+	CredentialAuto         BoolFlag
+	ProxyID                string
+	ProxyIDSet             bool
+	ProxyName              string
+	ProxyNameSet           bool
+	SaveCredentials        BoolFlag
+	HealthCheckInterval    int
+	HealthCheckIntervalSet bool
+	Output                 string
+}
+
 type AuthConnectionListInput struct {
 	Domain      string
 	ProfileName string
@@ -77,7 +101,9 @@ type AuthConnectionSubmitInput struct {
 	ID                string
 	FieldValues       map[string]string
 	MfaOptionID       string
+	SignInOptionID    string
 	SSOButtonSelector string
+	SSOProvider       string
 	Output            string
 }
 
@@ -159,7 +185,11 @@ func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateIn
 	}
 
 	pterm.Success.Printf("Created managed auth: %s\n", auth.ID)
+	printManagedAuthSummary(auth)
+	return nil
+}
 
+func printManagedAuthSummary(auth *kernel.ManagedAuth) {
 	tableData := pterm.TableData{
 		{"Property", "Value"},
 		{"ID", auth.ID},
@@ -177,8 +207,91 @@ func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateIn
 	if auth.Credential.Provider != "" {
 		tableData = append(tableData, []string{"Credential Provider", auth.Credential.Provider})
 	}
-
+	if auth.ProxyID != "" {
+		tableData = append(tableData, []string{"Proxy ID", auth.ProxyID})
+	}
 	PrintTableNoPad(tableData, true)
+}
+
+func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
+	params := kernel.AuthConnectionUpdateParams{
+		ManagedAuthUpdateRequest: kernel.ManagedAuthUpdateRequestParam{},
+	}
+	hasChanges := false
+
+	if in.HealthCheckIntervalSet {
+		params.ManagedAuthUpdateRequest.HealthCheckInterval = kernel.Opt(int64(in.HealthCheckInterval))
+		hasChanges = true
+	}
+	if in.LoginURLSet {
+		params.ManagedAuthUpdateRequest.LoginURL = kernel.Opt(in.LoginURL)
+		hasChanges = true
+	}
+	if in.SaveCredentials.Set {
+		params.ManagedAuthUpdateRequest.SaveCredentials = kernel.Opt(in.SaveCredentials.Value)
+		hasChanges = true
+	}
+	if in.AllowedDomainsSet {
+		params.ManagedAuthUpdateRequest.AllowedDomains = in.AllowedDomains
+		hasChanges = true
+	}
+
+	credentialChanged := in.CredentialNameSet || in.CredentialProviderSet || in.CredentialPathSet || in.CredentialAuto.Set
+	if credentialChanged {
+		if strings.TrimSpace(in.CredentialName) != "" && strings.TrimSpace(in.CredentialProvider) != "" {
+			return fmt.Errorf("credential reference must use either --credential-name or --credential-provider")
+		}
+		params.ManagedAuthUpdateRequest.Credential = kernel.ManagedAuthUpdateRequestCredentialParam{}
+		if in.CredentialNameSet {
+			params.ManagedAuthUpdateRequest.Credential.Name = kernel.Opt(in.CredentialName)
+		}
+		if in.CredentialProviderSet {
+			params.ManagedAuthUpdateRequest.Credential.Provider = kernel.Opt(in.CredentialProvider)
+		}
+		if in.CredentialPathSet {
+			params.ManagedAuthUpdateRequest.Credential.Path = kernel.Opt(in.CredentialPath)
+		}
+		if in.CredentialAuto.Set {
+			params.ManagedAuthUpdateRequest.Credential.Auto = kernel.Opt(in.CredentialAuto.Value)
+		}
+		hasChanges = true
+	}
+
+	proxyChanged := in.ProxyIDSet || in.ProxyNameSet
+	if proxyChanged {
+		params.ManagedAuthUpdateRequest.Proxy = kernel.ManagedAuthUpdateRequestProxyParam{}
+		if in.ProxyIDSet {
+			params.ManagedAuthUpdateRequest.Proxy.ID = kernel.Opt(in.ProxyID)
+		}
+		if in.ProxyNameSet {
+			params.ManagedAuthUpdateRequest.Proxy.Name = kernel.Opt(in.ProxyName)
+		}
+		hasChanges = true
+	}
+
+	if !hasChanges {
+		return fmt.Errorf("must provide at least one field to update")
+	}
+
+	if in.Output != "json" {
+		pterm.Info.Printf("Updating managed auth %s...\n", in.ID)
+	}
+
+	auth, err := c.svc.Update(ctx, in.ID, params)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(auth)
+	}
+
+	pterm.Success.Printf("Updated managed auth: %s\n", auth.ID)
+	printManagedAuthSummary(auth)
 	return nil
 }
 
@@ -444,10 +557,21 @@ func (c AuthConnectionCmd) Submit(ctx context.Context, in AuthConnectionSubmitIn
 	// Validate that we have some input to submit
 	hasFields := len(in.FieldValues) > 0
 	hasMfaOption := in.MfaOptionID != ""
+	hasSignInOption := in.SignInOptionID != ""
 	hasSSOButton := in.SSOButtonSelector != ""
+	hasSSOProvider := in.SSOProvider != ""
+	submitModes := 0
+	for _, active := range []bool{hasFields, hasMfaOption, hasSignInOption, hasSSOButton, hasSSOProvider} {
+		if active {
+			submitModes++
+		}
+	}
 
-	if !hasFields && !hasMfaOption && !hasSSOButton {
-		return fmt.Errorf("must provide at least one of: --field, --mfa-option-id, or --sso-button-selector")
+	if submitModes == 0 {
+		return fmt.Errorf("must provide exactly one of: --field, --mfa-option-id, --sign-in-option-id, --sso-button-selector, or --sso-provider")
+	}
+	if submitModes > 1 {
+		return fmt.Errorf("provide exactly one of: --field, --mfa-option-id, --sign-in-option-id, --sso-button-selector, or --sso-provider")
 	}
 
 	// Resolve MFA option: the user may pass the label (e.g. "Get a text"), the
@@ -489,8 +613,14 @@ func (c AuthConnectionCmd) Submit(ctx context.Context, in AuthConnectionSubmitIn
 	if hasMfaOption {
 		params.SubmitFieldsRequest.MfaOptionID = kernel.Opt(in.MfaOptionID)
 	}
+	if hasSignInOption {
+		params.SubmitFieldsRequest.SignInOptionID = kernel.Opt(in.SignInOptionID)
+	}
 	if hasSSOButton {
 		params.SubmitFieldsRequest.SSOButtonSelector = kernel.Opt(in.SSOButtonSelector)
+	}
+	if hasSSOProvider {
+		params.SubmitFieldsRequest.SSOProvider = kernel.Opt(in.SSOProvider)
 	}
 
 	if in.Output != "json" {
@@ -594,6 +724,14 @@ var authConnectionsCreateCmd = &cobra.Command{
 	RunE:  runAuthConnectionsCreate,
 }
 
+var authConnectionsUpdateCmd = &cobra.Command{
+	Use:   "update <id>",
+	Short: "Update a managed auth connection",
+	Long:  "Update managed authentication settings like login URL, health checks, credential source, and proxy.",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runAuthConnectionsUpdate,
+}
+
 var authConnectionsGetCmd = &cobra.Command{
 	Use:   "get <id>",
 	Short: "Get a managed auth by ID",
@@ -666,9 +804,26 @@ func init() {
 	authConnectionsCreateCmd.Flags().Int("health-check-interval", 0, "Interval in seconds between health checks (300-86400)")
 	_ = authConnectionsCreateCmd.MarkFlagRequired("domain")
 	_ = authConnectionsCreateCmd.MarkFlagRequired("profile-name")
+	authConnectionsCreateCmd.MarkFlagsMutuallyExclusive("credential-name", "credential-provider")
 
 	// Get flags
 	authConnectionsGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+
+	// Update flags
+	authConnectionsUpdateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	authConnectionsUpdateCmd.Flags().String("login-url", "", "Login page URL (set to empty string to clear)")
+	authConnectionsUpdateCmd.Flags().StringSlice("allowed-domain", []string{}, "Additional allowed domains (replaces existing list)")
+	authConnectionsUpdateCmd.Flags().String("credential-name", "", "Kernel credential name to use")
+	authConnectionsUpdateCmd.Flags().String("credential-provider", "", "External credential provider name")
+	authConnectionsUpdateCmd.Flags().String("credential-path", "", "Provider-specific path (e.g., VaultName/ItemName)")
+	authConnectionsUpdateCmd.Flags().Bool("credential-auto", false, "Lookup by domain from the specified provider")
+	authConnectionsUpdateCmd.Flags().String("proxy-id", "", "Proxy ID to use")
+	authConnectionsUpdateCmd.Flags().String("proxy-name", "", "Proxy name to use")
+	authConnectionsUpdateCmd.Flags().Bool("save-credentials", false, "Enable saving credentials after successful login")
+	authConnectionsUpdateCmd.Flags().Bool("no-save-credentials", false, "Disable saving credentials after successful login")
+	authConnectionsUpdateCmd.Flags().Int("health-check-interval", 0, "Interval in seconds between health checks")
+	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("credential-name", "credential-provider")
+	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("save-credentials", "no-save-credentials")
 
 	// List flags
 	authConnectionsListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
@@ -689,13 +844,16 @@ func init() {
 	authConnectionsSubmitCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	authConnectionsSubmitCmd.Flags().StringArray("field", []string{}, "Field name=value pair (repeatable)")
 	authConnectionsSubmitCmd.Flags().String("mfa-option-id", "", "MFA option ID if user selected an MFA method")
+	authConnectionsSubmitCmd.Flags().String("sign-in-option-id", "", "Sign-in option ID if the flow returned non-MFA choices")
 	authConnectionsSubmitCmd.Flags().String("sso-button-selector", "", "XPath selector if user chose an SSO button")
+	authConnectionsSubmitCmd.Flags().String("sso-provider", "", "SSO provider if user chose an SSO button by provider (e.g. google, github)")
 
 	// Follow flags
 	authConnectionsFollowCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 
 	// Wire up commands
 	authConnectionsCmd.AddCommand(authConnectionsCreateCmd)
+	authConnectionsCmd.AddCommand(authConnectionsUpdateCmd)
 	authConnectionsCmd.AddCommand(authConnectionsGetCmd)
 	authConnectionsCmd.AddCommand(authConnectionsListCmd)
 	authConnectionsCmd.AddCommand(authConnectionsDeleteCmd)
@@ -753,6 +911,55 @@ func runAuthConnectionsGet(cmd *cobra.Command, args []string) error {
 	})
 }
 
+func runAuthConnectionsUpdate(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	output, _ := cmd.Flags().GetString("output")
+	loginURL, _ := cmd.Flags().GetString("login-url")
+	allowedDomains, _ := cmd.Flags().GetStringSlice("allowed-domain")
+	credentialName, _ := cmd.Flags().GetString("credential-name")
+	credentialProvider, _ := cmd.Flags().GetString("credential-provider")
+	credentialPath, _ := cmd.Flags().GetString("credential-path")
+	credentialAuto, _ := cmd.Flags().GetBool("credential-auto")
+	proxyID, _ := cmd.Flags().GetString("proxy-id")
+	proxyName, _ := cmd.Flags().GetString("proxy-name")
+	saveCredentials, _ := cmd.Flags().GetBool("save-credentials")
+	noSaveCredentials, _ := cmd.Flags().GetBool("no-save-credentials")
+	healthCheckInterval, _ := cmd.Flags().GetInt("health-check-interval")
+
+	saveCredentialsFlag := BoolFlag{}
+	if cmd.Flags().Changed("save-credentials") {
+		saveCredentialsFlag = BoolFlag{Set: true, Value: saveCredentials}
+	}
+	if cmd.Flags().Changed("no-save-credentials") {
+		saveCredentialsFlag = BoolFlag{Set: true, Value: !noSaveCredentials}
+	}
+
+	svc := client.Auth.Connections
+	c := AuthConnectionCmd{svc: &svc}
+	return c.Update(cmd.Context(), AuthConnectionUpdateInput{
+		ID:                     args[0],
+		LoginURL:               loginURL,
+		LoginURLSet:            cmd.Flags().Changed("login-url"),
+		AllowedDomains:         allowedDomains,
+		AllowedDomainsSet:      cmd.Flags().Changed("allowed-domain"),
+		CredentialName:         credentialName,
+		CredentialNameSet:      cmd.Flags().Changed("credential-name"),
+		CredentialProvider:     credentialProvider,
+		CredentialProviderSet:  cmd.Flags().Changed("credential-provider"),
+		CredentialPath:         credentialPath,
+		CredentialPathSet:      cmd.Flags().Changed("credential-path"),
+		CredentialAuto:         BoolFlag{Set: cmd.Flags().Changed("credential-auto"), Value: credentialAuto},
+		ProxyID:                proxyID,
+		ProxyIDSet:             cmd.Flags().Changed("proxy-id"),
+		ProxyName:              proxyName,
+		ProxyNameSet:           cmd.Flags().Changed("proxy-name"),
+		SaveCredentials:        saveCredentialsFlag,
+		HealthCheckInterval:    healthCheckInterval,
+		HealthCheckIntervalSet: cmd.Flags().Changed("health-check-interval"),
+		Output:                 output,
+	})
+}
+
 func runAuthConnectionsList(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	output, _ := cmd.Flags().GetString("output")
@@ -805,7 +1012,9 @@ func runAuthConnectionsSubmit(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 	fieldPairs, _ := cmd.Flags().GetStringArray("field")
 	mfaOptionID, _ := cmd.Flags().GetString("mfa-option-id")
+	signInOptionID, _ := cmd.Flags().GetString("sign-in-option-id")
 	ssoButtonSelector, _ := cmd.Flags().GetString("sso-button-selector")
+	ssoProvider, _ := cmd.Flags().GetString("sso-provider")
 
 	// Parse field pairs into map
 	fieldValues := make(map[string]string)
@@ -823,7 +1032,9 @@ func runAuthConnectionsSubmit(cmd *cobra.Command, args []string) error {
 		ID:                args[0],
 		FieldValues:       fieldValues,
 		MfaOptionID:       mfaOptionID,
+		SignInOptionID:    signInOptionID,
 		SSOButtonSelector: ssoButtonSelector,
+		SSOProvider:       ssoProvider,
 		Output:            output,
 	})
 }

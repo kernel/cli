@@ -177,6 +177,7 @@ type BrowsersCreateInput struct {
 	Stealth            BoolFlag
 	Headless           BoolFlag
 	GPU                BoolFlag
+	InvocationID       string
 	Kiosk              BoolFlag
 	ProfileID          string
 	ProfileName        string
@@ -197,8 +198,9 @@ type BrowsersViewInput struct {
 }
 
 type BrowsersGetInput struct {
-	Identifier string
-	Output     string
+	Identifier     string
+	IncludeDeleted bool
+	Output         string
 }
 
 type BrowsersUpdateInput struct {
@@ -360,6 +362,9 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 	if in.GPU.Set {
 		params.GPU = kernel.Opt(in.GPU.Value)
+	}
+	if in.InvocationID != "" {
+		params.InvocationID = kernel.Opt(in.InvocationID)
 	}
 	if in.Kiosk.Set {
 		params.KioskMode = kernel.Opt(in.Kiosk.Value)
@@ -526,7 +531,12 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
-	browser, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
+	query := kernel.BrowserGetParams{}
+	if in.IncludeDeleted {
+		query.IncludeDeleted = kernel.Opt(true)
+	}
+
+	browser, err := b.browsers.Get(ctx, in.Identifier, query)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -2228,6 +2238,7 @@ func init() {
 
 	// get flags
 	browsersGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	browsersGetCmd.Flags().Bool("include-deleted", false, "Include soft-deleted browser sessions in the lookup")
 
 	// view flags
 	browsersViewCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
@@ -2494,6 +2505,7 @@ func init() {
 	browsersCreateCmd.Flags().BoolP("stealth", "s", false, "Launch browser in stealth mode to avoid detection")
 	browsersCreateCmd.Flags().BoolP("headless", "H", false, "Launch browser without GUI access")
 	browsersCreateCmd.Flags().Bool("gpu", false, "Launch browser with hardware-accelerated GPU rendering")
+	browsersCreateCmd.Flags().String("invocation-id", "", "Associate the browser session with an invocation")
 	browsersCreateCmd.Flags().Bool("kiosk", false, "Launch browser in kiosk mode")
 	browsersCreateCmd.Flags().IntP("timeout", "t", 60, "Timeout in seconds for the browser session")
 	browsersCreateCmd.Flags().String("profile-id", "", "Profile ID to load into the browser session (mutually exclusive with --profile-name)")
@@ -2540,6 +2552,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	stealthVal, _ := cmd.Flags().GetBool("stealth")
 	headlessVal, _ := cmd.Flags().GetBool("headless")
 	gpuVal, _ := cmd.Flags().GetBool("gpu")
+	invocationID, _ := cmd.Flags().GetString("invocation-id")
 	kioskVal, _ := cmd.Flags().GetBool("kiosk")
 	timeout, _ := cmd.Flags().GetInt("timeout")
 	profileID, _ := cmd.Flags().GetString("profile-id")
@@ -2652,6 +2665,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		Stealth:            BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealthVal},
 		Headless:           BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headlessVal},
 		GPU:                BoolFlag{Set: cmd.Flags().Changed("gpu"), Value: gpuVal},
+		InvocationID:       invocationID,
 		Kiosk:              BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kioskVal},
 		ProfileID:          profileID,
 		ProfileName:        profileName,
@@ -2696,12 +2710,14 @@ func runBrowsersView(cmd *cobra.Command, args []string) error {
 func runBrowsersGet(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	out, _ := cmd.Flags().GetString("output")
+	includeDeleted, _ := cmd.Flags().GetBool("include-deleted")
 
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
 	return b.Get(cmd.Context(), BrowsersGetInput{
-		Identifier: args[0],
-		Output:     out,
+		Identifier:     args[0],
+		IncludeDeleted: includeDeleted,
+		Output:         out,
 	})
 }
 

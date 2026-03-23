@@ -53,6 +53,7 @@ func init() {
 
 	// Add optional filters for list
 	appListCmd.Flags().String("name", "", "Filter by application name")
+	appListCmd.Flags().String("query", "", "Search apps by name")
 	appListCmd.Flags().String("version", "", "Filter by version label")
 	appListCmd.Flags().Int("limit", 20, "Max apps to return (default 20)")
 	appListCmd.Flags().Int("per-page", 20, "Items per page (alias of --limit)")
@@ -67,6 +68,7 @@ func init() {
 func runAppList(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	appName, _ := cmd.Flags().GetString("name")
+	query, _ := cmd.Flags().GetString("query")
 	version, _ := cmd.Flags().GetString("version")
 	lim, _ := cmd.Flags().GetInt("limit")
 	perPage, _ := cmd.Flags().GetInt("per-page")
@@ -100,6 +102,9 @@ func runAppList(cmd *cobra.Command, args []string) error {
 	params := kernel.AppListParams{}
 	if appName != "" {
 		params.AppName = kernel.Opt(appName)
+	}
+	if query != "" {
+		params.Query = kernel.Opt(query)
 	}
 	if version != "" {
 		params.Version = kernel.Opt(version)
@@ -170,17 +175,20 @@ func runAppList(cmd *cobra.Command, args []string) error {
 	PrintTableNoPad(tableData, true)
 
 	// Footer with pagination details and next command suggestion
-	fmt.Printf("\nPage: %d  Per-page: %d  Items this page: %d  Has more: %s\n", page, perPage, itemsThisPage, lo.Ternary(hasMore, "yes", "no"))
+	pterm.Printf("\nPage: %d  Per-page: %d  Items this page: %d  Has more: %s\n", page, perPage, itemsThisPage, lo.Ternary(hasMore, "yes", "no"))
 	if hasMore {
 		nextPage := page + 1
 		nextCmd := fmt.Sprintf("kernel app list --page %d --per-page %d", nextPage, perPage)
 		if appName != "" {
-			nextCmd += fmt.Sprintf(" --name %s", appName)
+			nextCmd += fmt.Sprintf(" --name %s", quoteIfNeeded(appName))
+		}
+		if query != "" {
+			nextCmd += fmt.Sprintf(" --query %s", quoteIfNeeded(query))
 		}
 		if version != "" {
-			nextCmd += fmt.Sprintf(" --version %s", version)
+			nextCmd += fmt.Sprintf(" --version %s", quoteIfNeeded(version))
 		}
-		fmt.Printf("Next: %s\n", nextCmd)
+		pterm.Printf("Next: %s\n", nextCmd)
 	}
 	// Concise notes when user-specified per-page/limit/page are outside API-allowed range
 	if cmd.Flags().Changed("per-page") {
