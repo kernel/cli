@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -86,6 +87,7 @@ type BrowserPoolsCreateInput struct {
 	ProfileName        string
 	ProfileSaveChanges BoolFlag
 	ProxyID            string
+	ChromePolicy       string
 	Extensions         []string
 	Viewport           string
 	Output             string
@@ -130,6 +132,14 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 
 	if in.ProxyID != "" {
 		params.ProxyID = kernel.String(in.ProxyID)
+	}
+	chromePolicy, err := parseChromePolicy(in.ChromePolicy)
+	if err != nil {
+		pterm.Error.Println(err.Error())
+		return nil
+	}
+	if len(chromePolicy) > 0 {
+		params.ChromePolicy = chromePolicy
 	}
 
 	params.Extensions = buildExtensionsParam(in.Extensions)
@@ -196,6 +206,7 @@ func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error
 		{"Kiosk Mode", fmt.Sprintf("%t", cfg.KioskMode)},
 		{"Profile", formatProfile(cfg.Profile)},
 		{"Proxy ID", util.OrDash(cfg.ProxyID)},
+		{"Chrome Policy", formatChromePolicy(cfg.ChromePolicy)},
 		{"Extensions", formatExtensions(cfg.Extensions)},
 		{"Viewport", formatViewport(cfg.Viewport)},
 	}
@@ -217,6 +228,7 @@ type BrowserPoolsUpdateInput struct {
 	ProfileName        string
 	ProfileSaveChanges BoolFlag
 	ProxyID            string
+	ChromePolicy       string
 	Extensions         []string
 	Viewport           string
 	DiscardAllIdle     BoolFlag
@@ -266,6 +278,14 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 
 	if in.ProxyID != "" {
 		params.ProxyID = kernel.String(in.ProxyID)
+	}
+	chromePolicy, err := parseChromePolicy(in.ChromePolicy)
+	if err != nil {
+		pterm.Error.Println(err.Error())
+		return nil
+	}
+	if len(chromePolicy) > 0 {
+		params.ChromePolicy = chromePolicy
 	}
 
 	params.Extensions = buildExtensionsParam(in.Extensions)
@@ -472,6 +492,7 @@ func init() {
 	browserPoolsCreateCmd.Flags().String("profile-name", "", "Profile name")
 	browserPoolsCreateCmd.Flags().Bool("save-changes", false, "Save changes to profile")
 	browserPoolsCreateCmd.Flags().String("proxy-id", "", "Proxy ID")
+	browserPoolsCreateCmd.Flags().String("chrome-policy", "", "JSON object of Chrome enterprise policy overrides to apply to all browsers in the pool")
 	browserPoolsCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsCreateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
 
@@ -488,6 +509,7 @@ func init() {
 	browserPoolsUpdateCmd.Flags().String("profile-name", "", "Profile name")
 	browserPoolsUpdateCmd.Flags().Bool("save-changes", false, "Save changes to profile")
 	browserPoolsUpdateCmd.Flags().String("proxy-id", "", "Proxy ID")
+	browserPoolsUpdateCmd.Flags().String("chrome-policy", "", "JSON object of Chrome enterprise policy overrides to apply to all browsers in the pool")
 	browserPoolsUpdateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsUpdateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
 	browserPoolsUpdateCmd.Flags().Bool("discard-all-idle", false, "Discard all idle browsers")
@@ -539,6 +561,7 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	saveChanges, _ := cmd.Flags().GetBool("save-changes")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
+	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	output, _ := cmd.Flags().GetString("output")
@@ -555,6 +578,7 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 		ProfileName:        profileName,
 		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
 		ProxyID:            proxyID,
+		ChromePolicy:       chromePolicy,
 		Extensions:         extensions,
 		Viewport:           viewport,
 		Output:             output,
@@ -585,6 +609,7 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	saveChanges, _ := cmd.Flags().GetBool("save-changes")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
+	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	discardIdle, _ := cmd.Flags().GetBool("discard-all-idle")
@@ -603,6 +628,7 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 		ProfileName:        profileName,
 		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
 		ProxyID:            proxyID,
+		ChromePolicy:       chromePolicy,
 		Extensions:         extensions,
 		Viewport:           viewport,
 		DiscardAllIdle:     BoolFlag{Set: cmd.Flags().Changed("discard-all-idle"), Value: discardIdle},
@@ -687,6 +713,23 @@ func buildExtensionsParam(extensions []string) []kernel.BrowserExtensionParam {
 	return result
 }
 
+func parseChromePolicy(raw string) (map[string]any, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+
+	var policy map[string]any
+	if err := json.Unmarshal([]byte(raw), &policy); err != nil {
+		return nil, fmt.Errorf("invalid --chrome-policy JSON: %w", err)
+	}
+	if policy == nil {
+		return nil, fmt.Errorf("--chrome-policy must be a JSON object")
+	}
+
+	return policy, nil
+}
+
 func buildViewportParam(viewport string) (*kernel.BrowserViewportParam, error) {
 	if viewport == "" {
 		return nil, nil
@@ -733,6 +776,19 @@ func formatExtensions(extensions []kernel.BrowserExtension) string {
 		}
 	}
 	return util.JoinOrDash(names...)
+}
+
+func formatChromePolicy(policy map[string]any) string {
+	if len(policy) == 0 {
+		return "-"
+	}
+
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return fmt.Sprintf("%v", policy)
+	}
+
+	return string(data)
 }
 
 func formatViewport(viewport kernel.BrowserViewport) string {

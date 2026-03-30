@@ -907,6 +907,25 @@ func TestBrowsersProcessExec_PrintsSummary(t *testing.T) {
 	assert.Contains(t, out, "Duration")
 }
 
+func TestBrowsersProcessExec_MapsEnv(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeProcessService{
+		ExecFunc: func(ctx context.Context, id string, body kernel.BrowserProcessExecParams, opts ...option.RequestOption) (*kernel.BrowserProcessExecResponse, error) {
+			assert.Equal(t, "id", id)
+			assert.Equal(t, map[string]string{"FOO": "bar", "HELLO": "world"}, body.Env)
+			return &kernel.BrowserProcessExecResponse{ExitCode: 0, DurationMs: 10}, nil
+		},
+	}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	b := BrowsersCmd{browsers: fakeBrowsers, process: fake}
+	err := b.ProcessExec(context.Background(), BrowsersProcessExecInput{
+		Identifier: "id",
+		Command:    "env",
+		Env:        []string{"FOO=bar", "HELLO=world"},
+	})
+	assert.NoError(t, err)
+}
+
 func TestBrowsersProcessSpawn_PrintsInfo(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeProcessService{}
@@ -916,6 +935,34 @@ func TestBrowsersProcessSpawn_PrintsInfo(t *testing.T) {
 	out := outBuf.String()
 	assert.Contains(t, out, "Process ID")
 	assert.Contains(t, out, "PID")
+}
+
+func TestBrowsersProcessSpawn_MapsTTYAndEnv(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeProcessService{
+		SpawnFunc: func(ctx context.Context, id string, body kernel.BrowserProcessSpawnParams, opts ...option.RequestOption) (*kernel.BrowserProcessSpawnResponse, error) {
+			assert.Equal(t, "id", id)
+			assert.True(t, body.AllocateTty.Valid())
+			assert.True(t, body.AllocateTty.Value)
+			assert.True(t, body.Cols.Valid())
+			assert.Equal(t, int64(120), body.Cols.Value)
+			assert.True(t, body.Rows.Valid())
+			assert.Equal(t, int64(40), body.Rows.Value)
+			assert.Equal(t, map[string]string{"FOO": "bar"}, body.Env)
+			return &kernel.BrowserProcessSpawnResponse{ProcessID: "proc-1", Pid: 123, StartedAt: time.Now()}, nil
+		},
+	}
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	b := BrowsersCmd{browsers: fakeBrowsers, process: fake}
+	err := b.ProcessSpawn(context.Background(), BrowsersProcessSpawnInput{
+		Identifier:  "id",
+		Command:     "bash",
+		AllocateTTY: BoolFlag{Set: true, Value: true},
+		Cols:        120,
+		Rows:        40,
+		Env:         []string{"FOO=bar"},
+	})
+	assert.NoError(t, err)
 }
 
 func TestBrowsersProcessKill_PrintsSuccess(t *testing.T) {

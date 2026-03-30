@@ -170,6 +170,23 @@ func parseViewport(viewport string) (width, height, refreshRate int64, err error
 	return w, h, refreshRate, nil
 }
 
+func parseStringMapFlag(values []string, flagName string) (map[string]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+
+	parsed := make(map[string]string, len(values))
+	for _, pair := range values {
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid %s value: %s (expected KEY=value)", flagName, pair)
+		}
+		parsed[parts[0]] = parts[1]
+	}
+
+	return parsed, nil
+}
+
 // Inputs for each command
 type BrowsersCreateInput struct {
 	PersistenceID      string
@@ -1257,18 +1274,23 @@ type BrowsersProcessExecInput struct {
 	Timeout    int
 	AsUser     string
 	AsRoot     BoolFlag
+	Env        []string
 	Output     string
 }
 
 type BrowsersProcessSpawnInput struct {
-	Identifier string
-	Command    string
-	Args       []string
-	Cwd        string
-	Timeout    int
-	AsUser     string
-	AsRoot     BoolFlag
-	Output     string
+	Identifier  string
+	Command     string
+	Args        []string
+	Cwd         string
+	Timeout     int
+	AsUser      string
+	AsRoot      BoolFlag
+	AllocateTTY BoolFlag
+	Cols        int64
+	Rows        int64
+	Env         []string
+	Output      string
 }
 
 type BrowsersProcessKillInput struct {
@@ -1396,6 +1418,13 @@ func (b BrowsersCmd) ProcessExec(ctx context.Context, in BrowsersProcessExecInpu
 	if in.AsRoot.Set {
 		params.AsRoot = kernel.Opt(in.AsRoot.Value)
 	}
+	env, err := parseStringMapFlag(in.Env, "--env")
+	if err != nil {
+		return err
+	}
+	if len(env) > 0 {
+		params.Env = env
+	}
 	res, err := b.process.Exec(ctx, br.SessionID, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -1462,6 +1491,27 @@ func (b BrowsersCmd) ProcessSpawn(ctx context.Context, in BrowsersProcessSpawnIn
 	}
 	if in.AsRoot.Set {
 		params.AsRoot = kernel.Opt(in.AsRoot.Value)
+	}
+	if in.AllocateTTY.Set {
+		params.AllocateTty = kernel.Opt(in.AllocateTTY.Value)
+	}
+	if in.Cols > 0 || in.Rows > 0 {
+		if !in.AllocateTTY.Set || !in.AllocateTTY.Value {
+			return fmt.Errorf("--cols and --rows require --allocate-tty")
+		}
+		if in.Cols > 0 {
+			params.Cols = kernel.Opt(in.Cols)
+		}
+		if in.Rows > 0 {
+			params.Rows = kernel.Opt(in.Rows)
+		}
+	}
+	env, err := parseStringMapFlag(in.Env, "--env")
+	if err != nil {
+		return err
+	}
+	if len(env) > 0 {
+		params.Env = env
 	}
 	res, err := b.process.Spawn(ctx, br.SessionID, params)
 	if err != nil {
@@ -2297,6 +2347,7 @@ func init() {
 	procExec.Flags().Int("timeout", 0, "Timeout in seconds")
 	procExec.Flags().String("as-user", "", "Run as user")
 	procExec.Flags().Bool("as-root", false, "Run as root")
+	procExec.Flags().StringArray("env", nil, "Environment variable in KEY=value format (repeatable)")
 	procExec.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	procSpawn := &cobra.Command{Use: "spawn <id> [--] [command...]", Short: "Execute a command asynchronously", Args: cobra.MinimumNArgs(1), RunE: runBrowsersProcessSpawn}
 	procSpawn.Flags().String("command", "", "Command to execute (optional; if omitted, trailing args are executed via /bin/bash -c)")
@@ -2305,6 +2356,10 @@ func init() {
 	procSpawn.Flags().Int("timeout", 0, "Timeout in seconds")
 	procSpawn.Flags().String("as-user", "", "Run as user")
 	procSpawn.Flags().Bool("as-root", false, "Run as root")
+	procSpawn.Flags().Bool("allocate-tty", false, "Allocate a pseudo-terminal (PTY) for interactive shells")
+	procSpawn.Flags().Int64("cols", 0, "Initial terminal columns when --allocate-tty is enabled")
+	procSpawn.Flags().Int64("rows", 0, "Initial terminal rows when --allocate-tty is enabled")
+	procSpawn.Flags().StringArray("env", nil, "Environment variable in KEY=value format (repeatable)")
 	procSpawn.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	procKill := &cobra.Command{Use: "kill <id> <process-id>", Short: "Send a signal to a process", Args: cobra.ExactArgs(2), RunE: runBrowsersProcessKill}
 	procKill.Flags().String("signal", "TERM", "Signal to send (TERM, KILL, INT, HUP)")
@@ -2806,6 +2861,7 @@ func runBrowsersProcessExec(cmd *cobra.Command, args []string) error {
 	timeout, _ := cmd.Flags().GetInt("timeout")
 	asUser, _ := cmd.Flags().GetString("as-user")
 	asRoot, _ := cmd.Flags().GetBool("as-root")
+	env, _ := cmd.Flags().GetStringArray("env")
 	if command == "" && len(args) > 1 {
 		// Treat trailing args after identifier as a shell command
 		shellCmd := strings.Join(args[1:], " ")
@@ -2814,7 +2870,7 @@ func runBrowsersProcessExec(cmd *cobra.Command, args []string) error {
 	}
 	output, _ := cmd.Flags().GetString("output")
 	b := BrowsersCmd{browsers: &svc, process: &svc.Process}
-	return b.ProcessExec(cmd.Context(), BrowsersProcessExecInput{Identifier: args[0], Command: command, Args: argv, Cwd: cwd, Timeout: timeout, AsUser: asUser, AsRoot: BoolFlag{Set: cmd.Flags().Changed("as-root"), Value: asRoot}, Output: output})
+	return b.ProcessExec(cmd.Context(), BrowsersProcessExecInput{Identifier: args[0], Command: command, Args: argv, Cwd: cwd, Timeout: timeout, AsUser: asUser, AsRoot: BoolFlag{Set: cmd.Flags().Changed("as-root"), Value: asRoot}, Env: env, Output: output})
 }
 
 func runBrowsersProcessSpawn(cmd *cobra.Command, args []string) error {
@@ -2826,6 +2882,10 @@ func runBrowsersProcessSpawn(cmd *cobra.Command, args []string) error {
 	timeout, _ := cmd.Flags().GetInt("timeout")
 	asUser, _ := cmd.Flags().GetString("as-user")
 	asRoot, _ := cmd.Flags().GetBool("as-root")
+	allocateTTY, _ := cmd.Flags().GetBool("allocate-tty")
+	cols, _ := cmd.Flags().GetInt64("cols")
+	rows, _ := cmd.Flags().GetInt64("rows")
+	env, _ := cmd.Flags().GetStringArray("env")
 	if command == "" && len(args) > 1 {
 		shellCmd := strings.Join(args[1:], " ")
 		command = "/bin/bash"
@@ -2833,7 +2893,20 @@ func runBrowsersProcessSpawn(cmd *cobra.Command, args []string) error {
 	}
 	output, _ := cmd.Flags().GetString("output")
 	b := BrowsersCmd{browsers: &svc, process: &svc.Process}
-	return b.ProcessSpawn(cmd.Context(), BrowsersProcessSpawnInput{Identifier: args[0], Command: command, Args: argv, Cwd: cwd, Timeout: timeout, AsUser: asUser, AsRoot: BoolFlag{Set: cmd.Flags().Changed("as-root"), Value: asRoot}, Output: output})
+	return b.ProcessSpawn(cmd.Context(), BrowsersProcessSpawnInput{
+		Identifier:  args[0],
+		Command:     command,
+		Args:        argv,
+		Cwd:         cwd,
+		Timeout:     timeout,
+		AsUser:      asUser,
+		AsRoot:      BoolFlag{Set: cmd.Flags().Changed("as-root"), Value: asRoot},
+		AllocateTTY: BoolFlag{Set: cmd.Flags().Changed("allocate-tty"), Value: allocateTTY},
+		Cols:        cols,
+		Rows:        rows,
+		Env:         env,
+		Output:      output,
+	})
 }
 
 func runBrowsersProcessKill(cmd *cobra.Command, args []string) error {
