@@ -711,9 +711,10 @@ func (c AuthConnectionCmd) Follow(ctx context.Context, in AuthConnectionFollowIn
 // --- Cobra wiring ---
 
 var authConnectionsCmd = &cobra.Command{
-	Use:   "connections",
-	Short: "Manage auth connections (managed auth)",
-	Long:  "Commands for managing authentication connections that keep profiles logged into domains",
+	Use:     "connections",
+	Aliases: []string{"connection"},
+	Short:   "Manage auth connections (managed auth)",
+	Long:    "Commands for managing authentication connections that keep profiles logged into domains",
 }
 
 var authConnectionsCreateCmd = &cobra.Command{
