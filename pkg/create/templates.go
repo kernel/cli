@@ -17,8 +17,9 @@ const (
 	TemplateBrowserUse           = "browser-use"
 	TemplateStagehand            = "stagehand"
 	TemplateOpenAGIComputerUse   = "openagi-computer-use"
-	TemplateClaudeAgentSDK       = "claude-agent-sdk"
-	TemplateYutoriComputerUse    = "yutori"
+	TemplateClaudeAgentSDK          = "claude-agent-sdk"
+	TemplateYutoriComputerUse       = "yutori"
+	TemplateCloudglueSessionRecap   = "cloudglue-session-recap"
 )
 
 type TemplateInfo struct {
@@ -89,6 +90,11 @@ var Templates = map[string]TemplateInfo{
 		Name:        "Yutori n1 Computer Use",
 		Description: "Implements a Yutori n1 computer use agent",
 		Languages:   []string{LanguageTypeScript, LanguagePython},
+	},
+	TemplateCloudglueSessionRecap: {
+		Name:        "Cloudglue Session Recap",
+		Description: "Analyze browser session recordings with Cloudglue video AI",
+		Languages:   []string{LanguageTypeScript},
 	},
 }
 
@@ -212,6 +218,11 @@ var Commands = map[string]map[string]DeployConfig{
 			EntryPoint:    "index.ts",
 			NeedsEnvFile:  true,
 			InvokeCommand: `kernel invoke ts-yutori-cua cua-task --payload '{"query": "Navigate to https://example.com and describe the page"}'`,
+		},
+		TemplateCloudglueSessionRecap: {
+			EntryPoint:    "index.ts",
+			NeedsEnvFile:  true,
+			InvokeCommand: `kernel invoke ts-cloudglue-session-recap session-recap --payload '{"recording_url": "https://your-recording-url.com/replay.mp4"}'`,
 		},
 	},
 	LanguagePython: {

@@ -1,0 +1,14 @@
+{
+  "name": "ts-cloudglue-session-recap",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@cloudglue/cloudglue-js": "^0.7.7",
+    "@onkernel/sdk": "^0.35.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.17",
+    "typescript": "^5.9.3"
+  }
+}

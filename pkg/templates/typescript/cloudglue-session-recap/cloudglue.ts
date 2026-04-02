@@ -1,0 +1,110 @@
+import { Cloudglue } from "@cloudglue/cloudglue-js";
+import type { SegmentationConfig } from "@cloudglue/cloudglue-js";
+
+const CLOUDGLUE_API_KEY = process.env.CLOUDGLUE_API_KEY;
+
+if (!CLOUDGLUE_API_KEY) {
+  throw new Error("CLOUDGLUE_API_KEY is not set");
+}
+
+const client = new Cloudglue({ apiKey: CLOUDGLUE_API_KEY });
+
+export interface SegmentationOptions {
+  maxSeconds?: number;
+}
+
+/** Build segmentation config with configurable max_seconds. */
+function buildSegmentation(opts?: SegmentationOptions): SegmentationConfig {
+  return {
+    strategy: "shot-detector",
+    shot_detector_config: {
+      detector: "adaptive",
+      min_seconds: 1,
+      max_seconds: opts?.maxSeconds ?? 8,
+      fill_gaps: true,
+    },
+  };
+}
+
+/**
+ * Poll a describe job until complete, fetching full data with thumbnails.
+ */
+async function pollDescribe(
+  jobId: string,
+  intervalMs = 5000
+): Promise<Record<string, unknown>> {
+  while (true) {
+    const job = await client.describe.getDescribe(jobId, {
+      include_thumbnails: true,
+      include_shots: true,
+    });
+    if (job.status === "completed") return job as Record<string, unknown>;
+    if (job.status === "failed" || job.status === "not_applicable") {
+      throw new Error(`Describe job ${jobId} failed: ${JSON.stringify(job)}`);
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
+/**
+ * Poll an extract job until complete, fetching thumbnails.
+ */
+async function pollExtract(
+  jobId: string,
+  intervalMs = 5000
+): Promise<Record<string, unknown>> {
+  while (true) {
+    const job = await client.extract.getExtract(jobId, {
+      include_thumbnails: true,
+      include_shots: true,
+    });
+    if (job.status === "completed") return job as Record<string, unknown>;
+    if (job.status === "failed" || job.status === "not_applicable") {
+      throw new Error(`Extract job ${jobId} failed: ${JSON.stringify(job)}`);
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
+/**
+ * Describe a video recording via Cloudglue.
+ * Analyzes a video recording scene by scene.
+ */
+export async function describeRecording(
+  url: string,
+  opts?: SegmentationOptions
+): Promise<Record<string, unknown>> {
+  const job = await client.describe.createDescribe(url, {
+    enable_visual_scene_description: true,
+    enable_scene_text: true,
+    enable_speech: true,
+    enable_summary: true,
+    segmentation_config: buildSegmentation(opts),
+    include_shots: true,
+  });
+
+  console.log(`Describe job created: ${job.job_id}`);
+  return await pollDescribe(job.job_id);
+}
+
+/**
+ * Extract structured data from a video at the segment level.
+ */
+export async function extractSegmentLevel(
+  url: string,
+  schema: Record<string, unknown>,
+  prompt: string,
+  opts?: SegmentationOptions
+): Promise<Record<string, unknown>> {
+  const job = await client.extract.createExtract(url, {
+    url,
+    schema,
+    prompt,
+    enable_segment_level_entities: true,
+    segmentation_config: buildSegmentation(opts),
+    include_shots: true,
+  });
+
+  console.log(`Extract job created: ${job.job_id} (segment-level)`);
+  return await pollExtract(job.job_id);
+}
