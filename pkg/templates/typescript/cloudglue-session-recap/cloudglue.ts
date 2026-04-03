@@ -26,6 +26,42 @@ function buildSegmentation(opts?: SegmentationOptions): SegmentationConfig {
   };
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Retry a function up to maxRetries times with backoff.
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  label: string,
+  maxRetries = 2,
+  backoffMs = 20_000
+): Promise<T> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : String(err);
+      console.error(
+        `${label}: attempt ${attempt}/${maxRetries} failed: ${msg}`
+      );
+      if (attempt < maxRetries) {
+        console.log(`${label}: waiting ${backoffMs / 1000}s before retry...`);
+        await sleep(backoffMs);
+        console.log(`${label}: retrying (attempt ${attempt + 1})...`);
+      } else {
+        console.error(`${label}: all ${maxRetries} attempts exhausted.`);
+        throw err;
+      }
+    }
+  }
+  // Unreachable, but TypeScript needs it
+  throw new Error(`${label} failed`);
+}
+
 /**
  * Poll a describe job until complete, fetching full data with thumbnails.
  */
@@ -68,27 +104,30 @@ async function pollExtract(
 
 /**
  * Describe a video recording via Cloudglue.
- * Analyzes a video recording scene by scene.
+ * Retries up to 2 times with 20s backoff if the video isn't ready yet.
  */
 export async function describeRecording(
   url: string,
   opts?: SegmentationOptions
 ): Promise<Record<string, unknown>> {
-  const job = await client.describe.createDescribe(url, {
-    enable_visual_scene_description: true,
-    enable_scene_text: true,
-    enable_speech: true,
-    enable_summary: true,
-    segmentation_config: buildSegmentation(opts),
-    include_shots: true,
-  });
+  return withRetry(async () => {
+    const job = await client.describe.createDescribe(url, {
+      enable_visual_scene_description: true,
+      enable_scene_text: true,
+      enable_speech: true,
+      enable_summary: true,
+      segmentation_config: buildSegmentation(opts),
+      include_shots: true,
+    });
 
-  console.log(`Describe job created: ${job.job_id}`);
-  return await pollDescribe(job.job_id);
+    console.log(`Describe job created: ${job.job_id}`);
+    return await pollDescribe(job.job_id);
+  }, "Describe");
 }
 
 /**
  * Extract structured data from a video at the segment level.
+ * Retries up to 2 times with 20s backoff if the video isn't ready yet.
  */
 export async function extractSegmentLevel(
   url: string,
@@ -96,15 +135,17 @@ export async function extractSegmentLevel(
   prompt: string,
   opts?: SegmentationOptions
 ): Promise<Record<string, unknown>> {
-  const job = await client.extract.createExtract(url, {
-    url,
-    schema,
-    prompt,
-    enable_segment_level_entities: true,
-    segmentation_config: buildSegmentation(opts),
-    include_shots: true,
-  });
+  return withRetry(async () => {
+    const job = await client.extract.createExtract(url, {
+      url,
+      schema,
+      prompt,
+      enable_segment_level_entities: true,
+      segmentation_config: buildSegmentation(opts),
+      include_shots: true,
+    });
 
-  console.log(`Extract job created: ${job.job_id} (segment-level)`);
-  return await pollExtract(job.job_id);
+    console.log(`Extract job created: ${job.job_id} (segment-level)`);
+    return await pollExtract(job.job_id);
+  }, "Extract");
 }
