@@ -13,7 +13,7 @@ type ProxyService interface {
 	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.ProxyGetResponse, err error)
 	New(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (res *kernel.ProxyNewResponse, err error)
 	Delete(ctx context.Context, id string, opts ...option.RequestOption) (err error)
-	Check(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.ProxyCheckResponse, err error)
+	Check(ctx context.Context, id string, body kernel.ProxyCheckParams, opts ...option.RequestOption) (res *kernel.ProxyCheckResponse, err error)
 }
 
 // ProxyCmd handles proxy operations independent of cobra.
@@ -62,5 +62,6 @@ type ProxyDeleteInput struct {
 
 type ProxyCheckInput struct {
 	ID     string
+	URL    string
 	Output string
 }

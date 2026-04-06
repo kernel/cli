@@ -221,15 +221,16 @@ type BrowsersGetInput struct {
 }
 
 type BrowsersUpdateInput struct {
-	Identifier         string
-	ProxyID            string
-	ClearProxy         bool
-	ProfileID          string
-	ProfileName        string
-	ProfileSaveChanges BoolFlag
-	Viewport           string
-	Force              bool
-	Output             string
+	Identifier          string
+	ProxyID             string
+	ClearProxy          bool
+	DisableDefaultProxy BoolFlag
+	ProfileID           string
+	ProfileName         string
+	ProfileSaveChanges  BoolFlag
+	Viewport            string
+	Force               bool
+	Output              string
 }
 
 // BrowsersCmd is a cobra-independent command handler for browsers operations.
@@ -610,7 +611,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("cannot specify both --proxy-id and --clear-proxy")
 	}
 
-	hasProxyChange := in.ProxyID != "" || in.ClearProxy
+	hasProxyChange := in.ProxyID != "" || in.ClearProxy || in.DisableDefaultProxy.Set
 	hasProfileChange := in.ProfileID != "" || in.ProfileName != ""
 	hasViewportChange := in.Viewport != ""
 
@@ -626,7 +627,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 
 	// Validate that at least one update option is provided
 	if !hasProxyChange && !hasProfileChange && !hasViewportChange {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --profile-id, --profile-name, or --viewport")
+		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, or --viewport")
 	}
 
 	params := kernel.BrowserUpdateParams{}
@@ -636,6 +637,9 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		params.ProxyID = kernel.Opt("")
 	} else if in.ProxyID != "" {
 		params.ProxyID = kernel.Opt(in.ProxyID)
+	}
+	if in.DisableDefaultProxy.Set {
+		params.DisableDefaultProxy = kernel.Opt(in.DisableDefaultProxy.Value)
 	}
 
 	// Handle profile changes
@@ -2260,6 +2264,7 @@ var browsersUpdateCmd = &cobra.Command{
 
 Supported operations:
   - Change or remove proxy (--proxy-id or --clear-proxy)
+  - Disable the default stealth proxy (--disable-default-proxy)
   - Load a profile into a session that doesn't have one (--profile-id or --profile-name)
   - Change viewport dimensions (--viewport)
   - Force viewport resize during active live view or recording (--force with --viewport)
@@ -2297,6 +2302,7 @@ func init() {
 	browsersUpdateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	browsersUpdateCmd.Flags().String("proxy-id", "", "ID of the proxy to use for the browser session")
 	browsersUpdateCmd.Flags().Bool("clear-proxy", false, "Remove the proxy from the browser session")
+	browsersUpdateCmd.Flags().Bool("disable-default-proxy", false, "Disable the default stealth proxy so the browser connects directly; use --disable-default-proxy=false to re-enable it")
 	browsersUpdateCmd.Flags().String("profile-id", "", "Profile ID to load into the browser session (mutually exclusive with --profile-name)")
 	browsersUpdateCmd.Flags().String("profile-name", "", "Profile name to load into the browser session (mutually exclusive with --profile-id)")
 	browsersUpdateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
@@ -2781,6 +2787,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	out, _ := cmd.Flags().GetString("output")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
 	clearProxy, _ := cmd.Flags().GetBool("clear-proxy")
+	disableDefaultProxy, _ := cmd.Flags().GetBool("disable-default-proxy")
 	profileID, _ := cmd.Flags().GetString("profile-id")
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	saveChanges, _ := cmd.Flags().GetBool("save-changes")
@@ -2790,15 +2797,16 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
 	return b.Update(cmd.Context(), BrowsersUpdateInput{
-		Identifier:         args[0],
-		ProxyID:            proxyID,
-		ClearProxy:         clearProxy,
-		ProfileID:          profileID,
-		ProfileName:        profileName,
-		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
-		Viewport:           viewport,
-		Force:              force,
-		Output:             out,
+		Identifier:          args[0],
+		ProxyID:             proxyID,
+		ClearProxy:          clearProxy,
+		DisableDefaultProxy: BoolFlag{Set: cmd.Flags().Changed("disable-default-proxy"), Value: disableDefaultProxy},
+		ProfileID:           profileID,
+		ProfileName:         profileName,
+		ProfileSaveChanges:  BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
+		Viewport:            viewport,
+		Force:               force,
+		Output:              out,
 	})
 }
 

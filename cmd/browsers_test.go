@@ -1491,6 +1491,25 @@ func TestBrowsersUpdate_WithViewportNoForce(t *testing.T) {
 	assert.False(t, captured.Viewport.Force.Valid())
 }
 
+func TestBrowsersUpdate_WithDisableDefaultProxy(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserUpdateParams
+	fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+		captured = body
+		return &kernel.BrowserUpdateResponse{SessionID: "session123"}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier:          "session123",
+		DisableDefaultProxy: BoolFlag{Set: true, Value: true},
+	})
+
+	assert.NoError(t, err)
+	assert.True(t, captured.DisableDefaultProxy.Valid())
+	assert.True(t, captured.DisableDefaultProxy.Value)
+}
+
 func TestBrowsersUpdate_ForceWithoutViewport_Errors(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeBrowsersService{}
