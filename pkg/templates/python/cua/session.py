@@ -110,7 +110,7 @@ class KernelBrowserSession:
             finally:
                 print(f"Destroying browser session: {self._session_id}")
                 await asyncio.to_thread(
-                    self.kernel.browsers.delete, id=self._session_id,
+                    self.kernel.browsers.delete_by_id, self._session_id,
                 )
 
         self._session_id = None

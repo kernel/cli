@@ -10,7 +10,6 @@ from datetime import datetime
 from google import genai
 from google.genai.types import (
     Content,
-    FunctionResponsePart,
     GenerateContentConfig,
     Part,
     ThinkingConfig,
@@ -118,16 +117,15 @@ class GeminiProvider:
                 )
 
                 if result.get("error"):
-                    responses.append(Part(function_response=FunctionResponsePart(
+                    responses.append(Part.from_function_response(
                         name=fc.name,
                         response={"error": result["error"], "url": "about:blank"},
-                    )))
+                    ))
                 else:
-                    fr_kwargs: dict = {
-                        "name": fc.name,
-                        "response": {"url": result.get("url", "about:blank")},
-                    }
-                    responses.append(Part(function_response=FunctionResponsePart(**fr_kwargs)))
+                    responses.append(Part.from_function_response(
+                        name=fc.name,
+                        response={"url": result.get("url", "about:blank")},
+                    ))
 
             contents.append(Content(role="user", parts=responses))
 

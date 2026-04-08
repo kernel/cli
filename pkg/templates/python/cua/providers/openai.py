@@ -131,6 +131,9 @@ def _translate_action(action: dict) -> list[dict]:
     if action_type == "back":
         return [{"type": "press_key", "press_key": {"keys": ["Left"], "hold_keys": ["Alt_L"]}}]
 
+    if action_type == "screenshot":
+        return []
+
     raise ValueError(f"Unknown CUA action: {action_type}")
 
 
