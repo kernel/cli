@@ -40,7 +40,7 @@ export class AnthropicProvider implements CuaProvider {
   async runTask(options: TaskOptions): Promise<TaskResult> {
     const { query, kernel, sessionId, viewportWidth = 1280, viewportHeight = 800 } = options;
     const client = new Anthropic({ apiKey: this.apiKey, maxRetries: 4 });
-    const model = 'claude-sonnet-4-6';
+    const model = options.model || 'claude-sonnet-4-6';
 
     const messages: BetaMessageParam[] = [{ role: 'user', content: query }];
 
@@ -51,13 +51,13 @@ export class AnthropicProvider implements CuaProvider {
         model,
         system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
         tools: [{
-          type: 'computer_20251124' as unknown as 'computer_20250124',
+          type: 'computer_20251124',
           name: 'computer',
           display_width_px: viewportWidth,
           display_height_px: viewportHeight,
           display_number: 1,
         }],
-        betas: ['computer-use-2025-01-24', 'prompt-caching-2024-07-31'],
+        betas: ['computer-use-2025-11-24', 'prompt-caching-2024-07-31'],
         thinking: { type: 'enabled', budget_tokens: 1024 },
       });
 

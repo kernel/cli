@@ -20,11 +20,13 @@ cp .env.example .env
 
 Set `CUA_PROVIDER` to your preferred provider and add the matching API key:
 
-| Provider    | Env var for key      | Model used                                 |
-|-------------|----------------------|--------------------------------------------|
-| `anthropic` | `ANTHROPIC_API_KEY`  | `claude-sonnet-4-6`                        |
-| `openai`    | `OPENAI_API_KEY`     | `gpt-5.4`                                 |
-| `gemini`    | `GOOGLE_API_KEY`     | `gemini-2.5-computer-use-preview-10-2025`  |
+
+| Provider    | Env var for key     | Model used                                |
+| ----------- | ------------------- | ----------------------------------------- |
+| `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6`                       |
+| `openai`    | `OPENAI_API_KEY`    | `gpt-5.4`                                 |
+| `gemini`    | `GOOGLE_API_KEY`    | `gemini-2.5-computer-use-preview-10-2025` |
+
 
 ### 3. Deploy to Kernel
 
@@ -83,3 +85,4 @@ To add a new provider, create a new file that implements the `CuaProvider` proto
 - [Anthropic Computer Use](https://docs.anthropic.com/en/docs/agents-and-tools/computer-use)
 - [OpenAI Computer Use](https://platform.openai.com/docs/guides/computer-use)
 - [Google Gemini Computer Use](https://ai.google.dev/gemini-api/docs/computer-use)
+

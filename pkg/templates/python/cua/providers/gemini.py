@@ -58,7 +58,7 @@ class GeminiProvider:
         width = options.viewport_width or DEFAULT_WIDTH
         height = options.viewport_height or DEFAULT_HEIGHT
         client = genai.Client(api_key=self._api_key)
-        model = "gemini-2.5-computer-use-preview-10-2025"
+        model = options.model or "gemini-2.5-computer-use-preview-10-2025"
 
         contents: list[Content] = [
             Content(role="user", parts=[Part(text=options.query)]),

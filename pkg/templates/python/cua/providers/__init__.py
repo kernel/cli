@@ -20,6 +20,7 @@ class TaskOptions:
     query: str
     kernel: Kernel
     session_id: str
+    model: str | None = None
     viewport_width: int = 1280
     viewport_height: int = 800
 

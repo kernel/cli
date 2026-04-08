@@ -70,7 +70,7 @@ export class GeminiProvider implements CuaProvider {
     const width = options.viewportWidth ?? DEFAULT_WIDTH;
     const height = options.viewportHeight ?? DEFAULT_HEIGHT;
     const ai = new GoogleGenAI({ apiKey: this.apiKey });
-    const model = 'gemini-2.5-computer-use-preview-10-2025';
+    const model = options.model || 'gemini-2.5-computer-use-preview-10-2025';
 
     const contents: Content[] = [{ role: 'user', parts: [{ text: query }] }];
     const maxIterations = 50;

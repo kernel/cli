@@ -137,6 +137,8 @@ function translateCuaAction(action: CuaAction): BatchAction[] {
       ];
     case 'back':
       return [{ type: 'press_key', press_key: { keys: ['Left'], hold_keys: ['Alt_L'] } }];
+    case 'screenshot':
+      return [];
     default:
       throw new Error(`Unknown CUA action: ${action.type}`);
   }
@@ -180,7 +182,7 @@ export class OpenAIProvider implements CuaProvider {
 
     for (let turn = 0; turn < maxTurns; turn++) {
       const response = await client.responses.create({
-        model: 'gpt-5.4',
+        model: options.model || 'gpt-5.4',
         input: [...input, ...items] as ResponseInputItem[],
         tools: [{ type: 'computer' } as unknown as OpenAI.Responses.Tool],
         truncation: 'auto',

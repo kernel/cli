@@ -13,19 +13,22 @@ Each provider requires its own API key:
 from __future__ import annotations
 
 import asyncio
-from typing import TypedDict
+from typing import Literal, TypedDict
 
-from kernel import Kernel, KernelContext
+import kernel
+from kernel import Kernel
 
 from providers import resolve_providers, run_with_fallback, TaskOptions
 from session import KernelBrowserSession, SessionOptions
 
-kernel = Kernel()
-app = kernel.app("python-cua")
+kernel_client = Kernel()
+app = kernel.App("python-cua")
 
 
 class CuaInput(TypedDict, total=False):
     query: str
+    provider: Literal["anthropic", "openai", "gemini"]
+    model: str
     record_replay: bool
 
 
@@ -49,14 +52,20 @@ def _get_providers():
 
 
 @app.action("cua-task")
-async def cua_task(ctx: KernelContext, payload: CuaInput | None = None) -> CuaOutput:
+async def cua_task(ctx: kernel.KernelContext, payload: CuaInput | None = None) -> CuaOutput:
     if not payload or not payload.get("query"):
         raise ValueError('Query is required. Payload must include: {"query": "your task description"}')
 
     providers = _get_providers()
 
+    # Per-request provider override: move requested provider to front
+    if payload.get("provider"):
+        requested = next((p for p in providers if p.name == payload["provider"]), None)
+        if requested:
+            providers = [requested] + [p for p in providers if p is not requested]
+
     session = KernelBrowserSession(
-        kernel,
+        kernel_client,
         SessionOptions(
             invocation_id=ctx.invocation_id,
             stealth=True,
@@ -72,8 +81,9 @@ async def cua_task(ctx: KernelContext, payload: CuaInput | None = None) -> CuaOu
             providers,
             TaskOptions(
                 query=payload["query"],
-                kernel=kernel,
+                kernel=kernel_client,
                 session_id=session.session_id,
+                model=payload.get("model"),
                 viewport_width=session.opts.viewport_width,
                 viewport_height=session.opts.viewport_height,
             ),

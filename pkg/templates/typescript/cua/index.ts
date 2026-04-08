@@ -12,13 +12,15 @@
 
 import { Kernel, type KernelContext } from '@onkernel/sdk';
 import { KernelBrowserSession } from './session';
-import { resolveProviders, runWithFallback } from './providers/index';
+import { resolveProviders, runWithFallback, type ProviderName } from './providers/index';
 
 const kernel = new Kernel();
 const app = kernel.app('ts-cua');
 
 interface CuaInput {
   query: string;
+  provider?: ProviderName;
+  model?: string;
   record_replay?: boolean;
 }
 
@@ -46,7 +48,15 @@ app.action<CuaInput, CuaOutput>(
       throw new Error('Query is required. Payload must include: { "query": "your task description" }');
     }
 
-    const providers = getProviders();
+    let providers = getProviders();
+
+    // Per-request provider override: move requested provider to front
+    if (payload.provider) {
+      const requested = providers.find(p => p.name === payload.provider);
+      if (requested) {
+        providers = [requested, ...providers.filter(p => p !== requested)];
+      }
+    }
 
     const session = new KernelBrowserSession(kernel, {
       invocationId: ctx.invocation_id,
@@ -60,6 +70,7 @@ app.action<CuaInput, CuaOutput>(
     try {
       const { result, provider } = await runWithFallback(providers, {
         query: payload.query,
+        model: payload.model,
         kernel,
         sessionId: session.sessionId,
         viewportWidth: session.viewportWidth,

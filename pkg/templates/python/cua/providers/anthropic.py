@@ -54,7 +54,7 @@ class AnthropicProvider:
 
     async def run_task(self, options: TaskOptions) -> TaskResult:
         client = anthropic.Anthropic(api_key=self._api_key, max_retries=4)
-        model = "claude-sonnet-4-6"
+        model = options.model or "claude-sonnet-4-6"
         messages: list[dict] = [{"role": "user", "content": options.query}]
 
         date_str = datetime.now().strftime("%A, %B %d, %Y")
@@ -74,7 +74,7 @@ class AnthropicProvider:
                     "display_height_px": options.viewport_height,
                     "display_number": 1,
                 }],
-                betas=["computer-use-2025-01-24", "prompt-caching-2024-07-31"],
+                betas=["computer-use-2025-11-24", "prompt-caching-2024-07-31"],
                 thinking={"type": "enabled", "budget_tokens": 1024},
             )
 

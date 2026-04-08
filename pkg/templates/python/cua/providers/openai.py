@@ -184,7 +184,7 @@ class OpenAIProvider:
         for _turn in range(50):
             response = await _create_response(
                 self._api_key,
-                model="gpt-5.4",
+                model=options.model or "gpt-5.4",
                 input=input_items + items,
                 tools=[{"type": "computer"}],
                 truncation="auto",

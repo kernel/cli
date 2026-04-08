@@ -16,6 +16,7 @@ import { GeminiProvider } from './gemini';
 // Shared interface every provider adapter must implement.
 export interface TaskOptions {
   query: string;
+  model?: string;
   kernel: Kernel;
   sessionId: string;
   viewportWidth?: number;
@@ -33,7 +34,9 @@ export interface CuaProvider {
   runTask(options: TaskOptions): Promise<TaskResult>;
 }
 
-const PROVIDERS: Record<string, () => CuaProvider> = {
+export type ProviderName = 'anthropic' | 'openai' | 'gemini';
+
+const PROVIDERS: Record<ProviderName, () => CuaProvider> = {
   anthropic: () => new AnthropicProvider(),
   openai: () => new OpenAIProvider(),
   gemini: () => new GeminiProvider(),
