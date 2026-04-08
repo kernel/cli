@@ -1,0 +1,13 @@
+[project]
+name = "python-cua"
+version = "0.1.0"
+description = "Unified CUA template with multi-provider fallback for Kernel"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.75.0",
+    "google-genai>=1.0.0",
+    "httpx>=0.28.1",
+    "kernel>=0.43.0",
+    "python-dotenv>=1.2.1",
+]
