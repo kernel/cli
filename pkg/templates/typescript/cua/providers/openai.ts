@@ -9,7 +9,6 @@ import type {
   ResponseInputItem,
   ResponseItem,
   ResponseComputerToolCall,
-  ResponseComputerToolCallOutputItem,
   ResponseOutputMessage,
 } from 'openai/resources/responses/responses';
 import type { CuaProvider, TaskOptions, TaskResult } from './index';
@@ -182,7 +181,7 @@ export class OpenAIProvider implements CuaProvider {
     for (let turn = 0; turn < maxTurns; turn++) {
       const response = await client.responses.create({
         model: 'gpt-5.4',
-        input: [...input, ...items],
+        input: [...input, ...items] as ResponseInputItem[],
         tools: [{ type: 'computer' } as unknown as OpenAI.Responses.Tool],
         truncation: 'auto',
         reasoning: { effort: 'low', summary: 'concise' },
@@ -225,16 +224,15 @@ export class OpenAIProvider implements CuaProvider {
           const buf = Buffer.from(await screenshotResp.arrayBuffer());
           const screenshot = buf.toString('base64');
 
-          const out: Omit<ResponseComputerToolCallOutputItem, 'id'> = {
+          items.push({
             type: 'computer_call_output',
             call_id: cc.call_id,
             acknowledged_safety_checks: pending,
             output: {
               type: 'computer_screenshot',
               image_url: `data:image/png;base64,${screenshot}`,
-            } as unknown as ResponseComputerToolCallOutputItem['output'],
-          };
-          items.push(out as ResponseItem);
+            },
+          } as unknown as ResponseItem);
         }
       }
 

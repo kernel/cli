@@ -28,9 +28,16 @@ interface CuaOutput {
   replay_url?: string;
 }
 
-// Resolve providers at startup so misconfiguration fails fast.
-const providers = resolveProviders();
-console.log(`Configured providers: ${providers.map(p => p.name).join(' -> ')}`);
+// Provider resolution is deferred to the action handler because env vars
+// are not available during Hypeman's build/discovery phase.
+let _providers: ReturnType<typeof resolveProviders> | null = null;
+function getProviders() {
+  if (!_providers) {
+    _providers = resolveProviders();
+    console.log(`Configured providers: ${_providers.map(p => p.name).join(' -> ')}`);
+  }
+  return _providers;
+}
 
 app.action<CuaInput, CuaOutput>(
   'cua-task',
@@ -38,6 +45,8 @@ app.action<CuaInput, CuaOutput>(
     if (!payload?.query) {
       throw new Error('Query is required. Payload must include: { "query": "your task description" }');
     }
+
+    const providers = getProviders();
 
     const session = new KernelBrowserSession(kernel, {
       invocationId: ctx.invocation_id,

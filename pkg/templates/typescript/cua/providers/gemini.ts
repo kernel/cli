@@ -90,15 +90,15 @@ export class GeminiProvider implements CuaProvider {
         },
       });
 
-      if (!response.candidates?.[0]?.content) break;
-      const candidate = response.candidates[0];
-      contents.push(candidate.content);
+      const candidateContent = response.candidates?.[0]?.content;
+      if (!candidateContent) break;
+      contents.push(candidateContent);
 
       // Extract text and function calls
-      const textParts = (candidate.content.parts ?? [])
+      const textParts = (candidateContent.parts ?? [])
         .filter(p => 'text' in p && p.text)
         .map(p => (p as { text: string }).text);
-      const functionCalls = (candidate.content.parts ?? [])
+      const functionCalls = (candidateContent.parts ?? [])
         .filter(p => 'functionCall' in p)
         .map(p => (p as { functionCall: FunctionCall }).functionCall);
 

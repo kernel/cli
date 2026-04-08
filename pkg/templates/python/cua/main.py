@@ -35,15 +35,25 @@ class CuaOutput(TypedDict, total=False):
     replay_url: str
 
 
-# Resolve providers at startup for fast failure on misconfiguration.
-providers = resolve_providers()
-print(f"Configured providers: {' -> '.join(p.name for p in providers)}")
+# Provider resolution is deferred to the action handler because env vars
+# are not available during Hypeman's build/discovery phase.
+_providers: list | None = None
+
+
+def _get_providers():
+    global _providers
+    if _providers is None:
+        _providers = resolve_providers()
+        print(f"Configured providers: {' -> '.join(p.name for p in _providers)}")
+    return _providers
 
 
 @app.action("cua-task")
 async def cua_task(ctx: KernelContext, payload: CuaInput | None = None) -> CuaOutput:
     if not payload or not payload.get("query"):
         raise ValueError('Query is required. Payload must include: {"query": "your task description"}')
+
+    providers = _get_providers()
 
     session = KernelBrowserSession(
         kernel,
