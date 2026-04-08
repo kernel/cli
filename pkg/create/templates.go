@@ -19,6 +19,7 @@ const (
 	TemplateOpenAGIComputerUse   = "openagi-computer-use"
 	TemplateClaudeAgentSDK       = "claude-agent-sdk"
 	TemplateYutoriComputerUse    = "yutori"
+	TemplateCUA                  = "cua"
 )
 
 type TemplateInfo struct {
@@ -88,6 +89,11 @@ var Templates = map[string]TemplateInfo{
 	TemplateYutoriComputerUse: {
 		Name:        "Yutori n1 Computer Use",
 		Description: "Implements a Yutori n1 computer use agent",
+		Languages:   []string{LanguageTypeScript, LanguagePython},
+	},
+	TemplateCUA: {
+		Name:        "Unified CUA",
+		Description: "Multi-provider CUA with automatic fallback (Anthropic, OpenAI, Gemini)",
 		Languages:   []string{LanguageTypeScript, LanguagePython},
 	},
 }
@@ -213,6 +219,11 @@ var Commands = map[string]map[string]DeployConfig{
 			NeedsEnvFile:  true,
 			InvokeCommand: `kernel invoke ts-yutori-cua cua-task --payload '{"query": "Navigate to https://example.com and describe the page"}'`,
 		},
+		TemplateCUA: {
+			EntryPoint:    "index.ts",
+			NeedsEnvFile:  true,
+			InvokeCommand: `kernel invoke ts-cua cua-task --payload '{"query": "Navigate to https://example.com and describe the page"}'`,
+		},
 	},
 	LanguagePython: {
 		TemplateSampleApp: {
@@ -259,6 +270,11 @@ var Commands = map[string]map[string]DeployConfig{
 			EntryPoint:    "main.py",
 			NeedsEnvFile:  true,
 			InvokeCommand: `kernel invoke python-yutori-cua cua-task --payload '{"query": "Navigate to https://example.com and describe the page"}'`,
+		},
+		TemplateCUA: {
+			EntryPoint:    "main.py",
+			NeedsEnvFile:  true,
+			InvokeCommand: `kernel invoke python-cua cua-task --payload '{"query": "Navigate to https://example.com and describe the page"}'`,
 		},
 	},
 }
