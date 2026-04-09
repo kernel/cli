@@ -84,8 +84,14 @@ async def cua_task(ctx: kernel.KernelContext, payload: CuaInput | None = None) -
         if requested:
             providers = [requested] + [p for p in providers if p is not requested]
 
-    # Use an existing browser session or create a new one
+    # Use an existing browser session (BYOB) or create a new one.
+    # BYOB is useful for multi-turn CUA on a persistent browser, or HITL
+    # where a human uses the live view between CUA calls.
     if payload.get("session_id"):
+        browser = await asyncio.to_thread(
+            kernel_client.browsers.retrieve, payload["session_id"],
+        )
+        vp = getattr(browser, "viewport", None)
         task_result = await run_with_fallback(
             providers,
             TaskOptions(
@@ -93,8 +99,8 @@ async def cua_task(ctx: kernel.KernelContext, payload: CuaInput | None = None) -
                 kernel=kernel_client,
                 session_id=payload["session_id"],
                 model=payload.get("model"),
-                viewport_width=1280,
-                viewport_height=800,
+                viewport_width=getattr(vp, "width", 1280),
+                viewport_height=getattr(vp, "height", 800),
             ),
         )
         return {"result": task_result.result, "provider": task_result.provider}

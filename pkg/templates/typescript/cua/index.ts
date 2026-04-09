@@ -67,15 +67,18 @@ app.action<CuaInput, CuaOutput>(
       }
     }
 
-    // Use an existing browser session or create a new one
+    // Use an existing browser session (BYOB) or create a new one.
+    // BYOB is useful for multi-turn CUA on a persistent browser, or HITL
+    // where a human uses the live view between CUA calls.
     if (payload.session_id) {
+      const browser = await kernel.browsers.retrieve(payload.session_id);
       const { result, provider } = await runWithFallback(providers, {
         query: payload.query,
         model: payload.model,
         kernel,
         sessionId: payload.session_id,
-        viewportWidth: 1280,
-        viewportHeight: 800,
+        viewportWidth: browser.viewport?.width ?? 1280,
+        viewportHeight: browser.viewport?.height ?? 800,
       });
       return { result, provider };
     }
