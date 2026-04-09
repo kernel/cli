@@ -3301,12 +3301,12 @@ type BrowsersCurlInput struct {
 
 // browserCurlRequest is the JSON body for POST /browsers/{id}/curl.
 type browserCurlRequest struct {
-	URL              string              `json:"url"`
-	Method           string              `json:"method,omitempty"`
-	Headers          map[string][]string `json:"headers,omitempty"`
-	Body             string              `json:"body,omitempty"`
-	TimeoutMs        int                 `json:"timeout_ms,omitempty"`
-	ResponseEncoding string              `json:"response_encoding,omitempty"`
+	URL              string            `json:"url"`
+	Method           string            `json:"method,omitempty"`
+	Headers          map[string]string `json:"headers,omitempty"`
+	Body             string            `json:"body,omitempty"`
+	TimeoutMs        int               `json:"timeout_ms,omitempty"`
+	ResponseEncoding string            `json:"response_encoding,omitempty"`
 }
 
 // browserCurlResponse is the JSON response from POST /browsers/{id}/curl.
@@ -3317,19 +3317,17 @@ type browserCurlResponse struct {
 	DurationMs float64             `json:"duration_ms"`
 }
 
-func parseCurlHeaders(raw []string) map[string][]string {
+func parseCurlHeaders(raw []string) map[string]string {
 	if len(raw) == 0 {
 		return nil
 	}
-	headers := make(map[string][]string)
+	headers := make(map[string]string)
 	for _, h := range raw {
 		k, v, ok := strings.Cut(h, ":")
 		if !ok {
 			continue
 		}
-		key := strings.TrimSpace(k)
-		val := strings.TrimSpace(v)
-		headers[key] = append(headers[key], val)
+		headers[strings.TrimSpace(k)] = strings.TrimSpace(v)
 	}
 	return headers
 }
