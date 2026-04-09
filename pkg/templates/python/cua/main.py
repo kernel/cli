@@ -48,6 +48,7 @@ class CuaInput(TypedDict, total=False):
     provider: Literal["anthropic", "openai", "gemini"]
     model: str
     record_replay: bool
+    session_id: str
     browser: BrowserConfig
 
 
@@ -82,6 +83,21 @@ async def cua_task(ctx: kernel.KernelContext, payload: CuaInput | None = None) -
         requested = next((p for p in providers if p.name == payload["provider"]), None)
         if requested:
             providers = [requested] + [p for p in providers if p is not requested]
+
+    # Use an existing browser session or create a new one
+    if payload.get("session_id"):
+        task_result = await run_with_fallback(
+            providers,
+            TaskOptions(
+                query=payload["query"],
+                kernel=kernel_client,
+                session_id=payload["session_id"],
+                model=payload.get("model"),
+                viewport_width=1280,
+                viewport_height=800,
+            ),
+        )
+        return {"result": task_result.result, "provider": task_result.provider}
 
     browser_cfg = payload.get("browser") or {}
     session = KernelBrowserSession(

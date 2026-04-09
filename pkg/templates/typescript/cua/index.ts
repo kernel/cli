@@ -29,6 +29,7 @@ interface CuaInput {
   provider?: ProviderName;
   model?: string;
   record_replay?: boolean;
+  session_id?: string;
   browser?: BrowserConfig;
 }
 
@@ -64,6 +65,19 @@ app.action<CuaInput, CuaOutput>(
       if (requested) {
         providers = [requested, ...providers.filter(p => p !== requested)];
       }
+    }
+
+    // Use an existing browser session or create a new one
+    if (payload.session_id) {
+      const { result, provider } = await runWithFallback(providers, {
+        query: payload.query,
+        model: payload.model,
+        kernel,
+        sessionId: payload.session_id,
+        viewportWidth: 1280,
+        viewportHeight: 800,
+      });
+      return { result, provider };
     }
 
     const session = new KernelBrowserSession(kernel, {
