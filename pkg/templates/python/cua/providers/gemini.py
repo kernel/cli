@@ -24,14 +24,6 @@ COORDINATE_SCALE = 1000
 DEFAULT_WIDTH = 1200
 DEFAULT_HEIGHT = 800
 
-PREDEFINED_ACTIONS = [
-    "click_at", "hover_at", "type_text_at", "scroll_document",
-    "scroll_at", "wait_5_seconds", "go_back", "go_forward",
-    "search", "navigate", "key_combination", "drag_and_drop",
-    "open_web_browser",
-]
-
-
 def _system_prompt() -> str:
     date = datetime.now().strftime("%A, %B %d, %Y")
     return (
@@ -126,6 +118,11 @@ class GeminiProvider:
                         name=fc.name,
                         response={"url": result.get("url", "about:blank")},
                     ))
+                    if result.get("screenshot"):
+                        responses.append(Part(inline_data={
+                            "mime_type": "image/png",
+                            "data": result["screenshot"],
+                        }))
 
             contents.append(Content(role="user", parts=responses))
 

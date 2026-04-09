@@ -7,20 +7,23 @@
 import { Anthropic } from '@anthropic-ai/sdk';
 import type { CuaProvider, TaskOptions, TaskResult } from './index';
 
-const SYSTEM_PROMPT = `<SYSTEM_CAPABILITY>
+function getSystemPrompt(): string {
+  const date = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  return `<SYSTEM_CAPABILITY>
 * You are utilising an Ubuntu virtual machine with internet access.
 * When you connect to the display, CHROMIUM IS ALREADY OPEN.
 * If you need to navigate to a new page, use ctrl+l to focus the url bar and then enter the url.
 * After each step, take a screenshot and carefully evaluate if you have achieved the right outcome.
 * Explicitly show your thinking: "I have evaluated step X..." If not correct, try again.
 * Only when you confirm a step was executed correctly should you move on to the next one.
-* The current date is ${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}.
+* The current date is ${date}.
 </SYSTEM_CAPABILITY>
 
 <IMPORTANT>
 * When using Chromium, if a startup wizard appears, IGNORE IT.
 * Click on the search bar and enter the appropriate URL there.
 </IMPORTANT>`;
+}
 
 type BetaMessageParam = Anthropic.Beta.Messages.BetaMessageParam;
 type BetaContentBlockParam = Anthropic.Beta.Messages.BetaContentBlockParam;
@@ -49,7 +52,7 @@ export class AnthropicProvider implements CuaProvider {
         max_tokens: 4096,
         messages,
         model,
-        system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+        system: [{ type: 'text', text: getSystemPrompt(), cache_control: { type: 'ephemeral' } }],
         tools: [{
           type: 'computer_20251124',
           name: 'computer',
