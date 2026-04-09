@@ -25,11 +25,30 @@ kernel_client = Kernel()
 app = kernel.App("python-cua")
 
 
+class BrowserProfile(TypedDict, total=False):
+    id: str
+    name: str
+    save_changes: bool
+
+
+class BrowserExtension(TypedDict, total=False):
+    id: str
+    name: str
+
+
+class BrowserConfig(TypedDict, total=False):
+    proxy_id: str
+    profile: BrowserProfile
+    extensions: list[BrowserExtension]
+    timeout_seconds: int
+
+
 class CuaInput(TypedDict, total=False):
     query: str
     provider: Literal["anthropic", "openai", "gemini"]
     model: str
     record_replay: bool
+    browser: BrowserConfig
 
 
 class CuaOutput(TypedDict, total=False):
@@ -64,12 +83,17 @@ async def cua_task(ctx: kernel.KernelContext, payload: CuaInput | None = None) -
         if requested:
             providers = [requested] + [p for p in providers if p is not requested]
 
+    browser_cfg = payload.get("browser") or {}
     session = KernelBrowserSession(
         kernel_client,
         SessionOptions(
             invocation_id=ctx.invocation_id,
             stealth=True,
             record_replay=payload.get("record_replay", False),
+            proxy_id=browser_cfg.get("proxy_id"),
+            profile=browser_cfg.get("profile"),
+            extensions=browser_cfg.get("extensions"),
+            timeout_seconds=browser_cfg.get("timeout_seconds", 300),
         ),
     )
 

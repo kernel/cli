@@ -17,11 +17,19 @@ import { resolveProviders, runWithFallback, type ProviderName } from './provider
 const kernel = new Kernel();
 const app = kernel.app('ts-cua');
 
+interface BrowserConfig {
+  proxy_id?: string;
+  profile?: { id?: string; name?: string; save_changes?: boolean };
+  extensions?: Array<{ id?: string; name?: string }>;
+  timeout_seconds?: number;
+}
+
 interface CuaInput {
   query: string;
   provider?: ProviderName;
   model?: string;
   record_replay?: boolean;
+  browser?: BrowserConfig;
 }
 
 interface CuaOutput {
@@ -62,6 +70,10 @@ app.action<CuaInput, CuaOutput>(
       invocationId: ctx.invocation_id,
       stealth: true,
       recordReplay: payload.record_replay ?? false,
+      ...(payload.browser?.proxy_id ? { proxyId: payload.browser.proxy_id } : {}),
+      ...(payload.browser?.profile ? { profile: payload.browser.profile } : {}),
+      ...(payload.browser?.extensions ? { extensions: payload.browser.extensions } : {}),
+      ...(payload.browser?.timeout_seconds ? { timeoutSeconds: payload.browser.timeout_seconds } : {}),
     });
 
     await session.start();

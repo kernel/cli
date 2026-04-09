@@ -19,6 +19,9 @@ class SessionOptions:
     replay_grace_period: float = 5.0
     viewport_width: int = 1280
     viewport_height: int = 800
+    proxy_id: str | None = None
+    profile: dict | None = None
+    extensions: list[dict] | None = None
 
 
 @dataclass
@@ -68,15 +71,25 @@ class KernelBrowserSession:
         )
 
     async def start(self) -> SessionInfo:
-        browser = await asyncio.to_thread(
-            self.kernel.browsers.create,
-            invocation_id=self.opts.invocation_id,
-            stealth=self.opts.stealth,
-            timeout_seconds=self.opts.timeout_seconds,
-            viewport={
+        create_kwargs: dict = {
+            "invocation_id": self.opts.invocation_id,
+            "stealth": self.opts.stealth,
+            "timeout_seconds": self.opts.timeout_seconds,
+            "viewport": {
                 "width": self.opts.viewport_width,
                 "height": self.opts.viewport_height,
             },
+        }
+        if self.opts.proxy_id:
+            create_kwargs["proxy_id"] = self.opts.proxy_id
+        if self.opts.profile:
+            create_kwargs["profile"] = self.opts.profile
+        if self.opts.extensions:
+            create_kwargs["extensions"] = self.opts.extensions
+
+        browser = await asyncio.to_thread(
+            self.kernel.browsers.create,
+            **create_kwargs,
         )
 
         self._session_id = browser.session_id

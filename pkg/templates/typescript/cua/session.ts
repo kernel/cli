@@ -14,6 +14,9 @@ export interface SessionOptions {
   replayGracePeriod?: number;
   viewportWidth?: number;
   viewportHeight?: number;
+  proxyId?: string;
+  profile?: { id?: string; name?: string; save_changes?: boolean };
+  extensions?: Array<{ id?: string; name?: string }>;
 }
 
 export interface SessionInfo {
@@ -75,6 +78,9 @@ export class KernelBrowserSession {
       stealth: this.opts.stealth,
       timeout_seconds: this.opts.timeoutSeconds,
       viewport: { width: this.opts.viewportWidth, height: this.opts.viewportHeight },
+      ...(this.opts.proxyId ? { proxy_id: this.opts.proxyId } : {}),
+      ...(this.opts.profile ? { profile: this.opts.profile } : {}),
+      ...(this.opts.extensions?.length ? { extensions: this.opts.extensions } : {}),
     });
 
     this._sessionId = browser.session_id;
