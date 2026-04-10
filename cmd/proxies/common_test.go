@@ -73,7 +73,7 @@ func (f *FakeProxyService) Delete(ctx context.Context, id string, opts ...option
 	return nil
 }
 
-func (f *FakeProxyService) Check(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ProxyCheckResponse, error) {
+func (f *FakeProxyService) Check(ctx context.Context, id string, body kernel.ProxyCheckParams, opts ...option.RequestOption) (*kernel.ProxyCheckResponse, error) {
 	if f.CheckFunc != nil {
 		return f.CheckFunc(ctx, id, opts...)
 	}

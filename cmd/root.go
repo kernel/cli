@@ -104,6 +104,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolP("version", "v", false, "Print the CLI version")
 	rootCmd.PersistentFlags().BoolP("no-color", "", false, "Disable color output")
 	rootCmd.PersistentFlags().String("log-level", "warn", "Set the log level (trace, debug, info, warn, error, fatal, print)")
+	rootCmd.PersistentFlags().String("project", "", "Project ID or name to scope all requests to (or set KERNEL_PROJECT_ID env var)")
 	rootCmd.SilenceUsage = true
 	rootCmd.SilenceErrors = true
 	cobra.OnInitialize(initConfig)
@@ -122,10 +123,39 @@ func init() {
 			return nil
 		}
 
-		// Get authenticated client with OAuth tokens or API key fallback
-		client, err := auth.GetAuthenticatedClient(option.WithHeader("X-Kernel-Cli-Version", metadata.Version))
+		clientOpts := []option.RequestOption{
+			option.WithHeader("X-Kernel-Cli-Version", metadata.Version),
+		}
+
+		projectVal, _ := cmd.Flags().GetString("project")
+		if projectVal == "" {
+			projectVal = os.Getenv("KERNEL_PROJECT_ID")
+		}
+
+		// If the value looks like a name (not a cuid2 ID), we need to
+		// resolve it after authenticating. Build the client first without
+		// the project header, resolve, then re-create with the header.
+		needsResolve := projectVal != "" && !looksLikeCUID(projectVal)
+
+		if projectVal != "" && !needsResolve {
+			clientOpts = append(clientOpts, option.WithHeader("X-Kernel-Project-Id", projectVal))
+		}
+
+		client, err := auth.GetAuthenticatedClient(clientOpts...)
 		if err != nil {
 			return fmt.Errorf("authentication required: %w", err)
+		}
+
+		if needsResolve {
+			resolved, resolveErr := resolveProjectByName(cmd.Context(), *client, projectVal)
+			if resolveErr != nil {
+				return resolveErr
+			}
+			clientOpts = append(clientOpts, option.WithHeader("X-Kernel-Project-Id", resolved))
+			client, err = auth.GetAuthenticatedClient(clientOpts...)
+			if err != nil {
+				return fmt.Errorf("authentication required: %w", err)
+			}
 		}
 
 		ctx := context.WithValue(cmd.Context(), util.KernelClientKey, *client)
@@ -144,6 +174,7 @@ func init() {
 	rootCmd.AddCommand(extensionsCmd)
 	rootCmd.AddCommand(credentialsCmd)
 	rootCmd.AddCommand(credentialProvidersCmd)
+	rootCmd.AddCommand(projectsCmd)
 	rootCmd.AddCommand(createCmd)
 	rootCmd.AddCommand(mcp.MCPCmd)
 	rootCmd.AddCommand(upgradeCmd)
@@ -221,6 +252,46 @@ func isUsageError(err error) bool {
 		}
 	}
 	return false
+}
+
+// looksLikeCUID returns true if s matches the cuid2 format used for resource IDs
+// (24 lowercase alphanumeric characters).
+func looksLikeCUID(s string) bool {
+	if len(s) != 24 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+			return false
+		}
+	}
+	return true
+}
+
+// resolveProjectByName lists the caller's projects and returns the ID of the
+// one whose name matches (case-insensitive). Returns an error if no match or
+// multiple matches are found.
+func resolveProjectByName(ctx context.Context, client kernel.Client, name string) (string, error) {
+	projects, err := client.Projects.List(ctx, kernel.ProjectListParams{})
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve project name %q: %w", name, err)
+	}
+	var matched []struct{ id, name string }
+	lower := strings.ToLower(name)
+	for _, p := range projects.Items {
+		if strings.ToLower(p.Name) == lower {
+			matched = append(matched, struct{ id, name string }{p.ID, p.Name})
+		}
+	}
+	switch len(matched) {
+	case 0:
+		return "", fmt.Errorf("no project found with name %q", name)
+	case 1:
+		pterm.Debug.Printf("Resolved project %q → %s\n", matched[0].name, matched[0].id)
+		return matched[0].id, nil
+	default:
+		return "", fmt.Errorf("multiple projects match name %q; use a project ID instead", name)
+	}
 }
 
 // onCancel runs a function when the provided context is cancelled
