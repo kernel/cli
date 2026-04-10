@@ -18,6 +18,7 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/param"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -264,7 +265,10 @@ func looksLikeCUID(s string) bool {
 // one whose name matches (case-insensitive). Returns an error if no match or
 // multiple matches are found.
 func resolveProjectByName(ctx context.Context, client kernel.Client, name string) (string, error) {
-	projects, err := client.Projects.List(ctx, kernel.ProjectListParams{})
+	const maxProjects = 200
+	projects, err := client.Projects.List(ctx, kernel.ProjectListParams{
+		Limit: param.NewOpt(int64(maxProjects)),
+	})
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve project name %q: %w", name, err)
 	}
