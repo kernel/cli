@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kernel/cli/pkg/table"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
@@ -3337,6 +3338,9 @@ func runBrowsersComputerWriteClipboard(cmd *cobra.Command, args []string) error 
 }
 
 func truncateURL(url string, maxLen int) string {
+	if !table.IsStdoutTTY() {
+		return url
+	}
 	if len(url) <= maxLen {
 		return url
 	}
