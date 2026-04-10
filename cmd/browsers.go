@@ -228,7 +228,6 @@ type BrowsersCmd struct {
 	logs       BrowserLogService
 	computer   BrowserComputerService
 	playwright BrowserPlaywrightService
-	client     *kernel.Client
 }
 
 type BrowsersListInput struct {
@@ -3384,6 +3383,9 @@ func (b BrowsersCmd) curlRaw(ctx context.Context, in BrowsersCurlInput) error {
 	params.Set("url", in.URL)
 	params.Set("method", method)
 	params.Set("timeout_ms", fmt.Sprintf("%d", in.TimeoutMs))
+	if in.Encoding != "" {
+		params.Set("response_encoding", in.Encoding)
+	}
 
 	// Add custom headers as query params
 	for _, h := range in.Headers {
@@ -3442,6 +3444,16 @@ func (b BrowsersCmd) curlRaw(ctx context.Context, in BrowsersCurlInput) error {
 		return fmt.Errorf("not found (%d): %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 
+	if in.Include {
+		fmt.Fprintf(os.Stdout, "HTTP %d\n", resp.StatusCode)
+		for k, vals := range resp.Header {
+			for _, v := range vals {
+				fmt.Fprintf(os.Stdout, "%s: %s\n", k, v)
+			}
+		}
+		fmt.Fprintln(os.Stdout)
+	}
+
 	if in.OutputFile != "" {
 		f, err := os.Create(in.OutputFile)
 		if err != nil {
@@ -3456,16 +3468,6 @@ func (b BrowsersCmd) curlRaw(ctx context.Context, in BrowsersCurlInput) error {
 			pterm.Success.Printf("Saved response to %s\n", in.OutputFile)
 		}
 		return nil
-	}
-
-	if in.Include {
-		fmt.Fprintf(os.Stdout, "HTTP %d\n", resp.StatusCode)
-		for k, vals := range resp.Header {
-			for _, v := range vals {
-				fmt.Fprintf(os.Stdout, "%s: %s\n", k, v)
-			}
-		}
-		fmt.Fprintln(os.Stdout)
 	}
 
 	_, err = io.Copy(os.Stdout, resp.Body)
@@ -3500,7 +3502,7 @@ func runBrowsersCurl(cmd *cobra.Command, args []string) error {
 	silent, _ := cmd.Flags().GetBool("silent")
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 
-	b := BrowsersCmd{browsers: &svc, client: &client}
+	b := BrowsersCmd{browsers: &svc}
 	return b.Curl(cmd.Context(), BrowsersCurlInput{
 		Identifier: args[0],
 		URL:        args[1],
