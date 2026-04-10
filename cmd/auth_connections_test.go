@@ -20,6 +20,7 @@ import (
 type FakeAuthConnectionService struct {
 	NewFunc             func(ctx context.Context, body kernel.AuthConnectionNewParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error)
 	GetFunc             func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error)
+	UpdateFunc          func(ctx context.Context, id string, body kernel.AuthConnectionUpdateParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error)
 	ListFunc            func(ctx context.Context, query kernel.AuthConnectionListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ManagedAuth], error)
 	DeleteFunc          func(ctx context.Context, id string, opts ...option.RequestOption) error
 	LoginFunc           func(ctx context.Context, id string, body kernel.AuthConnectionLoginParams, opts ...option.RequestOption) (*kernel.LoginResponse, error)
@@ -39,6 +40,13 @@ func (f *FakeAuthConnectionService) Get(ctx context.Context, id string, opts ...
 		return f.GetFunc(ctx, id, opts...)
 	}
 	return nil, errors.New("not found")
+}
+
+func (f *FakeAuthConnectionService) Update(ctx context.Context, id string, body kernel.AuthConnectionUpdateParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+	if f.UpdateFunc != nil {
+		return f.UpdateFunc(ctx, id, body, opts...)
+	}
+	return &kernel.ManagedAuth{ID: id}, nil
 }
 
 func (f *FakeAuthConnectionService) List(ctx context.Context, query kernel.AuthConnectionListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ManagedAuth], error) {
@@ -197,6 +205,56 @@ func TestAuthConnectionsList_JSONOutput_PrintsRawResponse(t *testing.T) {
 	assert.Contains(t, out, "\"raf-leaseweb\"")
 }
 
+func TestAuthConnectionsUpdate_MapsParams(t *testing.T) {
+	var captured kernel.AuthConnectionUpdateParams
+	fake := &FakeAuthConnectionService{
+		UpdateFunc: func(ctx context.Context, id string, body kernel.AuthConnectionUpdateParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			captured = body
+			return &kernel.ManagedAuth{
+				ID:          id,
+				Domain:      "example.com",
+				ProfileName: "profile-1",
+				Status:      kernel.ManagedAuthStatusAuthenticated,
+			}, nil
+		},
+	}
+
+	c := AuthConnectionCmd{svc: fake}
+	err := c.Update(context.Background(), AuthConnectionUpdateInput{
+		ID:                     "conn-1",
+		LoginURL:               "https://login.example.com",
+		LoginURLSet:            true,
+		AllowedDomains:         []string{"example.com", "login.example.com"},
+		AllowedDomainsSet:      true,
+		CredentialProvider:     "vault-provider",
+		CredentialProviderSet:  true,
+		CredentialPath:         "Vault/Item",
+		CredentialPathSet:      true,
+		CredentialAuto:         BoolFlag{Set: true, Value: true},
+		ProxyID:                "proxy-123",
+		ProxyIDSet:             true,
+		SaveCredentials:        BoolFlag{Set: true, Value: false},
+		HealthCheckInterval:    900,
+		HealthCheckIntervalSet: true,
+	})
+	require.NoError(t, err)
+	require.True(t, captured.ManagedAuthUpdateRequest.LoginURL.Valid())
+	assert.Equal(t, "https://login.example.com", captured.ManagedAuthUpdateRequest.LoginURL.Value)
+	assert.Equal(t, []string{"example.com", "login.example.com"}, captured.ManagedAuthUpdateRequest.AllowedDomains)
+	require.True(t, captured.ManagedAuthUpdateRequest.Credential.Provider.Valid())
+	assert.Equal(t, "vault-provider", captured.ManagedAuthUpdateRequest.Credential.Provider.Value)
+	require.True(t, captured.ManagedAuthUpdateRequest.Credential.Path.Valid())
+	assert.Equal(t, "Vault/Item", captured.ManagedAuthUpdateRequest.Credential.Path.Value)
+	require.True(t, captured.ManagedAuthUpdateRequest.Credential.Auto.Valid())
+	assert.True(t, captured.ManagedAuthUpdateRequest.Credential.Auto.Value)
+	require.True(t, captured.ManagedAuthUpdateRequest.Proxy.ID.Valid())
+	assert.Equal(t, "proxy-123", captured.ManagedAuthUpdateRequest.Proxy.ID.Value)
+	require.True(t, captured.ManagedAuthUpdateRequest.SaveCredentials.Valid())
+	assert.False(t, captured.ManagedAuthUpdateRequest.SaveCredentials.Value)
+	require.True(t, captured.ManagedAuthUpdateRequest.HealthCheckInterval.Valid())
+	assert.Equal(t, int64(900), captured.ManagedAuthUpdateRequest.HealthCheckInterval.Value)
+}
+
 func newFakeWithMfaOptions(options []kernel.ManagedAuthMfaOption) *FakeAuthConnectionService {
 	return &FakeAuthConnectionService{
 		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
@@ -231,6 +289,44 @@ func TestSubmit_MfaOptionResolvesType(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "sms", submittedID)
+}
+
+func TestSubmit_SSOProviderMapped(t *testing.T) {
+	var provider string
+	fake := &FakeAuthConnectionService{
+		SubmitFunc: func(ctx context.Context, id string, body kernel.AuthConnectionSubmitParams, opts ...option.RequestOption) (*kernel.SubmitFieldsResponse, error) {
+			provider = body.SubmitFieldsRequest.SSOProvider.Value
+			return &kernel.SubmitFieldsResponse{Accepted: true}, nil
+		},
+	}
+
+	c := AuthConnectionCmd{svc: fake}
+	err := c.Submit(context.Background(), AuthConnectionSubmitInput{
+		ID:          "conn-1",
+		SSOProvider: "google",
+		Output:      "json",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "google", provider)
+}
+
+func TestSubmit_SignInOptionMapped(t *testing.T) {
+	var signInOption string
+	fake := &FakeAuthConnectionService{
+		SubmitFunc: func(ctx context.Context, id string, body kernel.AuthConnectionSubmitParams, opts ...option.RequestOption) (*kernel.SubmitFieldsResponse, error) {
+			signInOption = body.SubmitFieldsRequest.SignInOptionID.Value
+			return &kernel.SubmitFieldsResponse{Accepted: true}, nil
+		},
+	}
+
+	c := AuthConnectionCmd{svc: fake}
+	err := c.Submit(context.Background(), AuthConnectionSubmitInput{
+		ID:             "conn-1",
+		SignInOptionID: "pick-account",
+		Output:         "json",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "pick-account", signInOption)
 }
 
 func TestSubmit_MfaOptionResolvesLabel(t *testing.T) {

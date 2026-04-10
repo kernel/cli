@@ -38,6 +38,7 @@ type CredentialProvidersGetInput struct {
 }
 
 type CredentialProvidersCreateInput struct {
+	Name            string
 	ProviderType    string
 	Token           string
 	CacheTtlSeconds int64
@@ -46,6 +47,7 @@ type CredentialProvidersCreateInput struct {
 
 type CredentialProvidersUpdateInput struct {
 	ID              string
+	Name            string
 	Token           string
 	CacheTtlSeconds int64
 	Enabled         BoolFlag
@@ -142,6 +144,9 @@ func (c CredentialProvidersCmd) Create(ctx context.Context, in CredentialProvide
 	if in.ProviderType == "" {
 		return fmt.Errorf("--provider-type is required")
 	}
+	if in.Name == "" {
+		return fmt.Errorf("--name is required")
+	}
 	if in.Token == "" {
 		return fmt.Errorf("--token is required")
 	}
@@ -154,6 +159,7 @@ func (c CredentialProvidersCmd) Create(ctx context.Context, in CredentialProvide
 
 	params := kernel.CredentialProviderNewParams{
 		CreateCredentialProviderRequest: kernel.CreateCredentialProviderRequestParam{
+			Name:         in.Name,
 			Token:        in.Token,
 			ProviderType: kernel.CreateCredentialProviderRequestProviderTypeOnepassword,
 		},
@@ -180,6 +186,7 @@ func (c CredentialProvidersCmd) Create(ctx context.Context, in CredentialProvide
 	tableData := pterm.TableData{
 		{"Property", "Value"},
 		{"ID", provider.ID},
+		{"Name", provider.Name},
 		{"Provider Type", string(provider.ProviderType)},
 		{"Enabled", fmt.Sprintf("%t", provider.Enabled)},
 		{"Priority", fmt.Sprintf("%d", provider.Priority)},
@@ -199,6 +206,9 @@ func (c CredentialProvidersCmd) Update(ctx context.Context, in CredentialProvide
 	}
 	if in.Token != "" {
 		params.UpdateCredentialProviderRequest.Token = kernel.Opt(in.Token)
+	}
+	if in.Name != "" {
+		params.UpdateCredentialProviderRequest.Name = kernel.Opt(in.Name)
 	}
 	if in.CacheTtlSeconds > 0 {
 		params.UpdateCredentialProviderRequest.CacheTtlSeconds = kernel.Opt(in.CacheTtlSeconds)
@@ -421,14 +431,17 @@ func init() {
 
 	// Create flags
 	credentialProvidersCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	credentialProvidersCreateCmd.Flags().String("name", "", "Human-readable name for this provider instance")
 	credentialProvidersCreateCmd.Flags().String("provider-type", "", "Provider type (e.g., onepassword)")
 	credentialProvidersCreateCmd.Flags().String("token", "", "Service account token for the provider")
 	credentialProvidersCreateCmd.Flags().Int64("cache-ttl", 0, "How long to cache credential lists in seconds (default 300)")
+	_ = credentialProvidersCreateCmd.MarkFlagRequired("name")
 	_ = credentialProvidersCreateCmd.MarkFlagRequired("provider-type")
 	_ = credentialProvidersCreateCmd.MarkFlagRequired("token")
 
 	// Update flags
 	credentialProvidersUpdateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	credentialProvidersUpdateCmd.Flags().String("name", "", "New human-readable name for this provider instance")
 	credentialProvidersUpdateCmd.Flags().String("token", "", "New service account token (to rotate credentials)")
 	credentialProvidersUpdateCmd.Flags().Int64("cache-ttl", 0, "How long to cache credential lists in seconds")
 	credentialProvidersUpdateCmd.Flags().Bool("enabled", true, "Whether the provider is enabled for credential lookups")
@@ -470,6 +483,7 @@ func runCredentialProvidersGet(cmd *cobra.Command, args []string) error {
 func runCredentialProvidersCreate(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	output, _ := cmd.Flags().GetString("output")
+	name, _ := cmd.Flags().GetString("name")
 	providerType, _ := cmd.Flags().GetString("provider-type")
 	token, _ := cmd.Flags().GetString("token")
 	cacheTtl, _ := cmd.Flags().GetInt64("cache-ttl")
@@ -477,6 +491,7 @@ func runCredentialProvidersCreate(cmd *cobra.Command, args []string) error {
 	svc := client.CredentialProviders
 	c := CredentialProvidersCmd{providers: &svc}
 	return c.Create(cmd.Context(), CredentialProvidersCreateInput{
+		Name:            name,
 		ProviderType:    providerType,
 		Token:           token,
 		CacheTtlSeconds: cacheTtl,
@@ -487,6 +502,7 @@ func runCredentialProvidersCreate(cmd *cobra.Command, args []string) error {
 func runCredentialProvidersUpdate(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	output, _ := cmd.Flags().GetString("output")
+	name, _ := cmd.Flags().GetString("name")
 	token, _ := cmd.Flags().GetString("token")
 	cacheTtl, _ := cmd.Flags().GetInt64("cache-ttl")
 	enabled, _ := cmd.Flags().GetBool("enabled")
@@ -496,6 +512,7 @@ func runCredentialProvidersUpdate(cmd *cobra.Command, args []string) error {
 	c := CredentialProvidersCmd{providers: &svc}
 	return c.Update(cmd.Context(), CredentialProvidersUpdateInput{
 		ID:              args[0],
+		Name:            name,
 		Token:           token,
 		CacheTtlSeconds: cacheTtl,
 		Enabled:         BoolFlag{Set: cmd.Flags().Changed("enabled"), Value: enabled},

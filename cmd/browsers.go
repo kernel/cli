@@ -99,9 +99,11 @@ type BrowserComputerService interface {
 	GetMousePosition(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.BrowserComputerGetMousePositionResponse, err error)
 	MoveMouse(ctx context.Context, id string, body kernel.BrowserComputerMoveMouseParams, opts ...option.RequestOption) (err error)
 	PressKey(ctx context.Context, id string, body kernel.BrowserComputerPressKeyParams, opts ...option.RequestOption) (err error)
+	ReadClipboard(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.BrowserComputerReadClipboardResponse, err error)
 	Scroll(ctx context.Context, id string, body kernel.BrowserComputerScrollParams, opts ...option.RequestOption) (err error)
 	SetCursorVisibility(ctx context.Context, id string, body kernel.BrowserComputerSetCursorVisibilityParams, opts ...option.RequestOption) (res *kernel.BrowserComputerSetCursorVisibilityResponse, err error)
 	TypeText(ctx context.Context, id string, body kernel.BrowserComputerTypeTextParams, opts ...option.RequestOption) (err error)
+	WriteClipboard(ctx context.Context, id string, body kernel.BrowserComputerWriteClipboardParams, opts ...option.RequestOption) (err error)
 }
 
 // BoolFlag captures whether a boolean flag was set explicitly and its value.
@@ -175,6 +177,7 @@ type BrowsersCreateInput struct {
 	Stealth            BoolFlag
 	Headless           BoolFlag
 	GPU                BoolFlag
+	InvocationID       string
 	Kiosk              BoolFlag
 	ProfileID          string
 	ProfileName        string
@@ -195,8 +198,9 @@ type BrowsersViewInput struct {
 }
 
 type BrowsersGetInput struct {
-	Identifier string
-	Output     string
+	Identifier     string
+	IncludeDeleted bool
+	Output         string
 }
 
 type BrowsersUpdateInput struct {
@@ -358,6 +362,9 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 	if in.GPU.Set {
 		params.GPU = kernel.Opt(in.GPU.Value)
+	}
+	if in.InvocationID != "" {
+		params.InvocationID = kernel.Opt(in.InvocationID)
 	}
 	if in.Kiosk.Set {
 		params.KioskMode = kernel.Opt(in.Kiosk.Value)
@@ -524,7 +531,12 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
-	browser, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
+	query := kernel.BrowserGetParams{}
+	if in.IncludeDeleted {
+		query.IncludeDeleted = kernel.Opt(true)
+	}
+
+	browser, err := b.browsers.Get(ctx, in.Identifier, query)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -719,6 +731,8 @@ type BrowsersComputerMoveMouseInput struct {
 	X          int64
 	Y          int64
 	HoldKeys   []string
+	Smooth     *bool
+	DurationMs *int64
 }
 
 type BrowsersComputerScreenshotInput struct {
@@ -763,6 +777,8 @@ type BrowsersComputerDragMouseInput struct {
 	StepsPerSegment int64
 	Button          string
 	HoldKeys        []string
+	Smooth          *bool
+	DurationMs      *int64
 }
 
 type BrowsersComputerSetCursorInput struct {
@@ -778,6 +794,16 @@ type BrowsersComputerGetMousePositionInput struct {
 type BrowsersComputerBatchInput struct {
 	Identifier  string
 	ActionsJSON string
+}
+
+type BrowsersComputerReadClipboardInput struct {
+	Identifier string
+	Output     string
+}
+
+type BrowsersComputerWriteClipboardInput struct {
+	Identifier string
+	Text       string
 }
 
 func (b BrowsersCmd) ComputerClickMouse(ctx context.Context, in BrowsersComputerClickMouseInput) error {
@@ -821,6 +847,16 @@ func (b BrowsersCmd) ComputerMoveMouse(ctx context.Context, in BrowsersComputerM
 	body := kernel.BrowserComputerMoveMouseParams{X: in.X, Y: in.Y}
 	if len(in.HoldKeys) > 0 {
 		body.HoldKeys = in.HoldKeys
+	}
+	extras := map[string]any{}
+	if in.Smooth != nil {
+		extras["smooth"] = *in.Smooth
+	}
+	if in.DurationMs != nil {
+		extras["duration_ms"] = *in.DurationMs
+	}
+	if len(extras) > 0 {
+		body.SetExtraFields(extras)
 	}
 	if err := b.computer.MoveMouse(ctx, br.SessionID, body); err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -967,6 +1003,16 @@ func (b BrowsersCmd) ComputerDragMouse(ctx context.Context, in BrowsersComputerD
 	if len(in.HoldKeys) > 0 {
 		body.HoldKeys = in.HoldKeys
 	}
+	extras := map[string]any{}
+	if in.Smooth != nil {
+		extras["smooth"] = *in.Smooth
+	}
+	if in.DurationMs != nil {
+		extras["duration_ms"] = *in.DurationMs
+	}
+	if len(extras) > 0 {
+		body.SetExtraFields(extras)
+	}
 	if err := b.computer.DragMouse(ctx, br.SessionID, body); err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -1039,6 +1085,47 @@ func (b BrowsersCmd) ComputerBatch(ctx context.Context, in BrowsersComputerBatch
 	return nil
 }
 
+func (b BrowsersCmd) ComputerReadClipboard(ctx context.Context, in BrowsersComputerReadClipboardInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+	if b.computer == nil {
+		pterm.Error.Println("computer service not available")
+		return nil
+	}
+	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	res, err := b.computer.ReadClipboard(ctx, br.SessionID)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	if in.Output == "json" {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(res)
+	}
+	fmt.Println(res.Text)
+	return nil
+}
+
+func (b BrowsersCmd) ComputerWriteClipboard(ctx context.Context, in BrowsersComputerWriteClipboardInput) error {
+	if b.computer == nil {
+		pterm.Error.Println("computer service not available")
+		return nil
+	}
+	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	if err := b.computer.WriteClipboard(ctx, br.SessionID, kernel.BrowserComputerWriteClipboardParams{Text: in.Text}); err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	pterm.Success.Println("Text written to clipboard")
+	return nil
+}
+
 // Replays
 type BrowsersReplaysListInput struct {
 	Identifier string
@@ -1068,11 +1155,7 @@ func (b BrowsersCmd) ReplaysList(ctx context.Context, in BrowsersReplaysListInpu
 		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 
-	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-	items, err := b.replays.List(ctx, br.SessionID)
+	items, err := b.replays.List(ctx, in.Identifier)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -1141,11 +1224,7 @@ func (b BrowsersCmd) ReplaysStop(ctx context.Context, in BrowsersReplaysStopInpu
 }
 
 func (b BrowsersCmd) ReplaysDownload(ctx context.Context, in BrowsersReplaysDownloadInput) error {
-	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-	res, err := b.replays.Download(ctx, in.ReplayID, kernel.BrowserReplayDownloadParams{ID: br.SessionID})
+	res, err := b.replays.Download(ctx, in.ReplayID, kernel.BrowserReplayDownloadParams{ID: in.Identifier})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -2159,6 +2238,7 @@ func init() {
 
 	// get flags
 	browsersGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	browsersGetCmd.Flags().Bool("include-deleted", false, "Include soft-deleted browser sessions in the lookup")
 
 	// view flags
 	browsersViewCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
@@ -2341,6 +2421,8 @@ func init() {
 	_ = computerMove.MarkFlagRequired("x")
 	_ = computerMove.MarkFlagRequired("y")
 	computerMove.Flags().StringSlice("hold-key", []string{}, "Modifier keys to hold (repeatable)")
+	computerMove.Flags().Bool("smooth", true, "Use human-like Bezier curve path instead of instant teleport")
+	computerMove.Flags().Int64("duration-ms", 0, "Target duration in ms for smooth movement (50-5000, 0 for auto)")
 
 	computerScreenshot := &cobra.Command{Use: "screenshot <id>", Short: "Capture a screenshot (optionally of a region)", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerScreenshot}
 	computerScreenshot.Flags().Int64("x", 0, "Top-left X")
@@ -2380,6 +2462,8 @@ func init() {
 	computerDrag.Flags().Int64("steps-per-segment", 0, "Number of move steps per path segment")
 	computerDrag.Flags().String("button", "left", "Mouse button: left,middle,right")
 	computerDrag.Flags().StringSlice("hold-key", []string{}, "Modifier keys to hold (repeatable)")
+	computerDrag.Flags().Bool("smooth", true, "Use human-like Bezier curves between waypoints")
+	computerDrag.Flags().Int64("duration-ms", 0, "Target duration in ms for smooth drag (50-10000, 0 for auto)")
 
 	// computer set-cursor
 	computerSetCursor := &cobra.Command{Use: "set-cursor <id>", Short: "Hide or show the cursor", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerSetCursor}
@@ -2395,7 +2479,16 @@ func init() {
 	computerBatch.Flags().String("actions", "", "JSON object with actions array (e.g., {\"actions\":[{\"type\":\"click_mouse\",...}]})")
 	_ = computerBatch.MarkFlagRequired("actions")
 
-	computerRoot.AddCommand(computerClick, computerMove, computerScreenshot, computerType, computerPressKey, computerScroll, computerDrag, computerSetCursor, computerGetMousePosition, computerBatch)
+	// computer read-clipboard
+	computerReadClipboard := &cobra.Command{Use: "read-clipboard <id>", Short: "Read text from the browser clipboard", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerReadClipboard}
+	computerReadClipboard.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+
+	// computer write-clipboard
+	computerWriteClipboard := &cobra.Command{Use: "write-clipboard <id>", Short: "Write text to the browser clipboard", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerWriteClipboard}
+	computerWriteClipboard.Flags().String("text", "", "Text to write to the clipboard")
+	_ = computerWriteClipboard.MarkFlagRequired("text")
+
+	computerRoot.AddCommand(computerClick, computerMove, computerScreenshot, computerType, computerPressKey, computerScroll, computerDrag, computerSetCursor, computerGetMousePosition, computerBatch, computerReadClipboard, computerWriteClipboard)
 	browsersCmd.AddCommand(computerRoot)
 
 	// playwright
@@ -2412,6 +2505,7 @@ func init() {
 	browsersCreateCmd.Flags().BoolP("stealth", "s", false, "Launch browser in stealth mode to avoid detection")
 	browsersCreateCmd.Flags().BoolP("headless", "H", false, "Launch browser without GUI access")
 	browsersCreateCmd.Flags().Bool("gpu", false, "Launch browser with hardware-accelerated GPU rendering")
+	browsersCreateCmd.Flags().String("invocation-id", "", "Associate the browser session with an invocation")
 	browsersCreateCmd.Flags().Bool("kiosk", false, "Launch browser in kiosk mode")
 	browsersCreateCmd.Flags().IntP("timeout", "t", 60, "Timeout in seconds for the browser session")
 	browsersCreateCmd.Flags().String("profile-id", "", "Profile ID to load into the browser session (mutually exclusive with --profile-name)")
@@ -2458,6 +2552,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	stealthVal, _ := cmd.Flags().GetBool("stealth")
 	headlessVal, _ := cmd.Flags().GetBool("headless")
 	gpuVal, _ := cmd.Flags().GetBool("gpu")
+	invocationID, _ := cmd.Flags().GetString("invocation-id")
 	kioskVal, _ := cmd.Flags().GetBool("kiosk")
 	timeout, _ := cmd.Flags().GetInt("timeout")
 	profileID, _ := cmd.Flags().GetString("profile-id")
@@ -2570,6 +2665,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		Stealth:            BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealthVal},
 		Headless:           BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headlessVal},
 		GPU:                BoolFlag{Set: cmd.Flags().Changed("gpu"), Value: gpuVal},
+		InvocationID:       invocationID,
 		Kiosk:              BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kioskVal},
 		ProfileID:          profileID,
 		ProfileName:        profileName,
@@ -2614,12 +2710,14 @@ func runBrowsersView(cmd *cobra.Command, args []string) error {
 func runBrowsersGet(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	out, _ := cmd.Flags().GetString("output")
+	includeDeleted, _ := cmd.Flags().GetBool("include-deleted")
 
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
 	return b.Get(cmd.Context(), BrowsersGetInput{
-		Identifier: args[0],
-		Output:     out,
+		Identifier:     args[0],
+		IncludeDeleted: includeDeleted,
+		Output:         out,
 	})
 }
 
@@ -2984,8 +3082,17 @@ func runBrowsersComputerMoveMouse(cmd *cobra.Command, args []string) error {
 	x, _ := cmd.Flags().GetInt64("x")
 	y, _ := cmd.Flags().GetInt64("y")
 	holdKeys, _ := cmd.Flags().GetStringSlice("hold-key")
+	in := BrowsersComputerMoveMouseInput{Identifier: args[0], X: x, Y: y, HoldKeys: holdKeys}
+	if cmd.Flags().Changed("smooth") {
+		v, _ := cmd.Flags().GetBool("smooth")
+		in.Smooth = &v
+	}
+	if cmd.Flags().Changed("duration-ms") {
+		v, _ := cmd.Flags().GetInt64("duration-ms")
+		in.DurationMs = &v
+	}
 	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
-	return b.ComputerMoveMouse(cmd.Context(), BrowsersComputerMoveMouseInput{Identifier: args[0], X: x, Y: y, HoldKeys: holdKeys})
+	return b.ComputerMoveMouse(cmd.Context(), in)
 }
 
 func runBrowsersComputerScreenshot(cmd *cobra.Command, args []string) error {
@@ -3079,8 +3186,17 @@ func runBrowsersComputerDragMouse(cmd *cobra.Command, args []string) error {
 		path = append(path, []int64{x, y})
 	}
 
+	in := BrowsersComputerDragMouseInput{Identifier: args[0], Path: path, Delay: delay, StepDelayMs: stepDelayMs, StepsPerSegment: stepsPerSegment, Button: button, HoldKeys: holdKeys}
+	if cmd.Flags().Changed("smooth") {
+		v, _ := cmd.Flags().GetBool("smooth")
+		in.Smooth = &v
+	}
+	if cmd.Flags().Changed("duration-ms") {
+		v, _ := cmd.Flags().GetInt64("duration-ms")
+		in.DurationMs = &v
+	}
 	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
-	return b.ComputerDragMouse(cmd.Context(), BrowsersComputerDragMouseInput{Identifier: args[0], Path: path, Delay: delay, StepDelayMs: stepDelayMs, StepsPerSegment: stepsPerSegment, Button: button, HoldKeys: holdKeys})
+	return b.ComputerDragMouse(cmd.Context(), in)
 }
 
 func runBrowsersComputerSetCursor(cmd *cobra.Command, args []string) error {
@@ -3119,6 +3235,24 @@ func runBrowsersComputerBatch(cmd *cobra.Command, args []string) error {
 
 	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
 	return b.ComputerBatch(cmd.Context(), BrowsersComputerBatchInput{Identifier: args[0], ActionsJSON: actionsJSON})
+}
+
+func runBrowsersComputerReadClipboard(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	output, _ := cmd.Flags().GetString("output")
+
+	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
+	return b.ComputerReadClipboard(cmd.Context(), BrowsersComputerReadClipboardInput{Identifier: args[0], Output: output})
+}
+
+func runBrowsersComputerWriteClipboard(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	text, _ := cmd.Flags().GetString("text")
+
+	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
+	return b.ComputerWriteClipboard(cmd.Context(), BrowsersComputerWriteClipboardInput{Identifier: args[0], Text: text})
 }
 
 func truncateURL(url string, maxLen int) string {

@@ -31,6 +31,14 @@ var deployDeleteCmd = &cobra.Command{
 	RunE:  runDeployDelete,
 }
 
+var deployGetCmd = &cobra.Command{
+	Use:   "get <deployment_id>",
+	Short: "Get a deployment",
+	Long:  "Retrieve detailed information about a deployment.",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runDeployGet,
+}
+
 var deployLogsCmd = &cobra.Command{
 	Use:   "logs <deployment_id>",
 	Short: "Stream logs for a deployment",
@@ -63,11 +71,15 @@ var deployGithubCmd = &cobra.Command{
 func init() {
 	deployCmd.Flags().String("version", "latest", "Specify a version for the app (default: latest)")
 	deployCmd.Flags().Bool("force", false, "Allow overwrite of an existing version with the same name")
+	deployCmd.Flags().String("region", "", "Deployment region (currently only aws.us-east-1a)")
 	deployCmd.Flags().StringArrayP("env", "e", []string{}, "Set environment variables (e.g., KEY=value). May be specified multiple times")
 	deployCmd.Flags().StringArray("env-file", []string{}, "Read environment variables from a file (.env format). May be specified multiple times")
 	deployCmd.Flags().StringP("output", "o", "", "Output format: json for JSONL streaming output")
 
 	// Subcommands under deploy
+	deployGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	deployCmd.AddCommand(deployGetCmd)
+
 	deployLogsCmd.Flags().BoolP("follow", "f", false, "Follow logs in real-time (stream continuously)")
 	deployLogsCmd.Flags().StringP("since", "s", "", "How far back to retrieve logs. Supports duration formats: ns, us, ms, s, m, h (e.g., 5m, 2h, 1h30m). Note: 'd' not supported; use hours instead. Can also specify timestamps: 2006-01-02, 2006-01-02T15:04, 2006-01-02T15:04:05, 2006-01-02T15:04:05.000. Max lookback ~167h.")
 	deployLogsCmd.Flags().BoolP("with-timestamps", "t", false, "Include timestamps in each log line")
@@ -79,6 +91,7 @@ func init() {
 	deployHistoryCmd.Flags().Int("limit", 20, "Max deployments to return (default 20)")
 	deployHistoryCmd.Flags().Int("per-page", 20, "Items per page (alias of --limit)")
 	deployHistoryCmd.Flags().Int("page", 1, "Page number (1-based)")
+	deployHistoryCmd.Flags().String("app-version", "", "Filter by application version (requires app_name)")
 	deployHistoryCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	deployCmd.AddCommand(deployHistoryCmd)
 
@@ -88,6 +101,7 @@ func init() {
 	deployGithubCmd.Flags().String("entrypoint", "", "Entrypoint within the repo/path (e.g., src/index.ts)")
 	deployGithubCmd.Flags().String("path", "", "Optional subdirectory within the repo (e.g., apps/api)")
 	deployGithubCmd.Flags().String("github-token", "", "GitHub token for private repositories (PAT or installation access token)")
+	deployGithubCmd.Flags().String("region", "aws.us-east-1a", "Deployment region (currently only aws.us-east-1a)")
 	_ = deployGithubCmd.MarkFlagRequired("url")
 	_ = deployGithubCmd.MarkFlagRequired("ref")
 	_ = deployGithubCmd.MarkFlagRequired("entrypoint")
@@ -102,6 +116,7 @@ func runDeployGithub(cmd *cobra.Command, args []string) error {
 	entrypoint, _ := cmd.Flags().GetString("entrypoint")
 	subpath, _ := cmd.Flags().GetString("path")
 	ghToken, _ := cmd.Flags().GetString("github-token")
+	region, _ := cmd.Flags().GetString("region")
 
 	version, _ := cmd.Flags().GetString("version")
 	force, _ := cmd.Flags().GetBool("force")
@@ -148,12 +163,18 @@ func runDeployGithub(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("KERNEL_API_KEY is required for github deploy")
 	}
 	baseURL := util.GetBaseURL()
+	if region == "" {
+		region = string(kernel.DeploymentNewParamsRegionAwsUsEast1a)
+	}
+	if region != string(kernel.DeploymentNewParamsRegionAwsUsEast1a) {
+		return fmt.Errorf("invalid --region value: %s (must be %s)", region, kernel.DeploymentNewParamsRegionAwsUsEast1a)
+	}
 
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	// regular fields
 	_ = mw.WriteField("version", version)
-	_ = mw.WriteField("region", "aws.us-east-1a")
+	_ = mw.WriteField("region", region)
 	if force {
 		_ = mw.WriteField("force", "true")
 	} else {
@@ -220,6 +241,7 @@ func runDeploy(cmd *cobra.Command, args []string) (err error) {
 	entrypoint := args[0]
 	version, _ := cmd.Flags().GetString("version")
 	force, _ := cmd.Flags().GetBool("force")
+	region, _ := cmd.Flags().GetString("region")
 	output, _ := cmd.Flags().GetString("output")
 
 	if output != "" && output != "json" {
@@ -293,18 +315,64 @@ func runDeploy(cmd *cobra.Command, args []string) (err error) {
 		pterm.Info.Println("Deploying...")
 	}
 
-	resp, err := client.Deployments.New(cmd.Context(), kernel.DeploymentNewParams{
+	params := kernel.DeploymentNewParams{
 		File:              file,
 		Version:           kernel.Opt(version),
 		Force:             kernel.Opt(force),
 		EntrypointRelPath: kernel.Opt(filepath.Base(resolvedEntrypoint)),
 		EnvVars:           envVars,
-	}, option.WithMaxRetries(0))
+	}
+	if region != "" {
+		if region != string(kernel.DeploymentNewParamsRegionAwsUsEast1a) {
+			return fmt.Errorf("invalid --region value: %s (must be %s)", region, kernel.DeploymentNewParamsRegionAwsUsEast1a)
+		}
+		params.Region = kernel.DeploymentNewParamsRegion(region)
+	}
+
+	resp, err := client.Deployments.New(cmd.Context(), params, option.WithMaxRetries(0))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
 	return followDeployment(cmd.Context(), client, resp.ID, startTime, output, option.WithMaxRetries(0))
+}
+
+func runDeployGet(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	output, _ := cmd.Flags().GetString("output")
+
+	if output != "" && output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
+	deployment, err := client.Deployments.Get(cmd.Context(), args[0])
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if output == "json" {
+		return util.PrintPrettyJSON(deployment)
+	}
+
+	tableData := pterm.TableData{
+		{"Property", "Value"},
+		{"ID", deployment.ID},
+		{"Status", string(deployment.Status)},
+		{"Status Reason", deployment.StatusReason},
+		{"Region", string(deployment.Region)},
+		{"Entrypoint", deployment.EntrypointRelPath},
+		{"Created At", util.FormatLocal(deployment.CreatedAt)},
+		{"Updated At", util.FormatLocal(deployment.UpdatedAt)},
+	}
+	if len(deployment.EnvVars) > 0 {
+		envVars := lo.MapToSlice(deployment.EnvVars, func(key, value string) string {
+			return fmt.Sprintf("%s=%s", key, value)
+		})
+		tableData = append(tableData, []string{"Env Vars", strings.Join(envVars, "\n")})
+	}
+
+	PrintTableNoPad(tableData, true)
+	return nil
 }
 
 func quoteIfNeeded(s string) string {
@@ -418,6 +486,7 @@ func runDeployHistory(cmd *cobra.Command, args []string) error {
 	lim, _ := cmd.Flags().GetInt("limit")
 	perPage, _ := cmd.Flags().GetInt("per-page")
 	page, _ := cmd.Flags().GetInt("page")
+	appVersionFilter, _ := cmd.Flags().GetString("app-version")
 	output, _ := cmd.Flags().GetString("output")
 
 	if output != "" && output != "json" {
@@ -445,10 +514,16 @@ func runDeployHistory(cmd *cobra.Command, args []string) error {
 	if len(args) == 1 {
 		appNameFilter = strings.TrimSpace(args[0])
 	}
+	if appVersionFilter != "" && appNameFilter == "" {
+		return fmt.Errorf("--app-version requires app_name")
+	}
 
 	params := kernel.DeploymentListParams{}
 	if appNameFilter != "" {
 		params.AppName = kernel.Opt(appNameFilter)
+	}
+	if appVersionFilter != "" {
+		params.AppVersion = kernel.Opt(appVersionFilter)
 	}
 	// Request one extra item to detect hasMore
 	params.Limit = kernel.Opt(int64(perPage + 1))
@@ -499,14 +574,17 @@ func runDeployHistory(cmd *cobra.Command, args []string) error {
 	}
 	pterm.DefaultTable.WithHasHeader().WithData(table).Render()
 
-	fmt.Printf("\nPage: %d  Per-page: %d  Items this page: %d  Has more: %s\n", page, perPage, itemsThisPage, lo.Ternary(hasMore, "yes", "no"))
+	pterm.Printf("\nPage: %d  Per-page: %d  Items this page: %d  Has more: %s\n", page, perPage, itemsThisPage, lo.Ternary(hasMore, "yes", "no"))
 	if hasMore {
 		nextPage := page + 1
 		nextCmd := fmt.Sprintf("kernel deploy history --page %d --per-page %d", nextPage, perPage)
 		if appNameFilter != "" {
-			nextCmd = fmt.Sprintf("kernel deploy history %s --page %d --per-page %d", appNameFilter, nextPage, perPage)
+			nextCmd = fmt.Sprintf("kernel deploy history %s --page %d --per-page %d", quoteIfNeeded(appNameFilter), nextPage, perPage)
 		}
-		fmt.Printf("Next: %s\n", nextCmd)
+		if appVersionFilter != "" {
+			nextCmd += fmt.Sprintf(" --app-version %s", quoteIfNeeded(appVersionFilter))
+		}
+		pterm.Printf("Next: %s\n", nextCmd)
 	}
 	// Concise notes when user-specified per-page/limit/page are outside API-allowed range
 	if cmd.Flags().Changed("per-page") {

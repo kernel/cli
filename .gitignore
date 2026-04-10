@@ -44,3 +44,7 @@ kernel
 
 # QA testing directories
 qa-*
+
+
+__pycache__
+.dmux/

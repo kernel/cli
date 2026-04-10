@@ -248,6 +248,25 @@ func TestBrowsersCreate_PrintsResponse(t *testing.T) {
 	assert.Contains(t, out, "pid-new")
 }
 
+func TestBrowsersCreate_WithInvocationID(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-new", CdpWsURL: "ws://cdp-new"}, nil
+		},
+	}
+
+	b := BrowsersCmd{browsers: fake}
+	err := b.Create(context.Background(), BrowsersCreateInput{
+		InvocationID: "invocation-123",
+	})
+	assert.NoError(t, err)
+	assert.True(t, captured.InvocationID.Valid())
+	assert.Equal(t, "invocation-123", captured.InvocationID.Value)
+}
+
 func TestBrowsersCreate_PrintsErrorOnFailure(t *testing.T) {
 	setupStdoutCapture(t)
 
@@ -470,6 +489,26 @@ func TestBrowsersGet_Error(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "get failed")
+}
+
+func TestBrowsersGet_WithIncludeDeleted(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserGetParams
+	fake := &FakeBrowsersService{
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			captured = query
+			return &kernel.BrowserGetResponse{SessionID: "sess-123"}, nil
+		},
+	}
+
+	b := BrowsersCmd{browsers: fake}
+	err := b.Get(context.Background(), BrowsersGetInput{
+		Identifier:     "sess-123",
+		IncludeDeleted: true,
+	})
+	assert.NoError(t, err)
+	assert.True(t, captured.IncludeDeleted.Valid())
+	assert.True(t, captured.IncludeDeleted.Value)
 }
 
 // --- Fakes for sub-services ---
@@ -701,6 +740,8 @@ type FakeComputerService struct {
 	DragMouseFunc           func(ctx context.Context, id string, body kernel.BrowserComputerDragMouseParams, opts ...option.RequestOption) error
 	TypeTextFunc            func(ctx context.Context, id string, body kernel.BrowserComputerTypeTextParams, opts ...option.RequestOption) error
 	SetCursorVisibilityFunc func(ctx context.Context, id string, body kernel.BrowserComputerSetCursorVisibilityParams, opts ...option.RequestOption) (*kernel.BrowserComputerSetCursorVisibilityResponse, error)
+	ReadClipboardFunc       func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserComputerReadClipboardResponse, error)
+	WriteClipboardFunc      func(ctx context.Context, id string, body kernel.BrowserComputerWriteClipboardParams, opts ...option.RequestOption) error
 }
 
 func (f *FakeComputerService) Batch(ctx context.Context, id string, body kernel.BrowserComputerBatchParams, opts ...option.RequestOption) error {
@@ -763,6 +804,18 @@ func (f *FakeComputerService) SetCursorVisibility(ctx context.Context, id string
 		return f.SetCursorVisibilityFunc(ctx, id, body, opts...)
 	}
 	return &kernel.BrowserComputerSetCursorVisibilityResponse{}, nil
+}
+func (f *FakeComputerService) ReadClipboard(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserComputerReadClipboardResponse, error) {
+	if f.ReadClipboardFunc != nil {
+		return f.ReadClipboardFunc(ctx, id, opts...)
+	}
+	return &kernel.BrowserComputerReadClipboardResponse{}, nil
+}
+func (f *FakeComputerService) WriteClipboard(ctx context.Context, id string, body kernel.BrowserComputerWriteClipboardParams, opts ...option.RequestOption) error {
+	if f.WriteClipboardFunc != nil {
+		return f.WriteClipboardFunc(ctx, id, body, opts...)
+	}
+	return nil
 }
 
 // --- Tests for Logs ---
@@ -1084,6 +1137,109 @@ func TestBrowsersComputerMoveMouse_PrintsSuccess(t *testing.T) {
 	_ = b.ComputerMoveMouse(context.Background(), BrowsersComputerMoveMouseInput{Identifier: "id", X: 5, Y: 6})
 	out := outBuf.String()
 	assert.Contains(t, out, "Moved mouse to (5,6)")
+}
+
+func TestBrowsersComputerMoveMouse_SmoothFalse(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	var capturedBody kernel.BrowserComputerMoveMouseParams
+	fakeComp := &FakeComputerService{
+		MoveMouseFunc: func(ctx context.Context, id string, body kernel.BrowserComputerMoveMouseParams, opts ...option.RequestOption) error {
+			capturedBody = body
+			return nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
+	smooth := false
+	_ = b.ComputerMoveMouse(context.Background(), BrowsersComputerMoveMouseInput{Identifier: "id", X: 100, Y: 200, Smooth: &smooth})
+	extras := capturedBody.ExtraFields()
+	assert.Contains(t, extras, "smooth")
+	assert.Equal(t, false, extras["smooth"])
+}
+
+func TestBrowsersComputerMoveMouse_DurationMs(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	var capturedBody kernel.BrowserComputerMoveMouseParams
+	fakeComp := &FakeComputerService{
+		MoveMouseFunc: func(ctx context.Context, id string, body kernel.BrowserComputerMoveMouseParams, opts ...option.RequestOption) error {
+			capturedBody = body
+			return nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
+	smooth := true
+	dur := int64(1500)
+	_ = b.ComputerMoveMouse(context.Background(), BrowsersComputerMoveMouseInput{Identifier: "id", X: 100, Y: 200, Smooth: &smooth, DurationMs: &dur})
+	extras := capturedBody.ExtraFields()
+	assert.Contains(t, extras, "smooth")
+	assert.Equal(t, true, extras["smooth"])
+	assert.Contains(t, extras, "duration_ms")
+	assert.Equal(t, int64(1500), extras["duration_ms"])
+}
+
+func TestBrowsersComputerMoveMouse_NoSmoothFlag(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	var capturedBody kernel.BrowserComputerMoveMouseParams
+	fakeComp := &FakeComputerService{
+		MoveMouseFunc: func(ctx context.Context, id string, body kernel.BrowserComputerMoveMouseParams, opts ...option.RequestOption) error {
+			capturedBody = body
+			return nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
+	_ = b.ComputerMoveMouse(context.Background(), BrowsersComputerMoveMouseInput{Identifier: "id", X: 100, Y: 200})
+	extras := capturedBody.ExtraFields()
+	assert.Empty(t, extras)
+}
+
+func TestBrowsersComputerDragMouse_SmoothFalse(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	var capturedBody kernel.BrowserComputerDragMouseParams
+	fakeComp := &FakeComputerService{
+		DragMouseFunc: func(ctx context.Context, id string, body kernel.BrowserComputerDragMouseParams, opts ...option.RequestOption) error {
+			capturedBody = body
+			return nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
+	smooth := false
+	_ = b.ComputerDragMouse(context.Background(), BrowsersComputerDragMouseInput{
+		Identifier: "id",
+		Path:       [][]int64{{100, 200}, {300, 400}},
+		Smooth:     &smooth,
+	})
+	extras := capturedBody.ExtraFields()
+	assert.Contains(t, extras, "smooth")
+	assert.Equal(t, false, extras["smooth"])
+}
+
+func TestBrowsersComputerDragMouse_DurationMs(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	var capturedBody kernel.BrowserComputerDragMouseParams
+	fakeComp := &FakeComputerService{
+		DragMouseFunc: func(ctx context.Context, id string, body kernel.BrowserComputerDragMouseParams, opts ...option.RequestOption) error {
+			capturedBody = body
+			return nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, computer: fakeComp}
+	smooth := true
+	dur := int64(3000)
+	_ = b.ComputerDragMouse(context.Background(), BrowsersComputerDragMouseInput{
+		Identifier: "id",
+		Path:       [][]int64{{100, 200}, {300, 400}},
+		Smooth:     &smooth,
+		DurationMs: &dur,
+	})
+	extras := capturedBody.ExtraFields()
+	assert.Contains(t, extras, "smooth")
+	assert.Equal(t, true, extras["smooth"])
+	assert.Contains(t, extras, "duration_ms")
+	assert.Equal(t, int64(3000), extras["duration_ms"])
 }
 
 func TestBrowsersComputerScreenshot_SavesFile(t *testing.T) {
