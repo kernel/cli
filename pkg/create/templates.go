@@ -19,7 +19,7 @@ const (
 	TemplateOpenAGIComputerUse   = "openagi-computer-use"
 	TemplateClaudeAgentSDK       = "claude-agent-sdk"
 	TemplateYutoriComputerUse    = "yutori"
-	TemplateTzafonComputerUse    = "tzafon-computer-use"
+	TemplateTzafonComputerUse    = "tzafon"
 )
 
 type TemplateInfo struct {
