@@ -19,6 +19,20 @@ var projectsCmd = &cobra.Command{
 	},
 }
 
+// resolveProjectArg resolves a positional project argument that may be an ID or
+// a name. If it looks like a cuid2 ID it is returned as-is; otherwise we list
+// projects and find the matching name (case-insensitive).
+func resolveProjectArg(cmd *cobra.Command, client kernel.Client, val string) (string, error) {
+	if cuidRegex.MatchString(val) {
+		return val, nil
+	}
+	resolved, err := resolveProjectByName(cmd.Context(), client, val)
+	if err != nil {
+		return "", err
+	}
+	return resolved, nil
+}
+
 var projectsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List projects",
@@ -70,14 +84,19 @@ var projectsCreateCmd = &cobra.Command{
 }
 
 var projectsGetCmd = &cobra.Command{
-	Use:   "get <id>",
-	Short: "Get a project by ID",
+	Use:   "get <id-or-name>",
+	Short: "Get a project by ID or name",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := getKernelClient(cmd)
 		ctx := cmd.Context()
 
-		project, err := client.Projects.Get(ctx, args[0])
+		projectID, err := resolveProjectArg(cmd, client, args[0])
+		if err != nil {
+			return err
+		}
+
+		project, err := client.Projects.Get(ctx, projectID)
 		if err != nil {
 			pterm.Error.Println("Failed to get project:", err)
 			return nil
@@ -97,33 +116,43 @@ var projectsGetCmd = &cobra.Command{
 }
 
 var projectsDeleteCmd = &cobra.Command{
-	Use:   "delete <id>",
+	Use:   "delete <id-or-name>",
 	Short: "Delete a project",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := getKernelClient(cmd)
 		ctx := cmd.Context()
 
-		err := client.Projects.Delete(ctx, args[0])
+		projectID, err := resolveProjectArg(cmd, client, args[0])
+		if err != nil {
+			return err
+		}
+
+		err = client.Projects.Delete(ctx, projectID)
 		if err != nil {
 			pterm.Error.Println("Failed to delete project:", err)
 			return nil
 		}
 
-		pterm.Success.Printf("Deleted project: %s\n", args[0])
+		pterm.Success.Printf("Deleted project: %s\n", projectID)
 		return nil
 	},
 }
 
 var projectsLimitsGetCmd = &cobra.Command{
-	Use:   "get-limits <project-id>",
+	Use:   "get-limits <id-or-name>",
 	Short: "Get project limit overrides",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := getKernelClient(cmd)
 		ctx := cmd.Context()
 
-		limits, err := client.Projects.Limits.Get(ctx, args[0])
+		projectID, err := resolveProjectArg(cmd, client, args[0])
+		if err != nil {
+			return err
+		}
+
+		limits, err := client.Projects.Limits.Get(ctx, projectID)
 		if err != nil {
 			pterm.Error.Println("Failed to get project limits:", err)
 			return nil
@@ -136,12 +165,17 @@ var projectsLimitsGetCmd = &cobra.Command{
 }
 
 var projectsLimitsSetCmd = &cobra.Command{
-	Use:   "set-limits <project-id>",
+	Use:   "set-limits <id-or-name>",
 	Short: "Set project limit overrides",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := getKernelClient(cmd)
 		ctx := cmd.Context()
+
+		projectID, err := resolveProjectArg(cmd, client, args[0])
+		if err != nil {
+			return err
+		}
 
 		inner := kernel.UpdateProjectLimitsRequestParam{}
 		limitFlags := []string{
@@ -178,7 +212,7 @@ var projectsLimitsSetCmd = &cobra.Command{
 			UpdateProjectLimitsRequest: inner,
 		}
 
-		limits, err := client.Projects.Limits.Update(ctx, args[0], params)
+		limits, err := client.Projects.Limits.Update(ctx, projectID, params)
 		if err != nil {
 			pterm.Error.Println("Failed to set project limits:", err)
 			return nil
