@@ -13,7 +13,7 @@ func TestProxyCheck_ShowsBypassHosts(t *testing.T) {
 	buf := captureOutput(t)
 
 	fake := &FakeProxyService{
-		CheckFunc: func(ctx context.Context, id string, body kernel.ProxyCheckParams, opts ...option.RequestOption) (*kernel.ProxyCheckResponse, error) {
+		CheckFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ProxyCheckResponse, error) {
 			return &kernel.ProxyCheckResponse{
 				ID:          id,
 				Name:        "Proxy 1",

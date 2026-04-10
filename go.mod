@@ -22,8 +22,6 @@ require (
 	golang.org/x/sync v0.19.0
 )
 
-replace github.com/kernel/kernel-go-sdk => github.com/stainless-sdks/kernel-go v0.0.0-20260410014529-98c58b154bb9
-
 require (
 	al.essio.dev/pkg/shellescape v1.5.1 // indirect
 	atomicgo.dev/cursor v0.2.0 // indirect

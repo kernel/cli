@@ -60,7 +60,6 @@ type FakeBrowsersService struct {
 	UpdateFunc         func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error)
 	DeleteFunc         func(ctx context.Context, body kernel.BrowserDeleteParams, opts ...option.RequestOption) error
 	DeleteByIDFunc     func(ctx context.Context, id string, opts ...option.RequestOption) error
-	CurlFunc           func(ctx context.Context, id string, body kernel.BrowserCurlParams, opts ...option.RequestOption) (*kernel.BrowserCurlResponse, error)
 	LoadExtensionsFunc func(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) error
 }
 
@@ -104,13 +103,6 @@ func (f *FakeBrowsersService) DeleteByID(ctx context.Context, id string, opts ..
 		return f.DeleteByIDFunc(ctx, id, opts...)
 	}
 	return nil
-}
-
-func (f *FakeBrowsersService) Curl(ctx context.Context, id string, body kernel.BrowserCurlParams, opts ...option.RequestOption) (*kernel.BrowserCurlResponse, error) {
-	if f.CurlFunc != nil {
-		return f.CurlFunc(ctx, id, body, opts...)
-	}
-	return &kernel.BrowserCurlResponse{}, nil
 }
 
 func (f *FakeBrowsersService) LoadExtensions(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) error {

@@ -37,7 +37,6 @@ type BrowsersService interface {
 	Update(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (res *kernel.BrowserUpdateResponse, err error)
 	Delete(ctx context.Context, body kernel.BrowserDeleteParams, opts ...option.RequestOption) (err error)
 	DeleteByID(ctx context.Context, id string, opts ...option.RequestOption) (err error)
-	Curl(ctx context.Context, id string, body kernel.BrowserCurlParams, opts ...option.RequestOption) (res *kernel.BrowserCurlResponse, err error)
 	LoadExtensions(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) (err error)
 }
 
@@ -3300,6 +3299,24 @@ type BrowsersCurlInput struct {
 	JSON       bool
 }
 
+// browserCurlRequest is the JSON body for POST /browsers/{id}/curl.
+type browserCurlRequest struct {
+	URL              string            `json:"url"`
+	Method           string            `json:"method,omitempty"`
+	Headers          map[string]string `json:"headers,omitempty"`
+	Body             string            `json:"body,omitempty"`
+	TimeoutMs        int               `json:"timeout_ms,omitempty"`
+	ResponseEncoding string            `json:"response_encoding,omitempty"`
+}
+
+// browserCurlResponse is the JSON response from POST /browsers/{id}/curl.
+type browserCurlResponse struct {
+	Status     int                 `json:"status"`
+	Headers    map[string][]string `json:"headers"`
+	Body       string              `json:"body"`
+	DurationMs float64             `json:"duration_ms"`
+}
+
 func parseCurlHeaders(raw []string) map[string]string {
 	if len(raw) == 0 {
 		return nil
@@ -3330,24 +3347,28 @@ func (b BrowsersCmd) Curl(ctx context.Context, in BrowsersCurlInput) error {
 		body = string(data)
 	}
 
-	params := kernel.BrowserCurlParams{
-		URL:     in.URL,
-		Headers: parseCurlHeaders(in.Headers),
+	reqBody := browserCurlRequest{
+		URL: in.URL,
 	}
 	if in.Method != "" {
-		params.Method = kernel.BrowserCurlParamsMethod(in.Method)
+		reqBody.Method = in.Method
 	}
 	if in.TimeoutMs != 0 {
-		params.TimeoutMs = kernel.Opt(int64(in.TimeoutMs))
+		reqBody.TimeoutMs = in.TimeoutMs
 	}
 	if in.Encoding != "" {
-		params.ResponseEncoding = kernel.BrowserCurlParamsResponseEncoding(in.Encoding)
+		reqBody.ResponseEncoding = in.Encoding
 	}
 	if body != "" {
-		params.Body = kernel.Opt(body)
+		reqBody.Body = body
 	}
+	reqBody.Headers = parseCurlHeaders(in.Headers)
 
-	result, err := b.browsers.Curl(ctx, in.Identifier, params)
+	client := b.client
+	path := fmt.Sprintf("/browsers/%s/curl", in.Identifier)
+
+	var result browserCurlResponse
+	err := client.Post(ctx, path, reqBody, &result)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
