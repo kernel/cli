@@ -144,16 +144,34 @@ var projectsLimitsSetCmd = &cobra.Command{
 		ctx := cmd.Context()
 
 		inner := kernel.UpdateProjectLimitsRequestParam{}
-		if v, _ := cmd.Flags().GetInt64("max-concurrent-sessions"); v >= 0 && cmd.Flags().Changed("max-concurrent-sessions") {
+		limitFlags := []string{
+			"max-concurrent-sessions",
+			"max-persistent-sessions",
+			"max-concurrent-invocations",
+			"max-pooled-sessions",
+		}
+		for _, name := range limitFlags {
+			if cmd.Flags().Changed(name) {
+				v, _ := cmd.Flags().GetInt64(name)
+				if v < 0 {
+					return fmt.Errorf("--%s must be non-negative (got %d); use 0 to remove the cap", name, v)
+				}
+			}
+		}
+		if cmd.Flags().Changed("max-concurrent-sessions") {
+			v, _ := cmd.Flags().GetInt64("max-concurrent-sessions")
 			inner.MaxConcurrentSessions = param.NewOpt(v)
 		}
-		if v, _ := cmd.Flags().GetInt64("max-persistent-sessions"); v >= 0 && cmd.Flags().Changed("max-persistent-sessions") {
+		if cmd.Flags().Changed("max-persistent-sessions") {
+			v, _ := cmd.Flags().GetInt64("max-persistent-sessions")
 			inner.MaxPersistentSessions = param.NewOpt(v)
 		}
-		if v, _ := cmd.Flags().GetInt64("max-concurrent-invocations"); v >= 0 && cmd.Flags().Changed("max-concurrent-invocations") {
+		if cmd.Flags().Changed("max-concurrent-invocations") {
+			v, _ := cmd.Flags().GetInt64("max-concurrent-invocations")
 			inner.MaxConcurrentInvocations = param.NewOpt(v)
 		}
-		if v, _ := cmd.Flags().GetInt64("max-pooled-sessions"); v >= 0 && cmd.Flags().Changed("max-pooled-sessions") {
+		if cmd.Flags().Changed("max-pooled-sessions") {
+			v, _ := cmd.Flags().GetInt64("max-pooled-sessions")
 			inner.MaxPooledSessions = param.NewOpt(v)
 		}
 		params := kernel.ProjectLimitUpdateParams{
