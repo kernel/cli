@@ -118,8 +118,8 @@ type Int64Flag struct {
 	Value int64
 }
 
-// Regular expression to validate CUID2 identifiers (24 lowercase alphanumeric characters).
-var cuidRegex = regexp.MustCompile(`^[a-z0-9]{24}$`)
+// Regular expression to validate CUID2 identifiers (starts with a letter, 24 lowercase alphanumeric characters).
+var cuidRegex = regexp.MustCompile(`^[a-z][a-z0-9]{23}$`)
 
 // getAvailableViewports returns the list of supported viewport configurations.
 func getAvailableViewports() []string {

@@ -254,22 +254,10 @@ func isUsageError(err error) bool {
 	return false
 }
 
-// looksLikeCUID returns true if s matches the cuid2 format used for resource IDs
-// (24 lowercase alphanumeric characters).
+// looksLikeCUID returns true if s matches the cuid2 format used for resource IDs.
+// Delegates to the shared cuidRegex defined in browsers.go.
 func looksLikeCUID(s string) bool {
-	if len(s) != 24 {
-		return false
-	}
-	for i, c := range s {
-		if i == 0 {
-			if !(c >= 'a' && c <= 'z') {
-				return false
-			}
-		} else if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
-			return false
-		}
-	}
-	return true
+	return cuidRegex.MatchString(s)
 }
 
 // resolveProjectByName lists the caller's projects and returns the ID of the
