@@ -260,8 +260,12 @@ func looksLikeCUID(s string) bool {
 	if len(s) != 24 {
 		return false
 	}
-	for _, c := range s {
-		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+	for i, c := range s {
+		if i == 0 {
+			if !(c >= 'a' && c <= 'z') {
+				return false
+			}
+		} else if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
 			return false
 		}
 	}
