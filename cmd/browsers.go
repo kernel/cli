@@ -227,6 +227,7 @@ type BrowsersCmd struct {
 	logs       BrowserLogService
 	computer   BrowserComputerService
 	playwright BrowserPlaywrightService
+	client     *kernel.Client
 }
 
 type BrowsersListInput struct {
@@ -3523,7 +3524,7 @@ func runBrowsersCurl(cmd *cobra.Command, args []string) error {
 	silent, _ := cmd.Flags().GetBool("silent")
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 
-	b := BrowsersCmd{browsers: &svc}
+	b := BrowsersCmd{browsers: &svc, client: &client}
 	return b.Curl(cmd.Context(), BrowsersCurlInput{
 		Identifier: args[0],
 		URL:        args[1],
