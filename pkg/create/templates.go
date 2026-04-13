@@ -20,6 +20,7 @@ const (
 	TemplateClaudeAgentSDK       = "claude-agent-sdk"
 	TemplateYutoriComputerUse    = "yutori"
 	TemplateUnifiedCUA           = "cua"
+	TemplateTzafonComputerUse    = "tzafon"
 )
 
 type TemplateInfo struct {
@@ -96,6 +97,11 @@ var Templates = map[string]TemplateInfo{
 		Description: "Multi-provider computer use agent with Anthropic/OpenAI/Gemini fallback",
 		Languages:   []string{LanguageTypeScript, LanguagePython},
 	},
+	TemplateTzafonComputerUse: {
+		Name:        "Tzafon Northstar Computer Use",
+		Description: "Implements a Tzafon Northstar CUA Fast computer use agent",
+		Languages:   []string{LanguageTypeScript, LanguagePython},
+	},
 }
 
 // GetSupportedTemplatesForLanguage returns a list of all supported template names for a given language
@@ -122,6 +128,10 @@ func GetSupportedTemplatesForLanguage(language string) TemplateKeyValues {
 				return 2
 			case TemplateYutoriComputerUse:
 				return 3
+			case TemplateTzafonComputerUse:
+				return 4
+			case TemplateUnifiedCUA:
+				return 5
 			default:
 				return 10
 			}
@@ -224,6 +234,11 @@ var Commands = map[string]map[string]DeployConfig{
 			NeedsEnvFile:  true,
 			InvokeCommand: `kernel invoke ts-cua cua-task --payload '{"query": "Go to https://news.ycombinator.com and get the top 5 stories"}'`,
 		},
+		TemplateTzafonComputerUse: {
+			EntryPoint:    "index.ts",
+			NeedsEnvFile:  true,
+			InvokeCommand: `kernel invoke ts-tzafon-cua cua-task --payload '{"query": "Go to wikipedia.org and search for Alan Turing"}'`,
+		},
 	},
 	LanguagePython: {
 		TemplateSampleApp: {
@@ -275,6 +290,11 @@ var Commands = map[string]map[string]DeployConfig{
 			EntryPoint:    "main.py",
 			NeedsEnvFile:  true,
 			InvokeCommand: `kernel invoke python-cua cua-task --payload '{"query": "Go to https://news.ycombinator.com and get the top 5 stories"}'`,
+		},
+		TemplateTzafonComputerUse: {
+			EntryPoint:    "main.py",
+			NeedsEnvFile:  true,
+			InvokeCommand: `kernel invoke python-tzafon-cua cua-task --payload '{"query": "Go to wikipedia.org and search for Alan Turing"}'`,
 		},
 	},
 }
