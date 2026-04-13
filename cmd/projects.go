@@ -1,15 +1,340 @@
 package cmd
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 
+	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/kernel/kernel-go-sdk/packages/param"
-
+	"github.com/kernel/kernel-go-sdk/packages/respjson"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
+
+type ProjectListService interface {
+	List(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.Project], err error)
+}
+
+type ProjectsService interface {
+	ProjectListService
+	New(ctx context.Context, body kernel.ProjectNewParams, opts ...option.RequestOption) (res *kernel.Project, err error)
+	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.Project, err error)
+	Delete(ctx context.Context, id string, opts ...option.RequestOption) (err error)
+}
+
+type ProjectLimitsService interface {
+	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.ProjectLimits, err error)
+	Update(ctx context.Context, id string, body kernel.ProjectLimitUpdateParams, opts ...option.RequestOption) (res *kernel.ProjectLimits, err error)
+}
+
+type ProjectsCmd struct {
+	projects ProjectsService
+	limits   ProjectLimitsService
+}
+
+type ProjectsListInput struct{}
+
+type ProjectsCreateInput struct {
+	Name string
+}
+
+type ProjectsGetInput struct {
+	Identifier string
+}
+
+type ProjectsDeleteInput struct {
+	Identifier string
+}
+
+type ProjectsLimitsGetInput struct {
+	Identifier string
+	Output     string
+}
+
+type ProjectsLimitsSetInput struct {
+	Identifier               string
+	MaxConcurrentSessions    Int64Flag
+	MaxPersistentSessions    Int64Flag
+	MaxConcurrentInvocations Int64Flag
+	MaxPooledSessions        Int64Flag
+	Output                   string
+}
+
+// resolveProjectArg resolves a positional project argument that may be an ID or
+// a name. If it looks like a cuid2 ID it is returned as-is; otherwise we list
+// projects and find the matching name (case-insensitive).
+func resolveProjectArg(ctx context.Context, projects ProjectListService, val string) (string, error) {
+	if cuidRegex.MatchString(val) {
+		return val, nil
+	}
+	resolved, err := resolveProjectByName(ctx, projects, val)
+	if err != nil {
+		return "", err
+	}
+	return resolved, nil
+}
+
+func (c ProjectsCmd) List(ctx context.Context, in ProjectsListInput) error {
+	projects, err := c.projects.List(ctx, kernel.ProjectListParams{})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if projects == nil || len(projects.Items) == 0 {
+		pterm.Info.Println("No projects found")
+		return nil
+	}
+
+	table := pterm.TableData{{"ID", "Name", "Status", "Created At"}}
+	for _, p := range projects.Items {
+		table = append(table, []string{p.ID, p.Name, string(p.Status), util.FormatLocal(p.CreatedAt)})
+	}
+	PrintTableNoPad(table, true)
+	return nil
+}
+
+func (c ProjectsCmd) Create(ctx context.Context, in ProjectsCreateInput) error {
+	project, err := c.projects.New(ctx, kernel.ProjectNewParams{
+		CreateProjectRequest: kernel.CreateProjectRequestParam{
+			Name: in.Name,
+		},
+	})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	pterm.Success.Printf("Created project: %s (ID: %s)\n", project.Name, project.ID)
+	return nil
+}
+
+func (c ProjectsCmd) Get(ctx context.Context, in ProjectsGetInput) error {
+	projectID, err := resolveProjectArg(ctx, c.projects, in.Identifier)
+	if err != nil {
+		return err
+	}
+
+	project, err := c.projects.Get(ctx, projectID)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	table := pterm.TableData{
+		{"Field", "Value"},
+		{"ID", project.ID},
+		{"Name", project.Name},
+		{"Status", string(project.Status)},
+		{"Created At", util.FormatLocal(project.CreatedAt)},
+		{"Updated At", util.FormatLocal(project.UpdatedAt)},
+	}
+	PrintTableNoPad(table, true)
+	return nil
+}
+
+func (c ProjectsCmd) Delete(ctx context.Context, in ProjectsDeleteInput) error {
+	projectID, err := resolveProjectArg(ctx, c.projects, in.Identifier)
+	if err != nil {
+		return err
+	}
+
+	err = c.projects.Delete(ctx, projectID)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	pterm.Success.Printf("Deleted project: %s\n", projectID)
+	return nil
+}
+
+func (c ProjectsCmd) LimitsGet(ctx context.Context, in ProjectsLimitsGetInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
+	projectID, err := resolveProjectArg(ctx, c.projects, in.Identifier)
+	if err != nil {
+		return err
+	}
+
+	limits, err := c.limits.Get(ctx, projectID)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		if limits == nil {
+			fmt.Println("null")
+			return nil
+		}
+		return util.PrintPrettyJSON(limits)
+	}
+
+	renderProjectLimits(limits)
+	return nil
+}
+
+func (c ProjectsCmd) LimitsSet(ctx context.Context, in ProjectsLimitsSetInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
+	projectID, err := resolveProjectArg(ctx, c.projects, in.Identifier)
+	if err != nil {
+		return err
+	}
+
+	inner := kernel.UpdateProjectLimitsRequestParam{}
+
+	if in.MaxConcurrentSessions.Set {
+		if in.MaxConcurrentSessions.Value < 0 {
+			return fmt.Errorf("--max-concurrent-sessions must be non-negative (got %d); use 0 to remove the cap", in.MaxConcurrentSessions.Value)
+		}
+		inner.MaxConcurrentSessions = param.NewOpt(in.MaxConcurrentSessions.Value)
+	}
+	if in.MaxPersistentSessions.Set {
+		if in.MaxPersistentSessions.Value < 0 {
+			return fmt.Errorf("--max-persistent-sessions must be non-negative (got %d); use 0 to remove the cap", in.MaxPersistentSessions.Value)
+		}
+		inner.MaxPersistentSessions = param.NewOpt(in.MaxPersistentSessions.Value)
+	}
+	if in.MaxConcurrentInvocations.Set {
+		if in.MaxConcurrentInvocations.Value < 0 {
+			return fmt.Errorf("--max-concurrent-invocations must be non-negative (got %d); use 0 to remove the cap", in.MaxConcurrentInvocations.Value)
+		}
+		inner.MaxConcurrentInvocations = param.NewOpt(in.MaxConcurrentInvocations.Value)
+	}
+	if in.MaxPooledSessions.Set {
+		if in.MaxPooledSessions.Value < 0 {
+			return fmt.Errorf("--max-pooled-sessions must be non-negative (got %d); use 0 to remove the cap", in.MaxPooledSessions.Value)
+		}
+		inner.MaxPooledSessions = param.NewOpt(in.MaxPooledSessions.Value)
+	}
+
+	params := kernel.ProjectLimitUpdateParams{
+		UpdateProjectLimitsRequest: inner,
+	}
+
+	limits, err := c.limits.Update(ctx, projectID, params)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		if limits == nil {
+			fmt.Println("null")
+			return nil
+		}
+		return util.PrintPrettyJSON(limits)
+	}
+
+	pterm.Success.Println("Project limits updated:")
+	renderProjectLimits(limits)
+	return nil
+}
+
+func renderProjectLimits(limits *kernel.ProjectLimits) {
+	if limits == nil {
+		pterm.Info.Println("No project limit overrides found")
+		return
+	}
+
+	rows := pterm.TableData{
+		{"Limit", "Value"},
+		{"Max Concurrent Sessions", formatProjectLimitValue(limits.MaxConcurrentSessions, limits.JSON.MaxConcurrentSessions)},
+		{"Max Persistent Sessions", formatProjectLimitValue(limits.MaxPersistentSessions, limits.JSON.MaxPersistentSessions)},
+		{"Max Concurrent Invocations", formatProjectLimitValue(limits.MaxConcurrentInvocations, limits.JSON.MaxConcurrentInvocations)},
+		{"Max Pooled Sessions", formatProjectLimitValue(limits.MaxPooledSessions, limits.JSON.MaxPooledSessions)},
+	}
+	PrintTableNoPad(rows, true)
+}
+
+func formatProjectLimitValue(value int64, field respjson.Field) string {
+	if !field.Valid() {
+		return "unlimited"
+	}
+	return fmt.Sprintf("%d", value)
+}
+
+func getProjectsHandler(cmd *cobra.Command) ProjectsCmd {
+	client := getKernelClient(cmd)
+	return ProjectsCmd{
+		projects: &client.Projects,
+		limits:   &client.Projects.Limits,
+	}
+}
+
+func runProjectsList(cmd *cobra.Command, args []string) error {
+	c := getProjectsHandler(cmd)
+	return c.List(cmd.Context(), ProjectsListInput{})
+}
+
+func runProjectsCreate(cmd *cobra.Command, args []string) error {
+	c := getProjectsHandler(cmd)
+	return c.Create(cmd.Context(), ProjectsCreateInput{Name: args[0]})
+}
+
+func runProjectsGet(cmd *cobra.Command, args []string) error {
+	c := getProjectsHandler(cmd)
+	return c.Get(cmd.Context(), ProjectsGetInput{Identifier: args[0]})
+}
+
+func runProjectsDelete(cmd *cobra.Command, args []string) error {
+	c := getProjectsHandler(cmd)
+	return c.Delete(cmd.Context(), ProjectsDeleteInput{Identifier: args[0]})
+}
+
+func runProjectsLimitsGet(cmd *cobra.Command, args []string) error {
+	c := getProjectsHandler(cmd)
+	output, _ := cmd.Flags().GetString("output")
+	return c.LimitsGet(cmd.Context(), ProjectsLimitsGetInput{
+		Identifier: args[0],
+		Output:     output,
+	})
+}
+
+func runProjectsLimitsSet(cmd *cobra.Command, args []string) error {
+	c := getProjectsHandler(cmd)
+	maxConcurrentSessions, _ := cmd.Flags().GetInt64("max-concurrent-sessions")
+	maxPersistentSessions, _ := cmd.Flags().GetInt64("max-persistent-sessions")
+	maxConcurrentInvocations, _ := cmd.Flags().GetInt64("max-concurrent-invocations")
+	maxPooledSessions, _ := cmd.Flags().GetInt64("max-pooled-sessions")
+	output, _ := cmd.Flags().GetString("output")
+
+	return c.LimitsSet(cmd.Context(), ProjectsLimitsSetInput{
+		Identifier: args[0],
+		MaxConcurrentSessions: Int64Flag{
+			Set:   cmd.Flags().Changed("max-concurrent-sessions"),
+			Value: maxConcurrentSessions,
+		},
+		MaxPersistentSessions: Int64Flag{
+			Set:   cmd.Flags().Changed("max-persistent-sessions"),
+			Value: maxPersistentSessions,
+		},
+		MaxConcurrentInvocations: Int64Flag{
+			Set:   cmd.Flags().Changed("max-concurrent-invocations"),
+			Value: maxConcurrentInvocations,
+		},
+		MaxPooledSessions: Int64Flag{
+			Set:   cmd.Flags().Changed("max-pooled-sessions"),
+			Value: maxPooledSessions,
+		},
+		Output: output,
+	})
+}
+
+func addProjectsLimitsOutputFlag(cmd *cobra.Command) {
+	cmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+}
+
+func addProjectsLimitsSetFlags(cmd *cobra.Command) {
+	cmd.Flags().Int64("max-concurrent-sessions", 0, "Maximum concurrent browser sessions (0 to remove cap)")
+	cmd.Flags().Int64("max-persistent-sessions", 0, "Maximum persistent browser sessions (0 to remove cap)")
+	cmd.Flags().Int64("max-concurrent-invocations", 0, "Maximum concurrent app invocations (0 to remove cap)")
+	cmd.Flags().Int64("max-pooled-sessions", 0, "Maximum pooled sessions capacity (0 to remove cap)")
+	addProjectsLimitsOutputFlag(cmd)
+}
 
 var projectsCmd = &cobra.Command{
 	Use:   "projects",
@@ -19,222 +344,85 @@ var projectsCmd = &cobra.Command{
 	},
 }
 
-// resolveProjectArg resolves a positional project argument that may be an ID or
-// a name. If it looks like a cuid2 ID it is returned as-is; otherwise we list
-// projects and find the matching name (case-insensitive).
-func resolveProjectArg(cmd *cobra.Command, client kernel.Client, val string) (string, error) {
-	if cuidRegex.MatchString(val) {
-		return val, nil
-	}
-	resolved, err := resolveProjectByName(cmd.Context(), client, val)
-	if err != nil {
-		return "", err
-	}
-	return resolved, nil
-}
-
 var projectsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List projects",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		client := getKernelClient(cmd)
-		ctx := cmd.Context()
-
-		projects, err := client.Projects.List(ctx, kernel.ProjectListParams{})
-		if err != nil {
-			pterm.Error.Println("Failed to list projects:", err)
-			return nil
-		}
-
-		if len(projects.Items) == 0 {
-			pterm.Info.Println("No projects found")
-			return nil
-		}
-
-		table := pterm.TableData{{"ID", "Name", "Status", "Created At"}}
-		for _, p := range projects.Items {
-			table = append(table, []string{p.ID, p.Name, string(p.Status), p.CreatedAt.String()})
-		}
-		_ = pterm.DefaultTable.WithHasHeader(true).WithData(table).Render()
-		return nil
-	},
+	RunE:  runProjectsList,
 }
 
 var projectsCreateCmd = &cobra.Command{
 	Use:   "create <name>",
 	Short: "Create a project",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		client := getKernelClient(cmd)
-		ctx := cmd.Context()
-
-		project, err := client.Projects.New(ctx, kernel.ProjectNewParams{
-			CreateProjectRequest: kernel.CreateProjectRequestParam{
-				Name: args[0],
-			},
-		})
-		if err != nil {
-			pterm.Error.Println("Failed to create project:", err)
-			return nil
-		}
-
-		pterm.Success.Printf("Created project: %s (ID: %s)\n", project.Name, project.ID)
-		return nil
-	},
+	RunE:  runProjectsCreate,
 }
 
 var projectsGetCmd = &cobra.Command{
 	Use:   "get <id-or-name>",
 	Short: "Get a project by ID or name",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		client := getKernelClient(cmd)
-		ctx := cmd.Context()
-
-		projectID, err := resolveProjectArg(cmd, client, args[0])
-		if err != nil {
-			return err
-		}
-
-		project, err := client.Projects.Get(ctx, projectID)
-		if err != nil {
-			pterm.Error.Println("Failed to get project:", err)
-			return nil
-		}
-
-		table := pterm.TableData{
-			{"Field", "Value"},
-			{"ID", project.ID},
-			{"Name", project.Name},
-			{"Status", string(project.Status)},
-			{"Created At", project.CreatedAt.String()},
-			{"Updated At", project.UpdatedAt.String()},
-		}
-		_ = pterm.DefaultTable.WithHasHeader(true).WithData(table).Render()
-		return nil
-	},
+	RunE:  runProjectsGet,
 }
 
 var projectsDeleteCmd = &cobra.Command{
 	Use:   "delete <id-or-name>",
 	Short: "Delete a project",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		client := getKernelClient(cmd)
-		ctx := cmd.Context()
+	RunE:  runProjectsDelete,
+}
 
-		projectID, err := resolveProjectArg(cmd, client, args[0])
-		if err != nil {
-			return err
-		}
-
-		err = client.Projects.Delete(ctx, projectID)
-		if err != nil {
-			pterm.Error.Println("Failed to delete project:", err)
-			return nil
-		}
-
-		pterm.Success.Printf("Deleted project: %s\n", projectID)
-		return nil
+var projectsLimitsCmd = &cobra.Command{
+	Use:   "limits",
+	Short: "Manage project limit overrides",
+	Run: func(cmd *cobra.Command, args []string) {
+		_ = cmd.Help()
 	},
 }
 
 var projectsLimitsGetCmd = &cobra.Command{
-	Use:   "get-limits <id-or-name>",
+	Use:   "get <id-or-name>",
 	Short: "Get project limit overrides",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		client := getKernelClient(cmd)
-		ctx := cmd.Context()
-
-		projectID, err := resolveProjectArg(cmd, client, args[0])
-		if err != nil {
-			return err
-		}
-
-		limits, err := client.Projects.Limits.Get(ctx, projectID)
-		if err != nil {
-			pterm.Error.Println("Failed to get project limits:", err)
-			return nil
-		}
-
-		out, _ := json.MarshalIndent(limits, "", "  ")
-		fmt.Println(string(out))
-		return nil
-	},
+	RunE:  runProjectsLimitsGet,
 }
 
 var projectsLimitsSetCmd = &cobra.Command{
-	Use:   "set-limits <id-or-name>",
+	Use:   "set <id-or-name>",
 	Short: "Set project limit overrides",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		client := getKernelClient(cmd)
-		ctx := cmd.Context()
+	RunE:  runProjectsLimitsSet,
+}
 
-		projectID, err := resolveProjectArg(cmd, client, args[0])
-		if err != nil {
-			return err
-		}
+var projectsGetLimitsCompatCmd = &cobra.Command{
+	Use:    "get-limits <id-or-name>",
+	Short:  "Get project limit overrides",
+	Hidden: true,
+	Args:   cobra.ExactArgs(1),
+	RunE:   runProjectsLimitsGet,
+}
 
-		inner := kernel.UpdateProjectLimitsRequestParam{}
-		limitFlags := []string{
-			"max-concurrent-sessions",
-			"max-persistent-sessions",
-			"max-concurrent-invocations",
-			"max-pooled-sessions",
-		}
-		for _, name := range limitFlags {
-			if cmd.Flags().Changed(name) {
-				v, _ := cmd.Flags().GetInt64(name)
-				if v < 0 {
-					return fmt.Errorf("--%s must be non-negative (got %d); use 0 to remove the cap", name, v)
-				}
-			}
-		}
-		if cmd.Flags().Changed("max-concurrent-sessions") {
-			v, _ := cmd.Flags().GetInt64("max-concurrent-sessions")
-			inner.MaxConcurrentSessions = param.NewOpt(v)
-		}
-		if cmd.Flags().Changed("max-persistent-sessions") {
-			v, _ := cmd.Flags().GetInt64("max-persistent-sessions")
-			inner.MaxPersistentSessions = param.NewOpt(v)
-		}
-		if cmd.Flags().Changed("max-concurrent-invocations") {
-			v, _ := cmd.Flags().GetInt64("max-concurrent-invocations")
-			inner.MaxConcurrentInvocations = param.NewOpt(v)
-		}
-		if cmd.Flags().Changed("max-pooled-sessions") {
-			v, _ := cmd.Flags().GetInt64("max-pooled-sessions")
-			inner.MaxPooledSessions = param.NewOpt(v)
-		}
-		params := kernel.ProjectLimitUpdateParams{
-			UpdateProjectLimitsRequest: inner,
-		}
-
-		limits, err := client.Projects.Limits.Update(ctx, projectID, params)
-		if err != nil {
-			pterm.Error.Println("Failed to set project limits:", err)
-			return nil
-		}
-
-		out, _ := json.MarshalIndent(limits, "", "  ")
-		pterm.Success.Println("Project limits updated:")
-		fmt.Println(string(out))
-		return nil
-	},
+var projectsSetLimitsCompatCmd = &cobra.Command{
+	Use:    "set-limits <id-or-name>",
+	Short:  "Set project limit overrides",
+	Hidden: true,
+	Args:   cobra.ExactArgs(1),
+	RunE:   runProjectsLimitsSet,
 }
 
 func init() {
-	projectsLimitsSetCmd.Flags().Int64("max-concurrent-sessions", 0, "Maximum concurrent browser sessions (0 to remove cap)")
-	projectsLimitsSetCmd.Flags().Int64("max-persistent-sessions", 0, "Maximum persistent browser sessions (0 to remove cap)")
-	projectsLimitsSetCmd.Flags().Int64("max-concurrent-invocations", 0, "Maximum concurrent app invocations (0 to remove cap)")
-	projectsLimitsSetCmd.Flags().Int64("max-pooled-sessions", 0, "Maximum pooled sessions capacity (0 to remove cap)")
+	addProjectsLimitsOutputFlag(projectsLimitsGetCmd)
+	addProjectsLimitsSetFlags(projectsLimitsSetCmd)
+	addProjectsLimitsOutputFlag(projectsGetLimitsCompatCmd)
+	addProjectsLimitsSetFlags(projectsSetLimitsCompatCmd)
+
+	projectsLimitsCmd.AddCommand(projectsLimitsGetCmd)
+	projectsLimitsCmd.AddCommand(projectsLimitsSetCmd)
 
 	projectsCmd.AddCommand(projectsListCmd)
 	projectsCmd.AddCommand(projectsCreateCmd)
 	projectsCmd.AddCommand(projectsGetCmd)
 	projectsCmd.AddCommand(projectsDeleteCmd)
-	projectsCmd.AddCommand(projectsLimitsGetCmd)
-	projectsCmd.AddCommand(projectsLimitsSetCmd)
+	projectsCmd.AddCommand(projectsLimitsCmd)
+	projectsCmd.AddCommand(projectsGetLimitsCompatCmd)
+	projectsCmd.AddCommand(projectsSetLimitsCompatCmd)
 }

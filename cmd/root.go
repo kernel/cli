@@ -101,11 +101,21 @@ func isAuthExempt(cmd *cobra.Command) bool {
 	return false
 }
 
+func resolveProjectSelection(projectFlag string) string {
+	if projectFlag != "" {
+		return projectFlag
+	}
+	if projectEnv := os.Getenv("KERNEL_PROJECT"); projectEnv != "" {
+		return projectEnv
+	}
+	return os.Getenv("KERNEL_PROJECT_ID")
+}
+
 func init() {
 	rootCmd.PersistentFlags().BoolP("version", "v", false, "Print the CLI version")
 	rootCmd.PersistentFlags().BoolP("no-color", "", false, "Disable color output")
 	rootCmd.PersistentFlags().String("log-level", "warn", "Set the log level (trace, debug, info, warn, error, fatal, print)")
-	rootCmd.PersistentFlags().String("project", "", "Project ID or name to scope all requests to (or set KERNEL_PROJECT_ID env var)")
+	rootCmd.PersistentFlags().String("project", "", "Project ID or name to scope all requests to (or set KERNEL_PROJECT or KERNEL_PROJECT_ID env var)")
 	rootCmd.SilenceUsage = true
 	rootCmd.SilenceErrors = true
 	cobra.OnInitialize(initConfig)
@@ -129,9 +139,7 @@ func init() {
 		}
 
 		projectVal, _ := cmd.Flags().GetString("project")
-		if projectVal == "" {
-			projectVal = os.Getenv("KERNEL_PROJECT_ID")
-		}
+		projectVal = resolveProjectSelection(projectVal)
 
 		// If the value looks like a name (not a cuid2 ID), we need to
 		// resolve it after authenticating. Build the client first without
@@ -148,7 +156,7 @@ func init() {
 		}
 
 		if needsResolve {
-			resolved, resolveErr := resolveProjectByName(cmd.Context(), *client, projectVal)
+			resolved, resolveErr := resolveProjectByName(cmd.Context(), &client.Projects, projectVal)
 			if resolveErr != nil {
 				return resolveErr
 			}
@@ -264,21 +272,36 @@ func looksLikeCUID(s string) bool {
 // resolveProjectByName lists the caller's projects and returns the ID of the
 // one whose name matches (case-insensitive). Returns an error if no match or
 // multiple matches are found.
-func resolveProjectByName(ctx context.Context, client kernel.Client, name string) (string, error) {
-	const maxProjects = 200
-	projects, err := client.Projects.List(ctx, kernel.ProjectListParams{
-		Limit: param.NewOpt(int64(maxProjects)),
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve project name %q: %w", name, err)
-	}
+func resolveProjectByName(ctx context.Context, projects ProjectListService, name string) (string, error) {
+	const pageSize int64 = 100
 	var matched []struct{ id, name string }
 	lower := strings.ToLower(name)
-	for _, p := range projects.Items {
-		if strings.ToLower(p.Name) == lower {
-			matched = append(matched, struct{ id, name string }{p.ID, p.Name})
+
+	var offset int64
+	for {
+		page, err := projects.List(ctx, kernel.ProjectListParams{
+			Limit:  param.NewOpt(pageSize),
+			Offset: param.NewOpt(offset),
+		})
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve project name %q: %w", name, err)
 		}
+		if page == nil || len(page.Items) == 0 {
+			break
+		}
+
+		for _, p := range page.Items {
+			if strings.ToLower(p.Name) == lower {
+				matched = append(matched, struct{ id, name string }{p.ID, p.Name})
+			}
+		}
+
+		if len(matched) > 1 || int64(len(page.Items)) < pageSize {
+			break
+		}
+		offset += int64(len(page.Items))
 	}
+
 	switch len(matched) {
 	case 0:
 		return "", fmt.Errorf("no project found with name %q", name)
