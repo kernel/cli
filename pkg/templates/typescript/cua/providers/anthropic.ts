@@ -13,6 +13,7 @@ function getSystemPrompt(): string {
 * You are utilising an Ubuntu virtual machine with internet access.
 * When you connect to the display, CHROMIUM IS ALREADY OPEN.
 * If you need to navigate to a new page, use ctrl+l to focus the url bar and then enter the url.
+* For long pages, prefer PageUp/PageDown style scrolling over repeated mouse-wheel scrolling. Use wheel scrolling mainly for small adjustments.
 * After each step, take a screenshot and carefully evaluate if you have achieved the right outcome.
 * Explicitly show your thinking: "I have evaluated step X..." If not correct, try again.
 * Only when you confirm a step was executed correctly should you move on to the next one.

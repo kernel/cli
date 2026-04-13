@@ -33,6 +33,7 @@ function getSystemPrompt(): string {
 You are operating a Chrome browser through computer use tools.
 The browser is already open and ready for use.
 When you need to navigate to a page, use the navigate action with a full URL.
+For long pages, prefer PageUp/PageDown style scrolling over repeated mouse-wheel scrolling. Use wheel scrolling mainly for small adjustments.
 After each action, carefully evaluate the screenshot to determine your next step.
 Current date: ${date}.`;
 }

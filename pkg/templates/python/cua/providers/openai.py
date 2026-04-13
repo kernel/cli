@@ -179,7 +179,14 @@ class OpenAIProvider:
         )
 
         input_items = [
-            {"role": "system", "content": f"Current date: {datetime.now().isoformat()}"},
+            {
+                "role": "system",
+                "content": (
+                    f"Current date: {datetime.now().isoformat()}. "
+                    "For long pages, prefer PageUp/PageDown style scrolling over repeated "
+                    "mouse-wheel scrolling. Use wheel scrolling mainly for small adjustments."
+                ),
+            },
             {"type": "message", "role": "user", "content": [{"type": "input_text", "text": options.query}]},
         ]
         items: list[dict] = []

@@ -31,6 +31,7 @@ def _system_prompt() -> str:
         "You are operating a Chrome browser through computer use tools.\n"
         "The browser is already open and ready for use.\n"
         "When you need to navigate to a page, use the navigate action.\n"
+        "For long pages, prefer PageUp/PageDown style scrolling over repeated mouse-wheel scrolling. Use wheel scrolling mainly for small adjustments.\n"
         "After each action, carefully evaluate the screenshot.\n"
         f"Current date: {date}."
     )

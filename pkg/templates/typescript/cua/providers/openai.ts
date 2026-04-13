@@ -168,7 +168,7 @@ export class OpenAIProvider implements CuaProvider {
     const input: ResponseInputItem[] = [
       {
         role: 'system',
-        content: `Current date: ${new Date().toISOString()}`,
+        content: `Current date: ${new Date().toISOString()}. For long pages, prefer PageUp/PageDown style scrolling over repeated mouse-wheel scrolling. Use wheel scrolling mainly for small adjustments.`,
       } as unknown as ResponseInputItem,
       {
         type: 'message',
