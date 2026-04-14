@@ -12,6 +12,8 @@ import type { Kernel } from '@onkernel/sdk';
 import { AnthropicProvider } from './anthropic';
 import { OpenAIProvider } from './openai';
 import { GeminiProvider } from './gemini';
+import { TzafonProvider } from './tzafon';
+import { YutoriProvider } from './yutori';
 
 // Shared interface every provider adapter must implement.
 export interface TaskOptions {
@@ -34,12 +36,14 @@ export interface CuaProvider {
   runTask(options: TaskOptions): Promise<TaskResult>;
 }
 
-export type ProviderName = 'anthropic' | 'openai' | 'gemini';
+export type ProviderName = 'anthropic' | 'openai' | 'gemini' | 'tzafon' | 'yutori';
 
 const PROVIDERS: Record<ProviderName, () => CuaProvider> = {
   anthropic: () => new AnthropicProvider(),
   openai: () => new OpenAIProvider(),
   gemini: () => new GeminiProvider(),
+  tzafon: () => new TzafonProvider(),
+  yutori: () => new YutoriProvider(),
 };
 
 /**

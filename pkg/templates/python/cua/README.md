@@ -1,6 +1,6 @@
 # Unified CUA Template
 
-A multi-provider Computer Use Agent (CUA) template for [Kernel](https://kernel.sh). Supports **Anthropic**, **OpenAI**, and **Google Gemini** as interchangeable backends with automatic fallback.
+A multi-provider Computer Use Agent (CUA) template for [Kernel](https://kernel.sh). Supports **Anthropic**, **OpenAI**, **Google Gemini**, **Tzafon**, **Yutori**, and **OpenAGI** as interchangeable backends with automatic fallback.
 
 ## Quick start
 
@@ -26,6 +26,9 @@ Set `CUA_PROVIDER` to your preferred provider and add the matching API key:
 | `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6`                       |
 | `openai`    | `OPENAI_API_KEY`    | `gpt-5.4`                                 |
 | `gemini`    | `GOOGLE_API_KEY`    | `gemini-2.5-computer-use-preview-10-2025` |
+| `tzafon`    | `TZAFON_API_KEY`    | `tzafon.northstar-cua-fast`               |
+| `yutori`    | `YUTORI_API_KEY`    | `n1-latest`                               |
+| `openagi`   | `OAGI_API_KEY`      | `lux-actor-1`                             |
 
 
 ### 3. Deploy to Kernel
@@ -71,6 +74,9 @@ providers/
   anthropic.py        — Anthropic Claude adapter
   openai.py           — OpenAI GPT adapter
   gemini.py           — Google Gemini adapter
+  tzafon.py           — Tzafon Northstar adapter
+  yutori.py           — Yutori n1 adapter
+  openagi.py          — OpenAGI Lux adapter (Python only)
 ```
 
 ## Customization
@@ -85,4 +91,7 @@ To add a new provider, create a new file that implements the `CuaProvider` proto
 - [Anthropic Computer Use](https://docs.anthropic.com/en/docs/agents-and-tools/computer-use)
 - [OpenAI Computer Use](https://platform.openai.com/docs/guides/computer-use)
 - [Google Gemini Computer Use](https://ai.google.dev/gemini-api/docs/computer-use)
+- [Tzafon Lightcone](https://docs.lightcone.ai)
+- [Yutori n1](https://docs.yutori.com/reference/n1)
+- [OpenAGI](https://agiopen.org)
 

@@ -48,6 +48,15 @@ def _build_provider(name: str) -> CuaProvider | None:
     if name == "gemini":
         from .gemini import GeminiProvider
         return GeminiProvider()
+    if name == "tzafon":
+        from .tzafon import TzafonProvider
+        return TzafonProvider()
+    if name == "yutori":
+        from .yutori import YutoriProvider
+        return YutoriProvider()
+    if name == "openagi":
+        from .openagi import OpenAGIProvider
+        return OpenAGIProvider()
     return None
 
 
@@ -82,7 +91,7 @@ def resolve_providers() -> list[CuaProvider]:
     if not providers:
         raise RuntimeError(
             "No CUA provider is configured. "
-            "Set CUA_PROVIDER to one of: anthropic, openai, gemini, "
+            "Set CUA_PROVIDER to one of: anthropic, openai, gemini, tzafon, yutori, openagi, "
             "and provide the matching API key."
         )
 

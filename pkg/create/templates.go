@@ -94,7 +94,7 @@ var Templates = map[string]TemplateInfo{
 	},
 	TemplateUnifiedCUA: {
 		Name:        "Unified CUA",
-		Description: "Multi-provider computer use agent with Anthropic/OpenAI/Gemini fallback",
+		Description: "Multi-provider computer use agent with Anthropic/OpenAI/Gemini/Tzafon/Yutori/OpenAGI fallback",
 		Languages:   []string{LanguageTypeScript, LanguagePython},
 	},
 	TemplateTzafonComputerUse: {

@@ -7,7 +7,9 @@
     "@anthropic-ai/sdk": "^0.86.1",
     "@google/genai": "^1.49.0",
     "@onkernel/sdk": "^0.47.0",
-    "openai": "^6.33.0"
+    "@tzafon/lightcone": "^0.7.0",
+    "openai": "^6.33.0",
+    "sharp": "^0.33.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.17",
