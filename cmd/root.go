@@ -115,7 +115,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolP("version", "v", false, "Print the CLI version")
 	rootCmd.PersistentFlags().BoolP("no-color", "", false, "Disable color output")
 	rootCmd.PersistentFlags().String("log-level", "warn", "Set the log level (trace, debug, info, warn, error, fatal, print)")
-	rootCmd.PersistentFlags().String("project", "", "Project ID or name to scope all requests to (or set KERNEL_PROJECT or KERNEL_PROJECT_ID env var)")
+	rootCmd.PersistentFlags().String("project", "", "Project ID to scope all requests to (or set KERNEL_PROJECT or KERNEL_PROJECT_ID env var)")
 	rootCmd.SilenceUsage = true
 	rootCmd.SilenceErrors = true
 	cobra.OnInitialize(initConfig)
@@ -141,30 +141,13 @@ func init() {
 		projectVal, _ := cmd.Flags().GetString("project")
 		projectVal = resolveProjectSelection(projectVal)
 
-		// If the value looks like a name (not a cuid2 ID), we need to
-		// resolve it after authenticating. Build the client first without
-		// the project header, resolve, then re-create with the header.
-		needsResolve := projectVal != "" && !looksLikeCUID(projectVal)
-
-		if projectVal != "" && !needsResolve {
+		if projectVal != "" {
 			clientOpts = append(clientOpts, option.WithHeader("X-Kernel-Project-Id", projectVal))
 		}
 
 		client, err := auth.GetAuthenticatedClient(clientOpts...)
 		if err != nil {
 			return fmt.Errorf("authentication required: %w", err)
-		}
-
-		if needsResolve {
-			resolved, resolveErr := resolveProjectByName(cmd.Context(), &client.Projects, projectVal)
-			if resolveErr != nil {
-				return resolveErr
-			}
-			clientOpts = append(clientOpts, option.WithHeader("X-Kernel-Project-Id", resolved))
-			client, err = auth.GetAuthenticatedClient(clientOpts...)
-			if err != nil {
-				return fmt.Errorf("authentication required: %w", err)
-			}
 		}
 
 		ctx := context.WithValue(cmd.Context(), util.KernelClientKey, *client)
@@ -261,12 +244,6 @@ func isUsageError(err error) bool {
 		}
 	}
 	return false
-}
-
-// looksLikeCUID returns true if s matches the cuid2 format used for resource IDs.
-// Delegates to the shared cuidRegex defined in browsers.go.
-func looksLikeCUID(s string) bool {
-	return cuidRegex.MatchString(s)
 }
 
 // resolveProjectByName lists the caller's projects and returns the ID of the
