@@ -205,6 +205,122 @@ func TestAuthConnectionsList_JSONOutput_PrintsRawResponse(t *testing.T) {
 	assert.Contains(t, out, "\"raf-leaseweb\"")
 }
 
+// Regression test for the 1Password auto-lookup UX gap: before this fix,
+// `kernel auth connections create --credential-provider foo` sent a
+// CredentialReference of { provider } with no auto flag, which the API accepted
+// as valid-but-inert — the managed auth session would never fetch credentials
+// and would prompt the user for manual input. The dashboard already defaults
+// to auto: true for this case (see packages/dashboard/src/components/create-managed-auth-dialog.tsx);
+// the CLI now matches that UX.
+func TestAuthConnectionsCreate_ProviderWithoutPath_DefaultsAutoTrue(t *testing.T) {
+	var captured kernel.AuthConnectionNewParams
+	fake := &FakeAuthConnectionService{
+		NewFunc: func(ctx context.Context, body kernel.AuthConnectionNewParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			captured = body
+			return &kernel.ManagedAuth{ID: "conn-new"}, nil
+		},
+	}
+
+	c := AuthConnectionCmd{svc: fake}
+	err := c.Create(context.Background(), AuthConnectionCreateInput{
+		Domain:             "google.com",
+		ProfileName:        "my-profile",
+		CredentialProvider: "my-1p",
+		Output:             "json",
+	})
+	require.NoError(t, err)
+
+	cred := captured.ManagedAuthCreateRequest.Credential
+	require.True(t, cred.Provider.Valid())
+	assert.Equal(t, "my-1p", cred.Provider.Value)
+	assert.False(t, cred.Path.Valid(), "path should not be set when only --credential-provider is given")
+	require.True(t, cred.Auto.Valid(), "auto should default to true when provider is set without path")
+	assert.True(t, cred.Auto.Value)
+}
+
+// Explicit --credential-path should keep the credential reference as a pinned
+// path lookup (no implicit auto).
+func TestAuthConnectionsCreate_ProviderWithPath_DoesNotSetAuto(t *testing.T) {
+	var captured kernel.AuthConnectionNewParams
+	fake := &FakeAuthConnectionService{
+		NewFunc: func(ctx context.Context, body kernel.AuthConnectionNewParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			captured = body
+			return &kernel.ManagedAuth{ID: "conn-new"}, nil
+		},
+	}
+
+	c := AuthConnectionCmd{svc: fake}
+	err := c.Create(context.Background(), AuthConnectionCreateInput{
+		Domain:             "google.com",
+		ProfileName:        "my-profile",
+		CredentialProvider: "my-1p",
+		CredentialPath:     "Employees/Google Workspace",
+		Output:             "json",
+	})
+	require.NoError(t, err)
+
+	cred := captured.ManagedAuthCreateRequest.Credential
+	require.True(t, cred.Provider.Valid())
+	assert.Equal(t, "my-1p", cred.Provider.Value)
+	require.True(t, cred.Path.Valid())
+	assert.Equal(t, "Employees/Google Workspace", cred.Path.Value)
+	assert.False(t, cred.Auto.Valid(), "auto should remain unset when --credential-path is explicit")
+}
+
+// --credential-auto should still be honored (it was a no-op redundant flag
+// before the default changed, but callers may pass it for clarity).
+func TestAuthConnectionsCreate_ProviderWithExplicitAuto_SetsAuto(t *testing.T) {
+	var captured kernel.AuthConnectionNewParams
+	fake := &FakeAuthConnectionService{
+		NewFunc: func(ctx context.Context, body kernel.AuthConnectionNewParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			captured = body
+			return &kernel.ManagedAuth{ID: "conn-new"}, nil
+		},
+	}
+
+	c := AuthConnectionCmd{svc: fake}
+	err := c.Create(context.Background(), AuthConnectionCreateInput{
+		Domain:             "google.com",
+		ProfileName:        "my-profile",
+		CredentialProvider: "my-1p",
+		CredentialAuto:     true,
+		Output:             "json",
+	})
+	require.NoError(t, err)
+
+	cred := captured.ManagedAuthCreateRequest.Credential
+	require.True(t, cred.Auto.Valid())
+	assert.True(t, cred.Auto.Value)
+}
+
+// --credential-name references a Kernel-managed credential and should never
+// carry a provider/auto/path — the default-auto logic must not kick in here.
+func TestAuthConnectionsCreate_CredentialName_UnaffectedByAutoDefault(t *testing.T) {
+	var captured kernel.AuthConnectionNewParams
+	fake := &FakeAuthConnectionService{
+		NewFunc: func(ctx context.Context, body kernel.AuthConnectionNewParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			captured = body
+			return &kernel.ManagedAuth{ID: "conn-new"}, nil
+		},
+	}
+
+	c := AuthConnectionCmd{svc: fake}
+	err := c.Create(context.Background(), AuthConnectionCreateInput{
+		Domain:         "google.com",
+		ProfileName:    "my-profile",
+		CredentialName: "my-google-creds",
+		Output:         "json",
+	})
+	require.NoError(t, err)
+
+	cred := captured.ManagedAuthCreateRequest.Credential
+	require.True(t, cred.Name.Valid())
+	assert.Equal(t, "my-google-creds", cred.Name.Value)
+	assert.False(t, cred.Provider.Valid())
+	assert.False(t, cred.Auto.Valid())
+	assert.False(t, cred.Path.Valid())
+}
+
 func TestAuthConnectionsUpdate_MapsParams(t *testing.T) {
 	var captured kernel.AuthConnectionUpdateParams
 	fake := &FakeAuthConnectionService{
