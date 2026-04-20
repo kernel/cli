@@ -144,7 +144,9 @@ Commands with JSON output support:
   - `sample-app` - Basic template with Playwright integration
   - `captcha-solver` - Template demonstrating Kernel's auto-CAPTCHA solver
   - `stagehand` - Template with Stagehand SDK (TypeScript only)
+  - `ehr-system` - EHR system automation demo with Playwright/OpenAI (TypeScript only)
   - `browser-use` - Template with Browser Use SDK (Python only)
+  - `lead-scraper` - Google Maps lead scraper using Browser Use (Python only)
   - `anthropic-computer-use` - Anthropic Computer Use prompt loop
   - `openai-computer-use` - OpenAI Computer Use Agent sample
   - `gemini-computer-use` - Implements a Gemini computer use agent (TypeScript only)
@@ -519,6 +521,12 @@ kernel create --name my-cu-app --language py --template anthropic-computer-use
 
 # Create a Claude Agent SDK app (TypeScript or Python)
 kernel create --name my-claude-agent --language ts --template claude-agent-sdk
+
+# Create a Google Maps Lead Scraper (Python)
+kernel create --name my-lead-scraper --language python --template lead-scraper
+
+# Create an EHR System Automation (TypeScript)
+kernel create --name my-ehr-bot --language ts --template ehr-system
 ```
 
 ### Deploy with environment variables
