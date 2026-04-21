@@ -66,7 +66,7 @@ var proxiesDeleteCmd = &cobra.Command{
 var proxiesCheckCmd = &cobra.Command{
 	Use:   "check <id>",
 	Short: "Run a health check on a proxy",
-	Long:  "Run a health check on a proxy to verify it's working and update its status.",
+	Long:  "Run a health check on a proxy to verify it's working and update its status. Optionally test against a specific public URL.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runProxiesCheck,
 }
@@ -115,4 +115,5 @@ func init() {
 
 	// Check flags
 	proxiesCheckCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	proxiesCheckCmd.Flags().String("url", "", "Optional public HTTP or HTTPS URL to test reachability against")
 }

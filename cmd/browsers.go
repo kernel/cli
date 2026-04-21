@@ -171,6 +171,23 @@ func parseViewport(viewport string) (width, height, refreshRate int64, err error
 	return w, h, refreshRate, nil
 }
 
+func parseStringMapFlag(values []string, flagName string) (map[string]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+
+	parsed := make(map[string]string, len(values))
+	for _, pair := range values {
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid %s value: %s (expected KEY=value)", flagName, pair)
+		}
+		parsed[parts[0]] = parts[1]
+	}
+
+	return parsed, nil
+}
+
 // Inputs for each command
 type BrowsersCreateInput struct {
 	PersistenceID      string
@@ -205,15 +222,16 @@ type BrowsersGetInput struct {
 }
 
 type BrowsersUpdateInput struct {
-	Identifier         string
-	ProxyID            string
-	ClearProxy         bool
-	ProfileID          string
-	ProfileName        string
-	ProfileSaveChanges BoolFlag
-	Viewport           string
-	Force              bool
-	Output             string
+	Identifier          string
+	ProxyID             string
+	ClearProxy          bool
+	DisableDefaultProxy BoolFlag
+	ProfileID           string
+	ProfileName         string
+	ProfileSaveChanges  BoolFlag
+	Viewport            string
+	Force               bool
+	Output              string
 }
 
 // BrowsersCmd is a cobra-independent command handler for browsers operations.
@@ -594,7 +612,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("cannot specify both --proxy-id and --clear-proxy")
 	}
 
-	hasProxyChange := in.ProxyID != "" || in.ClearProxy
+	hasProxyChange := in.ProxyID != "" || in.ClearProxy || in.DisableDefaultProxy.Set
 	hasProfileChange := in.ProfileID != "" || in.ProfileName != ""
 	hasViewportChange := in.Viewport != ""
 
@@ -610,7 +628,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 
 	// Validate that at least one update option is provided
 	if !hasProxyChange && !hasProfileChange && !hasViewportChange {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --profile-id, --profile-name, or --viewport")
+		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, or --viewport")
 	}
 
 	params := kernel.BrowserUpdateParams{}
@@ -620,6 +638,9 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		params.ProxyID = kernel.Opt("")
 	} else if in.ProxyID != "" {
 		params.ProxyID = kernel.Opt(in.ProxyID)
+	}
+	if in.DisableDefaultProxy.Set {
+		params.DisableDefaultProxy = kernel.Opt(in.DisableDefaultProxy.Value)
 	}
 
 	// Handle profile changes
@@ -1258,18 +1279,23 @@ type BrowsersProcessExecInput struct {
 	Timeout    int
 	AsUser     string
 	AsRoot     BoolFlag
+	Env        []string
 	Output     string
 }
 
 type BrowsersProcessSpawnInput struct {
-	Identifier string
-	Command    string
-	Args       []string
-	Cwd        string
-	Timeout    int
-	AsUser     string
-	AsRoot     BoolFlag
-	Output     string
+	Identifier  string
+	Command     string
+	Args        []string
+	Cwd         string
+	Timeout     int
+	AsUser      string
+	AsRoot      BoolFlag
+	AllocateTTY BoolFlag
+	Cols        int64
+	Rows        int64
+	Env         []string
+	Output      string
 }
 
 type BrowsersProcessKillInput struct {
@@ -1397,6 +1423,13 @@ func (b BrowsersCmd) ProcessExec(ctx context.Context, in BrowsersProcessExecInpu
 	if in.AsRoot.Set {
 		params.AsRoot = kernel.Opt(in.AsRoot.Value)
 	}
+	env, err := parseStringMapFlag(in.Env, "--env")
+	if err != nil {
+		return err
+	}
+	if len(env) > 0 {
+		params.Env = env
+	}
 	res, err := b.process.Exec(ctx, br.SessionID, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -1463,6 +1496,27 @@ func (b BrowsersCmd) ProcessSpawn(ctx context.Context, in BrowsersProcessSpawnIn
 	}
 	if in.AsRoot.Set {
 		params.AsRoot = kernel.Opt(in.AsRoot.Value)
+	}
+	if in.AllocateTTY.Set {
+		params.AllocateTty = kernel.Opt(in.AllocateTTY.Value)
+	}
+	if in.Cols > 0 || in.Rows > 0 {
+		if !in.AllocateTTY.Set || !in.AllocateTTY.Value {
+			return fmt.Errorf("--cols and --rows require --allocate-tty")
+		}
+		if in.Cols > 0 {
+			params.Cols = kernel.Opt(in.Cols)
+		}
+		if in.Rows > 0 {
+			params.Rows = kernel.Opt(in.Rows)
+		}
+	}
+	env, err := parseStringMapFlag(in.Env, "--env")
+	if err != nil {
+		return err
+	}
+	if len(env) > 0 {
+		params.Env = env
 	}
 	res, err := b.process.Spawn(ctx, br.SessionID, params)
 	if err != nil {
@@ -2211,6 +2265,7 @@ var browsersUpdateCmd = &cobra.Command{
 
 Supported operations:
   - Change or remove proxy (--proxy-id or --clear-proxy)
+  - Disable the default stealth proxy (--disable-default-proxy)
   - Load a profile into a session that doesn't have one (--profile-id or --profile-name)
   - Change viewport dimensions (--viewport)
   - Force viewport resize during active live view or recording (--force with --viewport)
@@ -2248,6 +2303,7 @@ func init() {
 	browsersUpdateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	browsersUpdateCmd.Flags().String("proxy-id", "", "ID of the proxy to use for the browser session")
 	browsersUpdateCmd.Flags().Bool("clear-proxy", false, "Remove the proxy from the browser session")
+	browsersUpdateCmd.Flags().Bool("disable-default-proxy", false, "Disable the default stealth proxy so the browser connects directly; use --disable-default-proxy=false to re-enable it")
 	browsersUpdateCmd.Flags().String("profile-id", "", "Profile ID to load into the browser session (mutually exclusive with --profile-name)")
 	browsersUpdateCmd.Flags().String("profile-name", "", "Profile name to load into the browser session (mutually exclusive with --profile-id)")
 	browsersUpdateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
@@ -2298,6 +2354,7 @@ func init() {
 	procExec.Flags().Int("timeout", 0, "Timeout in seconds")
 	procExec.Flags().String("as-user", "", "Run as user")
 	procExec.Flags().Bool("as-root", false, "Run as root")
+	procExec.Flags().StringArray("env", nil, "Environment variable in KEY=value format (repeatable)")
 	procExec.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	procSpawn := &cobra.Command{Use: "spawn <id> [--] [command...]", Short: "Execute a command asynchronously", Args: cobra.MinimumNArgs(1), RunE: runBrowsersProcessSpawn}
 	procSpawn.Flags().String("command", "", "Command to execute (optional; if omitted, trailing args are executed via /bin/bash -c)")
@@ -2306,6 +2363,10 @@ func init() {
 	procSpawn.Flags().Int("timeout", 0, "Timeout in seconds")
 	procSpawn.Flags().String("as-user", "", "Run as user")
 	procSpawn.Flags().Bool("as-root", false, "Run as root")
+	procSpawn.Flags().Bool("allocate-tty", false, "Allocate a pseudo-terminal (PTY) for interactive shells")
+	procSpawn.Flags().Int64("cols", 0, "Initial terminal columns when --allocate-tty is enabled")
+	procSpawn.Flags().Int64("rows", 0, "Initial terminal rows when --allocate-tty is enabled")
+	procSpawn.Flags().StringArray("env", nil, "Environment variable in KEY=value format (repeatable)")
 	procSpawn.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	procKill := &cobra.Command{Use: "kill <id> <process-id>", Short: "Send a signal to a process", Args: cobra.ExactArgs(2), RunE: runBrowsersProcessKill}
 	procKill.Flags().String("signal", "TERM", "Signal to send (TERM, KILL, INT, HUP)")
@@ -2727,6 +2788,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	out, _ := cmd.Flags().GetString("output")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
 	clearProxy, _ := cmd.Flags().GetBool("clear-proxy")
+	disableDefaultProxy, _ := cmd.Flags().GetBool("disable-default-proxy")
 	profileID, _ := cmd.Flags().GetString("profile-id")
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	saveChanges, _ := cmd.Flags().GetBool("save-changes")
@@ -2736,15 +2798,16 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
 	return b.Update(cmd.Context(), BrowsersUpdateInput{
-		Identifier:         args[0],
-		ProxyID:            proxyID,
-		ClearProxy:         clearProxy,
-		ProfileID:          profileID,
-		ProfileName:        profileName,
-		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
-		Viewport:           viewport,
-		Force:              force,
-		Output:             out,
+		Identifier:          args[0],
+		ProxyID:             proxyID,
+		ClearProxy:          clearProxy,
+		DisableDefaultProxy: BoolFlag{Set: cmd.Flags().Changed("disable-default-proxy"), Value: disableDefaultProxy},
+		ProfileID:           profileID,
+		ProfileName:         profileName,
+		ProfileSaveChanges:  BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
+		Viewport:            viewport,
+		Force:               force,
+		Output:              out,
 	})
 }
 
@@ -2807,6 +2870,7 @@ func runBrowsersProcessExec(cmd *cobra.Command, args []string) error {
 	timeout, _ := cmd.Flags().GetInt("timeout")
 	asUser, _ := cmd.Flags().GetString("as-user")
 	asRoot, _ := cmd.Flags().GetBool("as-root")
+	env, _ := cmd.Flags().GetStringArray("env")
 	if command == "" && len(args) > 1 {
 		// Treat trailing args after identifier as a shell command
 		shellCmd := strings.Join(args[1:], " ")
@@ -2815,7 +2879,7 @@ func runBrowsersProcessExec(cmd *cobra.Command, args []string) error {
 	}
 	output, _ := cmd.Flags().GetString("output")
 	b := BrowsersCmd{browsers: &svc, process: &svc.Process}
-	return b.ProcessExec(cmd.Context(), BrowsersProcessExecInput{Identifier: args[0], Command: command, Args: argv, Cwd: cwd, Timeout: timeout, AsUser: asUser, AsRoot: BoolFlag{Set: cmd.Flags().Changed("as-root"), Value: asRoot}, Output: output})
+	return b.ProcessExec(cmd.Context(), BrowsersProcessExecInput{Identifier: args[0], Command: command, Args: argv, Cwd: cwd, Timeout: timeout, AsUser: asUser, AsRoot: BoolFlag{Set: cmd.Flags().Changed("as-root"), Value: asRoot}, Env: env, Output: output})
 }
 
 func runBrowsersProcessSpawn(cmd *cobra.Command, args []string) error {
@@ -2827,6 +2891,10 @@ func runBrowsersProcessSpawn(cmd *cobra.Command, args []string) error {
 	timeout, _ := cmd.Flags().GetInt("timeout")
 	asUser, _ := cmd.Flags().GetString("as-user")
 	asRoot, _ := cmd.Flags().GetBool("as-root")
+	allocateTTY, _ := cmd.Flags().GetBool("allocate-tty")
+	cols, _ := cmd.Flags().GetInt64("cols")
+	rows, _ := cmd.Flags().GetInt64("rows")
+	env, _ := cmd.Flags().GetStringArray("env")
 	if command == "" && len(args) > 1 {
 		shellCmd := strings.Join(args[1:], " ")
 		command = "/bin/bash"
@@ -2834,7 +2902,20 @@ func runBrowsersProcessSpawn(cmd *cobra.Command, args []string) error {
 	}
 	output, _ := cmd.Flags().GetString("output")
 	b := BrowsersCmd{browsers: &svc, process: &svc.Process}
-	return b.ProcessSpawn(cmd.Context(), BrowsersProcessSpawnInput{Identifier: args[0], Command: command, Args: argv, Cwd: cwd, Timeout: timeout, AsUser: asUser, AsRoot: BoolFlag{Set: cmd.Flags().Changed("as-root"), Value: asRoot}, Output: output})
+	return b.ProcessSpawn(cmd.Context(), BrowsersProcessSpawnInput{
+		Identifier:  args[0],
+		Command:     command,
+		Args:        argv,
+		Cwd:         cwd,
+		Timeout:     timeout,
+		AsUser:      asUser,
+		AsRoot:      BoolFlag{Set: cmd.Flags().Changed("as-root"), Value: asRoot},
+		AllocateTTY: BoolFlag{Set: cmd.Flags().Changed("allocate-tty"), Value: allocateTTY},
+		Cols:        cols,
+		Rows:        rows,
+		Env:         env,
+		Output:      output,
+	})
 }
 
 func runBrowsersProcessKill(cmd *cobra.Command, args []string) error {

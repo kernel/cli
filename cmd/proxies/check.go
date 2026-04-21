@@ -20,7 +20,12 @@ func (p ProxyCmd) Check(ctx context.Context, in ProxyCheckInput) error {
 		pterm.Info.Printf("Running health check on proxy %s...\n", in.ID)
 	}
 
-	proxy, err := p.proxies.Check(ctx, in.ID)
+	params := kernel.ProxyCheckParams{}
+	if in.URL != "" {
+		params.URL = kernel.Opt(in.URL)
+	}
+
+	proxy, err := p.proxies.Check(ctx, in.ID, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -154,7 +159,8 @@ func getProxyCheckConfigRows(proxy *kernel.ProxyCheckResponse) [][]string {
 func runProxiesCheck(cmd *cobra.Command, args []string) error {
 	client := util.GetKernelClient(cmd)
 	output, _ := cmd.Flags().GetString("output")
+	url, _ := cmd.Flags().GetString("url")
 	svc := client.Proxies
 	p := ProxyCmd{proxies: &svc}
-	return p.Check(cmd.Context(), ProxyCheckInput{ID: args[0], Output: output})
+	return p.Check(cmd.Context(), ProxyCheckInput{ID: args[0], URL: url, Output: output})
 }
