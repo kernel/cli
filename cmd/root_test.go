@@ -79,27 +79,18 @@ func TestIsAuthExempt(t *testing.T) {
 }
 
 func TestResolveProjectSelection(t *testing.T) {
-	t.Run("flag value wins over env vars", func(t *testing.T) {
+	t.Run("flag value wins over env var", func(t *testing.T) {
 		t.Setenv("KERNEL_PROJECT", "env-project")
-		t.Setenv("KERNEL_PROJECT_ID", "env-project-id")
 		assert.Equal(t, "flag-project", resolveProjectSelection("flag-project"))
 	})
 
-	t.Run("new env var wins over legacy env var", func(t *testing.T) {
+	t.Run("env var used when no flag", func(t *testing.T) {
 		t.Setenv("KERNEL_PROJECT", "env-project")
-		t.Setenv("KERNEL_PROJECT_ID", "env-project-id")
 		assert.Equal(t, "env-project", resolveProjectSelection(""))
-	})
-
-	t.Run("legacy env var used as fallback", func(t *testing.T) {
-		t.Setenv("KERNEL_PROJECT", "")
-		t.Setenv("KERNEL_PROJECT_ID", "env-project-id")
-		assert.Equal(t, "env-project-id", resolveProjectSelection(""))
 	})
 
 	t.Run("empty when no flag or env var", func(t *testing.T) {
 		t.Setenv("KERNEL_PROJECT", "")
-		t.Setenv("KERNEL_PROJECT_ID", "")
 		assert.Equal(t, "", resolveProjectSelection(""))
 	})
 }

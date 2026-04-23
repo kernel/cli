@@ -105,17 +105,14 @@ func resolveProjectSelection(projectFlag string) string {
 	if projectFlag != "" {
 		return projectFlag
 	}
-	if projectEnv := os.Getenv("KERNEL_PROJECT"); projectEnv != "" {
-		return projectEnv
-	}
-	return os.Getenv("KERNEL_PROJECT_ID")
+	return os.Getenv("KERNEL_PROJECT")
 }
 
 func init() {
 	rootCmd.PersistentFlags().BoolP("version", "v", false, "Print the CLI version")
 	rootCmd.PersistentFlags().BoolP("no-color", "", false, "Disable color output")
 	rootCmd.PersistentFlags().String("log-level", "warn", "Set the log level (trace, debug, info, warn, error, fatal, print)")
-	rootCmd.PersistentFlags().String("project", "", "Project ID to scope all requests to (or set KERNEL_PROJECT or KERNEL_PROJECT_ID env var)")
+	rootCmd.PersistentFlags().String("project", "", "Project ID or name to scope all requests to (or set KERNEL_PROJECT env var)")
 	rootCmd.SilenceUsage = true
 	rootCmd.SilenceErrors = true
 	cobra.OnInitialize(initConfig)
