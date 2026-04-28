@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/kernel/kernel-go-sdk/shared"
 	"github.com/pterm/pterm"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // outBuf captures pterm output during tests.
@@ -60,6 +62,7 @@ type FakeBrowsersService struct {
 	UpdateFunc         func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error)
 	DeleteFunc         func(ctx context.Context, body kernel.BrowserDeleteParams, opts ...option.RequestOption) error
 	DeleteByIDFunc     func(ctx context.Context, id string, opts ...option.RequestOption) error
+	HTTPClientFunc     func(id string, opts ...option.RequestOption) (*http.Client, error)
 	LoadExtensionsFunc func(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) error
 }
 
@@ -105,11 +108,255 @@ func (f *FakeBrowsersService) DeleteByID(ctx context.Context, id string, opts ..
 	return nil
 }
 
+func (f *FakeBrowsersService) HTTPClient(id string, opts ...option.RequestOption) (*http.Client, error) {
+	if f.HTTPClientFunc != nil {
+		return f.HTTPClientFunc(id, opts...)
+	}
+	return http.DefaultClient, nil
+}
+
 func (f *FakeBrowsersService) LoadExtensions(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) error {
 	if f.LoadExtensionsFunc != nil {
 		return f.LoadExtensionsFunc(ctx, id, body, opts...)
 	}
 	return nil
+}
+
+func TestBrowsersCurlRawUsesBrowserHTTPClient(t *testing.T) {
+	var (
+		gotMethod      string
+		gotHeaders     []string
+		gotContentType string
+		gotBody        string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+
+		gotMethod = r.Method
+		gotHeaders = r.Header.Values("X-Test")
+		gotContentType = r.Header.Get("Content-Type")
+		gotBody = string(body)
+
+		w.WriteHeader(http.StatusAccepted)
+		_, err = w.Write([]byte("proxied"))
+		require.NoError(t, err)
+	}))
+	defer srv.Close()
+
+	getCalled := false
+	fake := &FakeBrowsersService{
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			getCalled = true
+			assert.Equal(t, "brw_123", id)
+			return &kernel.BrowserGetResponse{}, nil
+		},
+		HTTPClientFunc: func(id string, opts ...option.RequestOption) (*http.Client, error) {
+			assert.Equal(t, "brw_123", id)
+			return srv.Client(), nil
+		},
+	}
+
+	outputFile := filepath.Join(t.TempDir(), "response.txt")
+	b := BrowsersCmd{browsers: fake}
+	err := b.Curl(context.Background(), BrowsersCurlInput{
+		Identifier: "brw_123",
+		URL:        srv.URL + "/target",
+		Headers:    []string{"X-Test: yes", "X-Test: also-yes"},
+		Data:       "hello",
+		OutputFile: outputFile,
+		Silent:     true,
+	})
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(outputFile)
+	require.NoError(t, err)
+	assert.True(t, getCalled)
+	assert.Equal(t, http.MethodPost, gotMethod)
+	assert.Equal(t, []string{"yes", "also-yes"}, gotHeaders)
+	assert.Equal(t, "application/x-www-form-urlencoded", gotContentType)
+	assert.Equal(t, "hello", gotBody)
+	assert.Equal(t, "proxied", string(data))
+}
+
+func TestBrowsersCurlIncludeWritesHeadersToOutputFile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Test", "yes")
+		w.WriteHeader(http.StatusCreated)
+		_, err := w.Write([]byte("proxied"))
+		require.NoError(t, err)
+	}))
+	defer srv.Close()
+
+	fake := &FakeBrowsersService{
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			return &kernel.BrowserGetResponse{}, nil
+		},
+		HTTPClientFunc: func(id string, opts ...option.RequestOption) (*http.Client, error) {
+			return srv.Client(), nil
+		},
+	}
+
+	outputFile := filepath.Join(t.TempDir(), "response.txt")
+	b := BrowsersCmd{browsers: fake}
+	err := b.Curl(context.Background(), BrowsersCurlInput{
+		Identifier: "brw_123",
+		URL:        srv.URL + "/target",
+		OutputFile: outputFile,
+		Include:    true,
+	})
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(outputFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "HTTP/1.1 201 Created\r\n")
+	assert.Contains(t, string(data), "X-Test: yes\r\n")
+	assert.Contains(t, string(data), "\r\nproxied")
+}
+
+func TestBrowsersCurlHeadWritesHeadersOnly(t *testing.T) {
+	gotMethod := ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		w.Header().Set("X-Test", "yes")
+		_, err := w.Write([]byte("proxied"))
+		require.NoError(t, err)
+	}))
+	defer srv.Close()
+
+	fake := &FakeBrowsersService{
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			return &kernel.BrowserGetResponse{}, nil
+		},
+		HTTPClientFunc: func(id string, opts ...option.RequestOption) (*http.Client, error) {
+			return srv.Client(), nil
+		},
+	}
+
+	outputFile := filepath.Join(t.TempDir(), "response.txt")
+	b := BrowsersCmd{browsers: fake}
+	err := b.Curl(context.Background(), BrowsersCurlInput{
+		Identifier: "brw_123",
+		URL:        srv.URL + "/target",
+		Data:       "hello",
+		OutputFile: outputFile,
+		Head:       true,
+	})
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(outputFile)
+	require.NoError(t, err)
+	assert.Equal(t, http.MethodHead, gotMethod)
+	assert.Contains(t, string(data), "HTTP/1.1 200 OK\r\n")
+	assert.Contains(t, string(data), "X-Test: yes\r\n")
+	assert.NotContains(t, string(data), "proxied")
+}
+
+func TestBrowsersCurlSilentWrapsErrors(t *testing.T) {
+	fake := &FakeBrowsersService{
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			return &kernel.BrowserGetResponse{}, nil
+		},
+		HTTPClientFunc: func(id string, opts ...option.RequestOption) (*http.Client, error) {
+			return http.DefaultClient, nil
+		},
+	}
+
+	b := BrowsersCmd{browsers: fake}
+	err := b.Curl(context.Background(), BrowsersCurlInput{
+		Identifier: "brw_123",
+		URL:        "://not-a-url",
+		Silent:     true,
+	})
+	require.Error(t, err)
+
+	var silent interface{ Silent() bool }
+	require.ErrorAs(t, err, &silent)
+	assert.True(t, silent.Silent())
+}
+
+func TestBrowsersCurlDumpHeaderAndWriteOut(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Test", "yes")
+		_, err := w.Write([]byte("proxied"))
+		require.NoError(t, err)
+	}))
+	defer srv.Close()
+
+	fake := &FakeBrowsersService{
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			return &kernel.BrowserGetResponse{}, nil
+		},
+		HTTPClientFunc: func(id string, opts ...option.RequestOption) (*http.Client, error) {
+			return srv.Client(), nil
+		},
+	}
+
+	tmp := t.TempDir()
+	outputFile := filepath.Join(tmp, "body.txt")
+	headerFile := filepath.Join(tmp, "headers.txt")
+
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+	defer func() {
+		os.Stdout = oldStdout
+	}()
+
+	b := BrowsersCmd{browsers: fake}
+	err = b.Curl(context.Background(), BrowsersCurlInput{
+		Identifier: "brw_123",
+		URL:        srv.URL + "/target",
+		OutputFile: outputFile,
+		DumpHeader: headerFile,
+		WriteOut:   " code=%{http_code} bytes=%{size_download}\\n",
+	})
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+
+	body, err := os.ReadFile(outputFile)
+	require.NoError(t, err)
+	headers, err := os.ReadFile(headerFile)
+	require.NoError(t, err)
+	assert.Equal(t, "proxied", string(body))
+	assert.Contains(t, string(headers), "HTTP/1.1 200 OK\r\n")
+	assert.Contains(t, string(headers), "X-Test: yes\r\n")
+	assert.Equal(t, " code=200 bytes=7\n", string(out))
+}
+
+func TestBrowsersCurlFailSuppressesHTTPErrorBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	fake := &FakeBrowsersService{
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			return &kernel.BrowserGetResponse{}, nil
+		},
+		HTTPClientFunc: func(id string, opts ...option.RequestOption) (*http.Client, error) {
+			return srv.Client(), nil
+		},
+	}
+
+	outputFile := filepath.Join(t.TempDir(), "body.txt")
+	b := BrowsersCmd{browsers: fake}
+	err := b.Curl(context.Background(), BrowsersCurlInput{
+		Identifier: "brw_123",
+		URL:        srv.URL + "/target",
+		OutputFile: outputFile,
+		Fail:       true,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTP error: 404 Not Found")
+
+	data, err := os.ReadFile(outputFile)
+	require.NoError(t, err)
+	assert.Empty(t, data)
 }
 
 func TestBrowsersList_PrintsEmptyMessage(t *testing.T) {
