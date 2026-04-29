@@ -217,9 +217,9 @@ func Execute(m Metadata) {
 			// we should add them back later as it looks cleaner
 			errorTextStyle := styles.ErrorText.UnsetMargins()
 
-			// Fang passes the destination for errors (normally stderr). pterm's
-			// global Error printer does not know about it, so temporarily point
-			// pterm at fang's writer for this handler invocation.
+			// Keep command errors on fang's error stream, normally stderr. This
+			// gives curl-like commands a quiet stdout for response bodies and
+			// scripts while preserving the existing pterm error styling.
 			oldErrorWriter := pterm.Error.Writer
 			pterm.Error.Writer = w
 			defer func() {
