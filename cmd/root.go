@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -204,13 +205,30 @@ func Execute(m Metadata) {
 		fang.WithCommit(metadata.Commit),
 		fang.WithErrorHandler(func(w io.Writer, styles fang.Styles, err error) {
 			err = util.CleanedUpSdkError{Err: err}
+
+			// Some subcommands intentionally suppress diagnostics for curl-like
+			// quiet modes while still returning a non-zero exit status.
+			var silent interface{ Silent() bool }
+			if errors.As(err, &silent) && silent.Silent() {
+				return
+			}
+
 			// remove margins so that it matches other pterm.error "style"
 			// we should add them back later as it looks cleaner
 			errorTextStyle := styles.ErrorText.UnsetMargins()
+
+			// Keep command errors on fang's error stream, normally stderr. This
+			// gives curl-like commands a quiet stdout for response bodies and
+			// scripts while preserving the existing pterm error styling.
+			oldErrorWriter := pterm.Error.Writer
+			pterm.Error.Writer = w
+			defer func() {
+				pterm.Error.Writer = oldErrorWriter
+			}()
 			pterm.Error.Println(errorTextStyle.Render(strings.TrimSpace(err.Error())))
 			if isUsageError(err) {
-				pterm.Println()
-				pterm.Println(lipgloss.JoinHorizontal(
+				fmt.Fprintln(w)
+				fmt.Fprintln(w, lipgloss.JoinHorizontal(
 					lipgloss.Left,
 					errorTextStyle.UnsetWidth().Render("Try"),
 					styles.Program.Flag.Render("--help"),

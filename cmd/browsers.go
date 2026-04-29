@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kernel/cli/pkg/table"
 	"github.com/kernel/cli/pkg/util"
@@ -36,6 +37,7 @@ type BrowsersService interface {
 	Update(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (res *kernel.BrowserUpdateResponse, err error)
 	Delete(ctx context.Context, body kernel.BrowserDeleteParams, opts ...option.RequestOption) (err error)
 	DeleteByID(ctx context.Context, id string, opts ...option.RequestOption) (err error)
+	HTTPClient(id string, opts ...option.RequestOption) (*http.Client, error)
 	LoadExtensions(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) (err error)
 }
 
@@ -2519,6 +2521,31 @@ func init() {
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
 
+	// curl
+	curlCmd := &cobra.Command{
+		Use:   "curl <session-id> <url>",
+		Short: "Make HTTP requests through a browser session",
+		Long: `Execute HTTP requests through Chrome's network stack, inheriting the
+browser's TLS fingerprint, cookies, proxy configuration, and headers.
+Works like curl but requests go through the browser session. Redirects are
+followed automatically by Chromium.`,
+		Args: cobra.ExactArgs(2),
+		RunE: runBrowsersCurl,
+	}
+	curlCmd.Flags().StringP("request", "X", "", "HTTP method (default: GET)")
+	curlCmd.Flags().StringArrayP("header", "H", nil, "HTTP header (repeatable, \"Key: Value\" format)")
+	curlCmd.Flags().StringP("data", "d", "", "Request body")
+	curlCmd.Flags().String("data-file", "", "Read request body from file")
+	curlCmd.Flags().Float64("max-time", 30, "Maximum time allowed for the request in seconds")
+	curlCmd.Flags().StringP("output", "o", "", "Write response body to file")
+	curlCmd.Flags().BoolP("head", "I", false, "Fetch headers only")
+	curlCmd.Flags().BoolP("include", "i", false, "Include response headers in output")
+	curlCmd.Flags().StringP("dump-header", "D", "", "Write received headers to file (use - for stdout)")
+	curlCmd.Flags().StringP("write-out", "w", "", "Output text after completion; supports %{http_code}, %{response_code}, %{time_total}, %{size_download}")
+	curlCmd.Flags().BoolP("fail", "f", false, "Fail with no body output on HTTP errors")
+	curlCmd.Flags().BoolP("silent", "s", false, "Suppress progress output")
+	browsersCmd.AddCommand(curlCmd)
+
 	// no flags for view; it takes a single positional argument
 }
 
@@ -3254,6 +3281,281 @@ func runBrowsersComputerWriteClipboard(cmd *cobra.Command, args []string) error 
 
 	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
 	return b.ComputerWriteClipboard(cmd.Context(), BrowsersComputerWriteClipboardInput{Identifier: args[0], Text: text})
+}
+
+// Curl
+
+type BrowsersCurlInput struct {
+	Identifier string
+	URL        string
+	Method     string
+	Headers    []string
+	Data       string
+	DataFile   string
+	MaxTime    time.Duration
+	OutputFile string
+	Head       bool
+	Include    bool
+	DumpHeader string
+	WriteOut   string
+	Fail       bool
+	Silent     bool
+}
+
+type silentCurlError struct {
+	err error
+}
+
+func (e silentCurlError) Error() string {
+	return e.err.Error()
+}
+
+func (e silentCurlError) Unwrap() error {
+	return e.err
+}
+
+func (e silentCurlError) Silent() bool {
+	return true
+}
+
+func curlError(in BrowsersCurlInput, err error) error {
+	if err == nil {
+		return nil
+	}
+	if in.Silent {
+		return silentCurlError{err: err}
+	}
+	return err
+}
+
+func parseCurlHeaders(raw []string) http.Header {
+	if len(raw) == 0 {
+		return nil
+	}
+	headers := make(http.Header)
+	for _, h := range raw {
+		k, v, ok := strings.Cut(h, ":")
+		if !ok {
+			continue
+		}
+		headers.Add(strings.TrimSpace(k), strings.TrimSpace(v))
+	}
+	return headers
+}
+
+func readCurlBody(in BrowsersCurlInput) (string, error) {
+	if in.DataFile == "" {
+		return in.Data, nil
+	}
+
+	data, err := os.ReadFile(in.DataFile)
+	if err != nil {
+		return "", fmt.Errorf("reading data file: %w", err)
+	}
+	return string(data), nil
+}
+
+func hasCurlHeader(headers http.Header, name string) bool {
+	for key := range headers {
+		if strings.EqualFold(key, name) {
+			return true
+		}
+	}
+	return false
+}
+
+type curlWriteOutStats struct {
+	statusCode   int
+	timeTotal    time.Duration
+	sizeDownload int64
+}
+
+func expandCurlWriteOut(format string, stats curlWriteOutStats) string {
+	replacer := strings.NewReplacer(
+		`\\`, "\\",
+		`\n`, "\n",
+		`\r`, "\r",
+		`\t`, "\t",
+		`%%`, "%",
+		"%{http_code}", fmt.Sprintf("%03d", stats.statusCode),
+		"%{response_code}", fmt.Sprintf("%03d", stats.statusCode),
+		"%{time_total}", fmt.Sprintf("%.6f", stats.timeTotal.Seconds()),
+		"%{size_download}", fmt.Sprintf("%d", stats.sizeDownload),
+	)
+	return replacer.Replace(format)
+}
+
+func openCurlOutputFile(path string) (io.Writer, func() error, error) {
+	if path == "" {
+		return nil, nil, nil
+	}
+	if path == "-" {
+		return os.Stdout, func() error { return nil }, nil
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	return f, f.Close, nil
+}
+
+func (b BrowsersCmd) Curl(ctx context.Context, in BrowsersCurlInput) error {
+	body, err := readCurlBody(in)
+	if err != nil {
+		return curlError(in, err)
+	}
+
+	method := in.Method
+	if method == "" {
+		method = "GET"
+		if body != "" {
+			method = "POST"
+		}
+		if in.Head {
+			method = "HEAD"
+		}
+	}
+	include := in.Include || in.Head
+
+	var bodyReader io.Reader
+	if body != "" {
+		bodyReader = strings.NewReader(body)
+	}
+
+	// Seed the SDK's browser route cache before constructing the raw curl client.
+	if _, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{}); err != nil {
+		return curlError(in, util.CleanedUpSdkError{Err: err})
+	}
+
+	httpClient, err := b.browsers.HTTPClient(in.Identifier)
+	if err != nil {
+		return curlError(in, util.CleanedUpSdkError{Err: err})
+	}
+	if in.MaxTime > 0 {
+		httpClient.Timeout = in.MaxTime
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, in.URL, bodyReader)
+	if err != nil {
+		return curlError(in, fmt.Errorf("creating request: %w", err))
+	}
+	headers := parseCurlHeaders(in.Headers)
+	for key, values := range headers {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+	if body != "" && !hasCurlHeader(headers, "Content-Type") {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+
+	start := time.Now()
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return curlError(in, fmt.Errorf("request failed: %w", err))
+	}
+	defer resp.Body.Close()
+
+	var writer io.Writer = os.Stdout
+	var outputFile *os.File
+	if in.OutputFile != "" {
+		f, err := os.Create(in.OutputFile)
+		if err != nil {
+			return curlError(in, fmt.Errorf("creating output file: %w", err))
+		}
+		outputFile = f
+		defer outputFile.Close()
+		writer = outputFile
+	}
+
+	if in.DumpHeader != "" {
+		headerWriter, closeHeaderWriter, err := openCurlOutputFile(in.DumpHeader)
+		if err != nil {
+			return curlError(in, fmt.Errorf("creating dump header file: %w", err))
+		}
+		defer closeHeaderWriter()
+		writeCurlResponseHeaders(headerWriter, resp)
+	}
+
+	if in.Fail && resp.StatusCode >= 400 {
+		if in.WriteOut != "" {
+			fmt.Fprint(os.Stdout, expandCurlWriteOut(in.WriteOut, curlWriteOutStats{
+				statusCode: resp.StatusCode,
+				timeTotal:  time.Since(start),
+			}))
+		}
+		return curlError(in, fmt.Errorf("HTTP error: %s", resp.Status))
+	}
+
+	if include {
+		writeCurlResponseHeaders(writer, resp)
+	}
+
+	var sizeDownload int64
+	if !in.Head {
+		sizeDownload, err = io.Copy(writer, resp.Body)
+		if err != nil {
+			if in.OutputFile != "" {
+				return curlError(in, fmt.Errorf("writing output file: %w", err))
+			}
+			return curlError(in, err)
+		}
+	}
+
+	if in.WriteOut != "" {
+		fmt.Fprint(os.Stdout, expandCurlWriteOut(in.WriteOut, curlWriteOutStats{
+			statusCode:   resp.StatusCode,
+			timeTotal:    time.Since(start),
+			sizeDownload: sizeDownload,
+		}))
+	}
+	return nil
+}
+
+func writeCurlResponseHeaders(w io.Writer, resp *http.Response) {
+	fmt.Fprintf(w, "%s %s\r\n", resp.Proto, resp.Status)
+	for key, vals := range resp.Header {
+		for _, value := range vals {
+			fmt.Fprintf(w, "%s: %s\r\n", key, value)
+		}
+	}
+	fmt.Fprint(w, "\r\n")
+}
+
+func runBrowsersCurl(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+
+	method, _ := cmd.Flags().GetString("request")
+	headers, _ := cmd.Flags().GetStringArray("header")
+	data, _ := cmd.Flags().GetString("data")
+	dataFile, _ := cmd.Flags().GetString("data-file")
+	maxTime, _ := cmd.Flags().GetFloat64("max-time")
+	outputFile, _ := cmd.Flags().GetString("output")
+	head, _ := cmd.Flags().GetBool("head")
+	include, _ := cmd.Flags().GetBool("include")
+	dumpHeader, _ := cmd.Flags().GetString("dump-header")
+	writeOut, _ := cmd.Flags().GetString("write-out")
+	fail, _ := cmd.Flags().GetBool("fail")
+	silent, _ := cmd.Flags().GetBool("silent")
+
+	b := BrowsersCmd{browsers: &svc}
+	return b.Curl(cmd.Context(), BrowsersCurlInput{
+		Identifier: args[0],
+		URL:        args[1],
+		Method:     method,
+		Headers:    headers,
+		Data:       data,
+		DataFile:   dataFile,
+		MaxTime:    time.Duration(maxTime * float64(time.Second)),
+		OutputFile: outputFile,
+		Head:       head,
+		Include:    include,
+		DumpHeader: dumpHeader,
+		WriteOut:   writeOut,
+		Fail:       fail,
+		Silent:     silent,
+	})
 }
 
 func truncateURL(url string, maxLen int) string {
