@@ -24,6 +24,11 @@ COORDINATE_SCALE = 1000
 DEFAULT_WIDTH = 1200
 DEFAULT_HEIGHT = 800
 
+# Gemini reports scroll magnitude in pixels; computer.scroll expects wheel
+# notches. Convert with a per-notch pixel budget and clamp to a sane max.
+PX_PER_NOTCH = 60
+MAX_NOTCHES_PER_ACTION = 17
+
 def _system_prompt() -> str:
     date = datetime.now().strftime("%A, %B %d, %Y")
     return (
@@ -169,10 +174,11 @@ class GeminiProvider:
                     y = self._denorm(args.get("y"), height)
                 else:
                     x, y = width // 2, height // 2
-                magnitude = args.get("magnitude", 3)
+                magnitude_px = args.get("magnitude", 400)
+                notches = min(MAX_NOTCHES_PER_ACTION, max(1, round(magnitude_px / PX_PER_NOTCH)))
                 direction = args.get("direction", "down")
-                dy = -magnitude if direction == "up" else magnitude if direction == "down" else 0
-                dx = -magnitude if direction == "left" else magnitude if direction == "right" else 0
+                dy = -notches if direction == "up" else notches if direction == "down" else 0
+                dx = -notches if direction == "left" else notches if direction == "right" else 0
                 await asyncio.to_thread(
                     computer.scroll, options.session_id, x=x, y=y, delta_x=dx, delta_y=dy,
                 )
