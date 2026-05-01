@@ -151,6 +151,14 @@ func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateIn
 		}
 		if in.CredentialPath != "" {
 			params.ManagedAuthCreateRequest.Credential.Path = kernel.Opt(in.CredentialPath)
+		} else {
+			// Default to domain auto-lookup when no explicit --credential-path is
+			// given. This matches the dashboard's UX, where picking a provider
+			// without a specific item always means "look up by domain". Without
+			// this default, the server receives { provider } with no path or
+			// auto flag, which is a valid-but-inert credential reference that
+			// causes the managed auth session to never fetch credentials.
+			params.ManagedAuthCreateRequest.Credential.Auto = kernel.Opt(true)
 		}
 		if in.CredentialAuto {
 			params.ManagedAuthCreateRequest.Credential.Auto = kernel.Opt(true)
@@ -797,7 +805,7 @@ func init() {
 	authConnectionsCreateCmd.Flags().String("credential-name", "", "Kernel credential name to use")
 	authConnectionsCreateCmd.Flags().String("credential-provider", "", "External credential provider name")
 	authConnectionsCreateCmd.Flags().String("credential-path", "", "Provider-specific path (e.g., VaultName/ItemName)")
-	authConnectionsCreateCmd.Flags().Bool("credential-auto", false, "Lookup by domain from the specified provider")
+	authConnectionsCreateCmd.Flags().Bool("credential-auto", false, "Lookup by domain from the specified provider (defaults to true when --credential-provider is set without --credential-path)")
 	authConnectionsCreateCmd.Flags().String("proxy-id", "", "Proxy ID to use")
 	authConnectionsCreateCmd.Flags().String("proxy-name", "", "Proxy name to use")
 	authConnectionsCreateCmd.Flags().Bool("no-save-credentials", false, "Disable saving credentials after successful login")

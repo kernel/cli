@@ -217,6 +217,20 @@ Commands with JSON output support:
   - `--output json`, `-o json` - Output JSON with liveViewUrl
 - `kernel browsers get <id>` - Get detailed browser session info
   - `--output json`, `-o json` - Output raw JSON object
+- `kernel browsers curl <id> <url>` - Make HTTP requests through a browser session's Chrome network stack
+  - `-X, --request <method>` - HTTP method (default: GET; defaults to POST when `--data` is set)
+  - `-H, --header <header>` - HTTP header, repeatable (`"Key: Value"` format)
+  - `-d, --data <body>` - Request body
+  - `--data-file <path>` - Read request body from file
+  - `--max-time <seconds>` - Maximum time allowed for the request (default: 30)
+  - `-o, --output <path>` - Write response body to file
+  - `-I, --head` - Fetch headers only
+  - `-i, --include` - Include response headers in output
+  - `-D, --dump-header <path>` - Write received headers to file (use `-` for stdout)
+  - `-w, --write-out <format>` - Output text after completion; supports `%{http_code}`, `%{response_code}`, `%{time_total}`, and `%{size_download}`
+  - `-f, --fail` - Fail with no body output on HTTP errors
+  - `-s, --silent` - Suppress progress output
+  - _Note: redirects are followed automatically by Chromium._
 
 ### Browser Pools
 
@@ -592,6 +606,21 @@ kernel browsers delete browser123
 
 # Get live view URL
 kernel browsers view browser123
+
+# Make an HTTP request through the browser session
+kernel browsers curl browser123 https://example.com
+
+# Include response headers and save the response to a file
+kernel browsers curl browser123 -i -o page.html https://example.com
+
+# Send JSON and print curl-style status metrics
+kernel browsers curl browser123 https://api.example.com \
+  -H "Content-Type: application/json" \
+  -d '{"key":"value"}' \
+  -w 'status=%{http_code} bytes=%{size_download}\n'
+
+# Fail on HTTP errors without printing the response body
+kernel browsers curl browser123 -f https://example.com/missing
 
 # Stream browser logs
 kernel browsers logs stream my-browser --source supervisor --follow --supervisor-process chromium
