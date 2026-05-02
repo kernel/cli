@@ -106,6 +106,7 @@ export class KernelBrowserSession {
     const info = this.info;
 
     if (this._sessionId) {
+      const sessionId = this._sessionId;
       try {
         if (this.opts.recordReplay && this._replayId) {
           if (this.opts.replayGracePeriod > 0) {
@@ -115,15 +116,17 @@ export class KernelBrowserSession {
           info.replayViewUrl = this._replayViewUrl || undefined;
         }
       } finally {
-        console.log(`Destroying browser session: ${this._sessionId}`);
-        await this.kernel.browsers.deleteByID(this._sessionId);
+        // Reset state up front so that if browser deletion or a thrown replay error
+        // propagates, a follow-up stop() call from the caller's error path is a no-op
+        // instead of attempting to delete the same session twice.
+        this._sessionId = null;
+        this._liveViewUrl = null;
+        this._replayId = null;
+        this._replayViewUrl = null;
+        console.log(`Destroying browser session: ${sessionId}`);
+        await this.kernel.browsers.deleteByID(sessionId);
       }
     }
-
-    this._sessionId = null;
-    this._liveViewUrl = null;
-    this._replayId = null;
-    this._replayViewUrl = null;
 
     return info;
   }

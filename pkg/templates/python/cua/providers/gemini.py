@@ -210,8 +210,10 @@ class GeminiProvider:
                 await asyncio.sleep(1.5)
 
             elif name == "key_combination":
-                combo = args.get("key_combination", "")
-                parts = [k.strip() for k in combo.split("+")]
+                # Gemini sends the combo as a single "+"-joined string in `keys`.
+                if "keys" not in args:
+                    return {"error": "key_combination requires keys"}
+                parts = [k.strip() for k in str(args["keys"]).split("+")]
                 hold_keys = parts[:-1] if len(parts) > 1 else []
                 keys = parts[-1:] if parts else []
                 kwargs: dict = {"keys": keys or parts}
@@ -222,10 +224,11 @@ class GeminiProvider:
                 )
 
             elif name == "drag_and_drop":
-                sx = self._denorm(args.get("start_x"), width)
-                sy = self._denorm(args.get("start_y"), height)
-                ex = self._denorm(args.get("end_x"), width)
-                ey = self._denorm(args.get("end_y"), height)
+                # Gemini's drag schema uses x/y for the start and destination_x/destination_y for the end.
+                sx = self._denorm(args.get("x"), width)
+                sy = self._denorm(args.get("y"), height)
+                ex = self._denorm(args.get("destination_x"), width)
+                ey = self._denorm(args.get("destination_y"), height)
                 await asyncio.to_thread(
                     computer.drag_mouse, options.session_id, path=[[sx, sy], [ex, ey]],
                 )
