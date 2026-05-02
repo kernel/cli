@@ -18,6 +18,11 @@ const COORDINATE_SCALE = 1000;
 const DEFAULT_WIDTH = 1200;
 const DEFAULT_HEIGHT = 800;
 
+// Gemini reports scroll magnitude in pixels; computer.scroll expects wheel
+// notches. Convert with a per-notch pixel budget and clamp to a sane max.
+const PX_PER_NOTCH = 60;
+const MAX_NOTCHES_PER_ACTION = 17;
+
 const PREDEFINED_ACTIONS = [
   'click_at', 'hover_at', 'type_text_at', 'scroll_document',
   'scroll_at', 'wait_5_seconds', 'go_back', 'go_forward',
@@ -180,10 +185,14 @@ export class GeminiProvider implements CuaProvider {
         case 'scroll_at': {
           const x = name === 'scroll_at' ? this.denormalize(args.x, width) : width / 2;
           const y = name === 'scroll_at' ? this.denormalize(args.y, height) : height / 2;
-          const magnitude = args.magnitude ?? 3;
+          const magnitudePx = args.magnitude ?? 400;
+          const notches = Math.min(
+            MAX_NOTCHES_PER_ACTION,
+            Math.max(1, Math.round(magnitudePx / PX_PER_NOTCH)),
+          );
           const dir = args.direction ?? 'down';
-          const deltaY = dir === 'up' ? -magnitude : dir === 'down' ? magnitude : 0;
-          const deltaX = dir === 'left' ? -magnitude : dir === 'right' ? magnitude : 0;
+          const deltaY = dir === 'up' ? -notches : dir === 'down' ? notches : 0;
+          const deltaX = dir === 'left' ? -notches : dir === 'right' ? notches : 0;
           await computer.scroll(sessionId, { x, y, delta_x: deltaX, delta_y: deltaY });
           break;
         }
