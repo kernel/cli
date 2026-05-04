@@ -48,13 +48,11 @@ interface GeminiArgs {
   y?: number;
   text?: string;
   url?: string;
-  key_combination?: string;
+  keys?: string;
   direction?: string;
   magnitude?: number;
-  start_x?: number;
-  start_y?: number;
-  end_x?: number;
-  end_y?: number;
+  destination_x?: number;
+  destination_y?: number;
   safety_decision?: { decision: string; explanation?: string };
   [key: string]: unknown;
 }
@@ -221,8 +219,9 @@ export class GeminiProvider implements CuaProvider {
           break;
         }
         case 'key_combination': {
-          const combo = args.key_combination ?? '';
-          const parts = combo.split('+').map(k => k.trim());
+          // Gemini sends the combo as a single "+"-joined string in `keys`.
+          if (!args.keys) return { error: 'key_combination requires keys' };
+          const parts = args.keys.split('+').map(k => k.trim());
           const holdKeys = parts.slice(0, -1);
           const keys = parts.slice(-1);
           await computer.pressKey(sessionId, {
@@ -232,10 +231,11 @@ export class GeminiProvider implements CuaProvider {
           break;
         }
         case 'drag_and_drop': {
-          const sx = this.denormalize(args.start_x, width);
-          const sy = this.denormalize(args.start_y, height);
-          const ex = this.denormalize(args.end_x, width);
-          const ey = this.denormalize(args.end_y, height);
+          // Gemini's drag schema uses x/y for the start and destination_x/destination_y for the end.
+          const sx = this.denormalize(args.x, width);
+          const sy = this.denormalize(args.y, height);
+          const ex = this.denormalize(args.destination_x, width);
+          const ey = this.denormalize(args.destination_y, height);
           await computer.dragMouse(sessionId, { path: [[sx, sy], [ex, ey]] });
           break;
         }

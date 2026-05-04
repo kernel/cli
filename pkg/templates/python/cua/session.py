@@ -114,6 +114,7 @@ class KernelBrowserSession:
         info = self.info
 
         if self._session_id:
+            session_id = self._session_id
             try:
                 if self.opts.record_replay and self._replay_id:
                     if self.opts.replay_grace_period > 0:
@@ -121,15 +122,17 @@ class KernelBrowserSession:
                     await self._stop_replay()
                     info.replay_view_url = self._replay_view_url
             finally:
-                print(f"Destroying browser session: {self._session_id}")
+                # Reset state up front so that if browser deletion or a thrown replay
+                # error propagates, a follow-up stop() call from the caller's error path
+                # is a no-op instead of attempting to delete the same session twice.
+                self._session_id = None
+                self._live_view_url = None
+                self._replay_id = None
+                self._replay_view_url = None
+                print(f"Destroying browser session: {session_id}")
                 await asyncio.to_thread(
-                    self.kernel.browsers.delete_by_id, self._session_id,
+                    self.kernel.browsers.delete_by_id, session_id,
                 )
-
-        self._session_id = None
-        self._live_view_url = None
-        self._replay_id = None
-        self._replay_view_url = None
 
         return info
 
