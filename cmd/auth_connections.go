@@ -46,6 +46,9 @@ type AuthConnectionCreateInput struct {
 	SaveCredentials     bool
 	NoSaveCredentials   bool
 	HealthCheckInterval int
+	NoHealthChecks      bool
+	NoAutoReauth        bool
+	RecordSession       bool
 	Output              string
 }
 
@@ -74,6 +77,9 @@ type AuthConnectionUpdateInput struct {
 	SaveCredentials        BoolFlag
 	HealthCheckInterval    int
 	HealthCheckIntervalSet bool
+	HealthChecks           BoolFlag
+	AutoReauth             BoolFlag
+	RecordSession          BoolFlag
 	Output                 string
 }
 
@@ -179,6 +185,18 @@ func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateIn
 		params.ManagedAuthCreateRequest.SaveCredentials = kernel.Opt(false)
 	}
 
+	if in.NoHealthChecks {
+		params.ManagedAuthCreateRequest.HealthChecks = kernel.Opt(false)
+	}
+
+	if in.NoAutoReauth {
+		params.ManagedAuthCreateRequest.AutoReauth = kernel.Opt(false)
+	}
+
+	if in.RecordSession {
+		params.ManagedAuthCreateRequest.RecordSession = kernel.Opt(true)
+	}
+
 	if in.Output != "json" {
 		pterm.Info.Printf("Creating managed auth for %s...\n", in.Domain)
 	}
@@ -218,6 +236,9 @@ func printManagedAuthSummary(auth *kernel.ManagedAuth) {
 	if auth.ProxyID != "" {
 		tableData = append(tableData, []string{"Proxy ID", auth.ProxyID})
 	}
+	tableData = append(tableData, []string{"Health Checks", fmt.Sprintf("%t", auth.HealthChecks)})
+	tableData = append(tableData, []string{"Auto Reauth", fmt.Sprintf("%t", auth.AutoReauth)})
+	tableData = append(tableData, []string{"Record Session", fmt.Sprintf("%t", auth.RecordSession)})
 	PrintTableNoPad(tableData, true)
 }
 
@@ -241,6 +262,18 @@ func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateIn
 	}
 	if in.SaveCredentials.Set {
 		params.ManagedAuthUpdateRequest.SaveCredentials = kernel.Opt(in.SaveCredentials.Value)
+		hasChanges = true
+	}
+	if in.HealthChecks.Set {
+		params.ManagedAuthUpdateRequest.HealthChecks = kernel.Opt(in.HealthChecks.Value)
+		hasChanges = true
+	}
+	if in.AutoReauth.Set {
+		params.ManagedAuthUpdateRequest.AutoReauth = kernel.Opt(in.AutoReauth.Value)
+		hasChanges = true
+	}
+	if in.RecordSession.Set {
+		params.ManagedAuthUpdateRequest.RecordSession = kernel.Opt(in.RecordSession.Value)
 		hasChanges = true
 	}
 	if in.AllowedDomainsSet {
@@ -810,6 +843,9 @@ func init() {
 	authConnectionsCreateCmd.Flags().String("proxy-name", "", "Proxy name to use")
 	authConnectionsCreateCmd.Flags().Bool("no-save-credentials", false, "Disable saving credentials after successful login")
 	authConnectionsCreateCmd.Flags().Int("health-check-interval", 0, "Interval in seconds between health checks (300-86400)")
+	authConnectionsCreateCmd.Flags().Bool("no-health-checks", false, "Disable periodic health checks (also prevents automatic re-auth)")
+	authConnectionsCreateCmd.Flags().Bool("no-auto-reauth", false, "Disable automatic re-authentication when a health check detects an expired session")
+	authConnectionsCreateCmd.Flags().Bool("record-session", false, "Record browser sessions for this connection by default")
 	_ = authConnectionsCreateCmd.MarkFlagRequired("domain")
 	_ = authConnectionsCreateCmd.MarkFlagRequired("profile-name")
 	authConnectionsCreateCmd.MarkFlagsMutuallyExclusive("credential-name", "credential-provider")
@@ -830,8 +866,17 @@ func init() {
 	authConnectionsUpdateCmd.Flags().Bool("save-credentials", false, "Enable saving credentials after successful login")
 	authConnectionsUpdateCmd.Flags().Bool("no-save-credentials", false, "Disable saving credentials after successful login")
 	authConnectionsUpdateCmd.Flags().Int("health-check-interval", 0, "Interval in seconds between health checks")
+	authConnectionsUpdateCmd.Flags().Bool("health-checks", false, "Enable periodic health checks")
+	authConnectionsUpdateCmd.Flags().Bool("no-health-checks", false, "Disable periodic health checks (also prevents automatic re-auth)")
+	authConnectionsUpdateCmd.Flags().Bool("auto-reauth", false, "Enable automatic re-authentication on health check failure")
+	authConnectionsUpdateCmd.Flags().Bool("no-auto-reauth", false, "Disable automatic re-authentication")
+	authConnectionsUpdateCmd.Flags().Bool("record-session", false, "Record browser sessions for this connection by default")
+	authConnectionsUpdateCmd.Flags().Bool("no-record-session", false, "Do not record browser sessions by default")
 	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("credential-name", "credential-provider")
 	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("save-credentials", "no-save-credentials")
+	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("health-checks", "no-health-checks")
+	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("auto-reauth", "no-auto-reauth")
+	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("record-session", "no-record-session")
 
 	// List flags
 	authConnectionsListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
@@ -887,6 +932,9 @@ func runAuthConnectionsCreate(cmd *cobra.Command, args []string) error {
 	proxyName, _ := cmd.Flags().GetString("proxy-name")
 	noSaveCredentials, _ := cmd.Flags().GetBool("no-save-credentials")
 	healthCheckInterval, _ := cmd.Flags().GetInt("health-check-interval")
+	noHealthChecks, _ := cmd.Flags().GetBool("no-health-checks")
+	noAutoReauth, _ := cmd.Flags().GetBool("no-auto-reauth")
+	recordSession, _ := cmd.Flags().GetBool("record-session")
 
 	svc := client.Auth.Connections
 	c := AuthConnectionCmd{svc: &svc}
@@ -903,6 +951,9 @@ func runAuthConnectionsCreate(cmd *cobra.Command, args []string) error {
 		ProxyName:           proxyName,
 		NoSaveCredentials:   noSaveCredentials,
 		HealthCheckInterval: healthCheckInterval,
+		NoHealthChecks:      noHealthChecks,
+		NoAutoReauth:        noAutoReauth,
+		RecordSession:       recordSession,
 		Output:              output,
 	})
 }
@@ -942,6 +993,36 @@ func runAuthConnectionsUpdate(cmd *cobra.Command, args []string) error {
 		saveCredentialsFlag = BoolFlag{Set: true, Value: !noSaveCredentials}
 	}
 
+	healthChecksFlag := BoolFlag{}
+	if cmd.Flags().Changed("health-checks") {
+		v, _ := cmd.Flags().GetBool("health-checks")
+		healthChecksFlag = BoolFlag{Set: true, Value: v}
+	}
+	if cmd.Flags().Changed("no-health-checks") {
+		v, _ := cmd.Flags().GetBool("no-health-checks")
+		healthChecksFlag = BoolFlag{Set: true, Value: !v}
+	}
+
+	autoReauthFlag := BoolFlag{}
+	if cmd.Flags().Changed("auto-reauth") {
+		v, _ := cmd.Flags().GetBool("auto-reauth")
+		autoReauthFlag = BoolFlag{Set: true, Value: v}
+	}
+	if cmd.Flags().Changed("no-auto-reauth") {
+		v, _ := cmd.Flags().GetBool("no-auto-reauth")
+		autoReauthFlag = BoolFlag{Set: true, Value: !v}
+	}
+
+	recordSessionFlag := BoolFlag{}
+	if cmd.Flags().Changed("record-session") {
+		v, _ := cmd.Flags().GetBool("record-session")
+		recordSessionFlag = BoolFlag{Set: true, Value: v}
+	}
+	if cmd.Flags().Changed("no-record-session") {
+		v, _ := cmd.Flags().GetBool("no-record-session")
+		recordSessionFlag = BoolFlag{Set: true, Value: !v}
+	}
+
 	svc := client.Auth.Connections
 	c := AuthConnectionCmd{svc: &svc}
 	return c.Update(cmd.Context(), AuthConnectionUpdateInput{
@@ -964,6 +1045,9 @@ func runAuthConnectionsUpdate(cmd *cobra.Command, args []string) error {
 		SaveCredentials:        saveCredentialsFlag,
 		HealthCheckInterval:    healthCheckInterval,
 		HealthCheckIntervalSet: cmd.Flags().Changed("health-check-interval"),
+		HealthChecks:           healthChecksFlag,
+		AutoReauth:             autoReauthFlag,
+		RecordSession:          recordSessionFlag,
 		Output:                 output,
 	})
 }
