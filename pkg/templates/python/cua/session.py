@@ -111,28 +111,46 @@ class KernelBrowserSession:
         return self.info
 
     async def stop(self) -> SessionInfo:
-        info = self.info
+        session_id = self._session_id
+        if not session_id:
+            # Already stopped — return a snapshot of the (cleared) state without
+            # touching `self.info`, whose `session_id` property raises on None.
+            return SessionInfo(
+                session_id="",
+                live_view_url=self._live_view_url or "",
+                replay_id=self._replay_id,
+                replay_view_url=self._replay_view_url,
+                viewport_width=self.opts.viewport_width,
+                viewport_height=self.opts.viewport_height,
+            )
 
-        if self._session_id:
-            session_id = self._session_id
-            try:
-                if self.opts.record_replay and self._replay_id:
-                    if self.opts.replay_grace_period > 0:
-                        await asyncio.sleep(self.opts.replay_grace_period)
-                    await self._stop_replay()
-                    info.replay_view_url = self._replay_view_url
-            finally:
-                # Reset state up front so that if browser deletion or a thrown replay
-                # error propagates, a follow-up stop() call from the caller's error path
-                # is a no-op instead of attempting to delete the same session twice.
-                self._session_id = None
-                self._live_view_url = None
-                self._replay_id = None
-                self._replay_view_url = None
-                print(f"Destroying browser session: {session_id}")
-                await asyncio.to_thread(
-                    self.kernel.browsers.delete_by_id, session_id,
-                )
+        info = SessionInfo(
+            session_id=session_id,
+            live_view_url=self._live_view_url or "",
+            replay_id=self._replay_id,
+            replay_view_url=self._replay_view_url,
+            viewport_width=self.opts.viewport_width,
+            viewport_height=self.opts.viewport_height,
+        )
+
+        try:
+            if self.opts.record_replay and self._replay_id:
+                if self.opts.replay_grace_period > 0:
+                    await asyncio.sleep(self.opts.replay_grace_period)
+                await self._stop_replay()
+                info.replay_view_url = self._replay_view_url
+        finally:
+            # Reset state up front so that if browser deletion or a thrown replay
+            # error propagates, a follow-up stop() call from the caller's error path
+            # is a no-op instead of attempting to delete the same session twice.
+            self._session_id = None
+            self._live_view_url = None
+            self._replay_id = None
+            self._replay_view_url = None
+            print(f"Destroying browser session: {session_id}")
+            await asyncio.to_thread(
+                self.kernel.browsers.delete_by_id, session_id,
+            )
 
         return info
 

@@ -103,29 +103,47 @@ export class KernelBrowserSession {
   }
 
   async stop(): Promise<SessionInfo> {
-    const info = this.info;
+    const sessionId = this._sessionId;
+    if (!sessionId) {
+      // Already stopped — return a snapshot of the (cleared) state without
+      // touching `this.info`, whose `sessionId` getter throws on null.
+      return {
+        sessionId: '',
+        liveViewUrl: this._liveViewUrl ?? '',
+        replayId: this._replayId ?? undefined,
+        replayViewUrl: this._replayViewUrl ?? undefined,
+        viewportWidth: this.opts.viewportWidth,
+        viewportHeight: this.opts.viewportHeight,
+      };
+    }
 
-    if (this._sessionId) {
-      const sessionId = this._sessionId;
-      try {
-        if (this.opts.recordReplay && this._replayId) {
-          if (this.opts.replayGracePeriod > 0) {
-            await sleep(this.opts.replayGracePeriod * 1000);
-          }
-          await this.stopReplay();
-          info.replayViewUrl = this._replayViewUrl || undefined;
+    const info: SessionInfo = {
+      sessionId,
+      liveViewUrl: this._liveViewUrl ?? '',
+      replayId: this._replayId ?? undefined,
+      replayViewUrl: this._replayViewUrl ?? undefined,
+      viewportWidth: this.opts.viewportWidth,
+      viewportHeight: this.opts.viewportHeight,
+    };
+
+    try {
+      if (this.opts.recordReplay && this._replayId) {
+        if (this.opts.replayGracePeriod > 0) {
+          await sleep(this.opts.replayGracePeriod * 1000);
         }
-      } finally {
-        // Reset state up front so that if browser deletion or a thrown replay error
-        // propagates, a follow-up stop() call from the caller's error path is a no-op
-        // instead of attempting to delete the same session twice.
-        this._sessionId = null;
-        this._liveViewUrl = null;
-        this._replayId = null;
-        this._replayViewUrl = null;
-        console.log(`Destroying browser session: ${sessionId}`);
-        await this.kernel.browsers.deleteByID(sessionId);
+        await this.stopReplay();
+        info.replayViewUrl = this._replayViewUrl || undefined;
       }
+    } finally {
+      // Reset state up front so that if browser deletion or a thrown replay error
+      // propagates, a follow-up stop() call from the caller's error path is a no-op
+      // instead of attempting to delete the same session twice.
+      this._sessionId = null;
+      this._liveViewUrl = null;
+      this._replayId = null;
+      this._replayViewUrl = null;
+      console.log(`Destroying browser session: ${sessionId}`);
+      await this.kernel.browsers.deleteByID(sessionId);
     }
 
     return info;
