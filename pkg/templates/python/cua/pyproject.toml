@@ -9,6 +9,5 @@ dependencies = [
     "google-genai>=1.71.0",
     "httpx>=0.28.1",
     "kernel>=0.47.0",
-    "openai>=2.30.0",
     "python-dotenv>=1.2.2",
 ]

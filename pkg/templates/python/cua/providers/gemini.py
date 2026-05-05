@@ -16,6 +16,9 @@ from google.genai.types import (
     Tool,
     ComputerUse,
     Environment,
+    FunctionResponse,
+    FunctionResponseBlob,
+    FunctionResponsePart,
 )
 
 from . import CuaProvider, TaskOptions, TaskResult
@@ -28,6 +31,13 @@ DEFAULT_HEIGHT = 800
 # notches. Convert with a per-notch pixel budget and clamp to a sane max.
 PX_PER_NOTCH = 60
 MAX_NOTCHES_PER_ACTION = 17
+
+PREDEFINED_ACTIONS = {
+    "click_at", "hover_at", "type_text_at", "scroll_document",
+    "scroll_at", "wait_5_seconds", "go_back", "go_forward",
+    "search", "navigate", "key_combination", "drag_and_drop",
+    "open_web_browser",
+}
 
 def _system_prompt() -> str:
     date = datetime.now().strftime("%A, %B %d, %Y")
@@ -115,20 +125,24 @@ class GeminiProvider:
                 )
 
                 if result.get("error"):
-                    responses.append(Part.from_function_response(
+                    responses.append(Part(function_response=FunctionResponse(
                         name=fc.name,
                         response={"error": result["error"], "url": "about:blank"},
-                    ))
+                    )))
                 else:
-                    responses.append(Part.from_function_response(
+                    fr_parts = None
+                    if result.get("screenshot") and fc.name in PREDEFINED_ACTIONS:
+                        fr_parts = [FunctionResponsePart(
+                            inline_data=FunctionResponseBlob(
+                                mime_type="image/png",
+                                data=result["screenshot"],
+                            ),
+                        )]
+                    responses.append(Part(function_response=FunctionResponse(
                         name=fc.name,
                         response={"url": result.get("url", "about:blank")},
-                    ))
-                    if result.get("screenshot"):
-                        responses.append(Part(inline_data={
-                            "mime_type": "image/png",
-                            "data": result["screenshot"],
-                        }))
+                        parts=fr_parts,
+                    )))
 
             contents.append(Content(role="user", parts=responses))
 
