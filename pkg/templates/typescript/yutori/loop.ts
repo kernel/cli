@@ -1,19 +1,25 @@
 /**
- * Yutori n1 Sampling Loop
- * 
- * Implements the agent loop for Yutori's n1-latest computer use model.
- * n1-latest uses an OpenAI-compatible API with tool_calls:
+ * Yutori n1.5 Sampling Loop
+ *
+ * Implements the agent loop for Yutori's n1.5-latest computer use model.
+ * n1.5-latest uses an OpenAI-compatible API with tool_calls:
  * - Actions are returned via tool_calls in the assistant message
  * - Tool results use role: "tool" with matching tool_call_id
  * - The model stops by returning content without tool_calls
  * - Coordinates are returned in 1000x1000 space and need scaling
- * 
- * @see https://docs.yutori.com/reference/n1
+ *
+ * @see https://docs.yutori.com/reference/n1-5
  */
 
 import OpenAI from 'openai';
 import type { Kernel } from '@onkernel/sdk';
-import { ComputerTool, type N1Action, type ToolResult } from './tools/computer';
+import { ComputerTool, type N15Action, type ToolResult } from './tools/computer';
+
+// Tools that require a Playwright page / DOM access. The default core tool set
+// already excludes them, but we also list them in `disable_tools` so the
+// exclusion is explicit and survives if the default ever changes.
+const DISABLED_TOOLS = ['extract_elements', 'find', 'set_element_value', 'execute_js'];
+const TOOL_SET = 'browser_tools_core-20260403';
 
 interface SamplingLoopOptions {
   model?: string;
@@ -34,7 +40,7 @@ interface SamplingLoopResult {
 }
 
 export async function samplingLoop({
-  model = 'n1-latest',
+  model = 'n1.5-latest',
   task,
   apiKey,
   kernel,
@@ -85,6 +91,14 @@ export async function samplingLoop({
         messages: conversationMessages,
         max_completion_tokens: maxCompletionTokens,
         temperature: 0.3,
+        // n1.5-specific knobs go in extra_body (not yet in OpenAI SDK types).
+        // tool_set selects the core (coordinate-based) tools.
+        // disable_tools is a defense-in-depth exclusion of DOM/Playwright tools.
+        // @ts-expect-error extra_body is a Yutori extension
+        extra_body: {
+          tool_set: TOOL_SET,
+          disable_tools: DISABLED_TOOLS,
+        },
       });
     } catch (apiError) {
       console.error('API call failed:', apiError);
@@ -131,8 +145,8 @@ export async function samplingLoop({
         continue;
       }
 
-      const action: N1Action = {
-        action_type: actionName as N1Action['action_type'],
+      const action: N15Action = {
+        action_type: actionName as N15Action['action_type'],
         ...args,
       };
 
@@ -190,7 +204,7 @@ export async function samplingLoop({
   };
 }
 
-function scaleCoordinates(action: N1Action, viewportWidth: number, viewportHeight: number): N1Action {
+function scaleCoordinates(action: N15Action, viewportWidth: number, viewportHeight: number): N15Action {
   const scaled = { ...action };
 
   if (scaled.coordinates) {

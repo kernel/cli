@@ -1,8 +1,10 @@
 /**
- * Yutori n1 Computer Tool
- * 
- * Maps n1-latest action format to Kernel's Computer Controls API.
+ * Yutori n1.5 Computer Tool
+ *
+ * Maps n1.5-latest action format to Kernel's Computer Controls API.
  * Screenshots are converted to WebP for better compression across multi-step trajectories.
+ *
+ * @see https://docs.yutori.com/reference/n1-5
  */
 
 import { Buffer } from 'buffer';
@@ -26,31 +28,36 @@ export class ToolError extends Error {
   }
 }
 
-export type N1ActionType =
+export type N15ActionType =
   | 'left_click'
   | 'double_click'
   | 'triple_click'
+  | 'middle_click'
   | 'right_click'
+  | 'mouse_move'
+  | 'mouse_down'
+  | 'mouse_up'
   | 'scroll'
   | 'type'
   | 'key_press'
-  | 'hover'
+  | 'hold_key'
   | 'drag'
   | 'wait'
   | 'refresh'
   | 'go_back'
+  | 'go_forward'
   | 'goto_url';
 
-export interface N1Action {
-  action_type: N1ActionType;
+export interface N15Action {
+  action_type: N15ActionType;
   coordinates?: [number, number];
   start_coordinates?: [number, number];
   direction?: 'up' | 'down' | 'left' | 'right';
   amount?: number;
   text?: string;
-  press_enter_after?: boolean;
-  clear_before_typing?: boolean;
-  key_comb?: string;
+  key?: string;
+  modifier?: string;
+  duration?: number;
   url?: string;
 }
 
@@ -107,7 +114,7 @@ export class ComputerTool {
     this.kioskMode = kioskMode;
   }
 
-  async execute(action: N1Action): Promise<ToolResult> {
+  async execute(action: N15Action): Promise<ToolResult> {
     const { action_type } = action;
 
     switch (action_type) {
@@ -117,24 +124,34 @@ export class ComputerTool {
         return this.handleClick(action, 'left', 2);
       case 'triple_click':
         return this.handleClick(action, 'left', 3);
+      case 'middle_click':
+        return this.handleClick(action, 'middle', 1);
       case 'right_click':
         return this.handleClick(action, 'right', 1);
+      case 'mouse_move':
+        return this.handleMouseMove(action);
+      case 'mouse_down':
+        return this.handleMouseButton(action, 'down');
+      case 'mouse_up':
+        return this.handleMouseButton(action, 'up');
       case 'scroll':
         return this.handleScroll(action);
       case 'type':
         return this.handleType(action);
       case 'key_press':
         return this.handleKeyPress(action);
-      case 'hover':
-        return this.handleHover(action);
+      case 'hold_key':
+        return this.handleHoldKey(action);
       case 'drag':
         return this.handleDrag(action);
       case 'wait':
-        return this.handleWait();
+        return this.handleWait(action);
       case 'refresh':
         return this.handleRefresh();
       case 'go_back':
         return this.handleGoBack();
+      case 'go_forward':
+        return this.handleGoForward();
       case 'goto_url':
         return this.handleGotoUrl(action);
       default:
@@ -142,22 +159,50 @@ export class ComputerTool {
     }
   }
 
-  private async handleClick(action: N1Action, button: 'left' | 'right', numClicks: number): Promise<ToolResult> {
+  private async handleClick(action: N15Action, button: 'left' | 'right' | 'middle', numClicks: number): Promise<ToolResult> {
     const coords = this.getCoordinates(action.coordinates);
-    
+    const holdKeys = action.modifier ? [this.mapKey(action.modifier)] : undefined;
+
     await this.kernel.browsers.computer.clickMouse(this.sessionId, {
       x: coords.x,
       y: coords.y,
       button,
       click_type: 'click',
       num_clicks: numClicks,
+      ...(holdKeys ? { hold_keys: holdKeys } : {}),
     });
 
     await this.sleep(SCREENSHOT_DELAY_MS);
     return this.screenshot();
   }
 
-  private async handleScroll(action: N1Action): Promise<ToolResult> {
+  private async handleMouseMove(action: N15Action): Promise<ToolResult> {
+    const coords = this.getCoordinates(action.coordinates);
+
+    await this.kernel.browsers.computer.moveMouse(this.sessionId, {
+      x: coords.x,
+      y: coords.y,
+    });
+
+    await this.sleep(SCREENSHOT_DELAY_MS);
+    return this.screenshot();
+  }
+
+  private async handleMouseButton(action: N15Action, clickType: 'down' | 'up'): Promise<ToolResult> {
+    const coords = this.getCoordinates(action.coordinates);
+
+    await this.kernel.browsers.computer.clickMouse(this.sessionId, {
+      x: coords.x,
+      y: coords.y,
+      button: 'left',
+      click_type: clickType,
+    });
+
+    await this.sleep(SCREENSHOT_DELAY_MS);
+    return this.screenshot();
+  }
+
+  private async handleScroll(action: N15Action): Promise<ToolResult> {
     const coords = this.getCoordinates(action.coordinates);
     const direction = action.direction;
     const notches = Math.max(action.amount ?? 3, 1);
@@ -199,21 +244,10 @@ export class ComputerTool {
     };
   }
 
-  private async handleType(action: N1Action): Promise<ToolResult> {
+  private async handleType(action: N15Action): Promise<ToolResult> {
     const text = action.text;
     if (!text) {
       throw new ToolError('text is required for type action');
-    }
-
-    if (action.clear_before_typing) {
-      await this.kernel.browsers.computer.pressKey(this.sessionId, {
-        keys: ['ctrl+a'],
-      });
-      await this.sleep(100);
-      await this.kernel.browsers.computer.pressKey(this.sessionId, {
-        keys: ['BackSpace'],
-      });
-      await this.sleep(100);
     }
 
     await this.kernel.browsers.computer.typeText(this.sessionId, {
@@ -221,24 +255,17 @@ export class ComputerTool {
       delay: TYPING_DELAY_MS,
     });
 
-    if (action.press_enter_after) {
-      await this.sleep(100);
-      await this.kernel.browsers.computer.pressKey(this.sessionId, {
-        keys: ['Return'],
-      });
-    }
-
     await this.sleep(SCREENSHOT_DELAY_MS);
     return this.screenshot();
   }
 
-  private async handleKeyPress(action: N1Action): Promise<ToolResult> {
-    const keyComb = action.key_comb;
-    if (!keyComb) {
-      throw new ToolError('key_comb is required for key_press action');
+  private async handleKeyPress(action: N15Action): Promise<ToolResult> {
+    const key = action.key;
+    if (!key) {
+      throw new ToolError('key is required for key_press action');
     }
 
-    const mappedKey = this.mapKey(keyComb);
+    const mappedKey = this.mapKey(key);
 
     await this.kernel.browsers.computer.pressKey(this.sessionId, {
       keys: [mappedKey],
@@ -248,19 +275,25 @@ export class ComputerTool {
     return this.screenshot();
   }
 
-  private async handleHover(action: N1Action): Promise<ToolResult> {
-    const coords = this.getCoordinates(action.coordinates);
+  private async handleHoldKey(action: N15Action): Promise<ToolResult> {
+    const key = action.key;
+    if (!key) {
+      throw new ToolError('key is required for hold_key action');
+    }
 
-    await this.kernel.browsers.computer.moveMouse(this.sessionId, {
-      x: coords.x,
-      y: coords.y,
+    const mappedKey = this.mapKey(key);
+    const durationMs = action.duration && action.duration > 0 ? action.duration : 1000;
+
+    await this.kernel.browsers.computer.pressKey(this.sessionId, {
+      keys: [mappedKey],
+      duration: durationMs,
     });
 
     await this.sleep(SCREENSHOT_DELAY_MS);
     return this.screenshot();
   }
 
-  private async handleDrag(action: N1Action): Promise<ToolResult> {
+  private async handleDrag(action: N15Action): Promise<ToolResult> {
     const startCoords = this.getCoordinates(action.start_coordinates);
     const endCoords = this.getCoordinates(action.coordinates);
 
@@ -273,8 +306,9 @@ export class ComputerTool {
     return this.screenshot();
   }
 
-  private async handleWait(): Promise<ToolResult> {
-    await this.sleep(2000);
+  private async handleWait(action: N15Action): Promise<ToolResult> {
+    const durationMs = action.duration && action.duration > 0 ? action.duration : 2000;
+    await this.sleep(durationMs);
     return this.screenshot();
   }
 
@@ -296,7 +330,16 @@ export class ComputerTool {
     return this.screenshot();
   }
 
-  private async handleGotoUrl(action: N1Action): Promise<ToolResult> {
+  private async handleGoForward(): Promise<ToolResult> {
+    await this.kernel.browsers.computer.pressKey(this.sessionId, {
+      keys: ['alt+Right'],
+    });
+
+    await this.sleep(1500);
+    return this.screenshot();
+  }
+
+  private async handleGotoUrl(action: N15Action): Promise<ToolResult> {
     const url = action.url;
     if (!url) {
       throw new ToolError('url is required for goto_url action');
