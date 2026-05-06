@@ -1326,9 +1326,14 @@ type BrowsersPlaywrightExecuteInput struct {
 	Identifier string
 	Code       string
 	Timeout    int64
+	Output     string
 }
 
 func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrightExecuteInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+
 	if b.playwright == nil {
 		pterm.Error.Println("playwright service not available")
 		return nil
@@ -1344,6 +1349,10 @@ func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrigh
 	res, err := b.playwright.Execute(ctx, br.SessionID, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(res)
 	}
 
 	rows := pterm.TableData{{"Property", "Value"}, {"Success", fmt.Sprintf("%t", res.Success)}}
@@ -2498,6 +2507,7 @@ func init() {
 	playwrightRoot := &cobra.Command{Use: "playwright", Short: "Playwright operations"}
 	playwrightExecute := &cobra.Command{Use: "execute <id> [code]", Short: "Execute Playwright/TypeScript code against the browser", Args: cobra.MinimumNArgs(1), RunE: runBrowsersPlaywrightExecute}
 	playwrightExecute.Flags().Int64("timeout", 0, "Maximum execution time in seconds (default per server)")
+	playwrightExecute.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	playwrightRoot.AddCommand(playwrightExecute)
 	browsersCmd.AddCommand(playwrightRoot)
 
@@ -2954,8 +2964,9 @@ func runBrowsersPlaywrightExecute(cmd *cobra.Command, args []string) error {
 		code = string(data)
 	}
 	timeout, _ := cmd.Flags().GetInt64("timeout")
+	output, _ := cmd.Flags().GetString("output")
 	b := BrowsersCmd{browsers: &svc, playwright: &svc.Playwright}
-	return b.PlaywrightExecute(cmd.Context(), BrowsersPlaywrightExecuteInput{Identifier: args[0], Code: strings.TrimSpace(code), Timeout: timeout})
+	return b.PlaywrightExecute(cmd.Context(), BrowsersPlaywrightExecuteInput{Identifier: args[0], Code: strings.TrimSpace(code), Timeout: timeout, Output: output})
 }
 
 func runBrowsersFSNewDirectory(cmd *cobra.Command, args []string) error {
