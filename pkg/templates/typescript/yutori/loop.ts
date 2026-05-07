@@ -28,6 +28,11 @@ const TOOL_SET = 'browser_tools_core-20260403';
 const MAX_REQUEST_BYTES = 9_500_000;
 const KEEP_RECENT_SCREENSHOTS = 6;
 
+interface YutoriExtras {
+  tool_set: string;
+  disable_tools: string[];
+}
+
 interface SamplingLoopOptions {
   model?: string;
   task: string;
@@ -98,19 +103,21 @@ export async function samplingLoop({
 
     let response;
     try {
+      // n1.5-specific knobs (not in OpenAI SDK types). The openai-node SDK
+      // serializes the body as-is, so these go at the top level via a spread —
+      // unlike the Python SDK, there is no `extra_body` kwarg here.
+      // tool_set selects the core (coordinate-based) tools.
+      // disable_tools is a defense-in-depth exclusion of DOM/Playwright tools.
+      const yutoriExtras: YutoriExtras = {
+        tool_set: TOOL_SET,
+        disable_tools: DISABLED_TOOLS,
+      };
       response = await client.chat.completions.create({
         model,
         messages: requestMessages,
         max_completion_tokens: maxCompletionTokens,
         temperature: 0.3,
-        // n1.5-specific knobs go in extra_body (not yet in OpenAI SDK types).
-        // tool_set selects the core (coordinate-based) tools.
-        // disable_tools is a defense-in-depth exclusion of DOM/Playwright tools.
-        // @ts-expect-error extra_body is a Yutori extension
-        extra_body: {
-          tool_set: TOOL_SET,
-          disable_tools: DISABLED_TOOLS,
-        },
+        ...yutoriExtras,
       });
     } catch (apiError) {
       console.error('API call failed:', apiError);
