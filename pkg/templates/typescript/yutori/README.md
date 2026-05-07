@@ -1,8 +1,10 @@
 # Kernel TypeScript Sample App - Yutori n1.5 Computer Use
 
-This is a Kernel application that implements a prompt loop using Yutori's n1.5 computer use model with Kernel's Computer Controls API.
+This Kernel app implements a prompt loop using Yutori's Navigator n1.5 with Kernel's Computer Controls API.
 
-[Navigator n1.5](https://docs.yutori.com/reference/n1-5) is Yutori's pixels-to-actions LLM that predicts browser actions from screenshots.
+[Navigator n1.5](https://yutori.com/blog/introducing-n1-5) is Yutori's pixels-to-actions LLM that predicts browser actions from screenshots. Yutori reports **94.5% on Online-Mind2Web** and **88.0% on Navi-Bench v2** at **$1.50 per 1M input tokens** — currently among the most accurate and cost-effective computer-use models.
+
+This template runs n1.5 in **computer-use-only mode**. n1.5 also supports a hybrid vision + DOM/JavaScript path (page-state extraction, custom JS, structured JSON output) for multi-field forms and bulk data extraction, but those tools are intentionally disabled here — see [Disabled tools](#disabled-tools).
 
 ## Setup
 
