@@ -12,7 +12,7 @@ import type { Kernel } from '@onkernel/sdk';
 import sharp from 'sharp';
 
 const TYPING_DELAY_MS = 12;
-const SCREENSHOT_DELAY_MS = 300;
+const SCREENSHOT_DELAY_MS = 150;
 const ACTION_DELAY_MS = 300;
 
 export interface ToolResult {

@@ -19,7 +19,7 @@ from PIL import Image
 from .base import ToolError, ToolResult
 
 TYPING_DELAY_MS = 12
-SCREENSHOT_DELAY_S = 0.3
+SCREENSHOT_DELAY_S = 0.15
 ACTION_DELAY_S = 0.3
 
 N15ActionType = Literal[
