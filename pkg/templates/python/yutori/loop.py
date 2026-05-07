@@ -11,6 +11,7 @@ n1.5-latest uses an OpenAI-compatible API with tool_calls:
 @see https://docs.yutori.com/reference/n1-5
 """
 
+import copy
 import json
 from typing import Any, Optional
 
@@ -24,6 +25,13 @@ from tools import ComputerTool, N15Action, ToolResult
 # exclusion is explicit and survives if the default ever changes.
 DISABLED_TOOLS = ["extract_elements", "find", "set_element_value", "execute_js"]
 TOOL_SET = "browser_tools_core-20260403"
+
+# Screenshot-trimming defaults mirror Yutori's reference loop:
+# https://github.com/yutori-ai/yutori-sdk-python/blob/main/yutori/navigator/payload.py
+# Trimming is size-triggered — we only drop old screenshots when the payload
+# exceeds MAX_REQUEST_BYTES, and we always keep at least KEEP_RECENT_SCREENSHOTS.
+MAX_REQUEST_BYTES = 9_500_000
+KEEP_RECENT_SCREENSHOTS = 6
 
 
 async def sampling_loop(
@@ -69,10 +77,14 @@ async def sampling_loop(
         iteration += 1
         print(f"\n=== Iteration {iteration} ===")
 
+        request_messages, dropped = _trimmed_for_request(conversation_messages)
+        if dropped:
+            print(f"Trimmed {dropped} old screenshot(s) to fit request size limit")
+
         try:
             response = client.chat.completions.create(
                 model=model,
-                messages=conversation_messages,
+                messages=request_messages,
                 max_completion_tokens=max_completion_tokens,
                 temperature=0.3,
                 # n1.5-specific knobs go in extra_body.
@@ -166,6 +178,85 @@ async def sampling_loop(
         "messages": conversation_messages,
         "final_answer": final_answer,
     }
+
+
+def _trimmed_for_request(
+    messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Return a deep-copied messages list with old screenshots stripped to fit MAX_REQUEST_BYTES.
+
+    The most recent KEEP_RECENT_SCREENSHOTS screenshots are protected. The full
+    `messages` list is preserved unchanged for the caller's return value.
+    """
+    trimmed = copy.deepcopy(messages)
+    size = _estimate_size(trimmed)
+    if size <= MAX_REQUEST_BYTES:
+        return trimmed, 0
+
+    image_indices = [i for i, m in enumerate(trimmed) if _message_has_image(m)]
+    if not image_indices:
+        return trimmed, 0
+
+    protected = set(image_indices[-max(1, KEEP_RECENT_SCREENSHOTS):])
+    removed = 0
+
+    for idx in image_indices:
+        if size <= MAX_REQUEST_BYTES:
+            break
+        if idx in protected:
+            continue
+        if _strip_one_image(trimmed[idx]):
+            removed += 1
+            size = _estimate_size(trimmed)
+
+    # If still over, strip from the protected window too — but always keep the latest.
+    if size > MAX_REQUEST_BYTES:
+        last_idx = image_indices[-1]
+        for idx in image_indices:
+            if size <= MAX_REQUEST_BYTES:
+                break
+            if idx == last_idx:
+                continue
+            if _strip_one_image(trimmed[idx]):
+                removed += 1
+                size = _estimate_size(trimmed)
+
+    return trimmed, removed
+
+
+def _estimate_size(messages: list[dict[str, Any]]) -> int:
+    return len(json.dumps(messages, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+
+
+def _message_has_image(msg: dict[str, Any]) -> bool:
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(isinstance(p, dict) and p.get("type") == "image_url" for p in content)
+
+
+def _strip_one_image(msg: dict[str, Any]) -> bool:
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return False
+
+    removed = False
+    new_content: list[dict[str, Any]] = []
+    for part in content:
+        if not removed and isinstance(part, dict) and part.get("type") == "image_url":
+            removed = True
+            continue
+        new_content.append(part)
+
+    if not removed:
+        return False
+
+    has_text = any(isinstance(p, dict) and p.get("type") == "text" for p in new_content)
+    if not has_text:
+        new_content.append({"type": "text", "text": "Screenshot omitted to stay under request size limit."})
+
+    msg["content"] = new_content
+    return True
 
 
 def _scale_coordinates(action: N15Action, viewport_width: int, viewport_height: int) -> N15Action:
