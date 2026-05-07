@@ -251,12 +251,14 @@ class ComputerTool:
             raise ToolError("key is required for hold_key action")
 
         mapped_key = self._map_key(key)
-        duration = action.get("duration") or 1000
+        # Yutori emits `duration` in seconds; Kernel SDK's press_key takes ms.
+        duration_s = action.get("duration")
+        duration_ms = int(duration_s * 1000) if duration_s and duration_s > 0 else 1000
 
         self.kernel.browsers.computer.press_key(
             self.session_id,
             keys=[mapped_key],
-            duration=duration,
+            duration=duration_ms,
         )
 
         await asyncio.sleep(SCREENSHOT_DELAY_S)
@@ -276,8 +278,9 @@ class ComputerTool:
         return await self.screenshot()
 
     async def _handle_wait(self, action: N15Action) -> ToolResult:
+        # Yutori emits `duration` in seconds (matches reference impl).
         duration = action.get("duration")
-        seconds = (duration / 1000) if duration and duration > 0 else 2
+        seconds = duration if duration and duration > 0 else 2
         await asyncio.sleep(seconds)
         return await self.screenshot()
 

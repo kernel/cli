@@ -285,7 +285,8 @@ export class ComputerTool {
     }
 
     const mappedKey = this.mapKey(key);
-    const durationMs = action.duration && action.duration > 0 ? action.duration : 1000;
+    // Yutori emits `duration` in seconds; Kernel SDK's pressKey takes ms.
+    const durationMs = action.duration && action.duration > 0 ? Math.round(action.duration * 1000) : 1000;
 
     await this.kernel.browsers.computer.pressKey(this.sessionId, {
       keys: [mappedKey],
@@ -310,7 +311,8 @@ export class ComputerTool {
   }
 
   private async handleWait(action: N15Action): Promise<ToolResult> {
-    const durationMs = action.duration && action.duration > 0 ? action.duration : 2000;
+    // Yutori emits `duration` in seconds (matches reference impl).
+    const durationMs = action.duration && action.duration > 0 ? Math.round(action.duration * 1000) : 2000;
     await this.sleep(durationMs);
     return this.screenshot();
   }
