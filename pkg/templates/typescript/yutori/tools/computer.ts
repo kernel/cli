@@ -414,22 +414,19 @@ export class ComputerTool {
   }
 
   private mapKey(key: string): string {
-    if (key.includes('+')) {
-      const parts = key.split('+');
-      const mappedParts = parts.map(part => {
-        const trimmed = part.trim();
-        const lower = trimmed.toLowerCase();
-        
-        if (MODIFIER_MAP[lower]) {
-          return MODIFIER_MAP[lower];
-        }
-        
-        return KEY_MAP[trimmed] || trimmed;
-      });
-      return mappedParts.join('+');
-    }
+    const mapPart = (part: string): string => {
+      const trimmed = part.trim();
+      const lower = trimmed.toLowerCase();
+      if (MODIFIER_MAP[lower]) {
+        return MODIFIER_MAP[lower];
+      }
+      return KEY_MAP[trimmed] || trimmed;
+    };
 
-    return KEY_MAP[key] || key;
+    if (key.includes('+')) {
+      return key.split('+').map(mapPart).join('+');
+    }
+    return mapPart(key);
   }
 
   private sleep(ms: number): Promise<void> {

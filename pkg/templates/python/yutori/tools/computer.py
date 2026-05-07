@@ -374,18 +374,13 @@ class ComputerTool:
         return {"x": int(x), "y": int(y)}
 
     def _map_key(self, key: str) -> str:
-        if "+" in key:
-            parts = key.split("+")
-            mapped_parts = []
-            for part in parts:
-                trimmed = part.strip()
-                lower = trimmed.lower()
-                
-                if lower in MODIFIER_MAP:
-                    mapped_parts.append(MODIFIER_MAP[lower])
-                else:
-                    mapped_parts.append(KEY_MAP.get(trimmed, trimmed))
-            
-            return "+".join(mapped_parts)
+        def map_part(part: str) -> str:
+            trimmed = part.strip()
+            lower = trimmed.lower()
+            if lower in MODIFIER_MAP:
+                return MODIFIER_MAP[lower]
+            return KEY_MAP.get(trimmed, trimmed)
 
-        return KEY_MAP.get(key, key)
+        if "+" in key:
+            return "+".join(map_part(p) for p in key.split("+"))
+        return map_part(key)
