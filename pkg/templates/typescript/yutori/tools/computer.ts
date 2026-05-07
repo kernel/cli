@@ -229,11 +229,14 @@ export class ComputerTool {
         break;
     }
 
+    const holdKeys = action.modifier ? [this.mapKey(action.modifier)] : undefined;
+
     await this.kernel.browsers.computer.scroll(this.sessionId, {
       x: coords.x,
       y: coords.y,
       delta_x,
       delta_y,
+      ...(holdKeys ? { hold_keys: holdKeys } : {}),
     });
 
     await this.sleep(SCREENSHOT_DELAY_MS);

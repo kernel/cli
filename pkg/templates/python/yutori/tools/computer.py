@@ -199,13 +199,17 @@ class ComputerTool:
         elif direction == "right":
             delta_x = notches
 
-        self.kernel.browsers.computer.scroll(
-            self.session_id,
-            x=coords["x"],
-            y=coords["y"],
-            delta_x=delta_x,
-            delta_y=delta_y,
-        )
+        modifier = action.get("modifier")
+        scroll_kwargs: dict[str, Any] = {
+            "x": coords["x"],
+            "y": coords["y"],
+            "delta_x": delta_x,
+            "delta_y": delta_y,
+        }
+        if modifier:
+            scroll_kwargs["hold_keys"] = [self._map_key(modifier)]
+
+        self.kernel.browsers.computer.scroll(self.session_id, **scroll_kwargs)
 
         await asyncio.sleep(SCREENSHOT_DELAY_S)
         screenshot_result = await self.screenshot()
