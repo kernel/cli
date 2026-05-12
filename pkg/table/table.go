@@ -1,10 +1,12 @@
 package table
 
 import (
+	"os"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/pterm/pterm"
+	"golang.org/x/term"
 )
 
 // PrintTableNoPad renders a table similar to pterm.DefaultTable, but it avoids
@@ -17,12 +19,15 @@ func PrintTableNoPad(data pterm.TableData, hasHeader bool) {
 		return
 	}
 
-	// Get terminal width and truncate data to fit
-	termWidth := pterm.GetTerminalWidth()
-	if termWidth <= 0 {
-		termWidth = 80 // fallback
+	// Only truncate columns when outputting to a terminal.
+	// When piped (non-TTY), output full values so grep/awk/etc. work correctly.
+	if term.IsTerminal(int(os.Stdout.Fd())) {
+		termWidth := pterm.GetTerminalWidth()
+		if termWidth <= 0 {
+			termWidth = 80 // fallback
+		}
+		data = truncateTableData(data, termWidth)
 	}
-	data = truncateTableData(data, termWidth)
 
 	// Determine number of columns from the first row
 	numCols := len(data[0])
@@ -88,6 +93,11 @@ func PrintTableNoPad(data pterm.TableData, hasHeader bool) {
 	}
 
 	pterm.Print(b.String())
+}
+
+// IsStdoutTTY reports whether stdout is connected to a terminal.
+func IsStdoutTTY() bool {
+	return term.IsTerminal(int(os.Stdout.Fd()))
 }
 
 // truncateTableData intelligently truncates table cells to fit within terminal width

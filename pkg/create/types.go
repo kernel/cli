@@ -56,3 +56,16 @@ func NormalizeLanguage(language string) string {
 		return language
 	}
 }
+
+// LanguageShorthand returns the shorthand for a canonical language name,
+// or an empty string if the language has no shorthand. Inverse of NormalizeLanguage.
+func LanguageShorthand(language string) string {
+	switch language {
+	case LanguageTypeScript:
+		return LanguageShorthandTypeScript
+	case LanguagePython:
+		return LanguageShorthandPython
+	default:
+		return ""
+	}
+}
