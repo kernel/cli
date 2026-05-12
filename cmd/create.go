@@ -88,12 +88,9 @@ func init() {
 func supportedLanguageDisplay() []string {
 	out := make([]string, 0, len(create.SupportedLanguages))
 	for _, l := range create.SupportedLanguages {
-		switch l {
-		case create.LanguageTypeScript:
-			out = append(out, l+"|"+create.LanguageShorthandTypeScript)
-		case create.LanguagePython:
-			out = append(out, l+"|"+create.LanguageShorthandPython)
-		default:
+		if s := create.LanguageShorthand(l); s != "" {
+			out = append(out, l+"|"+s)
+		} else {
 			out = append(out, l)
 		}
 	}
@@ -111,12 +108,9 @@ func buildCreateLongHelp() string {
 
 	b.WriteString("Languages:\n")
 	for _, l := range create.SupportedLanguages {
-		switch l {
-		case create.LanguageTypeScript:
-			fmt.Fprintf(&b, "  %s (shorthand: %s)\n", l, create.LanguageShorthandTypeScript)
-		case create.LanguagePython:
-			fmt.Fprintf(&b, "  %s (shorthand: %s)\n", l, create.LanguageShorthandPython)
-		default:
+		if s := create.LanguageShorthand(l); s != "" {
+			fmt.Fprintf(&b, "  %s (shorthand: %s)\n", l, s)
+		} else {
 			fmt.Fprintf(&b, "  %s\n", l)
 		}
 	}
