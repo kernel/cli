@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/kernel/cli/pkg/create"
 	"github.com/pterm/pterm"
@@ -67,14 +69,74 @@ func (c CreateCmd) Create(ctx context.Context, ci create.CreateInput) error {
 var createCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new application",
-	Long:  "Commands for creating new Kernel applications",
-	RunE:  runCreateApp,
+	Long:  buildCreateLongHelp(),
+	Example: strings.Join([]string{
+		"create --name my-app --language typescript --template anthropic-computer-use",
+		"create -n my-app -l py -t sample-app",
+	}, "\n"),
+	RunE: runCreateApp,
 }
 
 func init() {
 	createCmd.Flags().StringP("name", "n", "", "Name of the application")
-	createCmd.Flags().StringP("language", "l", "", "Language of the application")
-	createCmd.Flags().StringP("template", "t", "", "Template to use for the application")
+	createCmd.Flags().StringP("language", "l", "", fmt.Sprintf("Language of the application (%s)", strings.Join(supportedLanguageDisplay(), ", ")))
+	createCmd.Flags().StringP("template", "t", "", "Template to use for the application (see 'kernel create --help' for the full list)")
+}
+
+// supportedLanguageDisplay returns each supported language with its shorthand,
+// e.g. ["typescript|ts", "python|py"], for inline flag-usage hints.
+func supportedLanguageDisplay() []string {
+	out := make([]string, 0, len(create.SupportedLanguages))
+	for _, l := range create.SupportedLanguages {
+		if s := create.LanguageShorthand(l); s != "" {
+			out = append(out, l+"|"+s)
+		} else {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// buildCreateLongHelp renders the Long help text for `kernel create`,
+// listing supported languages and every template (with descriptions and
+// which languages it supports) so agents and scripts can pick non-interactively.
+func buildCreateLongHelp() string {
+	var b strings.Builder
+	b.WriteString("Commands for creating new Kernel applications.\n\n")
+	b.WriteString("Pass --name, --language and --template to scaffold non-interactively;\n")
+	b.WriteString("any omitted flag falls back to an interactive prompt.\n\n")
+
+	b.WriteString("Languages:\n")
+	for _, l := range create.SupportedLanguages {
+		if s := create.LanguageShorthand(l); s != "" {
+			fmt.Fprintf(&b, "  %s (shorthand: %s)\n", l, s)
+		} else {
+			fmt.Fprintf(&b, "  %s\n", l)
+		}
+	}
+
+	keys := make([]string, 0, len(create.Templates))
+	for k := range create.Templates {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	keyWidth := 0
+	for _, k := range keys {
+		if len(k) > keyWidth {
+			keyWidth = len(k)
+		}
+	}
+
+	b.WriteString("\nTemplates:\n")
+	for _, k := range keys {
+		info := create.Templates[k]
+		langs := append([]string(nil), info.Languages...)
+		sort.Strings(langs)
+		fmt.Fprintf(&b, "  %-*s  %s [%s]\n", keyWidth, k, info.Description, strings.Join(langs, ", "))
+	}
+
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func runCreateApp(cmd *cobra.Command, args []string) error {
