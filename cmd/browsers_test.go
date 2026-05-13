@@ -1632,6 +1632,41 @@ func TestBrowsersCreate_WithViewportNoRefreshRate(t *testing.T) {
 	assert.False(t, captured.Viewport.RefreshRate.Valid())
 }
 
+func TestBrowsersCreate_WithStartURL(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+		captured = body
+		return &kernel.BrowserNewResponse{SessionID: "session123", CdpWsURL: "ws://example"}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{
+		StartURL: "https://example.com",
+	})
+
+	assert.NoError(t, err)
+	assert.True(t, captured.StartURL.Valid())
+	assert.Equal(t, "https://example.com", captured.StartURL.Value)
+}
+
+func TestBrowsersCreate_RejectsStartURLFlagToken(t *testing.T) {
+	called := false
+	fake := &FakeBrowsersService{NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+		called = true
+		return &kernel.BrowserNewResponse{}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{
+		StartURL: "--headless",
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--start-url requires a URL value")
+	assert.False(t, called)
+}
+
 func TestBrowsersCreate_WithInvalidViewport(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeBrowsersService{}
