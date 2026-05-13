@@ -30,7 +30,7 @@ async def cua_task(
     payload: QueryInput,
 ) -> QueryOutput:
     """
-    Process a user query using Yutori n1 Computer Use with Kernel's browser automation.
+    Process a user query using Yutori n1.5 Computer Use with Kernel's browser automation.
 
     Args:
         ctx: Kernel context containing invocation information
@@ -58,7 +58,7 @@ async def cua_task(
         print("Kernel browser live view url:", session.live_view_url)
 
         loop_result = await sampling_loop(
-            model="n1-latest",
+            model="n1.5-latest",
             task=payload["query"],
             api_key=str(api_key),
             kernel=session.kernel,
