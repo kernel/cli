@@ -87,8 +87,8 @@ var Templates = map[string]TemplateInfo{
 		Languages:   []string{LanguageTypeScript, LanguagePython},
 	},
 	TemplateYutoriComputerUse: {
-		Name:        "Yutori n1 Computer Use",
-		Description: "Implements a Yutori n1 computer use agent",
+		Name:        "Yutori n1.5 Computer Use",
+		Description: "Implements a Yutori n1.5 computer use agent",
 		Languages:   []string{LanguageTypeScript, LanguagePython},
 	},
 	TemplateTzafonComputerUse: {

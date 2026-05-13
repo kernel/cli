@@ -1,8 +1,10 @@
-# Kernel TypeScript Sample App - Yutori n1 Computer Use
+# Kernel TypeScript Sample App - Yutori n1.5 Computer Use
 
-This is a Kernel application that implements a prompt loop using Yutori's n1 computer use model with Kernel's Computer Controls API.
+This Kernel app implements a prompt loop using Yutori's Navigator n1.5 with Kernel's Computer Controls API.
 
-[n1](https://yutori.com/blog/introducing-navigator) is Yutori's pixels-to-actions LLM that predicts browser actions from screenshots.
+[Navigator n1.5](https://yutori.com/blog/introducing-n1-5) is Yutori's pixels-to-actions LLM that predicts browser actions from screenshots.
+
+This template runs n1.5 in **computer-use-only mode**. n1.5 also supports a hybrid vision + DOM/JavaScript path (page-state extraction, custom JS, structured JSON output) for multi-field forms and bulk data extraction, but those tools are intentionally disabled here — see [Disabled tools](#disabled-tools).
 
 ## Setup
 
@@ -55,9 +57,9 @@ kernel invoke ts-yutori-cua cua-task --payload '{"query": "Enter https://example
 
 ## Viewport Configuration
 
-Yutori n1 recommends a **1280×800 (WXGA, 16:10)** viewport for best grounding accuracy.
+Yutori n1.5 recommends a **1280×800 (WXGA, 16:10)** viewport for best grounding accuracy.
 
-> **Note:** n1 outputs coordinates in a 1000×1000 relative space, which are automatically scaled to the actual viewport dimensions.
+> **Note:** n1.5 outputs coordinates in a 1000×1000 relative space, which are automatically scaled to the actual viewport dimensions.
 
 See [Kernel Viewport Documentation](https://www.kernel.sh/docs/browsers/viewport) for all supported configurations.
 
@@ -65,25 +67,36 @@ See [Kernel Viewport Documentation](https://www.kernel.sh/docs/browsers/viewport
 
 Screenshots are automatically converted to WebP format for better compression across multi-step trajectories, as recommended by Yutori.
 
-## n1-latest Supported Actions
+## n1.5-latest Supported Actions
+
+This template uses the `browser_tools_core-20260403` tool set — coordinate-based browser actions that operate on screenshots only.
 
 | Action | Description |
 |--------|-------------|
-| `left_click` | Left mouse click at coordinates |
-| `double_click` | Double-click at coordinates |
-| `triple_click` | Triple-click at coordinates |
+| `left_click` | Left mouse click at coordinates (supports `modifier`) |
+| `double_click` | Double-click at coordinates (supports `modifier`) |
+| `triple_click` | Triple-click at coordinates (supports `modifier`) |
+| `middle_click` | Middle mouse click at coordinates |
 | `right_click` | Right mouse click at coordinates |
+| `mouse_move` | Move mouse to coordinates without clicking |
+| `mouse_down` | Press the left mouse button at coordinates |
+| `mouse_up` | Release the left mouse button at coordinates |
 | `scroll` | Scroll page in a direction |
 | `type` | Type text into focused element |
-| `key_press` | Send keyboard input |
-| `hover` | Move mouse without clicking |
+| `key_press` | Send a single key or key combination |
+| `hold_key` | Hold a key for a duration |
 | `drag` | Click-and-drag operation |
 | `wait` | Pause for UI to update |
 | `refresh` | Reload current page |
 | `go_back` | Navigate back in history |
+| `go_forward` | Navigate forward in history |
 | `goto_url` | Navigate to a URL |
+
+### Disabled tools
+
+The DOM/Playwright-based "expanded" tools (`extract_elements`, `find`, `set_element_value`, `execute_js`) are intentionally disabled via the `disable_tools` request parameter — this template runs computer-use only and does not expose a Playwright page to the model.
 
 ## Resources
 
-- [Yutori n1 API Documentation](https://docs.yutori.com/reference/n1)
+- [Yutori n1.5 API Documentation](https://docs.yutori.com/reference/n1-5)
 - [Kernel Documentation](https://www.kernel.sh/docs/quickstart)
