@@ -208,6 +208,7 @@ Commands with JSON output support:
   - `-s, --stealth` - Launch browser in stealth mode to avoid detection
   - `-H, --headless` - Launch browser without GUI access
   - `--kiosk` - Launch browser in kiosk mode
+  - `--start-url <url>` - Initial page to open on launch
   - `--pool-id <id>` - Acquire a browser from the specified pool (mutually exclusive with --pool-name; ignores other session flags)
   - `--pool-name <name>` - Acquire a browser from the pool name (mutually exclusive with --pool-id; ignores other session flags)
   - `--output json`, `-o json` - Output raw JSON object
@@ -242,12 +243,12 @@ Commands with JSON output support:
   - `--fill-rate <n>` - Percentage of the pool to fill per minute
   - `--timeout <seconds>` - Idle timeout for browsers acquired from the pool
   - `--stealth`, `--headless`, `--kiosk` - Default pool configuration
-  - `--profile-id`, `--profile-name`, `--save-changes`, `--proxy-id`, `--extension`, `--viewport` - Same semantics as `kernel browsers create`
+  - `--profile-id`, `--profile-name`, `--save-changes`, `--proxy-id`, `--start-url`, `--extension`, `--viewport` - Same semantics as `kernel browsers create`
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools get <id-or-name>` - Get pool details
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools update <id-or-name>` - Update pool configuration
-  - Same flags as create plus `--discard-all-idle` to discard all idle browsers in the pool and refill at the specified fill rate
+  - Same flags as create plus `--clear-start-url` (remove the pool's start URL) and `--discard-all-idle` (discard all idle browsers and refill)
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools delete <id-or-name>` - Delete a pool
   - `--force` - Force delete even if browsers are leased

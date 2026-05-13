@@ -86,6 +86,7 @@ type BrowserPoolsCreateInput struct {
 	ProfileName        string
 	ProfileSaveChanges BoolFlag
 	ProxyID            string
+	StartURL           string
 	Extensions         []string
 	Viewport           string
 	Output             string
@@ -130,6 +131,9 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 
 	if in.ProxyID != "" {
 		params.ProxyID = kernel.String(in.ProxyID)
+	}
+	if in.StartURL != "" {
+		params.StartURL = kernel.String(in.StartURL)
 	}
 
 	params.Extensions = buildExtensionsParam(in.Extensions)
@@ -196,6 +200,7 @@ func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error
 		{"Kiosk Mode", fmt.Sprintf("%t", cfg.KioskMode)},
 		{"Profile", formatProfile(cfg.Profile)},
 		{"Proxy ID", util.OrDash(cfg.ProxyID)},
+		{"Start URL", util.OrDash(cfg.StartURL)},
 		{"Extensions", formatExtensions(cfg.Extensions)},
 		{"Viewport", formatViewport(cfg.Viewport)},
 	}
@@ -217,6 +222,8 @@ type BrowserPoolsUpdateInput struct {
 	ProfileName        string
 	ProfileSaveChanges BoolFlag
 	ProxyID            string
+	StartURL           string
+	ClearStartURL      bool
 	Extensions         []string
 	Viewport           string
 	DiscardAllIdle     BoolFlag
@@ -226,6 +233,9 @@ type BrowserPoolsUpdateInput struct {
 func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput) error {
 	if in.Output != "" && in.Output != "json" {
 		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+	if in.StartURL != "" && in.ClearStartURL {
+		return fmt.Errorf("cannot specify both --start-url and --clear-start-url")
 	}
 
 	params := kernel.BrowserPoolUpdateParams{}
@@ -266,6 +276,11 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 
 	if in.ProxyID != "" {
 		params.ProxyID = kernel.String(in.ProxyID)
+	}
+	if in.ClearStartURL {
+		params.StartURL = kernel.String("")
+	} else if in.StartURL != "" {
+		params.StartURL = kernel.String(in.StartURL)
 	}
 
 	params.Extensions = buildExtensionsParam(in.Extensions)
@@ -351,6 +366,9 @@ func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInpu
 		{"Session ID", resp.SessionID},
 		{"CDP WebSocket URL", resp.CdpWsURL},
 		{"Live View URL", resp.BrowserLiveViewURL},
+	}
+	if resp.StartURL != "" {
+		tableData = append(tableData, []string{"Start URL", resp.StartURL})
 	}
 	PrintTableNoPad(tableData, true)
 	return nil
@@ -472,6 +490,7 @@ func init() {
 	browserPoolsCreateCmd.Flags().String("profile-name", "", "Profile name")
 	browserPoolsCreateCmd.Flags().Bool("save-changes", false, "Save changes to profile")
 	browserPoolsCreateCmd.Flags().String("proxy-id", "", "Proxy ID")
+	browserPoolsCreateCmd.Flags().String("start-url", "", "Initial page to open for new browsers")
 	browserPoolsCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsCreateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
 
@@ -488,6 +507,8 @@ func init() {
 	browserPoolsUpdateCmd.Flags().String("profile-name", "", "Profile name")
 	browserPoolsUpdateCmd.Flags().Bool("save-changes", false, "Save changes to profile")
 	browserPoolsUpdateCmd.Flags().String("proxy-id", "", "Proxy ID")
+	browserPoolsUpdateCmd.Flags().String("start-url", "", "Initial page to open for new browsers")
+	browserPoolsUpdateCmd.Flags().Bool("clear-start-url", false, "Clear the pool start URL")
 	browserPoolsUpdateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsUpdateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
 	browserPoolsUpdateCmd.Flags().Bool("discard-all-idle", false, "Discard all idle browsers")
@@ -539,6 +560,7 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	saveChanges, _ := cmd.Flags().GetBool("save-changes")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
+	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	output, _ := cmd.Flags().GetString("output")
@@ -555,6 +577,7 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 		ProfileName:        profileName,
 		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
 		ProxyID:            proxyID,
+		StartURL:           startURL,
 		Extensions:         extensions,
 		Viewport:           viewport,
 		Output:             output,
@@ -585,6 +608,8 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	saveChanges, _ := cmd.Flags().GetBool("save-changes")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
+	startURL, _ := cmd.Flags().GetString("start-url")
+	clearStartURL, _ := cmd.Flags().GetBool("clear-start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	discardIdle, _ := cmd.Flags().GetBool("discard-all-idle")
@@ -603,6 +628,8 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 		ProfileName:        profileName,
 		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
 		ProxyID:            proxyID,
+		StartURL:           startURL,
+		ClearStartURL:      clearStartURL,
 		Extensions:         extensions,
 		Viewport:           viewport,
 		DiscardAllIdle:     BoolFlag{Set: cmd.Flags().Changed("discard-all-idle"), Value: discardIdle},
