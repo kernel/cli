@@ -347,6 +347,9 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	if in.Output != "" && in.Output != "json" {
 		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
+	if err := validateStartURLFlag(in.StartURL); err != nil {
+		return err
+	}
 
 	if in.Output != "json" {
 		pterm.Info.Println("Creating browser session...")

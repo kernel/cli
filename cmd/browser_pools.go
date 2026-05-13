@@ -96,6 +96,9 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 	if in.Output != "" && in.Output != "json" {
 		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
+	if err := validateStartURLFlag(in.StartURL); err != nil {
+		return err
+	}
 
 	params := kernel.BrowserPoolNewParams{
 		Size: in.Size,
@@ -233,6 +236,9 @@ type BrowserPoolsUpdateInput struct {
 func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput) error {
 	if in.Output != "" && in.Output != "json" {
 		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+	if err := validateStartURLFlag(in.StartURL); err != nil {
+		return err
 	}
 	if in.StartURL != "" && in.ClearStartURL {
 		return fmt.Errorf("cannot specify both --start-url and --clear-start-url")
@@ -690,6 +696,13 @@ func buildProfileParam(profileID, profileName string, saveChanges BoolFlag) (*ke
 		profile.Name = kernel.String(profileName)
 	}
 	return &profile, nil
+}
+
+func validateStartURLFlag(startURL string) error {
+	if strings.HasPrefix(startURL, "-") {
+		return fmt.Errorf("--start-url requires a URL value")
+	}
+	return nil
 }
 
 func buildExtensionsParam(extensions []string) []kernel.BrowserExtensionParam {

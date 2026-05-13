@@ -1650,6 +1650,23 @@ func TestBrowsersCreate_WithStartURL(t *testing.T) {
 	assert.Equal(t, "https://example.com", captured.StartURL.Value)
 }
 
+func TestBrowsersCreate_RejectsStartURLFlagToken(t *testing.T) {
+	called := false
+	fake := &FakeBrowsersService{NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+		called = true
+		return &kernel.BrowserNewResponse{}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{
+		StartURL: "--headless",
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--start-url requires a URL value")
+	assert.False(t, called)
+}
+
 func TestBrowsersCreate_WithInvalidViewport(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeBrowsersService{}
