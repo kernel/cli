@@ -11,6 +11,8 @@ n1.5-latest uses an OpenAI-compatible API with tool_calls:
 @see https://docs.yutori.com/reference/n1-5
 """
 
+from __future__ import annotations
+
 import copy
 import json
 import platform
@@ -225,15 +227,15 @@ async def sampling_loop(
 
 def _format_task_with_context(task: str, user_timezone: str, user_location: str) -> str:
     """Append location, timezone, and current date/time to the task message."""
-    try:
-        tz = ZoneInfo(user_timezone)
-        tz_label = user_timezone
-    except (ZoneInfoNotFoundError, ValueError, OSError):
+    for timezone_name in [user_timezone, "America/Los_Angeles", "UTC"]:
         try:
-            tz = ZoneInfo("UTC")
-            tz_label = "UTC"
-        except (ZoneInfoNotFoundError, OSError):
-            return task
+            tz = ZoneInfo(timezone_name)
+            tz_label = timezone_name
+            break
+        except (ZoneInfoNotFoundError, ValueError, OSError):
+            continue
+    else:
+        return task
 
     now = datetime.now(tz)
     day_fmt = "%#d" if platform.system() == "Windows" else "%-d"

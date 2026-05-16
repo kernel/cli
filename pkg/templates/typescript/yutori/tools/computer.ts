@@ -133,6 +133,11 @@ function mapToken(token: string): string {
   return KEY_MAP[lower] ?? token.trim();
 }
 
+function normalizeUrl(url: string): string {
+  const trimmed = url.trim();
+  return trimmed.includes('://') ? trimmed : `https://${trimmed}`;
+}
+
 // Parse an n1.5 key expression into one Kernel combo string per sequential
 // press. Spaces separate sequential presses; `+` separates simultaneous tokens
 // within a press. Examples:
@@ -404,10 +409,11 @@ export class ComputerTool {
     if (!url) {
       throw new ToolError('url is required for goto_url action');
     }
+    const targetUrl = normalizeUrl(url);
 
     if (this.kioskMode) {
       const response = await this.kernel.browsers.playwright.execute(this.sessionId, {
-        code: `await page.goto(${JSON.stringify(url)});`,
+        code: `await page.goto(${JSON.stringify(targetUrl)});`,
         timeout_sec: 60,
       });
       if (!response.success) {
@@ -428,7 +434,7 @@ export class ComputerTool {
     await this.sleep(100);
 
     await this.kernel.browsers.computer.typeText(this.sessionId, {
-      text: url,
+      text: targetUrl,
       delay: TYPING_DELAY_MS,
     });
     await this.sleep(ACTION_DELAY_MS);

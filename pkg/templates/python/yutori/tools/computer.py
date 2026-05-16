@@ -7,6 +7,8 @@ Screenshots are converted to WebP for better compression across multi-step traje
 @see https://docs.yutori.com/reference/n1-5
 """
 
+from __future__ import annotations
+
 import asyncio
 import base64
 import json
@@ -126,6 +128,13 @@ KEY_MAP: dict[str, str] = {
 def _map_token(token: str) -> str:
     lower = token.strip().lower()
     return KEY_MAP.get(lower, token.strip())
+
+
+def _normalize_url(url: str) -> str:
+    trimmed = url.strip()
+    if "://" in trimmed:
+        return trimmed
+    return f"https://{trimmed}"
 
 
 def _parse_key_expression(expr: str) -> list[str]:
@@ -363,11 +372,12 @@ class ComputerTool:
         url = action.get("url")
         if not url:
             raise ToolError("url is required for goto_url action")
+        target_url = _normalize_url(url)
 
         if self.kiosk_mode:
             response = self.kernel.browsers.playwright.execute(
                 self.session_id,
-                code=f"await page.goto({json.dumps(url)});",
+                code=f"await page.goto({json.dumps(target_url)});",
                 timeout_sec=60,
             )
             if not response.success:
@@ -389,7 +399,7 @@ class ComputerTool:
 
         self.kernel.browsers.computer.type_text(
             self.session_id,
-            text=url,
+            text=target_url,
             delay=TYPING_DELAY_MS,
         )
         await asyncio.sleep(ACTION_DELAY_S)

@@ -267,42 +267,23 @@ export async function samplingLoop({
 }
 
 function formatTaskWithContext(task: string, userTimezone: string, userLocation: string): string {
-  let tzLabel = userTimezone;
-  let now: Date;
-  let timeFormatter: Intl.DateTimeFormat;
-  let dateFormatter: Intl.DateTimeFormat;
-  let weekdayFormatter: Intl.DateTimeFormat;
-  try {
-    now = new Date();
-    timeFormatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: userTimezone,
-      hour12: false,
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      timeZoneName: 'short',
-    });
-    dateFormatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: userTimezone,
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    });
-    weekdayFormatter = new Intl.DateTimeFormat('en-US', { timeZone: userTimezone, weekday: 'long' });
-  } catch {
-    tzLabel = 'UTC';
-    now = new Date();
-    timeFormatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'UTC',
-      hour12: false,
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      timeZoneName: 'short',
-    });
-    dateFormatter = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', year: 'numeric', month: 'long', day: 'numeric' });
-    weekdayFormatter = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'long' });
-  }
+  const now = new Date();
+  const tzLabel = resolveTimezone(userTimezone);
+  const timeFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: tzLabel,
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZoneName: 'short',
+  });
+  const dateFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: tzLabel,
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+  const weekdayFormatter = new Intl.DateTimeFormat('en-US', { timeZone: tzLabel, weekday: 'long' });
 
   const context = [
     `User's location: ${userLocation}`,
@@ -313,6 +294,18 @@ function formatTaskWithContext(task: string, userTimezone: string, userLocation:
   ].join('\n');
 
   return `${task}\n\n${context}`;
+}
+
+function resolveTimezone(userTimezone: string): string {
+  for (const timeZone of [userTimezone, 'America/Los_Angeles', 'UTC']) {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone }).format(new Date());
+      return timeZone;
+    } catch {
+      // Try the next fallback.
+    }
+  }
+  return 'UTC';
 }
 
 function formatStopAndSummarize(task: string): string {
