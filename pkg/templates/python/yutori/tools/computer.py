@@ -22,6 +22,18 @@ TYPING_DELAY_MS = 12
 SCREENSHOT_DELAY_S = 0.15
 ACTION_DELAY_S = 0.3
 
+# n1.5 scroll `amount` is in "wheel units" where 1 unit ≈ 10% of the viewport
+# height (~80px at 800px tall). Kernel's delta_y is a wheel-event repeat count
+# where each tick is much smaller in practice, so we multiply.
+SCROLL_NOTCHES_PER_AMOUNT = 4
+
+# WebP quality for screenshots. Kernel returns PNGs, which are crisp and
+# tolerate aggressive WebP compression with no visible degradation — matches
+# Yutori SDK's DEFAULT_WEBP_QUALITY_FOR_PNG=30 (yutori-sdk-python/yutori/
+# navigator/images.py). Lower values cut payload size substantially on long
+# multi-step trajectories.
+WEBP_QUALITY = 30
+
 N15ActionType = Literal[
     "left_click",
     "double_click",
@@ -57,43 +69,80 @@ class N15Action(TypedDict, total=False):
     url: str
 
 
-KEY_MAP = {
-    "Enter": "Return",
-    "Escape": "Escape",
-    "Backspace": "BackSpace",
-    "Tab": "Tab",
-    "Delete": "Delete",
-    "ArrowUp": "Up",
-    "ArrowDown": "Down",
-    "ArrowLeft": "Left",
-    "ArrowRight": "Right",
-    "Home": "Home",
-    "End": "End",
-    "PageUp": "Page_Up",
-    "PageDown": "Page_Down",
-    "F1": "F1",
-    "F2": "F2",
-    "F3": "F3",
-    "F4": "F4",
-    "F5": "F5",
-    "F6": "F6",
-    "F7": "F7",
-    "F8": "F8",
-    "F9": "F9",
-    "F10": "F10",
-    "F11": "F11",
-    "F12": "F12",
+# n1.5 emits lowercase key names (e.g. `enter`, `ctrl+c`, `down down down enter`).
+# Kernel's press_key expects XKeysym names (e.g. `Return`, `Ctrl`, `Page_Up`).
+# Keys not in the map pass through unchanged (printable characters like `a`,
+# `1`, `,` are already XKeysym).
+#
+# Sister implementation (Playwright target instead of XKeysym):
+# https://github.com/yutori-ai/yutori-sdk-python/blob/main/yutori/navigator/keys.py
+KEY_MAP: dict[str, str] = {
+    # Modifiers
+    "ctrl": "Ctrl",
+    "control": "Ctrl",
+    "shift": "Shift",
+    "alt": "Alt",
+    "meta": "Super_L",
+    "command": "Super_L",
+    "cmd": "Super_L",
+    "super": "Super_L",
+    "option": "Alt",
+    # Enter
+    "enter": "Return",
+    "return": "Return",
+    # Navigation
+    "tab": "Tab",
+    "backspace": "BackSpace",
+    "delete": "Delete",
+    "escape": "Escape",
+    "esc": "Escape",
+    "space": "space",
+    # Arrows
+    "up": "Up",
+    "down": "Down",
+    "left": "Left",
+    "right": "Right",
+    "arrowup": "Up",
+    "arrowdown": "Down",
+    "arrowleft": "Left",
+    "arrowright": "Right",
+    # Page nav
+    "home": "Home",
+    "end": "End",
+    "pageup": "Page_Up",
+    "pagedown": "Page_Down",
+    # Function keys
+    **{f"f{i}": f"F{i}" for i in range(1, 13)},
+    # Locks / special
+    "capslock": "Caps_Lock",
+    "numlock": "Num_Lock",
+    "scrolllock": "Scroll_Lock",
+    "insert": "Insert",
+    "pause": "Pause",
+    "printscreen": "Print",
 }
 
-MODIFIER_MAP = {
-    "control": "ctrl",
-    "ctrl": "ctrl",
-    "alt": "alt",
-    "shift": "shift",
-    "meta": "super",
-    "command": "super",
-    "cmd": "super",
-}
+
+def _map_token(token: str) -> str:
+    lower = token.strip().lower()
+    return KEY_MAP.get(lower, token.strip())
+
+
+def _parse_key_expression(expr: str) -> list[str]:
+    """Parse an n1.5 key expression into one Kernel combo per sequential press.
+
+    Spaces separate sequential presses; '+' separates simultaneous tokens
+    within a press. Examples:
+        "enter"             -> ["Return"]
+        "ctrl+c"            -> ["Ctrl+c"]
+        "down down enter"   -> ["Down", "Down", "Return"]
+        "ctrl+shift+t"      -> ["Ctrl+Shift+t"]
+    """
+    return [
+        "+".join(_map_token(token) for token in combo.split("+"))
+        for combo in expr.strip().split()
+        if combo
+    ]
 
 
 class ComputerTool:
@@ -145,7 +194,7 @@ class ComputerTool:
             "num_clicks": num_clicks,
         }
         if modifier:
-            kwargs["hold_keys"] = [self._map_key(modifier)]
+            kwargs["hold_keys"] = [_map_token(modifier)]
 
         self.kernel.browsers.computer.click_mouse(self.session_id, **kwargs)
 
@@ -181,23 +230,25 @@ class ComputerTool:
     async def _handle_scroll(self, action: N15Action) -> ToolResult:
         coords = self._get_coordinates(action.get("coordinates"))
         direction = action.get("direction")
-        notches = max(action.get("amount", 3), 1)
+        amount = max(action.get("amount", 3), 1)
 
         if direction not in ("up", "down", "left", "right"):
             raise ToolError(f"Invalid scroll direction: {direction}")
 
-        # Backend (kernel-images) uses delta_x/delta_y as wheel-event repeat count (notches), not pixels.
+        # Yutori 1 unit ≈ 10% of viewport height; scale into Kernel wheel-event ticks.
+        ticks = amount * SCROLL_NOTCHES_PER_AMOUNT
+
         delta_x = 0
         delta_y = 0
 
         if direction == "up":
-            delta_y = -notches
+            delta_y = -ticks
         elif direction == "down":
-            delta_y = notches
+            delta_y = ticks
         elif direction == "left":
-            delta_x = -notches
+            delta_x = -ticks
         elif direction == "right":
-            delta_x = notches
+            delta_x = ticks
 
         modifier = action.get("modifier")
         scroll_kwargs: dict[str, Any] = {
@@ -207,13 +258,13 @@ class ComputerTool:
             "delta_y": delta_y,
         }
         if modifier:
-            scroll_kwargs["hold_keys"] = [self._map_key(modifier)]
+            scroll_kwargs["hold_keys"] = [_map_token(modifier)]
 
         self.kernel.browsers.computer.scroll(self.session_id, **scroll_kwargs)
 
         await asyncio.sleep(SCREENSHOT_DELAY_S)
         screenshot_result = await self.screenshot()
-        screenshot_result["output"] = f"Scrolled {notches} wheel unit(s) {direction}."
+        screenshot_result["output"] = f"Scrolled {amount} unit(s) {direction}."
         return screenshot_result
 
     async def _handle_type(self, action: N15Action) -> ToolResult:
@@ -235,12 +286,11 @@ class ComputerTool:
         if not key:
             raise ToolError("key is required for key_press action")
 
-        mapped_key = self._map_key(key)
-
-        self.kernel.browsers.computer.press_key(
-            self.session_id,
-            keys=[mapped_key],
-        )
+        # n1.5 supports sequential presses ("down down down enter") — issue each
+        # combo as its own press_key so they're seen as separate keystrokes.
+        combos = _parse_key_expression(key)
+        for combo in combos:
+            self.kernel.browsers.computer.press_key(self.session_id, keys=[combo])
 
         await asyncio.sleep(SCREENSHOT_DELAY_S)
         return await self.screenshot()
@@ -250,16 +300,17 @@ class ComputerTool:
         if not key:
             raise ToolError("key is required for hold_key action")
 
-        mapped_key = self._map_key(key)
         # Yutori emits `duration` in seconds; Kernel SDK's press_key takes ms.
         duration_s = action.get("duration")
         duration_ms = int(duration_s * 1000) if duration_s and duration_s > 0 else 1000
 
-        self.kernel.browsers.computer.press_key(
-            self.session_id,
-            keys=[mapped_key],
-            duration=duration_ms,
-        )
+        combos = _parse_key_expression(key)
+        for combo in combos:
+            self.kernel.browsers.computer.press_key(
+                self.session_id,
+                keys=[combo],
+                duration=duration_ms,
+            )
 
         await asyncio.sleep(SCREENSHOT_DELAY_S)
         return await self.screenshot()
@@ -295,7 +346,7 @@ class ComputerTool:
     async def _handle_go_back(self, action: N15Action) -> ToolResult:
         self.kernel.browsers.computer.press_key(
             self.session_id,
-            keys=["alt+Left"],
+            keys=["Alt+Left"],
         )
         await asyncio.sleep(1.5)
         return await self.screenshot()
@@ -303,7 +354,7 @@ class ComputerTool:
     async def _handle_go_forward(self, action: N15Action) -> ToolResult:
         self.kernel.browsers.computer.press_key(
             self.session_id,
-            keys=["alt+Right"],
+            keys=["Alt+Right"],
         )
         await asyncio.sleep(1.5)
         return await self.screenshot()
@@ -326,13 +377,13 @@ class ComputerTool:
 
         self.kernel.browsers.computer.press_key(
             self.session_id,
-            keys=["ctrl+l"],
+            keys=["Ctrl+l"],
         )
         await asyncio.sleep(ACTION_DELAY_S)
 
         self.kernel.browsers.computer.press_key(
             self.session_id,
-            keys=["ctrl+a"],
+            keys=["Ctrl+a"],
         )
         await asyncio.sleep(0.1)
 
@@ -358,7 +409,7 @@ class ComputerTool:
             png_bytes = response.read()
             img = Image.open(BytesIO(png_bytes))
             webp_buf = BytesIO()
-            img.save(webp_buf, "WEBP", quality=80)
+            img.save(webp_buf, "WEBP", quality=WEBP_QUALITY)
             base64_image = base64.b64encode(webp_buf.getvalue()).decode("utf-8")
             return {"base64_image": base64_image}
         except Exception as e:
@@ -375,15 +426,3 @@ class ComputerTool:
             raise ToolError(f"Invalid coordinates: {coords}")
 
         return {"x": int(x), "y": int(y)}
-
-    def _map_key(self, key: str) -> str:
-        def map_part(part: str) -> str:
-            trimmed = part.strip()
-            lower = trimmed.lower()
-            if lower in MODIFIER_MAP:
-                return MODIFIER_MAP[lower]
-            return KEY_MAP.get(trimmed, trimmed)
-
-        if "+" in key:
-            return "+".join(map_part(p) for p in key.split("+"))
-        return map_part(key)

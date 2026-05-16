@@ -15,6 +15,18 @@ const TYPING_DELAY_MS = 12;
 const SCREENSHOT_DELAY_MS = 150;
 const ACTION_DELAY_MS = 300;
 
+// n1.5 scroll `amount` is in "wheel units" where 1 unit ≈ 10% of the viewport
+// height (~80px at 800px tall). Kernel's `delta_y` is a wheel-event repeat
+// count where each tick is much smaller in practice, so we multiply.
+const SCROLL_NOTCHES_PER_AMOUNT = 4;
+
+// WebP quality for screenshots. Kernel returns PNGs, which are crisp and
+// tolerate aggressive WebP compression with no visible degradation — matches
+// Yutori SDK's DEFAULT_WEBP_QUALITY_FOR_PNG=30 (yutori-sdk-python/yutori/
+// navigator/images.py). Lower values cut payload size substantially on long
+// multi-step trajectories.
+const WEBP_QUALITY = 30;
+
 export interface ToolResult {
   base64Image?: string;
   output?: string;
@@ -61,43 +73,80 @@ export interface N15Action {
   url?: string;
 }
 
+// n1.5 emits lowercase key names (e.g. `enter`, `ctrl+c`, `down down down enter`).
+// Kernel's press_key expects XKeysym names (e.g. `Return`, `Ctrl`, `Page_Up`).
+// This map covers every key Yutori documents at
+// https://docs.yutori.com/reference/n1-5#key-space — keys not in the map pass
+// through unchanged (printable characters like `a`, `1`, `,` are already XKeysym).
+//
+// Sister implementation (Playwright target instead of XKeysym):
+// https://github.com/yutori-ai/yutori-sdk-python/blob/main/yutori/navigator/keys.py
 const KEY_MAP: Record<string, string> = {
-  'Enter': 'Return',
-  'Escape': 'Escape',
-  'Backspace': 'BackSpace',
-  'Tab': 'Tab',
-  'Delete': 'Delete',
-  'ArrowUp': 'Up',
-  'ArrowDown': 'Down',
-  'ArrowLeft': 'Left',
-  'ArrowRight': 'Right',
-  'Home': 'Home',
-  'End': 'End',
-  'PageUp': 'Page_Up',
-  'PageDown': 'Page_Down',
-  'F1': 'F1',
-  'F2': 'F2',
-  'F3': 'F3',
-  'F4': 'F4',
-  'F5': 'F5',
-  'F6': 'F6',
-  'F7': 'F7',
-  'F8': 'F8',
-  'F9': 'F9',
-  'F10': 'F10',
-  'F11': 'F11',
-  'F12': 'F12',
+  // Modifiers
+  ctrl: 'Ctrl',
+  control: 'Ctrl',
+  shift: 'Shift',
+  alt: 'Alt',
+  meta: 'Super_L',
+  command: 'Super_L',
+  cmd: 'Super_L',
+  super: 'Super_L',
+  option: 'Alt',
+  // Enter
+  enter: 'Return',
+  return: 'Return',
+  // Navigation
+  tab: 'Tab',
+  backspace: 'BackSpace',
+  delete: 'Delete',
+  escape: 'Escape',
+  esc: 'Escape',
+  space: 'space',
+  // Arrows
+  up: 'Up',
+  down: 'Down',
+  left: 'Left',
+  right: 'Right',
+  arrowup: 'Up',
+  arrowdown: 'Down',
+  arrowleft: 'Left',
+  arrowright: 'Right',
+  // Page nav
+  home: 'Home',
+  end: 'End',
+  pageup: 'Page_Up',
+  pagedown: 'Page_Down',
+  // Function keys
+  f1: 'F1', f2: 'F2', f3: 'F3', f4: 'F4', f5: 'F5', f6: 'F6',
+  f7: 'F7', f8: 'F8', f9: 'F9', f10: 'F10', f11: 'F11', f12: 'F12',
+  // Locks / special
+  capslock: 'Caps_Lock',
+  numlock: 'Num_Lock',
+  scrolllock: 'Scroll_Lock',
+  insert: 'Insert',
+  pause: 'Pause',
+  printscreen: 'Print',
 };
 
-const MODIFIER_MAP: Record<string, string> = {
-  'control': 'ctrl',
-  'ctrl': 'ctrl',
-  'alt': 'alt',
-  'shift': 'shift',
-  'meta': 'super',
-  'command': 'super',
-  'cmd': 'super',
-};
+function mapToken(token: string): string {
+  const lower = token.trim().toLowerCase();
+  return KEY_MAP[lower] ?? token.trim();
+}
+
+// Parse an n1.5 key expression into one Kernel combo string per sequential
+// press. Spaces separate sequential presses; `+` separates simultaneous tokens
+// within a press. Examples:
+//   "enter"             -> ["Return"]
+//   "ctrl+c"            -> ["Ctrl+c"]
+//   "down down enter"   -> ["Down", "Down", "Return"]
+//   "ctrl+shift+t"      -> ["Ctrl+Shift+t"]
+function parseKeyExpression(expr: string): string[] {
+  return expr
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((combo) => combo.split('+').map(mapToken).join('+'));
+}
 
 export class ComputerTool {
   private kernel: Kernel;
@@ -161,7 +210,7 @@ export class ComputerTool {
 
   private async handleClick(action: N15Action, button: 'left' | 'right' | 'middle', numClicks: number): Promise<ToolResult> {
     const coords = this.getCoordinates(action.coordinates);
-    const holdKeys = action.modifier ? [this.mapKey(action.modifier)] : undefined;
+    const holdKeys = action.modifier ? [mapToken(action.modifier)] : undefined;
 
     await this.kernel.browsers.computer.clickMouse(this.sessionId, {
       x: coords.x,
@@ -205,31 +254,34 @@ export class ComputerTool {
   private async handleScroll(action: N15Action): Promise<ToolResult> {
     const coords = this.getCoordinates(action.coordinates);
     const direction = action.direction;
-    const notches = Math.max(action.amount ?? 3, 1);
+    const amount = Math.max(action.amount ?? 3, 1);
 
     if (!direction || !['up', 'down', 'left', 'right'].includes(direction)) {
       throw new ToolError(`Invalid scroll direction: ${direction}`);
     }
+
+    // Yutori 1 unit ≈ 10% of viewport height; scale into Kernel wheel-event ticks.
+    const ticks = amount * SCROLL_NOTCHES_PER_AMOUNT;
 
     let delta_x = 0;
     let delta_y = 0;
 
     switch (direction) {
       case 'up':
-        delta_y = -notches;
+        delta_y = -ticks;
         break;
       case 'down':
-        delta_y = notches;
+        delta_y = ticks;
         break;
       case 'left':
-        delta_x = -notches;
+        delta_x = -ticks;
         break;
       case 'right':
-        delta_x = notches;
+        delta_x = ticks;
         break;
     }
 
-    const holdKeys = action.modifier ? [this.mapKey(action.modifier)] : undefined;
+    const holdKeys = action.modifier ? [mapToken(action.modifier)] : undefined;
 
     await this.kernel.browsers.computer.scroll(this.sessionId, {
       x: coords.x,
@@ -243,7 +295,7 @@ export class ComputerTool {
     const screenshotResult = await this.screenshot();
     return {
       ...screenshotResult,
-      output: `Scrolled ${notches} wheel unit(s) ${direction}.`,
+      output: `Scrolled ${amount} unit(s) ${direction}.`,
     };
   }
 
@@ -268,11 +320,12 @@ export class ComputerTool {
       throw new ToolError('key is required for key_press action');
     }
 
-    const mappedKey = this.mapKey(key);
-
-    await this.kernel.browsers.computer.pressKey(this.sessionId, {
-      keys: [mappedKey],
-    });
+    // n1.5 supports sequential presses ("down down down enter") — issue each
+    // combo as its own pressKey so they're seen as separate keystrokes.
+    const combos = parseKeyExpression(key);
+    for (const combo of combos) {
+      await this.kernel.browsers.computer.pressKey(this.sessionId, { keys: [combo] });
+    }
 
     await this.sleep(SCREENSHOT_DELAY_MS);
     return this.screenshot();
@@ -284,14 +337,16 @@ export class ComputerTool {
       throw new ToolError('key is required for hold_key action');
     }
 
-    const mappedKey = this.mapKey(key);
     // Yutori emits `duration` in seconds; Kernel SDK's pressKey takes ms.
     const durationMs = action.duration && action.duration > 0 ? Math.round(action.duration * 1000) : 1000;
 
-    await this.kernel.browsers.computer.pressKey(this.sessionId, {
-      keys: [mappedKey],
-      duration: durationMs,
-    });
+    const combos = parseKeyExpression(key);
+    for (const combo of combos) {
+      await this.kernel.browsers.computer.pressKey(this.sessionId, {
+        keys: [combo],
+        duration: durationMs,
+      });
+    }
 
     await this.sleep(SCREENSHOT_DELAY_MS);
     return this.screenshot();
@@ -328,7 +383,7 @@ export class ComputerTool {
 
   private async handleGoBack(): Promise<ToolResult> {
     await this.kernel.browsers.computer.pressKey(this.sessionId, {
-      keys: ['alt+Left'],
+      keys: ['Alt+Left'],
     });
 
     await this.sleep(1500);
@@ -337,7 +392,7 @@ export class ComputerTool {
 
   private async handleGoForward(): Promise<ToolResult> {
     await this.kernel.browsers.computer.pressKey(this.sessionId, {
-      keys: ['alt+Right'],
+      keys: ['Alt+Right'],
     });
 
     await this.sleep(1500);
@@ -363,12 +418,12 @@ export class ComputerTool {
     }
 
     await this.kernel.browsers.computer.pressKey(this.sessionId, {
-      keys: ['ctrl+l'],
+      keys: ['Ctrl+l'],
     });
     await this.sleep(ACTION_DELAY_MS);
 
     await this.kernel.browsers.computer.pressKey(this.sessionId, {
-      keys: ['ctrl+a'],
+      keys: ['Ctrl+a'],
     });
     await this.sleep(100);
 
@@ -392,7 +447,7 @@ export class ComputerTool {
       const blob = await response.blob();
       const arrayBuffer = await blob.arrayBuffer();
       const pngBuffer = Buffer.from(arrayBuffer);
-      const webpBuffer = await sharp(pngBuffer).webp({ quality: 80 }).toBuffer();
+      const webpBuffer = await sharp(pngBuffer).webp({ quality: WEBP_QUALITY }).toBuffer();
 
       return {
         base64Image: webpBuffer.toString('base64'),
@@ -404,7 +459,7 @@ export class ComputerTool {
 
   private getCoordinates(coords?: [number, number]): { x: number; y: number } {
     if (!coords || coords.length !== 2) {
-      return { x: this.width / 2, y: this.height / 2 };
+      return { x: Math.floor(this.width / 2), y: Math.floor(this.height / 2) };
     }
 
     const [x, y] = coords;
@@ -415,23 +470,7 @@ export class ComputerTool {
     return { x, y };
   }
 
-  private mapKey(key: string): string {
-    const mapPart = (part: string): string => {
-      const trimmed = part.trim();
-      const lower = trimmed.toLowerCase();
-      if (MODIFIER_MAP[lower]) {
-        return MODIFIER_MAP[lower];
-      }
-      return KEY_MAP[trimmed] || trimmed;
-    };
-
-    if (key.includes('+')) {
-      return key.split('+').map(mapPart).join('+');
-    }
-    return mapPart(key);
-  }
-
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
