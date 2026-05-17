@@ -6,12 +6,15 @@ from loop import sampling_loop
 from session import KernelBrowserSession
 
 
-class QueryInput(TypedDict, total=False):
-    query: str
+class _QueryInputOptional(TypedDict, total=False):
     record_replay: Optional[bool]
     kiosk: Optional[bool]
     user_timezone: Optional[str]
     user_location: Optional[str]
+
+
+class QueryInput(_QueryInputOptional):
+    query: str
 
 
 class QueryOutput(TypedDict):
