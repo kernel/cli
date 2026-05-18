@@ -82,11 +82,10 @@ func IsNewerVersion(current, latest string) (bool, error) {
 const veryOldMinorGap = 5
 
 // IsVeryOldVersion reports whether current is far enough behind latest to
-// warrant an urgent "upgrade as soon as possible" warning. The user qualifies
-// when they are two or more majors behind, or at least veryOldMinorGap minor
-// versions behind within the same major. A single major-version bump is
-// intentionally not escalated: at the v0.x → v1.0 cusp, every up-to-date
-// v0.x user would otherwise be told they are "very old" the day v1.0 ships.
+// warrant an urgent upgrade warning: two or more majors behind, or at least
+// veryOldMinorGap minor versions behind within the same major. A single
+// major bump intentionally does not escalate so v0.x users are not all
+// flagged "very old" the day v1.0 ships.
 func IsVeryOldVersion(current, latest string) (bool, error) {
 	c := normalizeSemver(current)
 	l := normalizeSemver(latest)
@@ -101,11 +100,10 @@ func IsVeryOldVersion(current, latest string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	majorGap := int64(lv.Major()) - int64(cv.Major())
-	if majorGap >= 2 {
+	if lv.Major() >= cv.Major()+2 {
 		return true, nil
 	}
-	if majorGap == 0 && lv.Minor() >= cv.Minor()+veryOldMinorGap {
+	if lv.Major() == cv.Major() && lv.Minor() >= cv.Minor()+veryOldMinorGap {
 		return true, nil
 	}
 	return false, nil
@@ -192,11 +190,8 @@ func isOnOldBrewTap() bool {
 	return false
 }
 
-// printUpgradeMessage prints a concise upgrade banner. When the local version
-// is far behind the latest release, the banner escalates to an urgent warning.
-// All output is routed to stderr so that callers piping or redirecting stdout
-// (for example, `-o json` consumers) do not get banner text mixed into their
-// machine-readable output.
+// printUpgradeMessage prints a concise upgrade banner on stderr, escalating
+// to an urgent warning when the local version is far behind latest.
 func printUpgradeMessage(current, latest, url string) {
 	cur := strings.TrimPrefix(current, "v")
 	lat := strings.TrimPrefix(latest, "v")
@@ -463,10 +458,8 @@ func invokedTrivialCommand() bool {
 	return false
 }
 
-// stdoutIsTerminal reports whether stdout is connected to a terminal. When
-// stdout is a pipe, file, or other non-TTY (CI logs, `| jq`, `> file.json`,
-// `-o json` consumers, etc.) we skip the upgrade banner so we never corrupt
-// machine-readable output.
+// stdoutIsTerminal reports whether stdout is a TTY. Used to skip the upgrade
+// banner when stdout is piped or redirected.
 func stdoutIsTerminal() bool {
 	fi, err := os.Stdout.Stat()
 	if err != nil {
