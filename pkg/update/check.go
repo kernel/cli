@@ -77,6 +77,38 @@ func IsNewerVersion(current, latest string) (bool, error) {
 	return lv.GreaterThan(cv), nil
 }
 
+// veryOldMinorGap is the number of minor versions behind (within the same
+// major) at which the upgrade prompt escalates from informational to urgent.
+const veryOldMinorGap = 5
+
+// IsVeryOldVersion reports whether current is far enough behind latest to
+// warrant an urgent upgrade warning: two or more majors behind, or at least
+// veryOldMinorGap minor versions behind within the same major. A single
+// major bump intentionally does not escalate so v0.x users are not all
+// flagged "very old" the day v1.0 ships.
+func IsVeryOldVersion(current, latest string) (bool, error) {
+	c := normalizeSemver(current)
+	l := normalizeSemver(latest)
+	if c == "" || l == "" {
+		return false, errors.New("non-semver version")
+	}
+	cv, err := semver.NewVersion(c)
+	if err != nil {
+		return false, err
+	}
+	lv, err := semver.NewVersion(l)
+	if err != nil {
+		return false, err
+	}
+	if lv.Major() >= cv.Major()+2 {
+		return true, nil
+	}
+	if lv.Major() == cv.Major() && lv.Minor() >= cv.Minor()+veryOldMinorGap {
+		return true, nil
+	}
+	return false, nil
+}
+
 // FetchLatest queries GitHub Releases and returns the latest stable tag and URL.
 // It expects that the GitHub API returns releases in descending chronological order
 // (newest first), which is standard behavior.
@@ -158,31 +190,38 @@ func isOnOldBrewTap() bool {
 	return false
 }
 
-// printUpgradeMessage prints a concise upgrade banner.
+// printUpgradeMessage prints a concise upgrade banner on stderr, escalating
+// to an urgent warning when the local version is far behind latest.
 func printUpgradeMessage(current, latest, url string) {
 	cur := strings.TrimPrefix(current, "v")
 	lat := strings.TrimPrefix(latest, "v")
-	pterm.Println()
-	pterm.Info.Printf("A new release of kernel is available: %s → %s\n", cur, lat)
+	info := pterm.Info.WithWriter(os.Stderr)
+	warn := pterm.Warning.WithWriter(os.Stderr)
+	fmt.Fprintln(os.Stderr)
+	if veryOld, err := IsVeryOldVersion(current, latest); err == nil && veryOld {
+		warn.Printf("You are running a very old version of kernel (%s) and should upgrade as soon as possible. Latest: %s\n", cur, lat)
+	} else {
+		info.Printf("A new release of kernel is available: %s → %s\n", cur, lat)
+	}
 	if url != "" {
-		pterm.Info.Printf("Release notes: %s\n", url)
+		info.Printf("Release notes: %s\n", url)
 	}
 
 	method, _ := DetectInstallMethod()
 	if method == InstallMethodBrew && isOnOldBrewTap() {
-		pterm.Println()
-		pterm.Warning.Println("You have kernel installed from the old tap (onkernel/tap).")
-		pterm.Warning.Println("To upgrade, switch to the new tap:")
-		pterm.Println()
-		pterm.Println("  brew uninstall kernel")
-		pterm.Println("  brew install kernel/tap/kernel")
+		fmt.Fprintln(os.Stderr)
+		warn.Println("You have kernel installed from the old tap (onkernel/tap).")
+		warn.Println("To upgrade, switch to the new tap:")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "  brew uninstall kernel")
+		fmt.Fprintln(os.Stderr, "  brew install kernel/tap/kernel")
 		return
 	}
 
 	if cmd := SuggestUpgradeCommand(); cmd != "" {
-		pterm.Info.Printf("To upgrade, run: %s\n", cmd)
+		info.Printf("To upgrade, run: %s\n", cmd)
 	} else {
-		pterm.Info.Println("To upgrade, visit the release page above or use your package manager.")
+		info.Println("To upgrade, visit the release page above or use your package manager.")
 	}
 }
 
@@ -198,6 +237,9 @@ func MaybeShowMessage(ctx context.Context, currentVersion string, frequency time
 		return
 	}
 	if invokedTrivialCommand() {
+		return
+	}
+	if !stdoutIsTerminal() {
 		return
 	}
 
@@ -414,4 +456,14 @@ func invokedTrivialCommand() bool {
 		}
 	}
 	return false
+}
+
+// stdoutIsTerminal reports whether stdout is a TTY. Used to skip the upgrade
+// banner when stdout is piped or redirected.
+func stdoutIsTerminal() bool {
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
 }
