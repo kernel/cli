@@ -82,9 +82,11 @@ func IsNewerVersion(current, latest string) (bool, error) {
 const veryOldMinorGap = 5
 
 // IsVeryOldVersion reports whether current is far enough behind latest to
-// warrant an urgent "upgrade as soon as possible" warning. Any major-version
-// gap qualifies; otherwise the user must be at least veryOldMinorGap minor
-// versions behind within the same major.
+// warrant an urgent "upgrade as soon as possible" warning. The user qualifies
+// when they are two or more majors behind, or at least veryOldMinorGap minor
+// versions behind within the same major. A single major-version bump is
+// intentionally not escalated: at the v0.x → v1.0 cusp, every up-to-date
+// v0.x user would otherwise be told they are "very old" the day v1.0 ships.
 func IsVeryOldVersion(current, latest string) (bool, error) {
 	c := normalizeSemver(current)
 	l := normalizeSemver(latest)
@@ -99,10 +101,11 @@ func IsVeryOldVersion(current, latest string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if lv.Major() > cv.Major() {
+	majorGap := int64(lv.Major()) - int64(cv.Major())
+	if majorGap >= 2 {
 		return true, nil
 	}
-	if lv.Major() == cv.Major() && lv.Minor() >= cv.Minor()+veryOldMinorGap {
+	if majorGap == 0 && lv.Minor() >= cv.Minor()+veryOldMinorGap {
 		return true, nil
 	}
 	return false, nil
@@ -191,34 +194,39 @@ func isOnOldBrewTap() bool {
 
 // printUpgradeMessage prints a concise upgrade banner. When the local version
 // is far behind the latest release, the banner escalates to an urgent warning.
+// All output is routed to stderr so that callers piping or redirecting stdout
+// (for example, `-o json` consumers) do not get banner text mixed into their
+// machine-readable output.
 func printUpgradeMessage(current, latest, url string) {
 	cur := strings.TrimPrefix(current, "v")
 	lat := strings.TrimPrefix(latest, "v")
-	pterm.Println()
+	info := pterm.Info.WithWriter(os.Stderr)
+	warn := pterm.Warning.WithWriter(os.Stderr)
+	fmt.Fprintln(os.Stderr)
 	if veryOld, err := IsVeryOldVersion(current, latest); err == nil && veryOld {
-		pterm.Warning.Printf("You are running a very old version of kernel (%s) and should upgrade as soon as possible. Latest: %s\n", cur, lat)
+		warn.Printf("You are running a very old version of kernel (%s) and should upgrade as soon as possible. Latest: %s\n", cur, lat)
 	} else {
-		pterm.Info.Printf("A new release of kernel is available: %s → %s\n", cur, lat)
+		info.Printf("A new release of kernel is available: %s → %s\n", cur, lat)
 	}
 	if url != "" {
-		pterm.Info.Printf("Release notes: %s\n", url)
+		info.Printf("Release notes: %s\n", url)
 	}
 
 	method, _ := DetectInstallMethod()
 	if method == InstallMethodBrew && isOnOldBrewTap() {
-		pterm.Println()
-		pterm.Warning.Println("You have kernel installed from the old tap (onkernel/tap).")
-		pterm.Warning.Println("To upgrade, switch to the new tap:")
-		pterm.Println()
-		pterm.Println("  brew uninstall kernel")
-		pterm.Println("  brew install kernel/tap/kernel")
+		fmt.Fprintln(os.Stderr)
+		warn.Println("You have kernel installed from the old tap (onkernel/tap).")
+		warn.Println("To upgrade, switch to the new tap:")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "  brew uninstall kernel")
+		fmt.Fprintln(os.Stderr, "  brew install kernel/tap/kernel")
 		return
 	}
 
 	if cmd := SuggestUpgradeCommand(); cmd != "" {
-		pterm.Info.Printf("To upgrade, run: %s\n", cmd)
+		info.Printf("To upgrade, run: %s\n", cmd)
 	} else {
-		pterm.Info.Println("To upgrade, visit the release page above or use your package manager.")
+		info.Println("To upgrade, visit the release page above or use your package manager.")
 	}
 }
 
@@ -234,6 +242,9 @@ func MaybeShowMessage(ctx context.Context, currentVersion string, frequency time
 		return
 	}
 	if invokedTrivialCommand() {
+		return
+	}
+	if !stdoutIsTerminal() {
 		return
 	}
 
@@ -450,4 +461,16 @@ func invokedTrivialCommand() bool {
 		}
 	}
 	return false
+}
+
+// stdoutIsTerminal reports whether stdout is connected to a terminal. When
+// stdout is a pipe, file, or other non-TTY (CI logs, `| jq`, `> file.json`,
+// `-o json` consumers, etc.) we skip the upgrade banner so we never corrupt
+// machine-readable output.
+func stdoutIsTerminal() bool {
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
 }
