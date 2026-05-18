@@ -35,7 +35,6 @@ type BrowsersService interface {
 	List(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.BrowserListResponse], err error)
 	New(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (res *kernel.BrowserNewResponse, err error)
 	Update(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (res *kernel.BrowserUpdateResponse, err error)
-	Delete(ctx context.Context, body kernel.BrowserDeleteParams, opts ...option.RequestOption) (err error)
 	DeleteByID(ctx context.Context, id string, opts ...option.RequestOption) (err error)
 	HTTPClient(id string, opts ...option.RequestOption) (*http.Client, error)
 	LoadExtensions(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) (err error)

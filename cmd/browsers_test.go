@@ -60,7 +60,6 @@ type FakeBrowsersService struct {
 	ListFunc           func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error)
 	NewFunc            func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error)
 	UpdateFunc         func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error)
-	DeleteFunc         func(ctx context.Context, body kernel.BrowserDeleteParams, opts ...option.RequestOption) error
 	DeleteByIDFunc     func(ctx context.Context, id string, opts ...option.RequestOption) error
 	HTTPClientFunc     func(id string, opts ...option.RequestOption) (*http.Client, error)
 	LoadExtensionsFunc func(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) error
@@ -92,13 +91,6 @@ func (f *FakeBrowsersService) Update(ctx context.Context, id string, body kernel
 		return f.UpdateFunc(ctx, id, body, opts...)
 	}
 	return &kernel.BrowserUpdateResponse{}, nil
-}
-
-func (f *FakeBrowsersService) Delete(ctx context.Context, body kernel.BrowserDeleteParams, opts ...option.RequestOption) error {
-	if f.DeleteFunc != nil {
-		return f.DeleteFunc(ctx, body, opts...)
-	}
-	return nil
 }
 
 func (f *FakeBrowsersService) DeleteByID(ctx context.Context, id string, opts ...option.RequestOption) error {
@@ -400,14 +392,12 @@ func TestBrowsersList_PrintsTableWithRows(t *testing.T) {
 			CdpWsURL:           "ws://cdp-1",
 			BrowserLiveViewURL: "http://view-1",
 			CreatedAt:          created,
-			Persistence:        kernel.BrowserPersistence{ID: "pid-1"},
 		},
 		{
 			SessionID:          "sess-2",
 			CdpWsURL:           "ws://cdp-2",
 			BrowserLiveViewURL: "",
 			CreatedAt:          created,
-			Persistence:        kernel.BrowserPersistence{ID: ""},
 		},
 	}
 
@@ -422,7 +412,6 @@ func TestBrowsersList_PrintsTableWithRows(t *testing.T) {
 	out := outBuf.String()
 	assert.Contains(t, out, "sess-1")
 	assert.Contains(t, out, "sess-2")
-	assert.Contains(t, out, "pid-1")
 }
 
 func TestBrowsersList_PrintsErrorOnFailure(t *testing.T) {
@@ -469,7 +458,6 @@ func TestBrowsersCreate_PrintsResponse(t *testing.T) {
 				SessionID:          "sess-new",
 				CdpWsURL:           "ws://cdp-new",
 				BrowserLiveViewURL: "http://view-new",
-				Persistence:        kernel.BrowserPersistence{ID: "pid-new"},
 			}
 			return resp, nil
 		},
@@ -477,7 +465,6 @@ func TestBrowsersCreate_PrintsResponse(t *testing.T) {
 
 	b := BrowsersCmd{browsers: fake}
 	in := BrowsersCreateInput{
-		PersistenceID:  "pid-new",
 		TimeoutSeconds: 120,
 		Stealth:        BoolFlag{Set: true, Value: true},
 		Headless:       BoolFlag{Set: true, Value: false},
@@ -491,8 +478,6 @@ func TestBrowsersCreate_PrintsResponse(t *testing.T) {
 	assert.Contains(t, out, "ws://cdp-new")
 	assert.Contains(t, out, "Live View URL")
 	assert.Contains(t, out, "http://view-new")
-	assert.Contains(t, out, "Persistent ID")
-	assert.Contains(t, out, "pid-new")
 }
 
 func TestBrowsersCreate_WithInvocationID(t *testing.T) {
@@ -533,9 +518,6 @@ func TestBrowsersDelete_Success(t *testing.T) {
 	setupStdoutCapture(t)
 
 	fake := &FakeBrowsersService{
-		DeleteFunc: func(ctx context.Context, body kernel.BrowserDeleteParams, opts ...option.RequestOption) error {
-			return nil
-		},
 		DeleteByIDFunc: func(ctx context.Context, id string, opts ...option.RequestOption) error {
 			return nil
 		},
@@ -551,19 +533,15 @@ func TestBrowsersDelete_Failure(t *testing.T) {
 	setupStdoutCapture(t)
 
 	fake := &FakeBrowsersService{
-		DeleteFunc: func(ctx context.Context, body kernel.BrowserDeleteParams, opts ...option.RequestOption) error {
-			return errors.New("left failed")
-		},
 		DeleteByIDFunc: func(ctx context.Context, id string, opts ...option.RequestOption) error {
-			return errors.New("right failed")
+			return errors.New("delete failed")
 		},
 	}
 	b := BrowsersCmd{browsers: fake}
 	err := b.Delete(context.Background(), BrowsersDeleteInput{Identifier: "any"})
 
 	assert.Error(t, err)
-	errMsg := err.Error()
-	assert.True(t, strings.Contains(errMsg, "right failed") || strings.Contains(errMsg, "left failed"), "expected error message to contain either 'right failed' or 'left failed', got: %s", errMsg)
+	assert.Contains(t, err.Error(), "delete failed")
 }
 
 func TestBrowsersView_ByID_PrintsURL(t *testing.T) {
@@ -656,7 +634,6 @@ func TestBrowsersGet_PrintsDetails(t *testing.T) {
 				Stealth:            true,
 				KioskMode:          false,
 				Viewport:           shared.BrowserViewport{Width: 1920, Height: 1080, RefreshRate: 25},
-				Persistence:        kernel.BrowserPersistence{ID: "persist-id"},
 				Profile:            kernel.Profile{ID: "prof-id", Name: "my-profile"},
 				ProxyID:            "proxy-123",
 			}, nil
@@ -673,7 +650,6 @@ func TestBrowsersGet_PrintsDetails(t *testing.T) {
 	assert.Contains(t, out, "false") // Headless
 	assert.Contains(t, out, "true")  // Stealth
 	assert.Contains(t, out, "1920x1080@25")
-	assert.Contains(t, out, "persist-id")
 	assert.Contains(t, out, "my-profile")
 	assert.Contains(t, out, "proxy-123")
 }
