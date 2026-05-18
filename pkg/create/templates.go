@@ -19,6 +19,7 @@ const (
 	TemplateOpenAGIComputerUse   = "openagi-computer-use"
 	TemplateClaudeAgentSDK       = "claude-agent-sdk"
 	TemplateYutoriComputerUse    = "yutori"
+	TemplateUnifiedCUA           = "cua"
 	TemplateTzafonComputerUse    = "tzafon"
 )
 
@@ -91,6 +92,11 @@ var Templates = map[string]TemplateInfo{
 		Description: "Implements a Yutori n1.5 computer use agent",
 		Languages:   []string{LanguageTypeScript, LanguagePython},
 	},
+	TemplateUnifiedCUA: {
+		Name:        "Unified CUA",
+		Description: "Multi-provider computer use agent with Anthropic/OpenAI/Gemini fallback",
+		Languages:   []string{LanguageTypeScript, LanguagePython},
+	},
 	TemplateTzafonComputerUse: {
 		Name:        "Tzafon Northstar Computer Use",
 		Description: "Implements a Tzafon Northstar CUA Fast computer use agent",
@@ -124,6 +130,8 @@ func GetSupportedTemplatesForLanguage(language string) TemplateKeyValues {
 				return 3
 			case TemplateTzafonComputerUse:
 				return 4
+			case TemplateUnifiedCUA:
+				return 5
 			default:
 				return 10
 			}
@@ -221,6 +229,11 @@ var Commands = map[string]map[string]DeployConfig{
 			NeedsEnvFile:  true,
 			InvokeCommand: `kernel invoke ts-yutori-cua cua-task --payload '{"query": "Navigate to https://www.yutori.com and list the team member names."}'`,
 		},
+		TemplateUnifiedCUA: {
+			EntryPoint:    "index.ts",
+			NeedsEnvFile:  true,
+			InvokeCommand: `kernel invoke ts-cua cua-task --payload '{"query": "Go to https://news.ycombinator.com and get the top 5 stories"}'`,
+		},
 		TemplateTzafonComputerUse: {
 			EntryPoint:    "index.ts",
 			NeedsEnvFile:  true,
@@ -272,6 +285,11 @@ var Commands = map[string]map[string]DeployConfig{
 			EntryPoint:    "main.py",
 			NeedsEnvFile:  true,
 			InvokeCommand: `kernel invoke python-yutori-cua cua-task --payload '{"query": "Navigate to https://www.yutori.com and list the team member names."}'`,
+		},
+		TemplateUnifiedCUA: {
+			EntryPoint:    "main.py",
+			NeedsEnvFile:  true,
+			InvokeCommand: `kernel invoke python-cua cua-task --payload '{"query": "Go to https://news.ycombinator.com and get the top 5 stories"}'`,
 		},
 		TemplateTzafonComputerUse: {
 			EntryPoint:    "main.py",

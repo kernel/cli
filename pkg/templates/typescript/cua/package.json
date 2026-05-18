@@ -1,0 +1,16 @@
+{
+  "name": "ts-cua",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.86.1",
+    "@google/genai": "^1.49.0",
+    "@onkernel/sdk": "^0.47.0",
+    "openai": "^6.33.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.17",
+    "typescript": "^5.9.3"
+  }
+}
