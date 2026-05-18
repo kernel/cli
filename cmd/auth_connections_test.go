@@ -293,6 +293,34 @@ func TestAuthConnectionsCreate_ProviderWithExplicitAuto_SetsAuto(t *testing.T) {
 	assert.True(t, cred.Auto.Value)
 }
 
+func TestAuthConnectionsCreate_HealthMonitoringFlags(t *testing.T) {
+	var captured kernel.AuthConnectionNewParams
+	fake := &FakeAuthConnectionService{
+		NewFunc: func(ctx context.Context, body kernel.AuthConnectionNewParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			captured = body
+			return &kernel.ManagedAuth{ID: "conn-new"}, nil
+		},
+	}
+
+	c := AuthConnectionCmd{svc: fake}
+	err := c.Create(context.Background(), AuthConnectionCreateInput{
+		Domain:         "example.com",
+		ProfileName:    "p",
+		NoHealthChecks: true,
+		NoAutoReauth:   true,
+		RecordSession:  true,
+		Output:         "json",
+	})
+	require.NoError(t, err)
+
+	require.True(t, captured.ManagedAuthCreateRequest.HealthChecks.Valid())
+	assert.False(t, captured.ManagedAuthCreateRequest.HealthChecks.Value)
+	require.True(t, captured.ManagedAuthCreateRequest.AutoReauth.Valid())
+	assert.False(t, captured.ManagedAuthCreateRequest.AutoReauth.Value)
+	require.True(t, captured.ManagedAuthCreateRequest.RecordSession.Valid())
+	assert.True(t, captured.ManagedAuthCreateRequest.RecordSession.Value)
+}
+
 // --credential-name references a Kernel-managed credential and should never
 // carry a provider/auto/path — the default-auto logic must not kick in here.
 func TestAuthConnectionsCreate_CredentialName_UnaffectedByAutoDefault(t *testing.T) {
@@ -352,6 +380,9 @@ func TestAuthConnectionsUpdate_MapsParams(t *testing.T) {
 		SaveCredentials:        BoolFlag{Set: true, Value: false},
 		HealthCheckInterval:    900,
 		HealthCheckIntervalSet: true,
+		HealthChecks:           BoolFlag{Set: true, Value: false},
+		AutoReauth:             BoolFlag{Set: true, Value: false},
+		RecordSession:          BoolFlag{Set: true, Value: true},
 	})
 	require.NoError(t, err)
 	require.True(t, captured.ManagedAuthUpdateRequest.LoginURL.Valid())
@@ -369,6 +400,12 @@ func TestAuthConnectionsUpdate_MapsParams(t *testing.T) {
 	assert.False(t, captured.ManagedAuthUpdateRequest.SaveCredentials.Value)
 	require.True(t, captured.ManagedAuthUpdateRequest.HealthCheckInterval.Valid())
 	assert.Equal(t, int64(900), captured.ManagedAuthUpdateRequest.HealthCheckInterval.Value)
+	require.True(t, captured.ManagedAuthUpdateRequest.HealthChecks.Valid())
+	assert.False(t, captured.ManagedAuthUpdateRequest.HealthChecks.Value)
+	require.True(t, captured.ManagedAuthUpdateRequest.AutoReauth.Valid())
+	assert.False(t, captured.ManagedAuthUpdateRequest.AutoReauth.Value)
+	require.True(t, captured.ManagedAuthUpdateRequest.RecordSession.Valid())
+	assert.True(t, captured.ManagedAuthUpdateRequest.RecordSession.Value)
 }
 
 func newFakeWithMfaOptions(options []kernel.ManagedAuthMfaOption) *FakeAuthConnectionService {
