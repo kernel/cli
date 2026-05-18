@@ -11,9 +11,14 @@ n1.5-latest uses an OpenAI-compatible API with tool_calls:
 @see https://docs.yutori.com/reference/n1-5
 """
 
+from __future__ import annotations
+
 import copy
 import json
+import platform
+from datetime import datetime
 from typing import Any, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from kernel import Kernel
 from openai import OpenAI
@@ -25,6 +30,8 @@ from tools import ComputerTool, N15Action, ToolResult
 # exclusion is explicit and survives if the default ever changes.
 DISABLED_TOOLS = ["extract_elements", "find", "set_element_value", "execute_js"]
 TOOL_SET = "browser_tools_core-20260403"
+
+NAVIGATOR_COORDINATE_SCALE = 1000
 
 # Screenshot-trimming defaults mirror Yutori's reference loop:
 # https://github.com/yutori-ai/yutori-sdk-python/blob/main/yutori/navigator/payload.py
@@ -42,12 +49,14 @@ async def sampling_loop(
     kernel: Kernel,
     session_id: str,
     max_completion_tokens: int = 4096,
-    max_iterations: int = 50,
+    max_iterations: int = 100,
     viewport_width: int = 1280,
     viewport_height: int = 800,
     kiosk_mode: bool = False,
+    user_timezone: str = "America/Los_Angeles",
+    user_location: str = "San Francisco, CA, US",
 ) -> dict[str, Any]:
-    """Run the n1 sampling loop until the model stops calling tools or max iterations."""
+    """Run the n1.5 sampling loop until the model stops calling tools or max iterations."""
     client = OpenAI(
         api_key=api_key,
         base_url="https://api.yutori.com/v1",
@@ -57,7 +66,12 @@ async def sampling_loop(
 
     initial_screenshot = await computer_tool.screenshot()
 
-    user_content: list[dict[str, Any]] = [{"type": "text", "text": task}]
+    # Append location/timezone/current-date context to the task — mirrors Yutori's
+    # format_task_with_context helper and helps the model with date-sensitive
+    # judgments. https://github.com/yutori-ai/yutori-sdk-python/blob/main/yutori/navigator/context.py
+    task_with_context = _format_task_with_context(task, user_timezone, user_location)
+
+    user_content: list[dict[str, Any]] = [{"type": "text", "text": task_with_context}]
     if initial_screenshot.get("base64_image"):
         user_content.append({
             "type": "image_url",
@@ -171,13 +185,79 @@ async def sampling_loop(
                     "content": result.get("output", "OK"),
                 })
 
-    if iteration >= max_iterations:
-        print("Max iterations reached")
+    # If the loop exhausted iterations, prompt the model for a final summary so
+    # the caller gets a usable answer instead of empty content. Mirrors Yutori's
+    # format_stop_and_summarize helper.
+    if iteration >= max_iterations and not final_answer:
+        print("Max iterations reached — requesting summary")
+        try:
+            final_screenshot = await computer_tool.screenshot()
+            stop_content: list[dict[str, Any]] = [
+                {"type": "text", "text": _format_stop_and_summarize(task)}
+            ]
+            if final_screenshot.get("base64_image"):
+                stop_content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/webp;base64,{final_screenshot['base64_image']}"
+                    },
+                })
+            conversation_messages.append({"role": "user", "content": stop_content})
+
+            summary_messages, _ = _trimmed_for_request(conversation_messages)
+            summary_response = client.chat.completions.create(
+                model=model,
+                messages=summary_messages,
+                max_completion_tokens=max_completion_tokens,
+                temperature=0.3,
+                extra_body={"tool_set": TOOL_SET, "disable_tools": DISABLED_TOOLS},
+            )
+            summary = summary_response.choices[0].message if summary_response.choices else None
+            if summary:
+                conversation_messages.append(summary.model_dump(exclude_none=True))
+                final_answer = summary.content or None
+        except Exception as summary_error:
+            print(f"Stop-and-summarize call failed: {summary_error}")
 
     return {
         "messages": conversation_messages,
         "final_answer": final_answer,
     }
+
+
+def _format_task_with_context(task: str, user_timezone: str, user_location: str) -> str:
+    """Append location, timezone, and current date/time to the task message."""
+    for timezone_name in [user_timezone, "America/Los_Angeles", "UTC"]:
+        try:
+            tz = ZoneInfo(timezone_name)
+            tz_label = timezone_name
+            break
+        except (ZoneInfoNotFoundError, ValueError, OSError):
+            continue
+    else:
+        return task
+
+    now = datetime.now(tz)
+    day_fmt = "%#d" if platform.system() == "Windows" else "%-d"
+    context = "\n".join([
+        f"User's location: {user_location}",
+        f"User's timezone: {tz_label}",
+        f"Current Date: {now.strftime(f'%B {day_fmt}, %Y')}",
+        f"Current Time: {now.strftime('%H:%M:%S %Z')}",
+        f"Today is: {now.strftime('%A')}",
+    ])
+    return f"{task}\n\n{context}"
+
+
+def _format_stop_and_summarize(task: str) -> str:
+    return (
+        f"Stop here. "
+        f"Summarize your current progress and list in detail all the findings "
+        f"relevant to the given task:\n{task}\n"
+        f"Provide URLs for all relevant results you find and return them in your response. "
+        f"If there is no specific URL for a result, "
+        f"cite the page URL that the information was found on."
+    )
 
 
 def _trimmed_for_request(
@@ -263,17 +343,22 @@ def _scale_coordinates(action: N15Action, viewport_width: int, viewport_height: 
     scaled = dict(action)
 
     if "coordinates" in scaled and scaled["coordinates"]:
-        coords = scaled["coordinates"]
-        scaled["coordinates"] = [
-            round((coords[0] / 1000) * viewport_width),
-            round((coords[1] / 1000) * viewport_height),
-        ]
+        scaled["coordinates"] = _denormalize(scaled["coordinates"], viewport_width, viewport_height)
 
     if "start_coordinates" in scaled and scaled["start_coordinates"]:
-        coords = scaled["start_coordinates"]
-        scaled["start_coordinates"] = [
-            round((coords[0] / 1000) * viewport_width),
-            round((coords[1] / 1000) * viewport_height),
-        ]
+        scaled["start_coordinates"] = _denormalize(scaled["start_coordinates"], viewport_width, viewport_height)
 
     return scaled
+
+
+def _denormalize(coords: list[int] | tuple[int, int], width: int, height: int) -> list[int]:
+    """Map [0, 1000] coordinates to viewport pixels and clamp to [0, dim-1].
+
+    Clamping prevents a boundary value like 1000 from landing one pixel outside
+    the viewport on a 1280x800 display.
+    """
+    raw_x = round((coords[0] / NAVIGATOR_COORDINATE_SCALE) * width)
+    raw_y = round((coords[1] / NAVIGATOR_COORDINATE_SCALE) * height)
+    x = max(0, min(width - 1, raw_x))
+    y = max(0, min(height - 1, raw_y))
+    return [x, y]

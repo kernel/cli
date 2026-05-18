@@ -22,6 +22,18 @@ kernel deploy main.py --env-file .env
 ## Usage
 
 ```bash
+kernel invoke python-yutori-cua cua-task --payload '{"query": "Navigate to https://www.yutori.com and list the team member names."}'
+```
+
+Optional payload fields:
+
+- `record_replay` (bool) — capture a video of the session (paid plans only).
+- `kiosk` (bool) — launch the browser without address bar / tabs ([see below](#kiosk-mode)).
+- `user_timezone` (IANA, e.g. `"America/New_York"`) and `user_location` (free text, e.g. `"New York, NY, US"`) — appended to the task message so the model has accurate temporal/locational grounding.
+
+More involved example (Kanban drag-and-drop):
+
+```bash
 kernel invoke python-yutori-cua cua-task --payload '{"query": "Go to https://www.magnitasks.com, Click the Tasks option in the left-side bar, and drag the 5 items in the To Do and In Progress columns to the Done section of the Kanban board. You are done successfully when the items are dragged to Done. Do not click into the items."}'
 ```
 
