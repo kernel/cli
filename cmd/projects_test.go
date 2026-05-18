@@ -42,6 +42,7 @@ type FakeProjectsService struct {
 	ListFunc   func(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error)
 	NewFunc    func(ctx context.Context, body kernel.ProjectNewParams, opts ...option.RequestOption) (*kernel.Project, error)
 	GetFunc    func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.Project, error)
+	UpdateFunc func(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (*kernel.Project, error)
 	DeleteFunc func(ctx context.Context, id string, opts ...option.RequestOption) error
 }
 
@@ -64,6 +65,13 @@ func (f *FakeProjectsService) Get(ctx context.Context, id string, opts ...option
 		return f.GetFunc(ctx, id, opts...)
 	}
 	return &kernel.Project{ID: id, Name: "default"}, nil
+}
+
+func (f *FakeProjectsService) Update(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (*kernel.Project, error) {
+	if f.UpdateFunc != nil {
+		return f.UpdateFunc(ctx, id, body, opts...)
+	}
+	return &kernel.Project{ID: id, Name: body.UpdateProjectRequest.Name.Value, Status: kernel.ProjectStatusActive}, nil
 }
 
 func (f *FakeProjectsService) Delete(ctx context.Context, id string, opts ...option.RequestOption) error {
@@ -90,6 +98,49 @@ func (f *FakeProjectLimitsService) Update(ctx context.Context, id string, body k
 		return f.UpdateFunc(ctx, id, body, opts...)
 	}
 	return &kernel.ProjectLimits{}, nil
+}
+
+func TestProjectsUpdate_RenamesAndUpdatesStatus(t *testing.T) {
+	captureProjectsOutput(t)
+
+	var captured kernel.ProjectUpdateParams
+	fakeProjects := &FakeProjectsService{
+		UpdateFunc: func(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (*kernel.Project, error) {
+			captured = body
+			return &kernel.Project{ID: id, Name: "renamed", Status: kernel.ProjectStatusArchived}, nil
+		},
+	}
+	c := ProjectsCmd{projects: fakeProjects, limits: &FakeProjectLimitsService{}}
+
+	err := c.Update(context.Background(), ProjectsUpdateInput{
+		Identifier: "a12345678901234567890123",
+		Name:       "renamed",
+		NameSet:    true,
+		Status:     "archived",
+		StatusSet:  true,
+	})
+	assert.NoError(t, err)
+	assert.True(t, captured.UpdateProjectRequest.Name.Valid())
+	assert.Equal(t, "renamed", captured.UpdateProjectRequest.Name.Value)
+	assert.Equal(t, kernel.UpdateProjectRequestStatusArchived, captured.UpdateProjectRequest.Status)
+}
+
+func TestProjectsUpdate_RequiresAtLeastOneFlag(t *testing.T) {
+	c := ProjectsCmd{projects: &FakeProjectsService{}, limits: &FakeProjectLimitsService{}}
+	err := c.Update(context.Background(), ProjectsUpdateInput{Identifier: "a12345678901234567890123"})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "at least one of --name or --status")
+}
+
+func TestProjectsUpdate_RejectsUnknownStatus(t *testing.T) {
+	c := ProjectsCmd{projects: &FakeProjectsService{}, limits: &FakeProjectLimitsService{}}
+	err := c.Update(context.Background(), ProjectsUpdateInput{
+		Identifier: "a12345678901234567890123",
+		Status:     "deleted",
+		StatusSet:  true,
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "active, archived")
 }
 
 func TestProjectsLimitsGet_DefaultOutput(t *testing.T) {

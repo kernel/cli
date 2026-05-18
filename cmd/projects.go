@@ -22,6 +22,7 @@ type ProjectsService interface {
 	ProjectListService
 	New(ctx context.Context, body kernel.ProjectNewParams, opts ...option.RequestOption) (res *kernel.Project, err error)
 	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.Project, err error)
+	Update(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (res *kernel.Project, err error)
 	Delete(ctx context.Context, id string, opts ...option.RequestOption) (err error)
 }
 
@@ -43,6 +44,14 @@ type ProjectsCreateInput struct {
 
 type ProjectsGetInput struct {
 	Identifier string
+}
+
+type ProjectsUpdateInput struct {
+	Identifier string
+	Name       string
+	NameSet    bool
+	Status     string
+	StatusSet  bool
 }
 
 type ProjectsDeleteInput struct {
@@ -127,6 +136,50 @@ func (c ProjectsCmd) Get(ctx context.Context, in ProjectsGetInput) error {
 		{"Name", project.Name},
 		{"Status", string(project.Status)},
 		{"Created At", util.FormatLocal(project.CreatedAt)},
+		{"Updated At", util.FormatLocal(project.UpdatedAt)},
+	}
+	PrintTableNoPad(table, true)
+	return nil
+}
+
+func (c ProjectsCmd) Update(ctx context.Context, in ProjectsUpdateInput) error {
+	if !in.NameSet && !in.StatusSet {
+		return fmt.Errorf("must provide at least one of --name or --status")
+	}
+
+	projectID, err := resolveProjectArg(ctx, c.projects, in.Identifier)
+	if err != nil {
+		return err
+	}
+
+	inner := kernel.UpdateProjectRequestParam{}
+	if in.NameSet {
+		inner.Name = param.NewOpt(in.Name)
+	}
+	if in.StatusSet {
+		switch in.Status {
+		case "active":
+			inner.Status = kernel.UpdateProjectRequestStatusActive
+		case "archived":
+			inner.Status = kernel.UpdateProjectRequestStatusArchived
+		default:
+			return fmt.Errorf("--status must be one of: active, archived (got %q)", in.Status)
+		}
+	}
+
+	project, err := c.projects.Update(ctx, projectID, kernel.ProjectUpdateParams{
+		UpdateProjectRequest: inner,
+	})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	pterm.Success.Printf("Updated project: %s (ID: %s)\n", project.Name, project.ID)
+	table := pterm.TableData{
+		{"Field", "Value"},
+		{"ID", project.ID},
+		{"Name", project.Name},
+		{"Status", string(project.Status)},
 		{"Updated At", util.FormatLocal(project.UpdatedAt)},
 	}
 	PrintTableNoPad(table, true)
@@ -280,6 +333,19 @@ func runProjectsGet(cmd *cobra.Command, args []string) error {
 	return c.Get(cmd.Context(), ProjectsGetInput{Identifier: args[0]})
 }
 
+func runProjectsUpdate(cmd *cobra.Command, args []string) error {
+	c := getProjectsHandler(cmd)
+	name, _ := cmd.Flags().GetString("name")
+	status, _ := cmd.Flags().GetString("status")
+	return c.Update(cmd.Context(), ProjectsUpdateInput{
+		Identifier: args[0],
+		Name:       name,
+		NameSet:    cmd.Flags().Changed("name"),
+		Status:     status,
+		StatusSet:  cmd.Flags().Changed("status"),
+	})
+}
+
 func runProjectsDelete(cmd *cobra.Command, args []string) error {
 	c := getProjectsHandler(cmd)
 	return c.Delete(cmd.Context(), ProjectsDeleteInput{Identifier: args[0]})
@@ -364,6 +430,13 @@ var projectsGetCmd = &cobra.Command{
 	RunE:  runProjectsGet,
 }
 
+var projectsUpdateCmd = &cobra.Command{
+	Use:   "update <id-or-name>",
+	Short: "Update a project (rename or change status)",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runProjectsUpdate,
+}
+
 var projectsDeleteCmd = &cobra.Command{
 	Use:   "delete <id-or-name>",
 	Short: "Delete a project",
@@ -418,9 +491,13 @@ func init() {
 	projectsLimitsCmd.AddCommand(projectsLimitsGetCmd)
 	projectsLimitsCmd.AddCommand(projectsLimitsSetCmd)
 
+	projectsUpdateCmd.Flags().String("name", "", "New project name")
+	projectsUpdateCmd.Flags().String("status", "", "New project status (active, archived)")
+
 	projectsCmd.AddCommand(projectsListCmd)
 	projectsCmd.AddCommand(projectsCreateCmd)
 	projectsCmd.AddCommand(projectsGetCmd)
+	projectsCmd.AddCommand(projectsUpdateCmd)
 	projectsCmd.AddCommand(projectsDeleteCmd)
 	projectsCmd.AddCommand(projectsLimitsCmd)
 	projectsCmd.AddCommand(projectsGetLimitsCompatCmd)
