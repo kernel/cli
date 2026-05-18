@@ -57,7 +57,6 @@ type ProjectsLimitsGetInput struct {
 type ProjectsLimitsSetInput struct {
 	Identifier               string
 	MaxConcurrentSessions    Int64Flag
-	MaxPersistentSessions    Int64Flag
 	MaxConcurrentInvocations Int64Flag
 	MaxPooledSessions        Int64Flag
 	Output                   string
@@ -193,12 +192,6 @@ func (c ProjectsCmd) LimitsSet(ctx context.Context, in ProjectsLimitsSetInput) e
 		}
 		inner.MaxConcurrentSessions = param.NewOpt(in.MaxConcurrentSessions.Value)
 	}
-	if in.MaxPersistentSessions.Set {
-		if in.MaxPersistentSessions.Value < 0 {
-			return fmt.Errorf("--max-persistent-sessions must be non-negative (got %d); use 0 to remove the cap", in.MaxPersistentSessions.Value)
-		}
-		inner.MaxPersistentSessions = param.NewOpt(in.MaxPersistentSessions.Value)
-	}
 	if in.MaxConcurrentInvocations.Set {
 		if in.MaxConcurrentInvocations.Value < 0 {
 			return fmt.Errorf("--max-concurrent-invocations must be non-negative (got %d); use 0 to remove the cap", in.MaxConcurrentInvocations.Value)
@@ -243,7 +236,6 @@ func renderProjectLimits(limits *kernel.ProjectLimits) {
 	rows := pterm.TableData{
 		{"Limit", "Value"},
 		{"Max Concurrent Sessions", formatProjectLimitValue(limits.MaxConcurrentSessions, limits.JSON.MaxConcurrentSessions)},
-		{"Max Persistent Sessions", formatProjectLimitValue(limits.MaxPersistentSessions, limits.JSON.MaxPersistentSessions)},
 		{"Max Concurrent Invocations", formatProjectLimitValue(limits.MaxConcurrentInvocations, limits.JSON.MaxConcurrentInvocations)},
 		{"Max Pooled Sessions", formatProjectLimitValue(limits.MaxPooledSessions, limits.JSON.MaxPooledSessions)},
 	}
@@ -297,7 +289,6 @@ func runProjectsLimitsGet(cmd *cobra.Command, args []string) error {
 func runProjectsLimitsSet(cmd *cobra.Command, args []string) error {
 	c := getProjectsHandler(cmd)
 	maxConcurrentSessions, _ := cmd.Flags().GetInt64("max-concurrent-sessions")
-	maxPersistentSessions, _ := cmd.Flags().GetInt64("max-persistent-sessions")
 	maxConcurrentInvocations, _ := cmd.Flags().GetInt64("max-concurrent-invocations")
 	maxPooledSessions, _ := cmd.Flags().GetInt64("max-pooled-sessions")
 	output, _ := cmd.Flags().GetString("output")
@@ -307,10 +298,6 @@ func runProjectsLimitsSet(cmd *cobra.Command, args []string) error {
 		MaxConcurrentSessions: Int64Flag{
 			Set:   cmd.Flags().Changed("max-concurrent-sessions"),
 			Value: maxConcurrentSessions,
-		},
-		MaxPersistentSessions: Int64Flag{
-			Set:   cmd.Flags().Changed("max-persistent-sessions"),
-			Value: maxPersistentSessions,
 		},
 		MaxConcurrentInvocations: Int64Flag{
 			Set:   cmd.Flags().Changed("max-concurrent-invocations"),
@@ -330,7 +317,6 @@ func addProjectsLimitsOutputFlag(cmd *cobra.Command) {
 
 func addProjectsLimitsSetFlags(cmd *cobra.Command) {
 	cmd.Flags().Int64("max-concurrent-sessions", 0, "Maximum concurrent browser sessions (0 to remove cap)")
-	cmd.Flags().Int64("max-persistent-sessions", 0, "Maximum persistent browser sessions (0 to remove cap)")
 	cmd.Flags().Int64("max-concurrent-invocations", 0, "Maximum concurrent app invocations (0 to remove cap)")
 	cmd.Flags().Int64("max-pooled-sessions", 0, "Maximum pooled sessions capacity (0 to remove cap)")
 	addProjectsLimitsOutputFlag(cmd)
