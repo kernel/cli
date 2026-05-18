@@ -111,3 +111,34 @@ func TestInstallMethodRulesPathPrecedence(t *testing.T) {
 	assert.Equal(t, InstallMethodPNPM, detect("/home/user/.local/share/pnpm/kernel"))
 	assert.Equal(t, InstallMethodUnknown, detect("/usr/local/bin/kernel"))
 }
+
+func TestIsVeryOldVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		current string
+		latest  string
+		want    bool
+		wantErr bool
+	}{
+		{"same version", "v0.19.1", "v0.19.1", false, false},
+		{"one minor behind", "v0.18.0", "v0.19.0", false, false},
+		{"four minor behind", "v0.15.0", "v0.19.0", false, false},
+		{"five minor behind escalates", "v0.14.0", "v0.19.0", true, false},
+		{"many minor behind", "v0.5.0", "v0.19.1", true, false},
+		{"major behind escalates", "v1.2.3", "v2.0.0", true, false},
+		{"patch behind only", "v0.19.0", "v0.19.5", false, false},
+		{"v prefix tolerated", "0.10.0", "v0.19.0", true, false},
+		{"non-semver returns error", "dev", "v0.19.0", false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := IsVeryOldVersion(tt.current, tt.latest)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

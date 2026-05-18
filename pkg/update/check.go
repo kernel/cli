@@ -77,6 +77,37 @@ func IsNewerVersion(current, latest string) (bool, error) {
 	return lv.GreaterThan(cv), nil
 }
 
+// veryOldMinorGap is the number of minor versions behind (within the same
+// major) at which the upgrade prompt escalates from informational to urgent.
+const veryOldMinorGap = 5
+
+// IsVeryOldVersion reports whether current is far enough behind latest to
+// warrant an urgent "upgrade as soon as possible" warning. Any major-version
+// gap qualifies; otherwise the user must be at least veryOldMinorGap minor
+// versions behind within the same major.
+func IsVeryOldVersion(current, latest string) (bool, error) {
+	c := normalizeSemver(current)
+	l := normalizeSemver(latest)
+	if c == "" || l == "" {
+		return false, errors.New("non-semver version")
+	}
+	cv, err := semver.NewVersion(c)
+	if err != nil {
+		return false, err
+	}
+	lv, err := semver.NewVersion(l)
+	if err != nil {
+		return false, err
+	}
+	if lv.Major() > cv.Major() {
+		return true, nil
+	}
+	if lv.Major() == cv.Major() && lv.Minor() >= cv.Minor()+veryOldMinorGap {
+		return true, nil
+	}
+	return false, nil
+}
+
 // FetchLatest queries GitHub Releases and returns the latest stable tag and URL.
 // It expects that the GitHub API returns releases in descending chronological order
 // (newest first), which is standard behavior.
@@ -158,12 +189,17 @@ func isOnOldBrewTap() bool {
 	return false
 }
 
-// printUpgradeMessage prints a concise upgrade banner.
+// printUpgradeMessage prints a concise upgrade banner. When the local version
+// is far behind the latest release, the banner escalates to an urgent warning.
 func printUpgradeMessage(current, latest, url string) {
 	cur := strings.TrimPrefix(current, "v")
 	lat := strings.TrimPrefix(latest, "v")
 	pterm.Println()
-	pterm.Info.Printf("A new release of kernel is available: %s → %s\n", cur, lat)
+	if veryOld, err := IsVeryOldVersion(current, latest); err == nil && veryOld {
+		pterm.Warning.Printf("You are running a very old version of kernel (%s) and should upgrade as soon as possible. Latest: %s\n", cur, lat)
+	} else {
+		pterm.Info.Printf("A new release of kernel is available: %s → %s\n", cur, lat)
+	}
 	if url != "" {
 		pterm.Info.Printf("Release notes: %s\n", url)
 	}
