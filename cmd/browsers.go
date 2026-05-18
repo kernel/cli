@@ -175,7 +175,6 @@ func parseViewport(viewport string) (width, height, refreshRate int64, err error
 
 // Inputs for each command
 type BrowsersCreateInput struct {
-	PersistenceID      string
 	TimeoutSeconds     int
 	Stealth            BoolFlag
 	Headless           BoolFlag
@@ -291,7 +290,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	}
 
 	// Prepare table data
-	headers := []string{"Browser ID", "Created At", "Persistent ID", "Profile", "Pool", "CDP WS URL", "Live View URL"}
+	headers := []string{"Browser ID", "Created At", "Profile", "Pool", "CDP WS URL", "Live View URL"}
 	showDeletedAt := in.IncludeDeleted || in.Status == "deleted" || in.Status == "all"
 	if showDeletedAt {
 		headers = append(headers, "Deleted At")
@@ -299,11 +298,6 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	tableData := pterm.TableData{headers}
 
 	for _, browser := range browsers {
-		persistentID := "-"
-		if browser.Persistence.ID != "" {
-			persistentID = browser.Persistence.ID
-		}
-
 		profile := "-"
 		if browser.Profile.Name != "" {
 			profile = browser.Profile.Name
@@ -321,7 +315,6 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 		row := []string{
 			browser.SessionID,
 			util.FormatLocal(browser.CreatedAt),
-			persistentID,
 			profile,
 			pool,
 			truncateURL(browser.CdpWsURL, 50),
@@ -355,9 +348,6 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		pterm.Info.Println("Creating browser session...")
 	}
 	params := kernel.BrowserNewParams{}
-	if in.PersistenceID != "" {
-		params.Persistence = kernel.BrowserPersistenceParam{ID: in.PersistenceID}
-	}
 	if in.TimeoutSeconds > 0 {
 		params.TimeoutSeconds = kernel.Opt(int64(in.TimeoutSeconds))
 	}
@@ -442,17 +432,17 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		return util.PrintPrettyJSON(browser)
 	}
 
-	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Persistence, browser.Profile, browser.StartURL)
+	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.StartURL)
 	return nil
 }
 
-func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, persistence kernel.BrowserPersistence, profile kernel.Profile, startURL string) {
-	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, persistence, profile, startURL)
+func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, startURL string) {
+	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, profile, startURL)
 	PrintTableNoPad(tableData, true)
 }
 
 // buildBrowserTableData creates a base table with common browser session fields.
-func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, persistence kernel.BrowserPersistence, profile kernel.Profile, startURL string) pterm.TableData {
+func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, startURL string) pterm.TableData {
 	tableData := pterm.TableData{
 		{"Property", "Value"},
 		{"Session ID", sessionID},
@@ -460,9 +450,6 @@ func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, persistence ke
 	}
 	if liveViewURL != "" {
 		tableData = append(tableData, []string{"Live View URL", liveViewURL})
-	}
-	if persistence.ID != "" {
-		tableData = append(tableData, []string{"Persistent ID", persistence.ID})
 	}
 	if profile.ID != "" || profile.Name != "" {
 		profVal := profile.Name
@@ -478,26 +465,16 @@ func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, persistence ke
 }
 
 func (b BrowsersCmd) Delete(ctx context.Context, in BrowsersDeleteInput) error {
-	// Try both deletion modes without confirmation
 	// Treat not found as a success (idempotent delete)
 	var nonNotFoundErrors []error
 
-	// Attempt by session ID
 	if err := b.browsers.DeleteByID(ctx, in.Identifier); err != nil {
 		if !util.IsNotFound(err) {
 			nonNotFoundErrors = append(nonNotFoundErrors, err)
 		}
 	}
 
-	// Attempt by persistent ID (backward compatibility)
-	if err := b.browsers.Delete(ctx, kernel.BrowserDeleteParams{PersistentID: in.Identifier}); err != nil {
-		if !util.IsNotFound(err) {
-			nonNotFoundErrors = append(nonNotFoundErrors, err)
-		}
-	}
-
-	if len(nonNotFoundErrors) >= 2 {
-		// Both failed with meaningful errors; report one
+	if len(nonNotFoundErrors) > 0 {
 		return util.CleanedUpSdkError{Err: nonNotFoundErrors[0]}
 	}
 
@@ -562,7 +539,6 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		browser.SessionID,
 		browser.CdpWsURL,
 		browser.BrowserLiveViewURL,
-		browser.Persistence,
 		browser.Profile,
 		browser.StartURL,
 	)
@@ -2524,8 +2500,6 @@ func init() {
 
 	// Add flags for create command
 	browsersCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
-	browsersCreateCmd.Flags().StringP("persistent-id", "p", "", "[DEPRECATED] Use --timeout and profiles instead. Unique identifier for browser session persistence")
-	_ = browsersCreateCmd.Flags().MarkDeprecated("persistent-id", "use --timeout (up to 72 hours) and profiles instead")
 	browsersCreateCmd.Flags().BoolP("stealth", "s", false, "Launch browser in stealth mode to avoid detection")
 	browsersCreateCmd.Flags().BoolP("headless", "H", false, "Launch browser without GUI access")
 	browsersCreateCmd.Flags().Bool("gpu", false, "Launch browser with hardware-accelerated GPU rendering")
@@ -2595,10 +2569,6 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 
 	// Get flag values
-	persistenceID, _ := cmd.Flags().GetString("persistent-id")
-	if persistenceID != "" {
-		pterm.Warning.Println("--persistent-id is deprecated. Use --timeout (up to 72 hours) and profiles instead.")
-	}
 	stealthVal, _ := cmd.Flags().GetBool("stealth")
 	headlessVal, _ := cmd.Flags().GetBool("headless")
 	gpuVal, _ := cmd.Flags().GetBool("gpu")
@@ -2689,7 +2659,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if output == "json" {
 			return util.PrintPrettyJSON(resp)
 		}
-		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Persistence, resp.Profile, resp.StartURL)
+		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.StartURL)
 		return nil
 	}
 
@@ -2711,7 +2681,6 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	in := BrowsersCreateInput{
-		PersistenceID:      persistenceID,
 		TimeoutSeconds:     timeout,
 		Stealth:            BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealthVal},
 		Headless:           BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headlessVal},
