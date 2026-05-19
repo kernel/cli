@@ -100,7 +100,6 @@ func TestProjectsLimitsGet_DefaultOutput(t *testing.T) {
 	}
 	limits.JSON.MaxConcurrentSessions = respjson.NewField("10")
 	limits.JSON.MaxConcurrentInvocations = respjson.NewField("5")
-	limits.JSON.MaxPersistentSessions = respjson.NewField(respjson.Null)
 
 	fakeProjects := &FakeProjectsService{}
 	fakeLimits := &FakeProjectLimitsService{
