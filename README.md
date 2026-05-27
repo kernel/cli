@@ -211,6 +211,7 @@ Commands with JSON output support:
   - `--start-url <url>` - Initial page to open on launch
   - `--pool-id <id>` - Acquire a browser from the specified pool (mutually exclusive with --pool-name; ignores other session flags)
   - `--pool-name <name>` - Acquire a browser from the pool name (mutually exclusive with --pool-id; ignores other session flags)
+  - `--telemetry` - Enable telemetry capture on the new session (see `kernel browsers telemetry stream`)
   - `--output json`, `-o json` - Output raw JSON object
   - _Note: When a pool is specified, omit other session configuration flags—pool settings determine profile, proxy, viewport, etc._
 - `kernel browsers delete <id>` - Delete a browser
@@ -279,6 +280,18 @@ Commands with JSON output support:
 - `kernel browsers replays stop <id> <replay-id>` - Stop a replay recording
 - `kernel browsers replays download <id> <replay-id>` - Download a replay video
   - `-f, --output-file <path>` - Output file path for the replay video
+
+### Browser Telemetry
+
+- `kernel browsers telemetry stream <id>` - Stream live telemetry events
+  - `--categories <list>` - Filter by category (console,network,page,interaction,monitor)
+  - `--types <list>` - Filter by event type (e.g. network_response,console_error)
+  - `--seq <n>` - Resume stream from sequence number (Last-Event-ID)
+  - `-o, --output json` - Output newline-delimited JSON envelopes
+- `kernel browsers telemetry start <id>` - Start telemetry capture on a running session
+  - `-o, --output json` - Output raw API response
+- `kernel browsers telemetry stop <id>` - Stop telemetry capture on a running session
+  - `-o, --output json` - Output raw API response
 
 ### Browser Process Control
 
