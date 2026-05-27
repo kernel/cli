@@ -293,7 +293,7 @@ Commands with JSON output support:
 - `kernel browsers telemetry status <id>` - Show current telemetry configuration
   - `-o, --output json` - Output raw JSON telemetry config
 - `kernel browsers telemetry stream <id>` - Stream live telemetry events
-  - `--categories <list>` - Filter by category (console,network,page,interaction,monitor); `monitor` is always-on and filter-only — cannot be toggled via `telemetry set`
+  - `--categories <list>` - Filter by API event category (console,network,page,interaction,system,api); `system` covers `monitor_*` and `cdp_*` events
   - `--types <list>` - Filter by event type (e.g. network_response,console_error)
   - `--seq <n>` - Resume stream from sequence number (Last-Event-ID)
   - `-o, --output json` - Output newline-delimited JSON envelopes
