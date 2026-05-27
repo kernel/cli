@@ -128,7 +128,7 @@ Commands with JSON output support:
 - **Apps**: `list`, `history`
 - **Deploy**: `deploy` (JSONL streaming), `history`
 - **Invoke**: `invoke` (JSONL streaming), `history`
-- **Browser Sub-commands**: `replays list/start`, `process exec/spawn`, `fs file-info/list-files`
+- **Browser Sub-commands**: `replays list/start`, `process exec/spawn`, `fs file-info/list-files`, `telemetry start/stop/set/status/stream`
 
 ### Authentication
 
@@ -212,7 +212,7 @@ Commands with JSON output support:
   - `--pool-id <id>` - Acquire a browser from the specified pool (mutually exclusive with --pool-name; ignores other session flags)
   - `--pool-name <name>` - Acquire a browser from the pool name (mutually exclusive with --pool-id; ignores other session flags)
   - `--telemetry` - Enable telemetry for all categories (`enabled: true`)
-  - `--telemetry=<assignments>` - Per-category config at create time, e.g. `--telemetry=network=on,page=off` (same syntax as `telemetry set`)
+  - `--telemetry=<list>` - Per-category config at create time as a comma-separated list, e.g. `--telemetry=network=on,page=off`
   - `--output json`, `-o json` - Output raw JSON object
   - _Note: When a pool is specified, omit other session configuration flags—pool settings determine profile, proxy, viewport, etc._
 - `kernel browsers delete <id>` - Delete a browser
@@ -284,12 +284,12 @@ Commands with JSON output support:
 
 ### Browser Telemetry
 
-- `kernel browsers telemetry start <id>` - Start telemetry capture (`enabled: true`)
-  - `-o, --output json` - Output raw API response
-- `kernel browsers telemetry stop <id>` - Stop telemetry capture (`enabled: false`)
-  - `-o, --output json` - Output raw API response
-- `kernel browsers telemetry set <id> <name=on|off>...` - Set per-category telemetry config, e.g. `network=on page=off`
-  - `-o, --output json` - Output raw API response
+- `kernel browsers telemetry start <id>` - Start telemetry capture
+  - `-o, --output json` - Output the full updated browser session as JSON
+- `kernel browsers telemetry stop <id>` - Stop telemetry capture
+  - `-o, --output json` - Output the full updated browser session as JSON
+- `kernel browsers telemetry set <id> <name=on|off>...` - Set per-category telemetry config, e.g. `network=on page=off`. Valid categories: `console`, `interaction`, `network`, `page`. (The `system` category always emits and cannot be toggled.)
+  - `-o, --output json` - Output the full updated browser session as JSON
 - `kernel browsers telemetry status <id>` - Show current telemetry configuration
   - `-o, --output json` - Output raw JSON telemetry config
 - `kernel browsers telemetry stream <id>` - Stream live telemetry events
