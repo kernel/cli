@@ -262,10 +262,10 @@ func TestEventCategoryFromRaw(t *testing.T) {
 		// real category field present — used directly
 		{`{"type":"monitor_screenshot","category":"system","ts":0}`, "system"},
 		{`{"type":"network_response","category":"network","ts":0}`, "network"},
-		// no category field — falls back to type prefix
-		{`{"type":"console_log","ts":0}`, "console"},
-		{`{"type":"page_navigation","ts":0}`, "page"},
-		{`{"type":"nounderscore","ts":0}`, "nounderscore"},
+		// no category field — returns ""
+		{`{"type":"console_log","ts":0}`, ""},
+		{`{"type":"page_navigation","ts":0}`, ""},
+		{`{"type":"nounderscore","ts":0}`, ""},
 	}
 	for _, tc := range cases {
 		ev := makeEvent(t, tc.raw)

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -51,9 +52,16 @@ type BrowsersTelemetryStreamInput struct {
 	Output     string
 }
 
+func validateJSONOutput(out string) error {
+	if out != "" && out != "json" {
+		return errors.New("unsupported --output value: use 'json'")
+	}
+	return nil
+}
+
 func (b BrowsersCmd) TelemetryStart(ctx context.Context, in BrowsersTelemetryStartInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 	res, err := b.browsers.Update(ctx, in.Identifier, kernel.BrowserUpdateParams{
 		Telemetry: kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(true)},
@@ -69,8 +77,8 @@ func (b BrowsersCmd) TelemetryStart(ctx context.Context, in BrowsersTelemetrySta
 }
 
 func (b BrowsersCmd) TelemetryStop(ctx context.Context, in BrowsersTelemetryStopInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 	res, err := b.browsers.Update(ctx, in.Identifier, kernel.BrowserUpdateParams{
 		Telemetry: kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(false)},
@@ -90,11 +98,11 @@ func (b BrowsersCmd) TelemetryStop(ctx context.Context, in BrowsersTelemetryStop
 func parseTelemetryCategories(s string) (kernel.BrowserTelemetryCategoriesConfigParam, error) {
 	p := kernel.BrowserTelemetryCategoriesConfigParam{}
 	for _, part := range strings.Split(s, ",") {
-		kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
-		if len(kv) != 2 {
+		name, val, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
 			return p, fmt.Errorf("invalid category assignment %q: expected name=on or name=off", part)
 		}
-		name, val := strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1])
+		name, val = strings.TrimSpace(name), strings.TrimSpace(val)
 		var enabled bool
 		switch val {
 		case "on":
@@ -114,15 +122,15 @@ func parseTelemetryCategories(s string) (kernel.BrowserTelemetryCategoriesConfig
 		case "page":
 			p.Page = kernel.BrowserTelemetryCategoryConfigParam{Enabled: kernel.Opt(enabled)}
 		default:
-			return p, fmt.Errorf("unknown category %q: must be one of console, interaction, network, page", name)
+			return p, fmt.Errorf("unknown category %q: must be one of %s", name, strings.Join(settableCategories, ", "))
 		}
 	}
 	return p, nil
 }
 
 func (b BrowsersCmd) TelemetrySet(ctx context.Context, in BrowsersTelemetrySetInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 	p, err := parseTelemetryCategories(in.Categories)
 	if err != nil {
@@ -142,8 +150,8 @@ func (b BrowsersCmd) TelemetrySet(ctx context.Context, in BrowsersTelemetrySetIn
 }
 
 func (b BrowsersCmd) TelemetryStatus(ctx context.Context, in BrowsersTelemetryStatusInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 	browser, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -152,13 +160,11 @@ func (b BrowsersCmd) TelemetryStatus(ctx context.Context, in BrowsersTelemetrySt
 	if in.Output == "json" {
 		return util.PrintPrettyJSON(browser.Telemetry)
 	}
-	telemetryEnabled := browser.Telemetry.JSON.Browser.Valid()
-	if telemetryEnabled {
-		pterm.Printf("enabled:     on\n")
-	} else {
-		pterm.Printf("enabled:     off\n")
+	if !browser.Telemetry.JSON.Browser.Valid() {
+		pterm.Println("enabled:     off")
 		return nil
 	}
+	pterm.Println("enabled:     on")
 	cfg := browser.Telemetry.Browser
 	pterm.Printf("console:     %s\n", categoryOnOff(cfg.Console))
 	pterm.Printf("interaction: %s\n", categoryOnOff(cfg.Interaction))
@@ -180,21 +186,17 @@ func categoryOnOff(c kernel.BrowserTelemetryCategoryConfig) string {
 }
 
 // eventCategoryFromRaw reads the category field directly from the raw event JSON.
-// Falls back to prefix derivation (split on first _) when the field is absent.
+// Returns "" if the field is absent — callers that need a category must handle the empty case.
 func eventCategoryFromRaw(ev kernel.BrowserTelemetryEventUnion) string {
 	var obj struct {
 		Category string `json:"category"`
 	}
 	if raw := ev.RawJSON(); raw != "" {
-		if err := json.Unmarshal([]byte(raw), &obj); err == nil && obj.Category != "" {
+		if err := json.Unmarshal([]byte(raw), &obj); err == nil {
 			return obj.Category
 		}
 	}
-	// fallback: derive from type prefix (e.g. "network_response" -> "network")
-	if i := strings.Index(ev.Type, "_"); i > 0 {
-		return ev.Type[:i]
-	}
-	return ev.Type
+	return ""
 }
 
 // shouldEmit applies client-side category/type filters to a telemetry event.
@@ -207,6 +209,9 @@ func shouldEmit(ev kernel.BrowserTelemetryEventUnion, categories, types []string
 	}
 	return true
 }
+
+// settableCategories are the categories accepted by the set subcommand.
+var settableCategories = []string{"console", "interaction", "network", "page"}
 
 // knownTelemetryCategories are the real API event categories observable on stream.
 var knownTelemetryCategories = []string{"console", "network", "page", "interaction", "system"}
@@ -222,8 +227,8 @@ var knownTelemetryTypes = []string{
 }
 
 func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetryStreamInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 	for _, c := range in.Categories {
 		if !slices.Contains(knownTelemetryCategories, c) {
