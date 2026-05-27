@@ -1938,6 +1938,7 @@ func TestBrowsersTelemetryStatus_PrintsCategories(t *testing.T) {
 
 	assert.NoError(t, err)
 	out := outBuf.String()
+	assert.Contains(t, out, "enabled:     on")
 	assert.Contains(t, out, "console:     on")
 	assert.Contains(t, out, "interaction: off")
 	assert.Contains(t, out, "network:     on")
@@ -1960,10 +1961,32 @@ func TestBrowsersTelemetryStatus_VMDefaultsAllOn(t *testing.T) {
 
 	assert.NoError(t, err)
 	out := outBuf.String()
+	assert.Contains(t, out, "enabled:     on")
 	assert.Contains(t, out, "console:     on")
 	assert.Contains(t, out, "interaction: on")
 	assert.Contains(t, out, "network:     on")
 	assert.Contains(t, out, "page:        on")
+}
+
+func TestBrowsersTelemetryStatus_StoppedShowsDisabled(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		// API returns {} (no browser key) after telemetry stop
+		var resp kernel.BrowserGetResponse
+		if err := json.Unmarshal([]byte(`{"session_id":"session123","telemetry":{}}`), &resp); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		return &resp, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.TelemetryStatus(context.Background(), BrowsersTelemetryStatusInput{Identifier: "session123"})
+
+	assert.NoError(t, err)
+	out := outBuf.String()
+	assert.Contains(t, out, "enabled:     off")
+	assert.NotContains(t, out, "console:")
+	assert.NotContains(t, out, "network:")
 }
 
 func TestTelemetryStream_UnknownCategoryErrors(t *testing.T) {

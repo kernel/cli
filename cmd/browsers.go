@@ -799,6 +799,13 @@ func (b BrowsersCmd) TelemetryStatus(ctx context.Context, in BrowsersTelemetrySt
 	if in.Output == "json" {
 		return util.PrintPrettyJSON(browser.Telemetry)
 	}
+	telemetryEnabled := browser.Telemetry.JSON.Browser.Valid()
+	if telemetryEnabled {
+		pterm.Printf("enabled:     on\n")
+	} else {
+		pterm.Printf("enabled:     off\n")
+		return nil
+	}
 	cfg := browser.Telemetry.Browser
 	pterm.Printf("console:     %s\n", categoryOnOff(cfg.Console))
 	pterm.Printf("interaction: %s\n", categoryOnOff(cfg.Interaction))
