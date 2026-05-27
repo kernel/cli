@@ -849,7 +849,7 @@ func shouldEmit(ev kernel.BrowserTelemetryEventUnion, categories, types []string
 }
 
 // knownTelemetryCategories are the real API event categories observable on stream.
-var knownTelemetryCategories = []string{"console", "network", "page", "interaction", "system", "api"}
+var knownTelemetryCategories = []string{"console", "network", "page", "interaction", "system"}
 
 var knownTelemetryTypes = []string{
 	"console_log", "console_error",
@@ -2532,7 +2532,7 @@ func init() {
 	// telemetry
 	telemetryRoot := &cobra.Command{Use: "telemetry", Short: "Browser telemetry operations"}
 	telemetryStream := &cobra.Command{Use: "stream <id>", Short: "Stream live telemetry events", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStream}
-	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by API event category (console,network,page,interaction,system,api); system covers monitor_* and cdp_* events")
+	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by API event category (console,network,page,interaction,system); system covers all monitor_* events")
 	telemetryStream.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error)")
 	telemetryStream.Flags().Int64("seq", 0, "Resume stream from sequence number (Last-Event-ID)")
 	telemetryStream.Flags().StringP("output", "o", "", "Output format: json for newline-delimited JSON envelopes")
