@@ -224,6 +224,11 @@ type BrowsersUpdateInput struct {
 	Output             string
 }
 
+type BrowsersTelemetryStartInput struct {
+	Identifier string
+	Output     string
+}
+
 type BrowsersTelemetryStopInput struct {
 	Identifier string
 	Output     string
@@ -673,6 +678,23 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	pterm.Success.Printf("Updated browser %s\n", browser.SessionID)
+	return nil
+}
+
+func (b BrowsersCmd) TelemetryStart(ctx context.Context, in BrowsersTelemetryStartInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+	res, err := b.browsers.Update(ctx, in.Identifier, kernel.BrowserUpdateParams{
+		Telemetry: kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(true)},
+	})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(res)
+	}
+	pterm.Success.Printf("Started telemetry for browser %s\n", in.Identifier)
 	return nil
 }
 
@@ -2378,9 +2400,11 @@ func init() {
 	telemetryStream.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error)")
 	telemetryStream.Flags().Int64("seq", 0, "Resume stream from sequence number (Last-Event-ID)")
 	telemetryStream.Flags().StringP("output", "o", "", "Output format: json for newline-delimited JSON envelopes")
+	telemetryStart := &cobra.Command{Use: "start <id>", Short: "Start telemetry capture", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStart}
+	telemetryStart.Flags().StringP("output", "o", "", "Output format: json for raw API response")
 	telemetryStop := &cobra.Command{Use: "stop <id>", Short: "Stop telemetry capture", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStop}
 	telemetryStop.Flags().StringP("output", "o", "", "Output format: json for raw API response")
-	telemetryRoot.AddCommand(telemetryStream, telemetryStop)
+	telemetryRoot.AddCommand(telemetryStream, telemetryStart, telemetryStop)
 	browsersCmd.AddCommand(telemetryRoot)
 
 	// process
@@ -2915,6 +2939,14 @@ func runBrowsersReplaysDownload(cmd *cobra.Command, args []string) error {
 	out, _ := cmd.Flags().GetString("output-file")
 	b := BrowsersCmd{browsers: &svc, replays: &svc.Replays}
 	return b.ReplaysDownload(cmd.Context(), BrowsersReplaysDownloadInput{Identifier: args[0], ReplayID: args[1], Output: out})
+}
+
+func runBrowsersTelemetryStart(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	out, _ := cmd.Flags().GetString("output")
+	b := BrowsersCmd{browsers: &svc}
+	return b.TelemetryStart(cmd.Context(), BrowsersTelemetryStartInput{Identifier: args[0], Output: out})
 }
 
 func runBrowsersTelemetryStop(cmd *cobra.Command, args []string) error {

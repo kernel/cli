@@ -1762,6 +1762,26 @@ func TestBrowsersUpdate_ForceWithProxyButNoViewport_Errors(t *testing.T) {
 	assert.Contains(t, err.Error(), "--force requires --viewport")
 }
 
+func TestBrowsersTelemetryStart_SendsEnablePayload(t *testing.T) {
+	setupStdoutCapture(t)
+	var capturedID string
+	var captured kernel.BrowserUpdateParams
+	fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+		capturedID = id
+		captured = body
+		return &kernel.BrowserUpdateResponse{SessionID: id}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.TelemetryStart(context.Background(), BrowsersTelemetryStartInput{Identifier: "session123"})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "session123", capturedID)
+	assert.True(t, captured.Telemetry.Enabled.Valid())
+	assert.True(t, captured.Telemetry.Enabled.Value)
+	assert.Contains(t, outBuf.String(), "Started telemetry for browser session123")
+}
+
 func TestBrowsersTelemetryStop_SendsDisablePayload(t *testing.T) {
 	setupStdoutCapture(t)
 	var capturedID string
