@@ -207,7 +207,7 @@ func printManagedAuthSummary(auth *kernel.ManagedAuth) {
 		{"Can Reauth", fmt.Sprintf("%t", auth.CanReauth)},
 	}
 	if auth.CanReauthReason != "" {
-		tableData = append(tableData, []string{"Can Reauth Reason", auth.CanReauthReason})
+		tableData = append(tableData, []string{"Can Reauth Reason", string(auth.CanReauthReason)})
 	}
 	if auth.Credential.Name != "" {
 		tableData = append(tableData, []string{"Credential Name", auth.Credential.Name})
@@ -326,7 +326,7 @@ func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) e
 		{"Can Reauth", fmt.Sprintf("%t", auth.CanReauth)},
 	}
 	if auth.CanReauthReason != "" {
-		tableData = append(tableData, []string{"Can Reauth Reason", auth.CanReauthReason})
+		tableData = append(tableData, []string{"Can Reauth Reason", string(auth.CanReauthReason)})
 	}
 	if auth.Credential.Name != "" {
 		tableData = append(tableData, []string{"Credential Name", auth.Credential.Name})
