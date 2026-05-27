@@ -800,41 +800,56 @@ func (b BrowsersCmd) TelemetryStatus(ctx context.Context, in BrowsersTelemetrySt
 		return util.PrintPrettyJSON(browser.Telemetry)
 	}
 	cfg := browser.Telemetry.Browser
-	pterm.Printf("console:     %s\n", onOff(cfg.Console.Enabled))
-	pterm.Printf("interaction: %s\n", onOff(cfg.Interaction.Enabled))
-	pterm.Printf("network:     %s\n", onOff(cfg.Network.Enabled))
-	pterm.Printf("page:        %s\n", onOff(cfg.Page.Enabled))
+	pterm.Printf("console:     %s\n", categoryOnOff(cfg.Console))
+	pterm.Printf("interaction: %s\n", categoryOnOff(cfg.Interaction))
+	pterm.Printf("network:     %s\n", categoryOnOff(cfg.Network))
+	pterm.Printf("page:        %s\n", categoryOnOff(cfg.Page))
 	return nil
 }
 
-func onOff(v bool) string {
-	if v {
+// categoryOnOff returns "on" or "off" for a category config, respecting the SDK
+// default: if the enabled field is absent from the response, it defaults to true.
+func categoryOnOff(c kernel.BrowserTelemetryCategoryConfig) string {
+	if !c.JSON.Enabled.Valid() {
+		return "on"
+	}
+	if c.Enabled {
 		return "on"
 	}
 	return "off"
 }
 
-// eventCategory derives the category prefix from a telemetry event type string.
-// e.g. "network_response" -> "network", "monitor_screenshot" -> "monitor".
-func eventCategory(eventType string) string {
-	if i := strings.Index(eventType, "_"); i > 0 {
-		return eventType[:i]
+// eventCategoryFromRaw reads the category field directly from the raw event JSON.
+// Falls back to prefix derivation (split on first _) when the field is absent.
+func eventCategoryFromRaw(ev kernel.BrowserTelemetryEventUnion) string {
+	var obj struct {
+		Category string `json:"category"`
 	}
-	return eventType
+	if raw := ev.RawJSON(); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &obj); err == nil && obj.Category != "" {
+			return obj.Category
+		}
+	}
+	// fallback: derive from type prefix (e.g. "network_response" -> "network")
+	if i := strings.Index(ev.Type, "_"); i > 0 {
+		return ev.Type[:i]
+	}
+	return ev.Type
 }
 
 // shouldEmit applies client-side category/type filters to a telemetry event.
-func shouldEmit(eventType string, categories, types []string) bool {
-	if len(categories) > 0 && !slices.Contains(categories, eventCategory(eventType)) {
+func shouldEmit(ev kernel.BrowserTelemetryEventUnion, categories, types []string) bool {
+	if len(categories) > 0 && !slices.Contains(categories, eventCategoryFromRaw(ev)) {
 		return false
 	}
-	if len(types) > 0 && !slices.Contains(types, eventType) {
+	if len(types) > 0 && !slices.Contains(types, ev.Type) {
 		return false
 	}
 	return true
 }
 
-var knownTelemetryCategories = []string{"console", "network", "page", "interaction", "monitor"}
+// knownTelemetryCategories are the real API event categories observable on stream.
+var knownTelemetryCategories = []string{"console", "network", "page", "interaction", "system", "api"}
 
 var knownTelemetryTypes = []string{
 	"console_log", "console_error",
@@ -872,7 +887,7 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 	defer stream.Close()
 	for stream.Next() {
 		ev := stream.Current()
-		if !shouldEmit(ev.Event.Type, in.Categories, in.Types) {
+		if !shouldEmit(ev.Event, in.Categories, in.Types) {
 			continue
 		}
 		if in.Output == "json" {
@@ -880,7 +895,7 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 			continue
 		}
 		ts := time.UnixMicro(ev.Event.Ts).Local().Format("15:04:05")
-		pterm.Printf("%s  [%s]  %s\n", ts, eventCategory(ev.Event.Type), ev.Event.Type)
+		pterm.Printf("%s  [%s]  %s\n", ts, eventCategoryFromRaw(ev.Event), ev.Event.Type)
 	}
 	if err := stream.Err(); err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -2517,7 +2532,7 @@ func init() {
 	// telemetry
 	telemetryRoot := &cobra.Command{Use: "telemetry", Short: "Browser telemetry operations"}
 	telemetryStream := &cobra.Command{Use: "stream <id>", Short: "Stream live telemetry events", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStream}
-	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by category (console,network,page,interaction,monitor); monitor is always-on and filter-only — it cannot be toggled via telemetry set")
+	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by API event category (console,network,page,interaction,system,api); system covers monitor_* and cdp_* events")
 	telemetryStream.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error)")
 	telemetryStream.Flags().Int64("seq", 0, "Resume stream from sequence number (Last-Event-ID)")
 	telemetryStream.Flags().StringP("output", "o", "", "Output format: json for newline-delimited JSON envelopes")

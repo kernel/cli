@@ -1926,17 +1926,11 @@ func TestBrowsersTelemetrySet_WhitespaceTolerance(t *testing.T) {
 func TestBrowsersTelemetryStatus_PrintsCategories(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
-		return &kernel.BrowserGetResponse{
-			SessionID: id,
-			Telemetry: kernel.BrowserTelemetryConfig{
-				Browser: kernel.BrowserTelemetryCategoriesConfig{
-					Console:     kernel.BrowserTelemetryCategoryConfig{Enabled: true},
-					Interaction: kernel.BrowserTelemetryCategoryConfig{Enabled: false},
-					Network:     kernel.BrowserTelemetryCategoryConfig{Enabled: true},
-					Page:        kernel.BrowserTelemetryCategoryConfig{Enabled: false},
-				},
-			},
-		}, nil
+		var resp kernel.BrowserGetResponse
+		if err := json.Unmarshal([]byte(`{"session_id":"session123","telemetry":{"browser":{"console":{"enabled":true},"interaction":{"enabled":false},"network":{"enabled":true},"page":{"enabled":false}}}}`), &resp); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		return &resp, nil
 	}}
 	b := BrowsersCmd{browsers: fake}
 
@@ -1948,6 +1942,28 @@ func TestBrowsersTelemetryStatus_PrintsCategories(t *testing.T) {
 	assert.Contains(t, out, "interaction: off")
 	assert.Contains(t, out, "network:     on")
 	assert.Contains(t, out, "page:        off")
+}
+
+func TestBrowsersTelemetryStatus_VMDefaultsAllOn(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		// API returns browser:{} when using VM defaults — enabled field absent means true per SDK
+		var resp kernel.BrowserGetResponse
+		if err := json.Unmarshal([]byte(`{"session_id":"session123","telemetry":{"browser":{}}}`), &resp); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		return &resp, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.TelemetryStatus(context.Background(), BrowsersTelemetryStatusInput{Identifier: "session123"})
+
+	assert.NoError(t, err)
+	out := outBuf.String()
+	assert.Contains(t, out, "console:     on")
+	assert.Contains(t, out, "interaction: on")
+	assert.Contains(t, out, "network:     on")
+	assert.Contains(t, out, "page:        on")
 }
 
 func TestTelemetryStream_UnknownCategoryErrors(t *testing.T) {
@@ -1978,39 +1994,55 @@ func TestTelemetryStream_UnknownTypeWarns(t *testing.T) {
 	assert.Contains(t, outBuf.String(), "unrecognized event type")
 }
 
-func TestEventCategory(t *testing.T) {
-	cases := map[string]string{
-		"network_response":   "network",
-		"monitor_screenshot": "monitor",
-		"console_log":        "console",
-		"page_navigation":    "page",
-		"interaction_click":  "interaction",
-		"nounderscore":       "nounderscore",
+func makeEvent(t *testing.T, raw string) kernel.BrowserTelemetryEventUnion {
+	t.Helper()
+	var ev kernel.BrowserTelemetryEventUnion
+	if err := json.Unmarshal([]byte(raw), &ev); err != nil {
+		t.Fatalf("makeEvent: %v", err)
 	}
-	for input, want := range cases {
-		assert.Equal(t, want, eventCategory(input), "eventCategory(%q)", input)
+	return ev
+}
+
+func TestEventCategoryFromRaw(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want string
+	}{
+		// real category field present — used directly
+		{`{"type":"monitor_screenshot","category":"system","ts":0}`, "system"},
+		{`{"type":"network_response","category":"network","ts":0}`, "network"},
+		// no category field — falls back to type prefix
+		{`{"type":"console_log","ts":0}`, "console"},
+		{`{"type":"page_navigation","ts":0}`, "page"},
+		{`{"type":"nounderscore","ts":0}`, "nounderscore"},
+	}
+	for _, tc := range cases {
+		ev := makeEvent(t, tc.raw)
+		assert.Equal(t, tc.want, eventCategoryFromRaw(ev), "raw=%s", tc.raw)
 	}
 }
 
 func TestShouldEmit(t *testing.T) {
 	cases := []struct {
 		name       string
-		eventType  string
+		raw        string
 		categories []string
 		types      []string
 		want       bool
 	}{
-		{"no filters passes", "network_response", nil, nil, true},
-		{"matching category passes", "network_response", []string{"network"}, nil, true},
-		{"non-matching category drops", "console_log", []string{"network"}, nil, false},
-		{"matching type passes", "console_log", nil, []string{"console_log"}, true},
-		{"non-matching type drops", "network_response", nil, []string{"console_log"}, false},
-		{"both filters pass when both match", "network_response", []string{"network"}, []string{"network_response"}, true},
-		{"both filters drop when type misses", "network_response", []string{"network"}, []string{"console_log"}, false},
+		{"no filters passes", `{"type":"network_response","category":"network","ts":0}`, nil, nil, true},
+		{"matching category passes", `{"type":"network_response","category":"network","ts":0}`, []string{"network"}, nil, true},
+		{"non-matching category drops", `{"type":"console_log","category":"console","ts":0}`, []string{"network"}, nil, false},
+		{"system category matches monitor_screenshot", `{"type":"monitor_screenshot","category":"system","ts":0}`, []string{"system"}, nil, true},
+		{"matching type passes", `{"type":"console_log","category":"console","ts":0}`, nil, []string{"console_log"}, true},
+		{"non-matching type drops", `{"type":"network_response","category":"network","ts":0}`, nil, []string{"console_log"}, false},
+		{"both filters pass when both match", `{"type":"network_response","category":"network","ts":0}`, []string{"network"}, []string{"network_response"}, true},
+		{"both filters drop when type misses", `{"type":"network_response","category":"network","ts":0}`, []string{"network"}, []string{"console_log"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, shouldEmit(tc.eventType, tc.categories, tc.types))
+			ev := makeEvent(t, tc.raw)
+			assert.Equal(t, tc.want, shouldEmit(ev, tc.categories, tc.types))
 		})
 	}
 }
