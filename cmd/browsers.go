@@ -187,6 +187,7 @@ type BrowsersCreateInput struct {
 	StartURL           string
 	Extensions         []string
 	Viewport           string
+	TelemetryEnabled   bool
 	Output             string
 }
 
@@ -420,6 +421,10 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		if refreshRate > 0 {
 			params.Viewport.RefreshRate = kernel.Opt(refreshRate)
 		}
+	}
+
+	if in.TelemetryEnabled {
+		params.Telemetry = kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(true)}
 	}
 
 	browser, err := b.browsers.New(ctx, params)
@@ -2506,6 +2511,7 @@ func init() {
 	browsersCreateCmd.Flags().Bool("viewport-interactive", false, "Interactively select viewport size from list")
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
+	browsersCreateCmd.Flags().Bool("telemetry", false, "Enable telemetry capture on the new session")
 
 	// curl
 	curlCmd := &cobra.Command{
@@ -2575,6 +2581,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	viewportInteractive, _ := cmd.Flags().GetBool("viewport-interactive")
 	poolID, _ := cmd.Flags().GetString("pool-id")
 	poolName, _ := cmd.Flags().GetString("pool-name")
+	telemetry, _ := cmd.Flags().GetBool("telemetry")
 	output, _ := cmd.Flags().GetString("output")
 
 	if poolID != "" && poolName != "" {
@@ -2684,6 +2691,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		StartURL:           startURL,
 		Extensions:         extensions,
 		Viewport:           viewport,
+		TelemetryEnabled:   telemetry,
 		Output:             output,
 	}
 

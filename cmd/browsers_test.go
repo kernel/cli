@@ -1643,6 +1643,37 @@ func TestBrowsersCreate_RejectsStartURLFlagToken(t *testing.T) {
 	assert.False(t, called)
 }
 
+func TestBrowsersCreate_WithTelemetry(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+		captured = body
+		return &kernel.BrowserNewResponse{SessionID: "session123", CdpWsURL: "ws://example"}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{TelemetryEnabled: true})
+
+	assert.NoError(t, err)
+	assert.True(t, captured.Telemetry.Enabled.Valid())
+	assert.True(t, captured.Telemetry.Enabled.Value)
+}
+
+func TestBrowsersCreate_WithoutTelemetry(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+		captured = body
+		return &kernel.BrowserNewResponse{SessionID: "session123", CdpWsURL: "ws://example"}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{})
+
+	assert.NoError(t, err)
+	assert.False(t, captured.Telemetry.Enabled.Valid())
+}
+
 func TestBrowsersCreate_WithInvalidViewport(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeBrowsersService{}
