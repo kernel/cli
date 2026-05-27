@@ -1791,3 +1791,40 @@ func TestBrowsersTelemetryStop_UnsupportedOutputErrors(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported --output value")
 }
+
+func TestEventCategory(t *testing.T) {
+	cases := map[string]string{
+		"network_response":   "network",
+		"monitor_screenshot": "monitor",
+		"console_log":        "console",
+		"page_navigation":    "page",
+		"interaction_click":  "interaction",
+		"nounderscore":       "nounderscore",
+	}
+	for input, want := range cases {
+		assert.Equal(t, want, eventCategory(input), "eventCategory(%q)", input)
+	}
+}
+
+func TestShouldEmit(t *testing.T) {
+	cases := []struct {
+		name       string
+		eventType  string
+		categories []string
+		types      []string
+		want       bool
+	}{
+		{"no filters passes", "network_response", nil, nil, true},
+		{"matching category passes", "network_response", []string{"network"}, nil, true},
+		{"non-matching category drops", "console_log", []string{"network"}, nil, false},
+		{"matching type passes", "console_log", nil, []string{"console_log"}, true},
+		{"non-matching type drops", "network_response", nil, []string{"console_log"}, false},
+		{"both filters pass when both match", "network_response", []string{"network"}, []string{"network_response"}, true},
+		{"both filters drop when type misses", "network_response", []string{"network"}, []string{"console_log"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, shouldEmit(tc.eventType, tc.categories, tc.types))
+		})
+	}
+}
