@@ -911,6 +911,12 @@ func (f *FakeProcessService) StdoutStreamStreaming(ctx context.Context, processI
 	return makeStream([]kernel.BrowserProcessStdoutStreamResponse{{Stream: kernel.BrowserProcessStdoutStreamResponseStreamStdout, DataB64: "aGVsbG8=", Event: ""}, {Event: "exit", ExitCode: 0}})
 }
 
+type FakeBrowserTelemetryService struct{}
+
+func (f *FakeBrowserTelemetryService) StreamStreaming(ctx context.Context, id string, query kernel.BrowserTelemetryStreamParams, opts ...option.RequestOption) *ssestream.Stream[kernel.BrowserTelemetryStreamResponse] {
+	return makeStream([]kernel.BrowserTelemetryStreamResponse{})
+}
+
 type FakeLogService struct {
 	StreamFunc func(ctx context.Context, id string, query kernel.BrowserLogStreamParams, opts ...option.RequestOption) *ssestream.Stream[shared.LogEvent]
 }
@@ -1652,11 +1658,32 @@ func TestBrowsersCreate_WithTelemetry(t *testing.T) {
 	}}
 	b := BrowsersCmd{browsers: fake}
 
-	err := b.Create(context.Background(), BrowsersCreateInput{TelemetryEnabled: true})
+	err := b.Create(context.Background(), BrowsersCreateInput{Telemetry: "all"})
 
 	assert.NoError(t, err)
 	assert.True(t, captured.Telemetry.Enabled.Valid())
 	assert.True(t, captured.Telemetry.Enabled.Value)
+}
+
+func TestBrowsersCreate_WithTelemetryCategories(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+		captured = body
+		return &kernel.BrowserNewResponse{SessionID: "session123", CdpWsURL: "ws://example"}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{Telemetry: "network=on,page=off"})
+
+	assert.NoError(t, err)
+	assert.False(t, captured.Telemetry.Enabled.Valid())
+	assert.True(t, captured.Telemetry.Browser.Network.Enabled.Valid())
+	assert.True(t, captured.Telemetry.Browser.Network.Enabled.Value)
+	assert.True(t, captured.Telemetry.Browser.Page.Enabled.Valid())
+	assert.False(t, captured.Telemetry.Browser.Page.Enabled.Value)
+	assert.False(t, captured.Telemetry.Browser.Console.Enabled.Valid())
+	assert.False(t, captured.Telemetry.Browser.Interaction.Enabled.Valid())
 }
 
 func TestBrowsersCreate_WithoutTelemetry(t *testing.T) {
@@ -1842,14 +1869,58 @@ func TestBrowsersTelemetrySet_InvalidValue(t *testing.T) {
 	assert.Contains(t, err.Error(), "must be 'on' or 'off'")
 }
 
+func TestBrowsersTelemetryStart_UnsupportedOutputErrors(t *testing.T) {
+	b := BrowsersCmd{browsers: &FakeBrowsersService{}}
+
+	err := b.TelemetryStart(context.Background(), BrowsersTelemetryStartInput{Identifier: "session123", Output: "yaml"})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported --output value")
+}
+
 func TestBrowsersTelemetryStop_UnsupportedOutputErrors(t *testing.T) {
-	fake := &FakeBrowsersService{}
-	b := BrowsersCmd{browsers: fake}
+	b := BrowsersCmd{browsers: &FakeBrowsersService{}}
 
 	err := b.TelemetryStop(context.Background(), BrowsersTelemetryStopInput{Identifier: "session123", Output: "yaml"})
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported --output value")
+}
+
+func TestBrowsersTelemetrySet_UnsupportedOutputErrors(t *testing.T) {
+	b := BrowsersCmd{browsers: &FakeBrowsersService{}}
+
+	err := b.TelemetrySet(context.Background(), BrowsersTelemetrySetInput{Identifier: "session123", Categories: "network=on", Output: "yaml"})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported --output value")
+}
+
+func TestBrowsersTelemetryStatus_UnsupportedOutputErrors(t *testing.T) {
+	b := BrowsersCmd{browsers: &FakeBrowsersService{}}
+
+	err := b.TelemetryStatus(context.Background(), BrowsersTelemetryStatusInput{Identifier: "session123", Output: "yaml"})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported --output value")
+}
+
+func TestBrowsersTelemetrySet_WhitespaceTolerance(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserUpdateParams
+	fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+		captured = body
+		return &kernel.BrowserUpdateResponse{SessionID: id}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.TelemetrySet(context.Background(), BrowsersTelemetrySetInput{Identifier: "session123", Categories: " network = on , page = off "})
+
+	assert.NoError(t, err)
+	assert.True(t, captured.Telemetry.Browser.Network.Enabled.Valid())
+	assert.True(t, captured.Telemetry.Browser.Network.Enabled.Value)
+	assert.True(t, captured.Telemetry.Browser.Page.Enabled.Valid())
+	assert.False(t, captured.Telemetry.Browser.Page.Enabled.Value)
 }
 
 func TestBrowsersTelemetryStatus_PrintsCategories(t *testing.T) {
@@ -1877,6 +1948,34 @@ func TestBrowsersTelemetryStatus_PrintsCategories(t *testing.T) {
 	assert.Contains(t, out, "interaction: off")
 	assert.Contains(t, out, "network:     on")
 	assert.Contains(t, out, "page:        off")
+}
+
+func TestTelemetryStream_UnknownCategoryErrors(t *testing.T) {
+	b := BrowsersCmd{browsers: &FakeBrowsersService{}}
+
+	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
+		Identifier: "session123",
+		Categories: []string{"invalid"},
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown category")
+}
+
+func TestTelemetryStream_UnknownTypeWarns(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return &kernel.BrowserGetResponse{SessionID: id}, nil
+	}}
+	b := BrowsersCmd{browsers: fake, telemetry: &FakeBrowserTelemetryService{}}
+
+	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
+		Identifier: "session123",
+		Types:      []string{"invalid_type"},
+	})
+
+	assert.NoError(t, err)
+	assert.Contains(t, outBuf.String(), "unrecognized event type")
 }
 
 func TestEventCategory(t *testing.T) {
