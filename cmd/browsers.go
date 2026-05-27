@@ -218,6 +218,11 @@ type BrowsersUpdateInput struct {
 	Output             string
 }
 
+type BrowsersTelemetryStopInput struct {
+	Identifier string
+	Output     string
+}
+
 // BrowsersCmd is a cobra-independent command handler for browsers operations.
 type BrowsersCmd struct {
 	browsers   BrowsersService
@@ -653,6 +658,23 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	pterm.Success.Printf("Updated browser %s\n", browser.SessionID)
+	return nil
+}
+
+func (b BrowsersCmd) TelemetryStop(ctx context.Context, in BrowsersTelemetryStopInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+	res, err := b.browsers.Update(ctx, in.Identifier, kernel.BrowserUpdateParams{
+		Telemetry: kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(false)},
+	})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(res)
+	}
+	pterm.Success.Printf("Stopped telemetry for browser %s\n", in.Identifier)
 	return nil
 }
 
@@ -2282,6 +2304,13 @@ func init() {
 	replaysRoot.AddCommand(replaysList, replaysStart, replaysStop, replaysDownload)
 	browsersCmd.AddCommand(replaysRoot)
 
+	// telemetry
+	telemetryRoot := &cobra.Command{Use: "telemetry", Short: "Browser telemetry operations"}
+	telemetryStop := &cobra.Command{Use: "stop <id>", Short: "Stop telemetry capture", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStop}
+	telemetryStop.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	telemetryRoot.AddCommand(telemetryStop)
+	browsersCmd.AddCommand(telemetryRoot)
+
 	// process
 	procRoot := &cobra.Command{Use: "process", Short: "Manage processes inside the browser VM"}
 	procExec := &cobra.Command{Use: "exec <id> [--] [command...]", Short: "Execute a command synchronously", Args: cobra.MinimumNArgs(1), RunE: runBrowsersProcessExec}
@@ -2814,6 +2843,14 @@ func runBrowsersReplaysDownload(cmd *cobra.Command, args []string) error {
 	out, _ := cmd.Flags().GetString("output-file")
 	b := BrowsersCmd{browsers: &svc, replays: &svc.Replays}
 	return b.ReplaysDownload(cmd.Context(), BrowsersReplaysDownloadInput{Identifier: args[0], ReplayID: args[1], Output: out})
+}
+
+func runBrowsersTelemetryStop(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	out, _ := cmd.Flags().GetString("output")
+	b := BrowsersCmd{browsers: &svc}
+	return b.TelemetryStop(cmd.Context(), BrowsersTelemetryStopInput{Identifier: args[0], Output: out})
 }
 
 func runBrowsersProcessExec(cmd *cobra.Command, args []string) error {

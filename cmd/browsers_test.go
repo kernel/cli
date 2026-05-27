@@ -1761,3 +1761,33 @@ func TestBrowsersUpdate_ForceWithProxyButNoViewport_Errors(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "--force requires --viewport")
 }
+
+func TestBrowsersTelemetryStop_SendsDisablePayload(t *testing.T) {
+	setupStdoutCapture(t)
+	var capturedID string
+	var captured kernel.BrowserUpdateParams
+	fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+		capturedID = id
+		captured = body
+		return &kernel.BrowserUpdateResponse{SessionID: id}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.TelemetryStop(context.Background(), BrowsersTelemetryStopInput{Identifier: "session123"})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "session123", capturedID)
+	assert.True(t, captured.Telemetry.Enabled.Valid())
+	assert.False(t, captured.Telemetry.Enabled.Value)
+	assert.Contains(t, outBuf.String(), "Stopped telemetry for browser session123")
+}
+
+func TestBrowsersTelemetryStop_UnsupportedOutputErrors(t *testing.T) {
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.TelemetryStop(context.Background(), BrowsersTelemetryStopInput{Identifier: "session123", Output: "yaml"})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported --output value")
+}
