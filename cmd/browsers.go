@@ -193,8 +193,8 @@ type BrowsersCreateInput struct {
 	StartURL           string
 	Extensions         []string
 	Viewport           string
-	TelemetryEnabled   bool
-	Output             string
+	TelemetryEnabled bool
+	Output           string
 }
 
 type BrowsersDeleteInput struct {
@@ -230,6 +230,17 @@ type BrowsersTelemetryStartInput struct {
 }
 
 type BrowsersTelemetryStopInput struct {
+	Identifier string
+	Output     string
+}
+
+type BrowsersTelemetrySetInput struct {
+	Identifier string
+	Categories string // e.g. "network=on,page=off"
+	Output     string
+}
+
+type BrowsersTelemetryStatusInput struct {
 	Identifier string
 	Output     string
 }
@@ -713,6 +724,78 @@ func (b BrowsersCmd) TelemetryStop(ctx context.Context, in BrowsersTelemetryStop
 	}
 	pterm.Success.Printf("Stopped telemetry for browser %s\n", in.Identifier)
 	return nil
+}
+
+func (b BrowsersCmd) TelemetrySet(ctx context.Context, in BrowsersTelemetrySetInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+	p := kernel.BrowserTelemetryCategoriesConfigParam{}
+	for _, part := range strings.Split(in.Categories, ",") {
+		kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
+		if len(kv) != 2 {
+			return fmt.Errorf("invalid category assignment %q: expected name=on or name=off", part)
+		}
+		name, val := strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1])
+		var enabled bool
+		switch val {
+		case "on":
+			enabled = true
+		case "off":
+			enabled = false
+		default:
+			return fmt.Errorf("invalid value %q for category %q: must be 'on' or 'off'", val, name)
+		}
+		switch name {
+		case "console":
+			p.Console = kernel.BrowserTelemetryCategoryConfigParam{Enabled: kernel.Opt(enabled)}
+		case "interaction":
+			p.Interaction = kernel.BrowserTelemetryCategoryConfigParam{Enabled: kernel.Opt(enabled)}
+		case "network":
+			p.Network = kernel.BrowserTelemetryCategoryConfigParam{Enabled: kernel.Opt(enabled)}
+		case "page":
+			p.Page = kernel.BrowserTelemetryCategoryConfigParam{Enabled: kernel.Opt(enabled)}
+		default:
+			return fmt.Errorf("unknown category %q: must be one of console, interaction, network, page", name)
+		}
+	}
+	res, err := b.browsers.Update(ctx, in.Identifier, kernel.BrowserUpdateParams{
+		Telemetry: kernel.BrowserTelemetryRequestConfigParam{Browser: p},
+	})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(res)
+	}
+	pterm.Success.Printf("Updated telemetry categories for browser %s\n", in.Identifier)
+	return nil
+}
+
+func (b BrowsersCmd) TelemetryStatus(ctx context.Context, in BrowsersTelemetryStatusInput) error {
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
+	}
+	browser, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(browser.Telemetry)
+	}
+	cfg := browser.Telemetry.Browser
+	pterm.Printf("console:     %s\n", onOff(cfg.Console.Enabled))
+	pterm.Printf("interaction: %s\n", onOff(cfg.Interaction.Enabled))
+	pterm.Printf("network:     %s\n", onOff(cfg.Network.Enabled))
+	pterm.Printf("page:        %s\n", onOff(cfg.Page.Enabled))
+	return nil
+}
+
+func onOff(v bool) string {
+	if v {
+		return "on"
+	}
+	return "off"
 }
 
 // eventCategory derives the category prefix from a telemetry event type string.
@@ -2400,11 +2483,17 @@ func init() {
 	telemetryStream.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error)")
 	telemetryStream.Flags().Int64("seq", 0, "Resume stream from sequence number (Last-Event-ID)")
 	telemetryStream.Flags().StringP("output", "o", "", "Output format: json for newline-delimited JSON envelopes")
-	telemetryStart := &cobra.Command{Use: "start <id>", Short: "Start telemetry capture", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStart}
+	telemetryStart := &cobra.Command{Use: "start <id>", Short: "Start telemetry capture (enabled: true)", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStart}
 	telemetryStart.Flags().StringP("output", "o", "", "Output format: json for raw API response")
-	telemetryStop := &cobra.Command{Use: "stop <id>", Short: "Stop telemetry capture", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStop}
+	telemetryStop := &cobra.Command{Use: "stop <id>", Short: "Stop telemetry capture (enabled: false)", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStop}
 	telemetryStop.Flags().StringP("output", "o", "", "Output format: json for raw API response")
-	telemetryRoot.AddCommand(telemetryStream, telemetryStart, telemetryStop)
+	telemetrySet := &cobra.Command{Use: "set <id>", Short: "Set per-category telemetry config", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetrySet}
+	telemetrySet.Flags().String("categories", "", "Per-category assignments, e.g. network=on,page=off (console, interaction, network, page)")
+	_ = telemetrySet.MarkFlagRequired("categories")
+	telemetrySet.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	telemetryStatus := &cobra.Command{Use: "status <id>", Short: "Show current telemetry configuration", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStatus}
+	telemetryStatus.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	telemetryRoot.AddCommand(telemetryStream, telemetryStart, telemetryStop, telemetrySet, telemetryStatus)
 	browsersCmd.AddCommand(telemetryRoot)
 
 	// process
@@ -2636,7 +2725,7 @@ func init() {
 	browsersCreateCmd.Flags().Bool("viewport-interactive", false, "Interactively select viewport size from list")
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
-	browsersCreateCmd.Flags().Bool("telemetry", false, "Enable telemetry capture on the new session")
+	browsersCreateCmd.Flags().Bool("telemetry", false, "Enable telemetry capture on the new session (enabled: true)")
 
 	// curl
 	curlCmd := &cobra.Command{
@@ -2816,8 +2905,8 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		StartURL:           startURL,
 		Extensions:         extensions,
 		Viewport:           viewport,
-		TelemetryEnabled:   telemetry,
-		Output:             output,
+		TelemetryEnabled: telemetry,
+		Output:           output,
 	}
 
 	svc := client.Browsers
@@ -2955,6 +3044,23 @@ func runBrowsersTelemetryStop(cmd *cobra.Command, args []string) error {
 	out, _ := cmd.Flags().GetString("output")
 	b := BrowsersCmd{browsers: &svc}
 	return b.TelemetryStop(cmd.Context(), BrowsersTelemetryStopInput{Identifier: args[0], Output: out})
+}
+
+func runBrowsersTelemetrySet(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	out, _ := cmd.Flags().GetString("output")
+	categories, _ := cmd.Flags().GetString("categories")
+	b := BrowsersCmd{browsers: &svc}
+	return b.TelemetrySet(cmd.Context(), BrowsersTelemetrySetInput{Identifier: args[0], Categories: categories, Output: out})
+}
+
+func runBrowsersTelemetryStatus(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	out, _ := cmd.Flags().GetString("output")
+	b := BrowsersCmd{browsers: &svc}
+	return b.TelemetryStatus(cmd.Context(), BrowsersTelemetryStatusInput{Identifier: args[0], Output: out})
 }
 
 func runBrowsersTelemetryStream(cmd *cobra.Command, args []string) error {

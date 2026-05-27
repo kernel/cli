@@ -1802,6 +1802,46 @@ func TestBrowsersTelemetryStop_SendsDisablePayload(t *testing.T) {
 	assert.Contains(t, outBuf.String(), "Stopped telemetry for browser session123")
 }
 
+func TestBrowsersTelemetrySet_PartialCategories(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserUpdateParams
+	fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+		captured = body
+		return &kernel.BrowserUpdateResponse{SessionID: id}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.TelemetrySet(context.Background(), BrowsersTelemetrySetInput{Identifier: "session123", Categories: "network=on,page=off"})
+
+	assert.NoError(t, err)
+	assert.False(t, captured.Telemetry.Enabled.Valid())
+	assert.True(t, captured.Telemetry.Browser.Network.Enabled.Valid())
+	assert.True(t, captured.Telemetry.Browser.Network.Enabled.Value)
+	assert.True(t, captured.Telemetry.Browser.Page.Enabled.Valid())
+	assert.False(t, captured.Telemetry.Browser.Page.Enabled.Value)
+	// Unspecified categories omitted — server retains their state
+	assert.False(t, captured.Telemetry.Browser.Console.Enabled.Valid())
+	assert.False(t, captured.Telemetry.Browser.Interaction.Enabled.Valid())
+}
+
+func TestBrowsersTelemetrySet_InvalidCategory(t *testing.T) {
+	b := BrowsersCmd{browsers: &FakeBrowsersService{}}
+
+	err := b.TelemetrySet(context.Background(), BrowsersTelemetrySetInput{Identifier: "session123", Categories: "foo=on"})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown category")
+}
+
+func TestBrowsersTelemetrySet_InvalidValue(t *testing.T) {
+	b := BrowsersCmd{browsers: &FakeBrowsersService{}}
+
+	err := b.TelemetrySet(context.Background(), BrowsersTelemetrySetInput{Identifier: "session123", Categories: "network=yes"})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "must be 'on' or 'off'")
+}
+
 func TestBrowsersTelemetryStop_UnsupportedOutputErrors(t *testing.T) {
 	fake := &FakeBrowsersService{}
 	b := BrowsersCmd{browsers: fake}
@@ -1810,6 +1850,33 @@ func TestBrowsersTelemetryStop_UnsupportedOutputErrors(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported --output value")
+}
+
+func TestBrowsersTelemetryStatus_PrintsCategories(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return &kernel.BrowserGetResponse{
+			SessionID: id,
+			Telemetry: kernel.BrowserTelemetryConfig{
+				Browser: kernel.BrowserTelemetryCategoriesConfig{
+					Console:     kernel.BrowserTelemetryCategoryConfig{Enabled: true},
+					Interaction: kernel.BrowserTelemetryCategoryConfig{Enabled: false},
+					Network:     kernel.BrowserTelemetryCategoryConfig{Enabled: true},
+					Page:        kernel.BrowserTelemetryCategoryConfig{Enabled: false},
+				},
+			},
+		}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.TelemetryStatus(context.Background(), BrowsersTelemetryStatusInput{Identifier: "session123"})
+
+	assert.NoError(t, err)
+	out := outBuf.String()
+	assert.Contains(t, out, "console:     on")
+	assert.Contains(t, out, "interaction: off")
+	assert.Contains(t, out, "network:     on")
+	assert.Contains(t, out, "page:        off")
 }
 
 func TestEventCategory(t *testing.T) {
