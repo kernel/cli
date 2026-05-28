@@ -39,22 +39,22 @@ func makeEvent(t *testing.T, raw string) kernel.BrowserTelemetryEventUnion {
 	return ev
 }
 
-func TestEventCategoryFromRaw(t *testing.T) {
+func TestEventCategory(t *testing.T) {
 	cases := []struct {
 		raw  string
 		want string
 	}{
-		// real category field present — used directly
-		{`{"type":"monitor_screenshot","category":"system","ts":0}`, "system"},
-		{`{"type":"network_response","category":"network","ts":0}`, "network"},
-		// no category field — returns ""
-		{`{"type":"console_log","ts":0}`, ""},
-		{`{"type":"page_navigation","ts":0}`, ""},
-		{`{"type":"nounderscore","ts":0}`, ""},
+		{`{"type":"monitor_screenshot","ts":0}`, "system"},
+		{`{"type":"monitor_disconnected","ts":0}`, "system"},
+		{`{"type":"network_response","ts":0}`, "network"},
+		{`{"type":"console_log","ts":0}`, "console"},
+		{`{"type":"page_navigation","ts":0}`, "page"},
+		{`{"type":"interaction_click","ts":0}`, "interaction"},
+		{`{"type":"nounderscore","ts":0}`, "nounderscore"},
 	}
 	for _, tc := range cases {
 		ev := makeEvent(t, tc.raw)
-		assert.Equal(t, tc.want, eventCategoryFromRaw(ev), "raw=%s", tc.raw)
+		assert.Equal(t, tc.want, eventCategory(ev), "type=%s", ev.Type)
 	}
 }
 

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -77,23 +76,23 @@ func parseTelemetryCategories(s string) (kernel.BrowserTelemetryCategoriesConfig
 // "system" is always-on and cannot be toggled, but is valid as a --categories stream filter.
 var settableCategories = []string{"console", "interaction", "network", "page"}
 
-// eventCategoryFromRaw reads the category field directly from the raw event JSON.
-// Returns "" if the field is absent — callers that need a category must handle the empty case.
-func eventCategoryFromRaw(ev kernel.BrowserTelemetryEventUnion) string {
-	var obj struct {
-		Category string `json:"category"`
+// eventCategory derives the category from the event type prefix.
+// "monitor_*" maps to "system"; all others use the prefix before the first "_".
+// TODO(sdk): kernel-go-sdk should surface Category directly on BrowserTelemetryEventUnion.
+func eventCategory(ev kernel.BrowserTelemetryEventUnion) string {
+	prefix, _, ok := strings.Cut(ev.Type, "_")
+	if !ok {
+		return ev.Type
 	}
-	if raw := ev.RawJSON(); raw != "" {
-		if err := json.Unmarshal([]byte(raw), &obj); err == nil {
-			return obj.Category
-		}
+	if prefix == "monitor" {
+		return "system"
 	}
-	return ""
+	return prefix
 }
 
 // shouldEmit applies client-side category/type filters to a telemetry event.
 func shouldEmit(ev kernel.BrowserTelemetryEventUnion, categories, types []string) bool {
-	if len(categories) > 0 && !slices.Contains(categories, eventCategoryFromRaw(ev)) {
+	if len(categories) > 0 && !slices.Contains(categories, eventCategory(ev)) {
 		return false
 	}
 	if len(types) > 0 && !slices.Contains(types, ev.Type) {
@@ -135,7 +134,7 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 			continue
 		}
 		ts := time.UnixMicro(ev.Event.Ts).Local().Format("15:04:05")
-		pterm.Printf("%s  [%s]  %s\n", ts, eventCategoryFromRaw(ev.Event), ev.Event.Type)
+		pterm.Printf("%s  [%s]  %s\n", ts, eventCategory(ev.Event), ev.Event.Type)
 	}
 	if err := stream.Err(); err != nil {
 		return util.CleanedUpSdkError{Err: err}
