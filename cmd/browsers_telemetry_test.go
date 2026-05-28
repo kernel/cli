@@ -29,21 +29,6 @@ func TestTelemetryStream_UnknownCategoryErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown category")
 }
 
-func TestTelemetryStream_UnknownTypeWarns(t *testing.T) {
-	setupStdoutCapture(t)
-	fake := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
-		return &kernel.BrowserGetResponse{SessionID: id}, nil
-	}}
-	b := BrowsersCmd{browsers: fake, telemetry: &FakeBrowserTelemetryService{}}
-
-	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
-		Identifier: "session123",
-		Types:      []string{"invalid_type"},
-	})
-
-	assert.NoError(t, err)
-	assert.Contains(t, outBuf.String(), "unrecognized event type")
-}
 
 func makeEvent(t *testing.T, raw string) kernel.BrowserTelemetryEventUnion {
 	t.Helper()

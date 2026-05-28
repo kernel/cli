@@ -74,20 +74,8 @@ func parseTelemetryCategories(s string) (kernel.BrowserTelemetryCategoriesConfig
 }
 
 // settableCategories are the categories accepted by --telemetry=<categories>.
+// "system" is always-on and cannot be toggled, but is valid as a --categories stream filter.
 var settableCategories = []string{"console", "interaction", "network", "page"}
-
-// knownTelemetryCategories are the real API event categories observable on stream.
-var knownTelemetryCategories = []string{"console", "network", "page", "interaction", "system"}
-
-var knownTelemetryTypes = []string{
-	"console_log", "console_error",
-	"network_request", "network_response", "network_loading_failed", "network_idle",
-	"page_navigation", "page_dom_content_loaded", "page_load", "page_tab_opened",
-	"page_layout_shift", "page_lcp", "page_layout_settled", "page_navigation_settled",
-	"interaction_click", "interaction_key", "interaction_scroll_settled",
-	"monitor_screenshot", "monitor_disconnected", "monitor_reconnected",
-	"monitor_reconnect_failed", "monitor_init_failed",
-}
 
 // eventCategoryFromRaw reads the category field directly from the raw event JSON.
 // Returns "" if the field is absent — callers that need a category must handle the empty case.
@@ -119,13 +107,8 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 		return err
 	}
 	for _, c := range in.Categories {
-		if !slices.Contains(knownTelemetryCategories, c) {
-			return fmt.Errorf("unknown category %q: must be one of %s", c, strings.Join(knownTelemetryCategories, ", "))
-		}
-	}
-	for _, t := range in.Types {
-		if !slices.Contains(knownTelemetryTypes, t) {
-			pterm.Warning.Printf("unrecognized event type %q — no events will match\n", t)
+		if c != "system" && !slices.Contains(settableCategories, c) {
+			return fmt.Errorf("unknown category %q: must be one of %s", c, strings.Join(append(settableCategories, "system"), ", "))
 		}
 	}
 	if b.telemetry == nil {
