@@ -911,7 +911,6 @@ func (f *FakeProcessService) StdoutStreamStreaming(ctx context.Context, processI
 	return makeStream([]kernel.BrowserProcessStdoutStreamResponse{{Stream: kernel.BrowserProcessStdoutStreamResponseStreamStdout, DataB64: "aGVsbG8=", Event: ""}, {Event: "exit", ExitCode: 0}})
 }
 
-
 type FakeLogService struct {
 	StreamFunc func(ctx context.Context, id string, query kernel.BrowserLogStreamParams, opts ...option.RequestOption) *ssestream.Stream[shared.LogEvent]
 }
@@ -1672,13 +1671,30 @@ func TestBrowsersCreate_WithTelemetryCategories(t *testing.T) {
 	err := b.Create(context.Background(), BrowsersCreateInput{Telemetry: "network=on,page=off"})
 
 	assert.NoError(t, err)
-	assert.False(t, captured.Telemetry.Enabled.Valid())
+	assert.True(t, captured.Telemetry.Enabled.Valid())
+	assert.True(t, captured.Telemetry.Enabled.Value)
 	assert.True(t, captured.Telemetry.Browser.Network.Enabled.Valid())
 	assert.True(t, captured.Telemetry.Browser.Network.Enabled.Value)
 	assert.True(t, captured.Telemetry.Browser.Page.Enabled.Valid())
 	assert.False(t, captured.Telemetry.Browser.Page.Enabled.Value)
 	assert.False(t, captured.Telemetry.Browser.Console.Enabled.Valid())
 	assert.False(t, captured.Telemetry.Browser.Interaction.Enabled.Valid())
+}
+
+func TestBrowsersCreate_WithTelemetryOff(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+		captured = body
+		return &kernel.BrowserNewResponse{SessionID: "session123", CdpWsURL: "ws://example"}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{Telemetry: "off"})
+
+	assert.NoError(t, err)
+	assert.True(t, captured.Telemetry.Enabled.Valid())
+	assert.False(t, captured.Telemetry.Enabled.Value)
 }
 
 func TestBrowsersCreate_WithoutTelemetry(t *testing.T) {
@@ -1783,4 +1799,3 @@ func TestBrowsersUpdate_ForceWithProxyButNoViewport_Errors(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "--force requires --viewport")
 }
-

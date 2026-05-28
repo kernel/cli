@@ -427,12 +427,14 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 
 	if in.Telemetry == "all" {
 		params.Telemetry = kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(true)}
+	} else if in.Telemetry == "off" {
+		params.Telemetry = kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(false)}
 	} else if in.Telemetry != "" {
 		p, err := parseTelemetryCategories(in.Telemetry)
 		if err != nil {
 			return err
 		}
-		params.Telemetry = kernel.BrowserTelemetryRequestConfigParam{Browser: p}
+		params.Telemetry = kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(true), Browser: p}
 	}
 
 	browser, err := b.browsers.New(ctx, params)
@@ -2535,7 +2537,7 @@ func init() {
 	browsersCreateCmd.Flags().Bool("viewport-interactive", false, "Interactively select viewport size from list")
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
-	browsersCreateCmd.Flags().String("telemetry", "", "Enable telemetry: --telemetry=all to enable all, --telemetry=network=on,page=off for per-category")
+	browsersCreateCmd.Flags().String("telemetry", "", "Configure telemetry: --telemetry=all to enable, --telemetry=off to disable, --telemetry=network=on,page=off for per-category")
 
 	// curl
 	curlCmd := &cobra.Command{

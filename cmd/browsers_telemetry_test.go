@@ -29,7 +29,6 @@ func TestTelemetryStream_UnknownCategoryErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown category")
 }
 
-
 func makeEvent(t *testing.T, raw string) kernel.BrowserTelemetryEventUnion {
 	t.Helper()
 	var ev kernel.BrowserTelemetryEventUnion

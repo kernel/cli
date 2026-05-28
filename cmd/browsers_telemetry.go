@@ -68,6 +68,9 @@ func parseTelemetryCategories(s string) (kernel.BrowserTelemetryCategoriesConfig
 // "system" is always-on and cannot be toggled, but is valid as a --categories stream filter.
 var settableCategories = []string{"console", "interaction", "network", "page"}
 
+// streamableCategories extends settableCategories with "system" for --categories stream filtering.
+var streamableCategories = append(settableCategories[:len(settableCategories):len(settableCategories)], "system")
+
 // eventCategory derives the category from the event type prefix.
 // "monitor_*" maps to "system"; all others use the prefix before the first "_".
 // TODO(sdk): kernel-go-sdk should surface Category directly on BrowserTelemetryEventUnion.
@@ -98,8 +101,8 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 	for _, c := range in.Categories {
-		if c != "system" && !slices.Contains(settableCategories, c) {
-			return fmt.Errorf("unknown category %q: must be one of %s", c, strings.Join(append(settableCategories, "system"), ", "))
+		if !slices.Contains(streamableCategories, c) {
+			return fmt.Errorf("unknown category %q: must be one of %s", c, strings.Join(streamableCategories, ", "))
 		}
 	}
 	if b.telemetry == nil {
