@@ -84,9 +84,6 @@ func applyTelemetryParam(s string) (kernel.BrowserTelemetryRequestConfigParam, e
 // "system" is always-on and cannot be toggled, but is valid as a --categories stream filter.
 var settableCategories = []string{"console", "interaction", "network", "page"}
 
-// streamableCategories extends settableCategories with "system" for --categories stream filtering.
-var streamableCategories = append(settableCategories[:len(settableCategories):len(settableCategories)], "system")
-
 // eventCategory derives the category from the event type prefix.
 // "monitor_*" maps to "system"; all others use the prefix before the first "_".
 // TODO(sdk): kernel-go-sdk should surface Category directly on BrowserTelemetryEventUnion.
@@ -113,39 +110,39 @@ func shouldEmit(ev kernel.BrowserTelemetryEventUnion, categories, types []string
 }
 
 func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetryStreamInput) error {
+	if b.telemetry == nil {
+		return fmt.Errorf("telemetry service not available")
+	}
 	if in.Output != "" && in.Output != "json" {
 		return fmt.Errorf("unsupported --output value: use 'json'")
-	}
-	for _, c := range in.Categories {
-		if !slices.Contains(streamableCategories, c) {
-			return fmt.Errorf("unknown category %q: must be one of %s", c, strings.Join(streamableCategories, ", "))
-		}
-	}
-	if b.telemetry == nil {
-		pterm.Error.Println("telemetry service not available")
-		return nil
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 	params := kernel.BrowserTelemetryStreamParams{}
-	if in.Seq > 0 {
+	if in.Seq >= 0 {
 		params.LastEventID = kernel.Opt(strconv.FormatInt(in.Seq, 10))
 	}
 	stream := b.telemetry.StreamStreaming(ctx, br.SessionID, params)
 	defer stream.Close()
 	for stream.Next() {
 		ev := stream.Current()
-		if !shouldEmit(ev.Event, in.Categories, in.Types) {
+		cat := eventCategory(ev.Event)
+		if len(in.Categories) > 0 && !slices.Contains(in.Categories, cat) {
+			continue
+		}
+		if len(in.Types) > 0 && !slices.Contains(in.Types, ev.Event.Type) {
 			continue
 		}
 		if in.Output == "json" {
-			_ = util.PrintCompactJSONLine(ev)
+			if err := util.PrintCompactJSONLine(ev); err != nil {
+				return err
+			}
 			continue
 		}
 		ts := time.UnixMicro(ev.Event.Ts).Local().Format("15:04:05")
-		pterm.Printf("%s  [%s]  %s\n", ts, eventCategory(ev.Event), ev.Event.Type)
+		pterm.Printf("%s  %-11s  %s\n", ts, "["+cat+"]", ev.Event.Type)
 	}
 	if err := stream.Err(); err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -159,7 +156,7 @@ func init() {
 	telemetryStream := &cobra.Command{Use: "stream <id>", Short: "Stream live telemetry events", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStream}
 	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by API event category (console,network,page,interaction,system); system covers all monitor_* events")
 	telemetryStream.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error)")
-	telemetryStream.Flags().Int64("seq", 0, "Resume stream from sequence number (Last-Event-ID)")
+	telemetryStream.Flags().Int64("seq", -1, "Resume stream from sequence number (Last-Event-ID); 0 means from the beginning")
 	telemetryStream.Flags().StringP("output", "o", "", "Output format: json for newline-delimited JSON envelopes")
 	telemetryRoot.AddCommand(telemetryStream)
 	browsersCmd.AddCommand(telemetryRoot)

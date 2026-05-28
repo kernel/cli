@@ -11,22 +11,103 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-type FakeBrowserTelemetryService struct{}
+type FakeBrowserTelemetryService struct {
+	StreamFunc func() *ssestream.Stream[kernel.BrowserTelemetryStreamResponse]
+}
 
 func (f *FakeBrowserTelemetryService) StreamStreaming(ctx context.Context, id string, query kernel.BrowserTelemetryStreamParams, opts ...option.RequestOption) *ssestream.Stream[kernel.BrowserTelemetryStreamResponse] {
+	if f.StreamFunc != nil {
+		return f.StreamFunc()
+	}
 	return makeStream([]kernel.BrowserTelemetryStreamResponse{})
 }
 
-func TestTelemetryStream_UnknownCategoryErrors(t *testing.T) {
+func TestTelemetryStream_NilTelemetryErrors(t *testing.T) {
 	b := BrowsersCmd{browsers: &FakeBrowsersService{}}
 
 	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
 		Identifier: "session123",
-		Categories: []string{"invalid"},
 	})
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown category")
+	assert.Contains(t, err.Error(), "telemetry service not available")
+}
+
+func TestTelemetryStream_UnknownCategoryPassesThrough(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return &kernel.BrowserGetResponse{SessionID: id}, nil
+	}}
+	b := BrowsersCmd{browsers: fake, telemetry: &FakeBrowserTelemetryService{}}
+
+	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
+		Identifier: "session123",
+		Categories: []string{"future_category"},
+		Seq:        -1,
+	})
+
+	assert.NoError(t, err)
+}
+
+func TestTelemetryStream_SystemCategoryAccepted(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return &kernel.BrowserGetResponse{SessionID: id}, nil
+	}}
+	b := BrowsersCmd{browsers: fake, telemetry: &FakeBrowserTelemetryService{}}
+
+	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
+		Identifier: "session123",
+		Categories: []string{"system"},
+		Seq:        -1,
+	})
+
+	assert.NoError(t, err)
+}
+
+func TestTelemetryStream_EventsFlow(t *testing.T) {
+	setupStdoutCapture(t)
+	event := kernel.BrowserTelemetryStreamResponse{}
+	if err := json.Unmarshal([]byte(`{"event":{"type":"network_response","ts":1000000}}`), &event); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return &kernel.BrowserGetResponse{SessionID: id}, nil
+	}}
+	fakeTelemetry := &FakeBrowserTelemetryService{StreamFunc: func() *ssestream.Stream[kernel.BrowserTelemetryStreamResponse] {
+		return makeStream([]kernel.BrowserTelemetryStreamResponse{event})
+	}}
+	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
+
+	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
+		Identifier: "session123",
+		Seq:        -1,
+	})
+
+	assert.NoError(t, err)
+	assert.Contains(t, outBuf.String(), "network_response")
+}
+
+func TestTelemetryStream_EventsFlow_JSON(t *testing.T) {
+	event := kernel.BrowserTelemetryStreamResponse{}
+	if err := json.Unmarshal([]byte(`{"event":{"type":"network_response","ts":1000000}}`), &event); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return &kernel.BrowserGetResponse{SessionID: id}, nil
+	}}
+	fakeTelemetry := &FakeBrowserTelemetryService{StreamFunc: func() *ssestream.Stream[kernel.BrowserTelemetryStreamResponse] {
+		return makeStream([]kernel.BrowserTelemetryStreamResponse{event})
+	}}
+	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
+
+	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
+		Identifier: "session123",
+		Output:     "json",
+		Seq:        -1,
+	})
+
+	assert.NoError(t, err)
 }
 
 func makeEvent(t *testing.T, raw string) kernel.BrowserTelemetryEventUnion {

@@ -128,7 +128,8 @@ Commands with JSON output support:
 - **Apps**: `list`, `history`
 - **Deploy**: `deploy` (JSONL streaming), `history`
 - **Invoke**: `invoke` (JSONL streaming), `history`
-- **Browser Sub-commands**: `replays list/start`, `process exec/spawn`, `fs file-info/list-files`, `telemetry stream`
+- **Browser Sub-commands**: `replays list/start`, `process exec/spawn`, `fs file-info/list-files`
+- **Browser NDJSON streaming**: `telemetry stream`
 
 ### Authentication
 
@@ -211,8 +212,7 @@ Commands with JSON output support:
   - `--start-url <url>` - Initial page to open on launch
   - `--pool-id <id>` - Acquire a browser from the specified pool (mutually exclusive with --pool-name; ignores other session flags)
   - `--pool-name <name>` - Acquire a browser from the pool name (mutually exclusive with --pool-id; ignores other session flags)
-  - `--telemetry=all` - Enable telemetry for all categories
-  - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`
+  - `--telemetry=all` - Enable telemetry for all categories; `--telemetry=off` to disable; `--telemetry=network=on,page=off` for per-category
   - `--output json`, `-o json` - Output raw JSON object
   - _Note: When a pool is specified, omit other session configuration flags—pool settings determine profile, proxy, viewport, etc._
 - `kernel browsers delete <id>` - Delete a browser
@@ -221,7 +221,9 @@ Commands with JSON output support:
 - `kernel browsers get <id>` - Get detailed browser session info
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers update <id>` - Update a running browser session
-  - `--telemetry=all` to enable all categories; `--telemetry=off` to disable; `--telemetry=network=on,page=off` for per-category
+  - `--telemetry=all` - Enable telemetry for all categories
+  - `--telemetry=off` - Disable telemetry
+  - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers curl <id> <url>` - Make HTTP requests through a browser session's Chrome network stack
   - `-X, --request <method>` - HTTP method (default: GET; defaults to POST when `--data` is set)
@@ -293,11 +295,12 @@ Telemetry config is a sub-field of the browser session. Use `browsers update` to
 - Disable: `kernel browsers update <id> --telemetry=off`
 - Per-category: `kernel browsers update <id> --telemetry=network=on,page=off` (valid: `console`, `interaction`, `network`, `page`; `system` always emits and cannot be toggled)
 
-- `kernel browsers telemetry stream <id>` - Stream live telemetry events
+- `kernel browsers telemetry stream <id>` - Stream live telemetry events (NDJSON with `-o json`)
   - `--categories <list>` - Filter by API event category (console,network,page,interaction,system); `system` covers all `monitor_*` events
   - `--types <list>` - Filter by event type (e.g. network_response,console_error)
-  - `--seq <n>` - Resume stream from sequence number (Last-Event-ID)
+  - `--seq <n>` - Resume stream from sequence number (Last-Event-ID); `--seq=0` resumes from the beginning
   - `-o, --output json` - Output newline-delimited JSON envelopes
+  - Default output: `15:04:05  [network]      network_response`
 
 ### Browser Process Control
 
