@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -28,13 +27,6 @@ type BrowsersTelemetryStreamInput struct {
 	Types      []string
 	Seq        int64
 	Output     string
-}
-
-func validateJSONOutput(out string) error {
-	if out != "" && out != "json" {
-		return errors.New("unsupported --output value: use 'json'")
-	}
-	return nil
 }
 
 // parseTelemetryCategories parses a comma-separated "name=on|off" string into
@@ -102,8 +94,8 @@ func shouldEmit(ev kernel.BrowserTelemetryEventUnion, categories, types []string
 }
 
 func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetryStreamInput) error {
-	if err := validateJSONOutput(in.Output); err != nil {
-		return err
+	if in.Output != "" && in.Output != "json" {
+		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
 	for _, c := range in.Categories {
 		if c != "system" && !slices.Contains(settableCategories, c) {
