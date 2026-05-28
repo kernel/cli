@@ -426,7 +426,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 
 	if in.Telemetry != "" {
-		t, err := applyTelemetryParam(in.Telemetry)
+		t, err := buildTelemetryParam(in.Telemetry)
 		if err != nil {
 			return err
 		}
@@ -627,7 +627,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 
 	// Handle telemetry changes
 	if in.Telemetry != "" {
-		t, err := applyTelemetryParam(in.Telemetry)
+		t, err := buildTelemetryParam(in.Telemetry)
 		if err != nil {
 			return err
 		}

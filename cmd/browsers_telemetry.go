@@ -64,8 +64,8 @@ func parseTelemetryCategories(s string) (kernel.BrowserTelemetryCategoriesConfig
 	return p, nil
 }
 
-// applyTelemetryParam converts a --telemetry flag value to the API param.
-func applyTelemetryParam(s string) (kernel.BrowserTelemetryRequestConfigParam, error) {
+// buildTelemetryParam converts a --telemetry flag value to the API param.
+func buildTelemetryParam(s string) (kernel.BrowserTelemetryRequestConfigParam, error) {
 	switch s {
 	case "all":
 		return kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(true)}, nil
@@ -120,6 +120,9 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
+	if in.Seq < -1 {
+		return fmt.Errorf("--seq must be >= 0 (use --seq=0 to resume from the beginning, or omit to stream from now)")
+	}
 	params := kernel.BrowserTelemetryStreamParams{}
 	if in.Seq >= 0 {
 		params.LastEventID = kernel.Opt(strconv.FormatInt(in.Seq, 10))
@@ -142,7 +145,7 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 			continue
 		}
 		ts := time.UnixMicro(ev.Event.Ts).Local().Format("15:04:05")
-		pterm.Printf("%s  %-11s  %s\n", ts, "["+cat+"]", ev.Event.Type)
+		pterm.Printf("%s\t[%s]\t%s\n", ts, cat, ev.Event.Type)
 	}
 	if err := stream.Err(); err != nil {
 		return util.CleanedUpSdkError{Err: err}
