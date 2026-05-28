@@ -425,16 +425,12 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		}
 	}
 
-	if in.Telemetry == "all" {
-		params.Telemetry = kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(true)}
-	} else if in.Telemetry == "off" {
-		params.Telemetry = kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(false)}
-	} else if in.Telemetry != "" {
-		p, err := parseTelemetryCategories(in.Telemetry)
+	if in.Telemetry != "" {
+		t, err := applyTelemetryParam(in.Telemetry)
 		if err != nil {
 			return err
 		}
-		params.Telemetry = kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(true), Browser: p}
+		params.Telemetry = t
 	}
 
 	browser, err := b.browsers.New(ctx, params)
@@ -602,10 +598,8 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("--force requires --viewport")
 	}
 
-	hasTelemetryChange := in.Telemetry != ""
-
 	// Validate that at least one update option is provided
-	if !hasProxyChange && !hasProfileChange && !hasViewportChange && !hasTelemetryChange {
+	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" {
 		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --profile-id, --profile-name, --viewport, or --telemetry")
 	}
 
@@ -632,16 +626,12 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	// Handle telemetry changes
-	if in.Telemetry == "all" {
-		params.Telemetry = kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(true)}
-	} else if in.Telemetry == "off" {
-		params.Telemetry = kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(false)}
-	} else if in.Telemetry != "" {
-		p, err := parseTelemetryCategories(in.Telemetry)
+	if in.Telemetry != "" {
+		t, err := applyTelemetryParam(in.Telemetry)
 		if err != nil {
 			return err
 		}
-		params.Telemetry = kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(true), Browser: p}
+		params.Telemetry = t
 	}
 
 	// Handle viewport changes

@@ -64,6 +64,22 @@ func parseTelemetryCategories(s string) (kernel.BrowserTelemetryCategoriesConfig
 	return p, nil
 }
 
+// applyTelemetryParam converts a --telemetry flag value to the API param.
+func applyTelemetryParam(s string) (kernel.BrowserTelemetryRequestConfigParam, error) {
+	switch s {
+	case "all":
+		return kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(true)}, nil
+	case "off":
+		return kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(false)}, nil
+	default:
+		p, err := parseTelemetryCategories(s)
+		if err != nil {
+			return kernel.BrowserTelemetryRequestConfigParam{}, err
+		}
+		return kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(true), Browser: p}, nil
+	}
+}
+
 // settableCategories are the categories accepted by --telemetry=<categories>.
 // "system" is always-on and cannot be toggled, but is valid as a --categories stream filter.
 var settableCategories = []string{"console", "interaction", "network", "page"}

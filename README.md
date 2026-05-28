@@ -221,9 +221,6 @@ Commands with JSON output support:
 - `kernel browsers get <id>` - Get detailed browser session info
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers update <id>` - Update a running browser session
-  - `--proxy-id <id>` - Set proxy; `--clear-proxy` to remove
-  - `--profile-id <id>` / `--profile-name <name>` - Load a profile; `--save-changes` to persist on exit
-  - `--viewport <WxH@fps>` - Resize viewport; `--force` to resize during active live view or recording
   - `--telemetry=all` to enable all categories; `--telemetry=off` to disable; `--telemetry=network=on,page=off` for per-category
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers curl <id> <url>` - Make HTTP requests through a browser session's Chrome network stack
