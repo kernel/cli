@@ -18,33 +18,8 @@ import (
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/klauspost/compress/zstd"
-	"github.com/pterm/pterm"
 	"github.com/stretchr/testify/assert"
 )
-
-// captureProfilesOutput sets pterm writers for tests in this file
-func captureProfilesOutput(t *testing.T) *bytes.Buffer {
-	var buf bytes.Buffer
-	pterm.SetDefaultOutput(&buf)
-	pterm.Info.Writer = &buf
-	pterm.Error.Writer = &buf
-	pterm.Success.Writer = &buf
-	pterm.Warning.Writer = &buf
-	pterm.Debug.Writer = &buf
-	pterm.Fatal.Writer = &buf
-	pterm.DefaultTable = *pterm.DefaultTable.WithWriter(&buf)
-	t.Cleanup(func() {
-		pterm.SetDefaultOutput(os.Stdout)
-		pterm.Info.Writer = os.Stdout
-		pterm.Error.Writer = os.Stdout
-		pterm.Success.Writer = os.Stdout
-		pterm.Warning.Writer = os.Stdout
-		pterm.Debug.Writer = os.Stdout
-		pterm.Fatal.Writer = os.Stdout
-		pterm.DefaultTable = *pterm.DefaultTable.WithWriter(os.Stdout)
-	})
-	return &buf
-}
 
 // FakeProfilesService implements ProfilesService
 type FakeProfilesService struct {
@@ -87,7 +62,7 @@ func (f *FakeProfilesService) New(ctx context.Context, body kernel.ProfileNewPar
 }
 
 func TestProfilesList_Empty(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	fake := &FakeProfilesService{}
 	p := ProfilesCmd{profiles: fake}
 	_ = p.List(context.Background(), ProfilesListInput{Page: 1, PerPage: 20})
@@ -95,7 +70,7 @@ func TestProfilesList_Empty(t *testing.T) {
 }
 
 func TestProfilesList_WithRows(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	created := time.Unix(0, 0)
 	rows := []kernel.Profile{{ID: "p1", Name: "alpha", CreatedAt: created, UpdatedAt: created}, {ID: "p2", Name: "", CreatedAt: created, UpdatedAt: created}}
 	fake := &FakeProfilesService{ListFunc: func(ctx context.Context, query kernel.ProfileListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Profile], error) {
@@ -111,7 +86,7 @@ func TestProfilesList_WithRows(t *testing.T) {
 }
 
 func TestProfilesList_HasMore(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	created := time.Unix(0, 0)
 	perPage := 2
 	items := make([]kernel.Profile, perPage+1)
@@ -132,7 +107,7 @@ func TestProfilesList_HasMore(t *testing.T) {
 }
 
 func TestProfilesList_QueryInNextHint(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	created := time.Unix(0, 0)
 	items := make([]kernel.Profile, 3)
 	for i := range items {
@@ -148,7 +123,7 @@ func TestProfilesList_QueryInNextHint(t *testing.T) {
 }
 
 func TestProfilesList_QueryWithSpacesQuoted(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	created := time.Unix(0, 0)
 	items := make([]kernel.Profile, 3)
 	for i := range items {
@@ -164,7 +139,7 @@ func TestProfilesList_QueryWithSpacesQuoted(t *testing.T) {
 }
 
 func TestProfilesGet_Success(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	fake := &FakeProfilesService{GetFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*kernel.Profile, error) {
 		return &kernel.Profile{ID: "p1", Name: "alpha", CreatedAt: time.Unix(0, 0), UpdatedAt: time.Unix(0, 0)}, nil
 	}}
@@ -188,7 +163,7 @@ func TestProfilesGet_Error(t *testing.T) {
 }
 
 func TestProfilesCreate_Success(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	fake := &FakeProfilesService{NewFunc: func(ctx context.Context, body kernel.ProfileNewParams, opts ...option.RequestOption) (*kernel.Profile, error) {
 		return &kernel.Profile{ID: "pnew", Name: body.Name.Value, CreatedAt: time.Unix(0, 0), UpdatedAt: time.Unix(0, 0)}, nil
 	}}
@@ -210,7 +185,7 @@ func TestProfilesCreate_Error(t *testing.T) {
 }
 
 func TestProfilesDelete_ConfirmNotFound(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	fake := &FakeProfilesService{GetFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*kernel.Profile, error) {
 		return nil, &kernel.Error{StatusCode: http.StatusNotFound}
 	}}
@@ -220,7 +195,7 @@ func TestProfilesDelete_ConfirmNotFound(t *testing.T) {
 }
 
 func TestProfilesDelete_SkipConfirm(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	fake := &FakeProfilesService{}
 	p := ProfilesCmd{profiles: fake}
 	_ = p.Delete(context.Background(), ProfilesDeleteInput{Identifier: "a", SkipConfirm: true})
@@ -255,7 +230,7 @@ func TestProfilesDownload_MissingTo(t *testing.T) {
 }
 
 func TestProfilesDownload_ExtractSuccess(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	dir, err := os.MkdirTemp("", "profile-*")
 	assert.NoError(t, err)
 	defer os.RemoveAll(dir)
@@ -283,7 +258,7 @@ func TestProfilesDownload_ExtractSuccess(t *testing.T) {
 }
 
 func TestProfilesDownload_202NoData(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	dir, err := os.MkdirTemp("", "profile-*")
 	assert.NoError(t, err)
 	defer os.RemoveAll(dir)

@@ -148,8 +148,8 @@ func (c ProjectsCmd) Delete(ctx context.Context, in ProjectsDeleteInput) error {
 }
 
 func (c ProjectsCmd) LimitsGet(ctx context.Context, in ProjectsLimitsGetInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	projectID, err := resolveProjectArg(ctx, c.projects, in.Identifier)
@@ -175,8 +175,8 @@ func (c ProjectsCmd) LimitsGet(ctx context.Context, in ProjectsLimitsGetInput) e
 }
 
 func (c ProjectsCmd) LimitsSet(ctx context.Context, in ProjectsLimitsSetInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	projectID, err := resolveProjectArg(ctx, c.projects, in.Identifier)
@@ -312,7 +312,7 @@ func runProjectsLimitsSet(cmd *cobra.Command, args []string) error {
 }
 
 func addProjectsLimitsOutputFlag(cmd *cobra.Command) {
-	cmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(cmd)
 }
 
 func addProjectsLimitsSetFlags(cmd *cobra.Command) {
