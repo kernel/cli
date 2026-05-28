@@ -23,27 +23,6 @@ type BrowserTelemetryService interface {
 	StreamStreaming(ctx context.Context, id string, query kernel.BrowserTelemetryStreamParams, opts ...option.RequestOption) (stream *ssestream.Stream[kernel.BrowserTelemetryStreamResponse])
 }
 
-type BrowsersTelemetryStartInput struct {
-	Identifier string
-	Output     string
-}
-
-type BrowsersTelemetryStopInput struct {
-	Identifier string
-	Output     string
-}
-
-type BrowsersTelemetrySetInput struct {
-	Identifier string
-	Categories string // e.g. "network=on,page=off"
-	Output     string
-}
-
-type BrowsersTelemetryStatusInput struct {
-	Identifier string
-	Output     string
-}
-
 type BrowsersTelemetryStreamInput struct {
 	Identifier string
 	Categories []string
@@ -56,40 +35,6 @@ func validateJSONOutput(out string) error {
 	if out != "" && out != "json" {
 		return errors.New("unsupported --output value: use 'json'")
 	}
-	return nil
-}
-
-func (b BrowsersCmd) TelemetryStart(ctx context.Context, in BrowsersTelemetryStartInput) error {
-	if err := validateJSONOutput(in.Output); err != nil {
-		return err
-	}
-	res, err := b.browsers.Update(ctx, in.Identifier, kernel.BrowserUpdateParams{
-		Telemetry: kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(true)},
-	})
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-	if in.Output == "json" {
-		return util.PrintPrettyJSON(res)
-	}
-	pterm.Success.Printf("Started telemetry for browser %s\n", in.Identifier)
-	return nil
-}
-
-func (b BrowsersCmd) TelemetryStop(ctx context.Context, in BrowsersTelemetryStopInput) error {
-	if err := validateJSONOutput(in.Output); err != nil {
-		return err
-	}
-	res, err := b.browsers.Update(ctx, in.Identifier, kernel.BrowserUpdateParams{
-		Telemetry: kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(false)},
-	})
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-	if in.Output == "json" {
-		return util.PrintPrettyJSON(res)
-	}
-	pterm.Success.Printf("Stopped telemetry for browser %s\n", in.Identifier)
 	return nil
 }
 
@@ -128,61 +73,20 @@ func parseTelemetryCategories(s string) (kernel.BrowserTelemetryCategoriesConfig
 	return p, nil
 }
 
-func (b BrowsersCmd) TelemetrySet(ctx context.Context, in BrowsersTelemetrySetInput) error {
-	if err := validateJSONOutput(in.Output); err != nil {
-		return err
-	}
-	p, err := parseTelemetryCategories(in.Categories)
-	if err != nil {
-		return err
-	}
-	res, err := b.browsers.Update(ctx, in.Identifier, kernel.BrowserUpdateParams{
-		Telemetry: kernel.BrowserTelemetryRequestConfigParam{Browser: p},
-	})
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-	if in.Output == "json" {
-		return util.PrintPrettyJSON(res)
-	}
-	pterm.Success.Printf("Updated telemetry categories for browser %s\n", in.Identifier)
-	return nil
-}
+// settableCategories are the categories accepted by --telemetry=<categories>.
+var settableCategories = []string{"console", "interaction", "network", "page"}
 
-func (b BrowsersCmd) TelemetryStatus(ctx context.Context, in BrowsersTelemetryStatusInput) error {
-	if err := validateJSONOutput(in.Output); err != nil {
-		return err
-	}
-	browser, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-	if in.Output == "json" {
-		return util.PrintPrettyJSON(browser.Telemetry)
-	}
-	if !browser.Telemetry.JSON.Browser.Valid() {
-		pterm.Println("enabled:     off")
-		return nil
-	}
-	pterm.Println("enabled:     on")
-	cfg := browser.Telemetry.Browser
-	pterm.Printf("console:     %s\n", categoryOnOff(cfg.Console))
-	pterm.Printf("interaction: %s\n", categoryOnOff(cfg.Interaction))
-	pterm.Printf("network:     %s\n", categoryOnOff(cfg.Network))
-	pterm.Printf("page:        %s\n", categoryOnOff(cfg.Page))
-	return nil
-}
+// knownTelemetryCategories are the real API event categories observable on stream.
+var knownTelemetryCategories = []string{"console", "network", "page", "interaction", "system"}
 
-// categoryOnOff returns "on" or "off" for a category config, respecting the SDK
-// default: if the enabled field is absent from the response, it defaults to true.
-func categoryOnOff(c kernel.BrowserTelemetryCategoryConfig) string {
-	if !c.JSON.Enabled.Valid() {
-		return "on"
-	}
-	if c.Enabled {
-		return "on"
-	}
-	return "off"
+var knownTelemetryTypes = []string{
+	"console_log", "console_error",
+	"network_request", "network_response", "network_loading_failed", "network_idle",
+	"page_navigation", "page_dom_content_loaded", "page_load", "page_tab_opened",
+	"page_layout_shift", "page_lcp", "page_layout_settled", "page_navigation_settled",
+	"interaction_click", "interaction_key", "interaction_scroll_settled",
+	"monitor_screenshot", "monitor_disconnected", "monitor_reconnected",
+	"monitor_reconnect_failed", "monitor_init_failed",
 }
 
 // eventCategoryFromRaw reads the category field directly from the raw event JSON.
@@ -210,22 +114,6 @@ func shouldEmit(ev kernel.BrowserTelemetryEventUnion, categories, types []string
 	return true
 }
 
-// settableCategories are the categories accepted by the set subcommand.
-var settableCategories = []string{"console", "interaction", "network", "page"}
-
-// knownTelemetryCategories are the real API event categories observable on stream.
-var knownTelemetryCategories = []string{"console", "network", "page", "interaction", "system"}
-
-var knownTelemetryTypes = []string{
-	"console_log", "console_error",
-	"network_request", "network_response", "network_loading_failed", "network_idle",
-	"page_navigation", "page_dom_content_loaded", "page_load", "page_tab_opened",
-	"page_layout_shift", "page_lcp", "page_layout_settled", "page_navigation_settled",
-	"interaction_click", "interaction_key", "interaction_scroll_settled",
-	"monitor_screenshot", "monitor_disconnected", "monitor_reconnected",
-	"monitor_reconnect_failed", "monitor_init_failed",
-}
-
 func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetryStreamInput) error {
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
@@ -239,6 +127,10 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 		if !slices.Contains(knownTelemetryTypes, t) {
 			pterm.Warning.Printf("unrecognized event type %q — no events will match\n", t)
 		}
+	}
+	if b.telemetry == nil {
+		pterm.Error.Println("telemetry service not available")
+		return nil
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -276,48 +168,8 @@ func init() {
 	telemetryStream.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error)")
 	telemetryStream.Flags().Int64("seq", 0, "Resume stream from sequence number (Last-Event-ID)")
 	telemetryStream.Flags().StringP("output", "o", "", "Output format: json for newline-delimited JSON envelopes")
-	telemetryStart := &cobra.Command{Use: "start <id>", Short: "Start telemetry capture (enabled: true)", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStart}
-	telemetryStart.Flags().StringP("output", "o", "", "Output format: json for raw API response")
-	telemetryStop := &cobra.Command{Use: "stop <id>", Short: "Stop telemetry capture (enabled: false)", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStop}
-	telemetryStop.Flags().StringP("output", "o", "", "Output format: json for raw API response")
-	telemetrySet := &cobra.Command{Use: "set <id> <name=on|off>...", Short: "Set per-category telemetry config", Args: cobra.MinimumNArgs(2), RunE: runBrowsersTelemetrySet}
-	telemetrySet.Flags().StringP("output", "o", "", "Output format: json for raw API response")
-	telemetryStatus := &cobra.Command{Use: "status <id>", Short: "Show current telemetry configuration", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStatus}
-	telemetryStatus.Flags().StringP("output", "o", "", "Output format: json for raw API response")
-	telemetryRoot.AddCommand(telemetryStream, telemetryStart, telemetryStop, telemetrySet, telemetryStatus)
+	telemetryRoot.AddCommand(telemetryStream)
 	browsersCmd.AddCommand(telemetryRoot)
-}
-
-func runBrowsersTelemetryStart(cmd *cobra.Command, args []string) error {
-	client := getKernelClient(cmd)
-	svc := client.Browsers
-	out, _ := cmd.Flags().GetString("output")
-	b := BrowsersCmd{browsers: &svc}
-	return b.TelemetryStart(cmd.Context(), BrowsersTelemetryStartInput{Identifier: args[0], Output: out})
-}
-
-func runBrowsersTelemetryStop(cmd *cobra.Command, args []string) error {
-	client := getKernelClient(cmd)
-	svc := client.Browsers
-	out, _ := cmd.Flags().GetString("output")
-	b := BrowsersCmd{browsers: &svc}
-	return b.TelemetryStop(cmd.Context(), BrowsersTelemetryStopInput{Identifier: args[0], Output: out})
-}
-
-func runBrowsersTelemetrySet(cmd *cobra.Command, args []string) error {
-	client := getKernelClient(cmd)
-	svc := client.Browsers
-	out, _ := cmd.Flags().GetString("output")
-	b := BrowsersCmd{browsers: &svc}
-	return b.TelemetrySet(cmd.Context(), BrowsersTelemetrySetInput{Identifier: args[0], Categories: strings.Join(args[1:], ","), Output: out})
-}
-
-func runBrowsersTelemetryStatus(cmd *cobra.Command, args []string) error {
-	client := getKernelClient(cmd)
-	svc := client.Browsers
-	out, _ := cmd.Flags().GetString("output")
-	b := BrowsersCmd{browsers: &svc}
-	return b.TelemetryStatus(cmd.Context(), BrowsersTelemetryStatusInput{Identifier: args[0], Output: out})
 }
 
 func runBrowsersTelemetryStream(cmd *cobra.Command, args []string) error {

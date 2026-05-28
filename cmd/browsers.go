@@ -215,9 +215,9 @@ type BrowsersUpdateInput struct {
 	ProfileSaveChanges BoolFlag
 	Viewport           string
 	Force              bool
+	Telemetry          string
 	Output             string
 }
-
 
 // BrowsersCmd is a cobra-independent command handler for browsers operations.
 type BrowsersCmd struct {
@@ -600,9 +600,11 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("--force requires --viewport")
 	}
 
+	hasTelemetryChange := in.Telemetry != ""
+
 	// Validate that at least one update option is provided
-	if !hasProxyChange && !hasProfileChange && !hasViewportChange {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --profile-id, --profile-name, or --viewport")
+	if !hasProxyChange && !hasProfileChange && !hasViewportChange && !hasTelemetryChange {
+		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --profile-id, --profile-name, --viewport, or --telemetry")
 	}
 
 	params := kernel.BrowserUpdateParams{}
@@ -625,6 +627,19 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		if in.ProfileSaveChanges.Set {
 			params.Profile.SaveChanges = kernel.Opt(in.ProfileSaveChanges.Value)
 		}
+	}
+
+	// Handle telemetry changes
+	if in.Telemetry == "all" {
+		params.Telemetry = kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(true)}
+	} else if in.Telemetry == "off" {
+		params.Telemetry = kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(false)}
+	} else if in.Telemetry != "" {
+		p, err := parseTelemetryCategories(in.Telemetry)
+		if err != nil {
+			return err
+		}
+		params.Telemetry = kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(true), Browser: p}
 	}
 
 	// Handle viewport changes
@@ -2254,6 +2269,8 @@ func init() {
 	browsersUpdateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
 	browsersUpdateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersUpdateCmd.Flags().Bool("force", false, "Force viewport resize even when a live view or recording/replay is active")
+	browsersUpdateCmd.Flags().String("telemetry", "", "Update telemetry: --telemetry for all categories, --telemetry=off to disable, --telemetry=network=on,page=off for per-category")
+	browsersUpdateCmd.Flag("telemetry").NoOptDefVal = "all"
 
 	browsersCmd.AddCommand(browsersListCmd)
 	browsersCmd.AddCommand(browsersCreateCmd)
@@ -2759,6 +2776,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	saveChanges, _ := cmd.Flags().GetBool("save-changes")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	force, _ := cmd.Flags().GetBool("force")
+	telemetry, _ := cmd.Flags().GetString("telemetry")
 
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
@@ -2771,6 +2789,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
 		Viewport:           viewport,
 		Force:              force,
+		Telemetry:          telemetry,
 		Output:             out,
 	})
 }
