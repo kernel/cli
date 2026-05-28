@@ -291,18 +291,20 @@ Commands with JSON output support:
 
 ### Browser Telemetry
 
-Telemetry config is a sub-field of the browser session. Use `browsers update` to enable, disable, or configure it, and `browsers get` to inspect the current state.
+Telemetry config is a sub-field of the browser session. Use `browsers create` or `browsers update` to enable, disable, or configure it, and `browsers get` to inspect the current state.
 
 - Enable all categories: `kernel browsers update <id> --telemetry=all`
 - Disable: `kernel browsers update <id> --telemetry=off`
 - Per-category: `kernel browsers update <id> --telemetry=network=on,page=off` (valid: `console`, `interaction`, `network`, `page`; `system` always emits and cannot be toggled)
 
+Per-category updates are partial — only categories you name are changed; others retain their current state. `--telemetry=all` and `--telemetry=off` reset the entire config.
+
 - `kernel browsers telemetry stream <id>` - Stream live telemetry events (NDJSON with `-o json`)
-  - `--categories <list>` - Filter by API event category (console,network,page,interaction,system); `system` covers all `monitor_*` events
-  - `--types <list>` - Filter by event type (e.g. network_response,console_error)
-  - `--seq <n>` - Resume stream from sequence number (Last-Event-ID); `--seq=0` resumes from the beginning
+  - `--categories <list>` - Filter by event category (`console`, `network`, `page`, `interaction`, `system`); `system` matches `monitor_*` event types
+  - `--types <list>` - Filter by event type (e.g. `network_response`, `console_error`)
+  - `--seq <n>` - Resume from sequence number (Last-Event-ID); `--seq=0` replays from the beginning. Omit to stream from now.
   - `-o, --output json` - Output newline-delimited JSON envelopes
-  - Default output: `15:04:05  [network]      network_response`
+  - Default output: tab-separated `<time>\t[<category>]\t<type>`, e.g. `15:04:05  [network]  network_response`
 
 ### Browser Process Control
 
