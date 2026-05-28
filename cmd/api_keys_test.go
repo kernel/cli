@@ -97,6 +97,7 @@ func TestAPIKeysCreateBuildsParamsAndPrintsPlaintextKey(t *testing.T) {
 	require.NoError(t, err)
 
 	out := buf.String()
+	assert.Contains(t, out, "Created API key: key_123")
 	assert.Contains(t, out, "key_123")
 	assert.Contains(t, out, "sk_live_123")
 	assert.Contains(t, out, "Prod")
@@ -199,6 +200,26 @@ func TestAPIKeysUpdateRequiresName(t *testing.T) {
 	err := c.Update(context.Background(), APIKeysUpdateInput{ID: "key_123"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--name is required")
+}
+
+func TestAPIKeysUpdatePrintsTerseSuccess(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fake := &FakeAPIKeysService{
+		UpdateFunc: func(ctx context.Context, id string, body kernel.APIKeyUpdateParams, opts ...option.RequestOption) (*kernel.APIKey, error) {
+			assert.Equal(t, "key_123", id)
+			assert.Equal(t, "renamed", body.Name)
+			return apiKeyFromJSON(`{"id":"key_123","name":"renamed","masked_key":"sk_...123","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123","email":"dev@example.com","name":"Dev"},"expires_at":null,"project_id":null,"project_name":null}`), nil
+		},
+	}
+	c := APIKeysCmd{apiKeys: fake}
+
+	err := c.Update(context.Background(), APIKeysUpdateInput{ID: "key_123", Name: "renamed"})
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.Contains(t, out, "Updated API key: key_123")
+	assert.NotContains(t, out, "Masked Key")
+	assert.NotContains(t, out, "sk_...123")
 }
 
 func TestAPIKeysDeleteSkipsConfirmation(t *testing.T) {

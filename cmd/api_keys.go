@@ -81,6 +81,7 @@ func (c APIKeysCmd) Create(ctx context.Context, in APIKeysCreateInput) error {
 		return util.PrintPrettyJSON(key)
 	}
 
+	pterm.Success.Printf("Created API key: %s\n", key.ID)
 	renderCreatedAPIKey(key)
 	return nil
 }
@@ -175,7 +176,6 @@ func (c APIKeysCmd) Update(ctx context.Context, in APIKeysUpdateInput) error {
 	}
 
 	pterm.Success.Printf("Updated API key: %s\n", key.ID)
-	renderAPIKeyDetails(key)
 	return nil
 }
 
