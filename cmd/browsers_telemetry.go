@@ -116,12 +116,12 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 	if in.Output != "" && in.Output != "json" {
 		return fmt.Errorf("unsupported --output value: use 'json'")
 	}
+	if in.Seq < -1 {
+		return fmt.Errorf("--seq must be >= 0 (use --seq=0 to resume from the beginning, or omit to stream from now)")
+	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
-	}
-	if in.Seq < -1 {
-		return fmt.Errorf("--seq must be >= 0 (use --seq=0 to resume from the beginning, or omit to stream from now)")
 	}
 	params := kernel.BrowserTelemetryStreamParams{}
 	if in.Seq >= 0 {
