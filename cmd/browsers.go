@@ -2269,8 +2269,7 @@ func init() {
 	browsersUpdateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
 	browsersUpdateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersUpdateCmd.Flags().Bool("force", false, "Force viewport resize even when a live view or recording/replay is active")
-	browsersUpdateCmd.Flags().String("telemetry", "", "Update telemetry: --telemetry for all categories, --telemetry=off to disable, --telemetry=network=on,page=off for per-category")
-	browsersUpdateCmd.Flag("telemetry").NoOptDefVal = "all"
+	browsersUpdateCmd.Flags().String("telemetry", "", "Update telemetry: --telemetry=all to enable, --telemetry=off to disable, --telemetry=network=on,page=off for per-category")
 
 	browsersCmd.AddCommand(browsersListCmd)
 	browsersCmd.AddCommand(browsersCreateCmd)
@@ -2536,8 +2535,7 @@ func init() {
 	browsersCreateCmd.Flags().Bool("viewport-interactive", false, "Interactively select viewport size from list")
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
-	browsersCreateCmd.Flags().String("telemetry", "", "Enable telemetry: --telemetry for all, --telemetry=network=on,page=off for per-category")
-	browsersCreateCmd.Flag("telemetry").NoOptDefVal = "all"
+	browsersCreateCmd.Flags().String("telemetry", "", "Enable telemetry: --telemetry=all to enable all, --telemetry=network=on,page=off for per-category")
 
 	// curl
 	curlCmd := &cobra.Command{

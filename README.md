@@ -211,7 +211,7 @@ Commands with JSON output support:
   - `--start-url <url>` - Initial page to open on launch
   - `--pool-id <id>` - Acquire a browser from the specified pool (mutually exclusive with --pool-name; ignores other session flags)
   - `--pool-name <name>` - Acquire a browser from the pool name (mutually exclusive with --pool-id; ignores other session flags)
-  - `--telemetry` - Enable telemetry for all categories
+  - `--telemetry=all` - Enable telemetry for all categories
   - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`
   - `--output json`, `-o json` - Output raw JSON object
   - _Note: When a pool is specified, omit other session configuration flags—pool settings determine profile, proxy, viewport, etc._
@@ -224,7 +224,7 @@ Commands with JSON output support:
   - `--proxy-id <id>` - Set proxy; `--clear-proxy` to remove
   - `--profile-id <id>` / `--profile-name <name>` - Load a profile; `--save-changes` to persist on exit
   - `--viewport <WxH@fps>` - Resize viewport; `--force` to resize during active live view or recording
-  - `--telemetry` - Enable telemetry for all categories; `--telemetry=off` to disable; `--telemetry=network=on,page=off` for per-category
+  - `--telemetry=all` to enable all categories; `--telemetry=off` to disable; `--telemetry=network=on,page=off` for per-category
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers curl <id> <url>` - Make HTTP requests through a browser session's Chrome network stack
   - `-X, --request <method>` - HTTP method (default: GET; defaults to POST when `--data` is set)
@@ -292,7 +292,7 @@ Commands with JSON output support:
 
 Telemetry config is a sub-field of the browser session. Use `browsers update` to enable, disable, or configure it, and `browsers get` to inspect the current state.
 
-- Enable all categories: `kernel browsers update <id> --telemetry`
+- Enable all categories: `kernel browsers update <id> --telemetry=all`
 - Disable: `kernel browsers update <id> --telemetry=off`
 - Per-category: `kernel browsers update <id> --telemetry=network=on,page=off` (valid: `console`, `interaction`, `network`, `page`; `system` always emits and cannot be toggled)
 
