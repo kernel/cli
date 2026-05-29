@@ -253,6 +253,9 @@ func isUsageError(err error) bool {
 		"unknown shorthand flag:",
 		"unknown command",
 		"invalid argument",
+		"accepts ",
+		"requires at least ",
+		"requires exactly ",
 	} {
 		if strings.HasPrefix(s, prefix) {
 			return true

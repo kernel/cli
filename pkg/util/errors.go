@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/kernel/kernel-go-sdk"
 )
@@ -38,4 +39,51 @@ func (e CleanedUpSdkError) Error() string {
 
 func (e CleanedUpSdkError) Unwrap() error {
 	return e.Err
+}
+
+func RequiredFlag(flag, valueHint string) error {
+	if valueHint == "" {
+		return fmt.Errorf("%s is required; add %s", flag, flag)
+	}
+	return fmt.Errorf("%s is required; add %s %s", flag, flag, valueHint)
+}
+
+func RequiredArg(name, usage string) error {
+	return fmt.Errorf("missing %s; use: %s", name, usage)
+}
+
+func ChooseOne(flags ...string) error {
+	return fmt.Errorf("choose one of %s", joinOptions(flags))
+}
+
+func ChooseOnlyOne(flags ...string) error {
+	return fmt.Errorf("choose only one of %s", joinOptions(flags))
+}
+
+func SetAtLeastOne(flags ...string) error {
+	return fmt.Errorf("set at least one of %s", joinOptions(flags))
+}
+
+func InvalidChoice(flag, value string, choices ...string) error {
+	return fmt.Errorf("invalid %s %q; use one of: %s", flag, value, strings.Join(choices, ", "))
+}
+
+func NotFound(resource, id, listCommand string) error {
+	if listCommand == "" {
+		return fmt.Errorf("%s %q not found", resource, id)
+	}
+	return fmt.Errorf("%s %q not found; run `%s` to find valid IDs", resource, id, listCommand)
+}
+
+func joinOptions(items []string) string {
+	switch len(items) {
+	case 0:
+		return ""
+	case 1:
+		return items[0]
+	case 2:
+		return items[0] + " or " + items[1]
+	default:
+		return strings.Join(items[:len(items)-1], ", ") + ", or " + items[len(items)-1]
+	}
 }

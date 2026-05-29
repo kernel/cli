@@ -100,13 +100,14 @@ func TestExtensionsDelete_NotFound(t *testing.T) {
 }
 
 func TestExtensionsDownload_MissingOutput(t *testing.T) {
-	buf := capturePtermOutput(t)
 	fake := &FakeExtensionsService{DownloadFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("content")), Header: http.Header{}}, nil
 	}}
 	e := ExtensionsCmd{extensions: fake}
-	_ = e.Download(context.Background(), ExtensionsDownloadInput{Identifier: "e1", Output: ""})
-	assert.Contains(t, buf.String(), "Missing --to output directory")
+	err := e.Download(context.Background(), ExtensionsDownloadInput{Identifier: "e1", Output: ""})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "--to is required")
+	assert.Contains(t, err.Error(), "add --to <directory>")
 }
 
 func TestExtensionsDownload_ExtractsToDir(t *testing.T) {
@@ -158,11 +159,12 @@ func TestExtensionsDownloadWebStore_ExtractsToDir(t *testing.T) {
 }
 
 func TestExtensionsDownloadWebStore_InvalidOS(t *testing.T) {
-	buf := capturePtermOutput(t)
 	fake := &FakeExtensionsService{}
 	e := ExtensionsCmd{extensions: fake}
-	_ = e.DownloadWebStore(context.Background(), ExtensionsDownloadWebStoreInput{URL: "https://store/link", Output: "x", OS: "freebsd"})
-	assert.Contains(t, buf.String(), "--os must be one of mac, win, linux")
+	err := e.DownloadWebStore(context.Background(), ExtensionsDownloadWebStoreInput{URL: "https://store/link", Output: "x", OS: "freebsd"})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), `invalid --os "freebsd"`)
+	assert.Contains(t, err.Error(), "linux, mac, win")
 }
 
 func TestExtensionsUpload_Success(t *testing.T) {

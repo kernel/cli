@@ -118,10 +118,10 @@ func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateIn
 	}
 
 	if in.Domain == "" {
-		return fmt.Errorf("--domain is required")
+		return util.RequiredFlag("--domain", "<domain>")
 	}
 	if in.ProfileName == "" {
-		return fmt.Errorf("--profile-name is required")
+		return util.RequiredFlag("--profile-name", "<profile-name>")
 	}
 
 	params := kernel.AuthConnectionNewParams{
@@ -251,7 +251,7 @@ func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateIn
 	credentialChanged := in.CredentialNameSet || in.CredentialProviderSet || in.CredentialPathSet || in.CredentialAuto.Set
 	if credentialChanged {
 		if strings.TrimSpace(in.CredentialName) != "" && strings.TrimSpace(in.CredentialProvider) != "" {
-			return fmt.Errorf("credential reference must use either --credential-name or --credential-provider")
+			return util.ChooseOnlyOne("--credential-name", "--credential-provider")
 		}
 		params.ManagedAuthUpdateRequest.Credential = kernel.ManagedAuthUpdateRequestCredentialParam{}
 		if in.CredentialNameSet {
@@ -282,7 +282,7 @@ func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateIn
 	}
 
 	if !hasChanges {
-		return fmt.Errorf("must provide at least one field to update")
+		return util.SetAtLeastOne("--domain", "--profile-name", "--credential-name", "--credential-provider", "--credential-path", "--credential-auto", "--proxy-id", "--proxy-name")
 	}
 
 	if in.Output != "json" {
@@ -568,10 +568,10 @@ func (c AuthConnectionCmd) Submit(ctx context.Context, in AuthConnectionSubmitIn
 	}
 
 	if submitModes == 0 {
-		return fmt.Errorf("must provide exactly one of: --field, --mfa-option-id, --sign-in-option-id, --sso-button-selector, or --sso-provider")
+		return util.ChooseOne("--field", "--mfa-option-id", "--sign-in-option-id", "--sso-button-selector", "--sso-provider")
 	}
 	if submitModes > 1 {
-		return fmt.Errorf("provide exactly one of: --field, --mfa-option-id, --sign-in-option-id, --sso-button-selector, or --sso-provider")
+		return util.ChooseOnlyOne("--field", "--mfa-option-id", "--sign-in-option-id", "--sso-button-selector", "--sso-provider")
 	}
 
 	// Resolve MFA option: the user may pass the label (e.g. "Get a text"), the
@@ -1021,7 +1021,7 @@ func runAuthConnectionsSubmit(cmd *cobra.Command, args []string) error {
 	for _, pair := range fieldPairs {
 		parts := strings.SplitN(pair, "=", 2)
 		if len(parts) != 2 {
-			return fmt.Errorf("invalid field format: %s (expected key=value)", pair)
+			return fmt.Errorf("invalid --field %q; use key=value", pair)
 		}
 		fieldValues[parts[0]] = parts[1]
 	}

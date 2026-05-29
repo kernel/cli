@@ -58,13 +58,13 @@ func (c APIKeysCmd) Create(ctx context.Context, in APIKeysCreateInput) error {
 		return err
 	}
 	if in.Name == "" {
-		return fmt.Errorf("--name is required")
+		return util.RequiredFlag("--name", "<name>")
 	}
 
 	params := kernel.APIKeyNewParams{Name: in.Name}
 	if in.DaysToExpire.Set {
 		if in.DaysToExpire.Value < 1 || in.DaysToExpire.Value > 3650 {
-			return fmt.Errorf("--days-to-expire must be between 1 and 3650")
+			return fmt.Errorf("invalid --days-to-expire %d; use a value from 1 to 3650", in.DaysToExpire.Value)
 		}
 		params.DaysToExpire = kernel.Int(in.DaysToExpire.Value)
 	}
@@ -91,10 +91,10 @@ func (c APIKeysCmd) List(ctx context.Context, in APIKeysListInput) error {
 		return err
 	}
 	if in.Limit < 0 {
-		return fmt.Errorf("--limit must be non-negative")
+		return fmt.Errorf("invalid --limit %d; use 0 or a positive number", in.Limit)
 	}
 	if in.Offset < 0 {
-		return fmt.Errorf("--offset must be non-negative")
+		return fmt.Errorf("invalid --offset %d; use 0 or a positive number", in.Offset)
 	}
 
 	params := kernel.APIKeyListParams{}
@@ -164,7 +164,7 @@ func (c APIKeysCmd) Update(ctx context.Context, in APIKeysUpdateInput) error {
 		return err
 	}
 	if in.Name == "" {
-		return fmt.Errorf("--name is required")
+		return util.RequiredFlag("--name", "<new-name>")
 	}
 
 	key, err := c.apiKeys.Update(ctx, in.ID, kernel.APIKeyUpdateParams{Name: in.Name})
@@ -193,7 +193,7 @@ func (c APIKeysCmd) Delete(ctx context.Context, in APIKeysDeleteInput) error {
 
 	if err := c.apiKeys.Delete(ctx, in.ID); err != nil {
 		if util.IsNotFound(err) {
-			return fmt.Errorf("API key %q not found", in.ID)
+			return util.NotFound("API key", in.ID, "kernel api-keys list")
 		}
 		return util.CleanedUpSdkError{Err: err}
 	}

@@ -217,6 +217,10 @@ type BrowsersCmd struct {
 	playwright BrowserPlaywrightService
 }
 
+func browserServiceUnavailable(service string) error {
+	return fmt.Errorf("%s service is unavailable; upgrade the CLI and retry", service)
+}
+
 type BrowsersListInput struct {
 	Output         string
 	IncludeDeleted bool
@@ -242,7 +246,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 		case "all":
 			params.Status = kernel.BrowserListParamsStatusAll
 		default:
-			return fmt.Errorf("invalid --status value: %s (must be 'active', 'deleted', or 'all')", in.Status)
+			return util.InvalidChoice("--status", in.Status, "active", "deleted", "all")
 		}
 	} else if in.IncludeDeleted {
 		params.IncludeDeleted = kernel.Opt(true)
@@ -356,8 +360,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 
 	// Validate profile selection: at most one of profile-id or profile-name must be provided
 	if in.ProfileID != "" && in.ProfileName != "" {
-		pterm.Error.Println("must specify at most one of --profile-id or --profile-name")
-		return nil
+		return util.ChooseOnlyOne("--profile-id", "--profile-name")
 	} else if in.ProfileID != "" || in.ProfileName != "" {
 		params.Profile = kernel.BrowserProfileParam{
 			SaveChanges: kernel.Opt(in.ProfileSaveChanges.Value),
@@ -398,8 +401,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	if in.Viewport != "" {
 		width, height, refreshRate, err := parseViewport(in.Viewport)
 		if err != nil {
-			pterm.Error.Printf("Invalid viewport format: %v\n", err)
-			return nil
+			return fmt.Errorf("invalid --viewport %q; use WIDTHxHEIGHT or WIDTHxHEIGHT@RATE: %v", in.Viewport, err)
 		}
 		params.Viewport = kernel.BrowserViewportParam{
 			Width:  width,
@@ -553,12 +555,12 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 
 	// Validate profile selection: at most one of profile-id or profile-name must be provided
 	if in.ProfileID != "" && in.ProfileName != "" {
-		return fmt.Errorf("must specify at most one of --profile-id or --profile-name")
+		return util.ChooseOnlyOne("--profile-id", "--profile-name")
 	}
 
 	// Cannot specify both --proxy-id and --clear-proxy
 	if in.ProxyID != "" && in.ClearProxy {
-		return fmt.Errorf("cannot specify both --proxy-id and --clear-proxy")
+		return util.ChooseOnlyOne("--proxy-id", "--clear-proxy")
 	}
 
 	hasProxyChange := in.ProxyID != "" || in.ClearProxy
@@ -567,17 +569,17 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 
 	// Validate --save-changes is only used with a profile
 	if in.ProfileSaveChanges.Set && !hasProfileChange {
-		return fmt.Errorf("--save-changes requires --profile-id or --profile-name")
+		return fmt.Errorf("--save-changes requires a profile; add --profile-id <id> or --profile-name <name>")
 	}
 
 	// Validate --force is only used with a viewport change
 	if in.Force && !hasViewportChange {
-		return fmt.Errorf("--force requires --viewport")
+		return fmt.Errorf("--force requires --viewport; add --viewport WIDTHxHEIGHT")
 	}
 
 	// Validate that at least one update option is provided
 	if !hasProxyChange && !hasProfileChange && !hasViewportChange {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --profile-id, --profile-name, or --viewport")
+		return util.SetAtLeastOne("--proxy-id", "--clear-proxy", "--profile-id", "--profile-name", "--viewport")
 	}
 
 	params := kernel.BrowserUpdateParams{}
@@ -606,7 +608,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	if hasViewportChange {
 		width, height, refreshRate, err := parseViewport(in.Viewport)
 		if err != nil {
-			return fmt.Errorf("invalid viewport format: %v", err)
+			return fmt.Errorf("invalid --viewport %q; use WIDTHxHEIGHT or WIDTHxHEIGHT@RATE: %v", in.Viewport, err)
 		}
 		params.Viewport = kernel.BrowserUpdateParamsViewport{
 			BrowserViewportParam: shared.BrowserViewportParam{
@@ -650,8 +652,7 @@ type BrowsersLogsStreamInput struct {
 
 func (b BrowsersCmd) LogsStream(ctx context.Context, in BrowsersLogsStreamInput) error {
 	if b.logs == nil {
-		pterm.Error.Println("logs service not available")
-		return nil
+		return browserServiceUnavailable("logs")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -669,8 +670,7 @@ func (b BrowsersCmd) LogsStream(ctx context.Context, in BrowsersLogsStreamInput)
 	}
 	stream := b.logs.StreamStreaming(ctx, br.SessionID, params)
 	if stream == nil {
-		pterm.Error.Println("failed to open log stream")
-		return nil
+		return fmt.Errorf("open log stream failed; check browser %q is running and retry", br.SessionID)
 	}
 	defer stream.Close()
 	for stream.Next() {
@@ -776,8 +776,7 @@ type BrowsersComputerWriteClipboardInput struct {
 
 func (b BrowsersCmd) ComputerClickMouse(ctx context.Context, in BrowsersComputerClickMouseInput) error {
 	if b.computer == nil {
-		pterm.Error.Println("computer service not available")
-		return nil
+		return browserServiceUnavailable("computer")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -805,8 +804,7 @@ func (b BrowsersCmd) ComputerClickMouse(ctx context.Context, in BrowsersComputer
 
 func (b BrowsersCmd) ComputerMoveMouse(ctx context.Context, in BrowsersComputerMoveMouseInput) error {
 	if b.computer == nil {
-		pterm.Error.Println("computer service not available")
-		return nil
+		return browserServiceUnavailable("computer")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -835,8 +833,7 @@ func (b BrowsersCmd) ComputerMoveMouse(ctx context.Context, in BrowsersComputerM
 
 func (b BrowsersCmd) ComputerScreenshot(ctx context.Context, in BrowsersComputerScreenshotInput) error {
 	if b.computer == nil {
-		pterm.Error.Println("computer service not available")
-		return nil
+		return browserServiceUnavailable("computer")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -852,18 +849,15 @@ func (b BrowsersCmd) ComputerScreenshot(ctx context.Context, in BrowsersComputer
 	}
 	defer res.Body.Close()
 	if in.To == "" {
-		pterm.Error.Println("--to is required to save the screenshot")
-		return nil
+		return util.RequiredFlag("--to", "<path>")
 	}
 	f, err := os.Create(in.To)
 	if err != nil {
-		pterm.Error.Printf("Failed to create file: %v\n", err)
-		return nil
+		return fmt.Errorf("create screenshot file %q failed; choose a writable --to path: %w", in.To, err)
 	}
 	defer f.Close()
 	if _, err := io.Copy(f, res.Body); err != nil {
-		pterm.Error.Printf("Failed to write file: %v\n", err)
-		return nil
+		return fmt.Errorf("write screenshot file %q failed; check disk space and permissions: %w", in.To, err)
 	}
 	pterm.Success.Printf("Saved screenshot to %s\n", in.To)
 	return nil
@@ -871,8 +865,7 @@ func (b BrowsersCmd) ComputerScreenshot(ctx context.Context, in BrowsersComputer
 
 func (b BrowsersCmd) ComputerTypeText(ctx context.Context, in BrowsersComputerTypeTextInput) error {
 	if b.computer == nil {
-		pterm.Error.Println("computer service not available")
-		return nil
+		return browserServiceUnavailable("computer")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -891,16 +884,14 @@ func (b BrowsersCmd) ComputerTypeText(ctx context.Context, in BrowsersComputerTy
 
 func (b BrowsersCmd) ComputerPressKey(ctx context.Context, in BrowsersComputerPressKeyInput) error {
 	if b.computer == nil {
-		pterm.Error.Println("computer service not available")
-		return nil
+		return browserServiceUnavailable("computer")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 	if len(in.Keys) == 0 {
-		pterm.Error.Println("no keys specified")
-		return nil
+		return util.RequiredArg("keys", "kernel browsers computer press-key <browser> <key> [key...]")
 	}
 	body := kernel.BrowserComputerPressKeyParams{Keys: in.Keys}
 	if in.Duration > 0 {
@@ -918,8 +909,7 @@ func (b BrowsersCmd) ComputerPressKey(ctx context.Context, in BrowsersComputerPr
 
 func (b BrowsersCmd) ComputerScroll(ctx context.Context, in BrowsersComputerScrollInput) error {
 	if b.computer == nil {
-		pterm.Error.Println("computer service not available")
-		return nil
+		return browserServiceUnavailable("computer")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -944,16 +934,14 @@ func (b BrowsersCmd) ComputerScroll(ctx context.Context, in BrowsersComputerScro
 
 func (b BrowsersCmd) ComputerDragMouse(ctx context.Context, in BrowsersComputerDragMouseInput) error {
 	if b.computer == nil {
-		pterm.Error.Println("computer service not available")
-		return nil
+		return browserServiceUnavailable("computer")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 	if len(in.Path) < 2 {
-		pterm.Error.Println("path must include at least two points")
-		return nil
+		return fmt.Errorf("drag path needs at least two points; pass --point x,y at least twice")
 	}
 	body := kernel.BrowserComputerDragMouseParams{Path: in.Path}
 	if in.Delay > 0 {
@@ -990,8 +978,7 @@ func (b BrowsersCmd) ComputerDragMouse(ctx context.Context, in BrowsersComputerD
 
 func (b BrowsersCmd) ComputerSetCursor(ctx context.Context, in BrowsersComputerSetCursorInput) error {
 	if b.computer == nil {
-		pterm.Error.Println("computer service not available")
-		return nil
+		return browserServiceUnavailable("computer")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1012,8 +999,7 @@ func (b BrowsersCmd) ComputerSetCursor(ctx context.Context, in BrowsersComputerS
 
 func (b BrowsersCmd) ComputerGetMousePosition(ctx context.Context, in BrowsersComputerGetMousePositionInput) error {
 	if b.computer == nil {
-		pterm.Error.Println("computer service not available")
-		return nil
+		return browserServiceUnavailable("computer")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1034,8 +1020,7 @@ func (b BrowsersCmd) ComputerGetMousePosition(ctx context.Context, in BrowsersCo
 
 func (b BrowsersCmd) ComputerBatch(ctx context.Context, in BrowsersComputerBatchInput) error {
 	if b.computer == nil {
-		pterm.Error.Println("computer service not available")
-		return nil
+		return browserServiceUnavailable("computer")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1043,8 +1028,7 @@ func (b BrowsersCmd) ComputerBatch(ctx context.Context, in BrowsersComputerBatch
 	}
 	var body kernel.BrowserComputerBatchParams
 	if err := json.Unmarshal([]byte(in.ActionsJSON), &body); err != nil {
-		pterm.Error.Printf("Invalid JSON: %v\n", err)
-		return nil
+		return fmt.Errorf("invalid actions JSON; pass a valid JSON object or array: %w", err)
 	}
 	if err := b.computer.Batch(ctx, br.SessionID, body); err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -1058,8 +1042,7 @@ func (b BrowsersCmd) ComputerReadClipboard(ctx context.Context, in BrowsersCompu
 		return err
 	}
 	if b.computer == nil {
-		pterm.Error.Println("computer service not available")
-		return nil
+		return browserServiceUnavailable("computer")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1080,8 +1063,7 @@ func (b BrowsersCmd) ComputerReadClipboard(ctx context.Context, in BrowsersCompu
 
 func (b BrowsersCmd) ComputerWriteClipboard(ctx context.Context, in BrowsersComputerWriteClipboardInput) error {
 	if b.computer == nil {
-		pterm.Error.Println("computer service not available")
-		return nil
+		return browserServiceUnavailable("computer")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1200,13 +1182,11 @@ func (b BrowsersCmd) ReplaysDownload(ctx context.Context, in BrowsersReplaysDown
 	}
 	f, err := os.Create(in.Output)
 	if err != nil {
-		pterm.Error.Printf("Failed to create file: %v\n", err)
-		return nil
+		return fmt.Errorf("create replay file %q failed; choose a writable --output path: %w", in.Output, err)
 	}
 	defer f.Close()
 	if _, err := io.Copy(f, res.Body); err != nil {
-		pterm.Error.Printf("Failed to write file: %v\n", err)
-		return nil
+		return fmt.Errorf("write replay file %q failed; check disk space and permissions: %w", in.Output, err)
 	}
 	pterm.Success.Printf("Saved replay to %s\n", in.Output)
 	return nil
@@ -1296,8 +1276,7 @@ func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrigh
 	}
 
 	if b.playwright == nil {
-		pterm.Error.Println("playwright service not available")
-		return nil
+		return browserServiceUnavailable("playwright")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1335,7 +1314,7 @@ func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrigh
 		}
 	}
 	if !res.Success && res.Error != "" {
-		pterm.Error.Printf("error: %s\n", res.Error)
+		return fmt.Errorf("Playwright execution failed: %s", res.Error)
 	}
 	return nil
 }
@@ -1346,8 +1325,7 @@ func (b BrowsersCmd) ProcessExec(ctx context.Context, in BrowsersProcessExecInpu
 	}
 
 	if b.process == nil {
-		pterm.Error.Println("process service not available")
-		return nil
+		return browserServiceUnavailable("process")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1413,8 +1391,7 @@ func (b BrowsersCmd) ProcessSpawn(ctx context.Context, in BrowsersProcessSpawnIn
 	}
 
 	if b.process == nil {
-		pterm.Error.Println("process service not available")
-		return nil
+		return browserServiceUnavailable("process")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1452,8 +1429,7 @@ func (b BrowsersCmd) ProcessSpawn(ctx context.Context, in BrowsersProcessSpawnIn
 
 func (b BrowsersCmd) ProcessKill(ctx context.Context, in BrowsersProcessKillInput) error {
 	if b.process == nil {
-		pterm.Error.Println("process service not available")
-		return nil
+		return browserServiceUnavailable("process")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1470,8 +1446,7 @@ func (b BrowsersCmd) ProcessKill(ctx context.Context, in BrowsersProcessKillInpu
 
 func (b BrowsersCmd) ProcessStatus(ctx context.Context, in BrowsersProcessStatusInput) error {
 	if b.process == nil {
-		pterm.Error.Println("process service not available")
-		return nil
+		return browserServiceUnavailable("process")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1488,8 +1463,7 @@ func (b BrowsersCmd) ProcessStatus(ctx context.Context, in BrowsersProcessStatus
 
 func (b BrowsersCmd) ProcessStdin(ctx context.Context, in BrowsersProcessStdinInput) error {
 	if b.process == nil {
-		pterm.Error.Println("process service not available")
-		return nil
+		return browserServiceUnavailable("process")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1505,8 +1479,7 @@ func (b BrowsersCmd) ProcessStdin(ctx context.Context, in BrowsersProcessStdinIn
 
 func (b BrowsersCmd) ProcessStdoutStream(ctx context.Context, in BrowsersProcessStdoutStreamInput) error {
 	if b.process == nil {
-		pterm.Error.Println("process service not available")
-		return nil
+		return browserServiceUnavailable("process")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1514,8 +1487,7 @@ func (b BrowsersCmd) ProcessStdoutStream(ctx context.Context, in BrowsersProcess
 	}
 	stream := b.process.StdoutStreamStreaming(ctx, in.ProcessID, kernel.BrowserProcessStdoutStreamParams{ID: br.SessionID})
 	if stream == nil {
-		pterm.Error.Println("failed to open stdout stream")
-		return nil
+		return fmt.Errorf("open stdout stream failed; check process %q is running and retry", in.ProcessID)
 	}
 	defer stream.Close()
 	for stream.Next() {
@@ -1539,8 +1511,7 @@ func (b BrowsersCmd) ProcessStdoutStream(ctx context.Context, in BrowsersProcess
 
 func (b BrowsersCmd) ProcessResize(ctx context.Context, in BrowsersProcessResizeInput) error {
 	if b.process == nil {
-		pterm.Error.Println("process service not available")
-		return nil
+		return browserServiceUnavailable("process")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1562,8 +1533,7 @@ func (b BrowsersCmd) FSWatchStart(ctx context.Context, in BrowsersFSWatchStartIn
 	}
 
 	if b.fsWatch == nil {
-		pterm.Error.Println("fs watch service not available")
-		return nil
+		return browserServiceUnavailable("fs watch")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1588,8 +1558,7 @@ func (b BrowsersCmd) FSWatchStart(ctx context.Context, in BrowsersFSWatchStartIn
 
 func (b BrowsersCmd) FSWatchStop(ctx context.Context, in BrowsersFSWatchStopInput) error {
 	if b.fsWatch == nil {
-		pterm.Error.Println("fs watch service not available")
-		return nil
+		return browserServiceUnavailable("fs watch")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1605,8 +1574,7 @@ func (b BrowsersCmd) FSWatchStop(ctx context.Context, in BrowsersFSWatchStopInpu
 
 func (b BrowsersCmd) FSWatchEvents(ctx context.Context, in BrowsersFSWatchEventsInput) error {
 	if b.fsWatch == nil {
-		pterm.Error.Println("fs watch service not available")
-		return nil
+		return browserServiceUnavailable("fs watch")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1614,8 +1582,7 @@ func (b BrowsersCmd) FSWatchEvents(ctx context.Context, in BrowsersFSWatchEvents
 	}
 	stream := b.fsWatch.EventsStreaming(ctx, in.WatchID, kernel.BrowserFWatchEventsParams{ID: br.SessionID})
 	if stream == nil {
-		pterm.Error.Println("failed to open watch events stream")
-		return nil
+		return fmt.Errorf("open watch events stream failed; check watch %q is active and retry", in.WatchID)
 	}
 	defer stream.Close()
 	for stream.Next() {
@@ -1714,8 +1681,7 @@ type BrowsersExtensionsUploadInput struct {
 
 func (b BrowsersCmd) FSNewDirectory(ctx context.Context, in BrowsersFSNewDirInput) error {
 	if b.fs == nil {
-		pterm.Error.Println("fs service not available")
-		return nil
+		return browserServiceUnavailable("fs")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1734,8 +1700,7 @@ func (b BrowsersCmd) FSNewDirectory(ctx context.Context, in BrowsersFSNewDirInpu
 
 func (b BrowsersCmd) FSDeleteDirectory(ctx context.Context, in BrowsersFSDeleteDirInput) error {
 	if b.fs == nil {
-		pterm.Error.Println("fs service not available")
-		return nil
+		return browserServiceUnavailable("fs")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1750,8 +1715,7 @@ func (b BrowsersCmd) FSDeleteDirectory(ctx context.Context, in BrowsersFSDeleteD
 
 func (b BrowsersCmd) FSDeleteFile(ctx context.Context, in BrowsersFSDeleteFileInput) error {
 	if b.fs == nil {
-		pterm.Error.Println("fs service not available")
-		return nil
+		return browserServiceUnavailable("fs")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1766,8 +1730,7 @@ func (b BrowsersCmd) FSDeleteFile(ctx context.Context, in BrowsersFSDeleteFileIn
 
 func (b BrowsersCmd) FSDownloadDirZip(ctx context.Context, in BrowsersFSDownloadDirZipInput) error {
 	if b.fs == nil {
-		pterm.Error.Println("fs service not available")
-		return nil
+		return browserServiceUnavailable("fs")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1785,13 +1748,11 @@ func (b BrowsersCmd) FSDownloadDirZip(ctx context.Context, in BrowsersFSDownload
 	}
 	f, err := os.Create(in.Output)
 	if err != nil {
-		pterm.Error.Printf("Failed to create file: %v\n", err)
-		return nil
+		return fmt.Errorf("create zip file %q failed; choose a writable --output path: %w", in.Output, err)
 	}
 	defer f.Close()
 	if _, err := io.Copy(f, res.Body); err != nil {
-		pterm.Error.Printf("Failed to write file: %v\n", err)
-		return nil
+		return fmt.Errorf("write zip file %q failed; check disk space and permissions: %w", in.Output, err)
 	}
 	pterm.Success.Printf("Saved zip to %s\n", in.Output)
 	return nil
@@ -1803,8 +1764,7 @@ func (b BrowsersCmd) FSFileInfo(ctx context.Context, in BrowsersFSFileInfoInput)
 	}
 
 	if b.fs == nil {
-		pterm.Error.Println("fs service not available")
-		return nil
+		return browserServiceUnavailable("fs")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1830,8 +1790,7 @@ func (b BrowsersCmd) FSListFiles(ctx context.Context, in BrowsersFSListFilesInpu
 	}
 
 	if b.fs == nil {
-		pterm.Error.Println("fs service not available")
-		return nil
+		return browserServiceUnavailable("fs")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1860,8 +1819,7 @@ func (b BrowsersCmd) FSListFiles(ctx context.Context, in BrowsersFSListFilesInpu
 
 func (b BrowsersCmd) FSMove(ctx context.Context, in BrowsersFSMoveInput) error {
 	if b.fs == nil {
-		pterm.Error.Println("fs service not available")
-		return nil
+		return browserServiceUnavailable("fs")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1876,8 +1834,7 @@ func (b BrowsersCmd) FSMove(ctx context.Context, in BrowsersFSMoveInput) error {
 
 func (b BrowsersCmd) FSReadFile(ctx context.Context, in BrowsersFSReadFileInput) error {
 	if b.fs == nil {
-		pterm.Error.Println("fs service not available")
-		return nil
+		return browserServiceUnavailable("fs")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1894,13 +1851,11 @@ func (b BrowsersCmd) FSReadFile(ctx context.Context, in BrowsersFSReadFileInput)
 	}
 	f, err := os.Create(in.Output)
 	if err != nil {
-		pterm.Error.Printf("Failed to create file: %v\n", err)
-		return nil
+		return fmt.Errorf("create output file %q failed; choose a writable --output path: %w", in.Output, err)
 	}
 	defer f.Close()
 	if _, err := io.Copy(f, res.Body); err != nil {
-		pterm.Error.Printf("Failed to write file: %v\n", err)
-		return nil
+		return fmt.Errorf("write output file %q failed; check disk space and permissions: %w", in.Output, err)
 	}
 	pterm.Success.Printf("Saved file to %s\n", in.Output)
 	return nil
@@ -1908,8 +1863,7 @@ func (b BrowsersCmd) FSReadFile(ctx context.Context, in BrowsersFSReadFileInput)
 
 func (b BrowsersCmd) FSSetPermissions(ctx context.Context, in BrowsersFSSetPermsInput) error {
 	if b.fs == nil {
-		pterm.Error.Println("fs service not available")
-		return nil
+		return browserServiceUnavailable("fs")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1931,8 +1885,7 @@ func (b BrowsersCmd) FSSetPermissions(ctx context.Context, in BrowsersFSSetPerms
 
 func (b BrowsersCmd) FSUpload(ctx context.Context, in BrowsersFSUploadInput) error {
 	if b.fs == nil {
-		pterm.Error.Println("fs service not available")
-		return nil
+		return browserServiceUnavailable("fs")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1943,11 +1896,10 @@ func (b BrowsersCmd) FSUpload(ctx context.Context, in BrowsersFSUploadInput) err
 	for _, m := range in.Mappings {
 		f, err := os.Open(m.Local)
 		if err != nil {
-			pterm.Error.Printf("Failed to open %s: %v\n", m.Local, err)
 			for _, c := range toClose {
 				_ = c.Close()
 			}
-			return nil
+			return fmt.Errorf("open upload source %q failed; check the local path: %w", m.Local, err)
 		}
 		toClose = append(toClose, f)
 		files = append(files, kernel.BrowserFUploadParamsFile{DestPath: m.Dest, File: f})
@@ -1956,11 +1908,10 @@ func (b BrowsersCmd) FSUpload(ctx context.Context, in BrowsersFSUploadInput) err
 		for _, lp := range in.Paths {
 			f, err := os.Open(lp)
 			if err != nil {
-				pterm.Error.Printf("Failed to open %s: %v\n", lp, err)
 				for _, c := range toClose {
 					_ = c.Close()
 				}
-				return nil
+				return fmt.Errorf("open upload source %q failed; check the local path: %w", lp, err)
 			}
 			toClose = append(toClose, f)
 			dest := filepath.Join(in.DestDir, filepath.Base(lp))
@@ -1968,8 +1919,7 @@ func (b BrowsersCmd) FSUpload(ctx context.Context, in BrowsersFSUploadInput) err
 		}
 	}
 	if len(files) == 0 {
-		pterm.Error.Println("no files specified for upload")
-		return nil
+		return fmt.Errorf("no files to upload; pass --file local:remote or --path with --dest-dir")
 	}
 	defer func() {
 		for _, c := range toClose {
@@ -1989,8 +1939,7 @@ func (b BrowsersCmd) FSUpload(ctx context.Context, in BrowsersFSUploadInput) err
 
 func (b BrowsersCmd) FSUploadZip(ctx context.Context, in BrowsersFSUploadZipInput) error {
 	if b.fs == nil {
-		pterm.Error.Println("fs service not available")
-		return nil
+		return browserServiceUnavailable("fs")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -1998,8 +1947,7 @@ func (b BrowsersCmd) FSUploadZip(ctx context.Context, in BrowsersFSUploadZipInpu
 	}
 	f, err := os.Open(in.ZipPath)
 	if err != nil {
-		pterm.Error.Printf("Failed to open zip: %v\n", err)
-		return nil
+		return fmt.Errorf("open zip %q failed; check --zip path: %w", in.ZipPath, err)
 	}
 	defer f.Close()
 	if err := b.fs.UploadZip(ctx, br.SessionID, kernel.BrowserFUploadZipParams{DestPath: in.DestDir, ZipFile: f}); err != nil {
@@ -2011,8 +1959,7 @@ func (b BrowsersCmd) FSUploadZip(ctx context.Context, in BrowsersFSUploadZipInpu
 
 func (b BrowsersCmd) FSWriteFile(ctx context.Context, in BrowsersFSWriteFileInput) error {
 	if b.fs == nil {
-		pterm.Error.Println("fs service not available")
-		return nil
+		return browserServiceUnavailable("fs")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -2022,14 +1969,12 @@ func (b BrowsersCmd) FSWriteFile(ctx context.Context, in BrowsersFSWriteFileInpu
 	if in.SourcePath != "" {
 		f, err := os.Open(in.SourcePath)
 		if err != nil {
-			pterm.Error.Printf("Failed to open input: %v\n", err)
-			return nil
+			return fmt.Errorf("open source file %q failed; check --source: %w", in.SourcePath, err)
 		}
 		defer f.Close()
 		reader = f
 	} else {
-		pterm.Error.Println("--source is required")
-		return nil
+		return util.RequiredFlag("--source", "<local-path>")
 	}
 	params := kernel.BrowserFWriteFileParams{Path: in.DestPath}
 	if in.Mode != "" {
@@ -2044,8 +1989,7 @@ func (b BrowsersCmd) FSWriteFile(ctx context.Context, in BrowsersFSWriteFileInpu
 
 func (b BrowsersCmd) ExtensionsUpload(ctx context.Context, in BrowsersExtensionsUploadInput) error {
 	if b.browsers == nil {
-		pterm.Error.Println("browsers service not available")
-		return nil
+		return browserServiceUnavailable("browsers")
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
@@ -2053,8 +1997,7 @@ func (b BrowsersCmd) ExtensionsUpload(ctx context.Context, in BrowsersExtensions
 	}
 
 	if len(in.ExtensionPaths) == 0 {
-		pterm.Error.Println("no extension paths provided")
-		return nil
+		return util.RequiredArg("extension path", "kernel browsers extensions upload <browser> <extension-dir> [extension-dir...]")
 	}
 
 	var extensions []kernel.BrowserLoadExtensionsParamsExtension
@@ -2073,12 +2016,10 @@ func (b BrowsersCmd) ExtensionsUpload(ctx context.Context, in BrowsersExtensions
 	for _, extPath := range in.ExtensionPaths {
 		info, err := os.Stat(extPath)
 		if err != nil {
-			pterm.Error.Printf("Failed to stat %s: %v\n", extPath, err)
-			return nil
+			return fmt.Errorf("read extension path %q failed; check the directory exists: %w", extPath, err)
 		}
 		if !info.IsDir() {
-			pterm.Error.Printf("Path %s is not a directory\n", extPath)
-			return nil
+			return fmt.Errorf("extension path %q is not a directory; pass an unpacked extension directory", extPath)
 		}
 
 		extName := generateRandomExtensionName()
@@ -2086,15 +2027,13 @@ func (b BrowsersCmd) ExtensionsUpload(ctx context.Context, in BrowsersExtensions
 
 		pterm.Info.Printf("Zipping %s as %s...\n", extPath, extName)
 		if err := util.ZipDirectory(extPath, tempZipPath, nil); err != nil {
-			pterm.Error.Printf("Failed to zip %s: %v\n", extPath, err)
-			return nil
+			return fmt.Errorf("zip extension %q failed; check the directory contents: %w", extPath, err)
 		}
 		tempZipFiles = append(tempZipFiles, tempZipPath)
 
 		zipFile, err := os.Open(tempZipPath)
 		if err != nil {
-			pterm.Error.Printf("Failed to open zip %s: %v\n", tempZipPath, err)
-			return nil
+			return fmt.Errorf("open generated extension zip %q failed: %w", tempZipPath, err)
 		}
 		openFiles = append(openFiles, zipFile)
 
@@ -2186,10 +2125,10 @@ Supported operations:
 Note: Profiles can only be loaded into sessions that don't already have a profile.`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
-			return fmt.Errorf("missing required argument: browser ID\n\nUsage: kernel browsers update <id> [flags]")
+			return util.RequiredArg("browser ID", "kernel browsers update <id> [flags]")
 		}
 		if len(args) > 1 {
-			return fmt.Errorf("expected 1 argument (browser ID), got %d", len(args))
+			return fmt.Errorf("accepts 1 browser ID, got %d", len(args))
 		}
 		return nil
 	},
@@ -2558,8 +2497,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 
 	if poolID != "" && poolName != "" {
-		pterm.Error.Println("must specify at most one of --pool-id or --pool-name")
-		return nil
+		return util.ChooseOnlyOne("--pool-id", "--pool-name")
 	}
 
 	if poolID != "" || poolName != "" {
@@ -2623,8 +2561,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 				fmt.Println("null")
 				return nil
 			}
-			pterm.Error.Println("Acquire request timed out (no browser available). Retry to continue waiting.")
-			return nil
+			return fmt.Errorf("acquire timed out because no pooled browser is available; retry or increase --timeout")
 		}
 		if output == "json" {
 			return util.PrintPrettyJSON(resp)
@@ -2644,8 +2581,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 			WithDefaultText("Select a viewport size:").
 			Show()
 		if err != nil {
-			pterm.Error.Printf("Failed to select viewport: %v\n", err)
-			return nil
+			return fmt.Errorf("select viewport failed; pass --viewport WIDTHxHEIGHT instead: %w", err)
 		}
 		viewport = selectedViewport
 	}
@@ -2906,13 +2842,11 @@ func runBrowsersPlaywrightExecute(cmd *cobra.Command, args []string) error {
 		// Read code from stdin
 		stat, _ := os.Stdin.Stat()
 		if (stat.Mode() & os.ModeCharDevice) != 0 {
-			pterm.Error.Println("no code provided. Provide code as an argument or pipe via stdin")
-			return nil
+			return util.RequiredArg("Playwright code", "kernel browsers playwright <browser> '<code>'")
 		}
 		data, err := io.ReadAll(os.Stdin)
 		if err != nil {
-			pterm.Error.Printf("failed to read stdin: %v\n", err)
-			return nil
+			return fmt.Errorf("read Playwright code from stdin failed: %w", err)
 		}
 		code = string(data)
 	}
@@ -3017,8 +2951,7 @@ func runBrowsersFSUpload(cmd *cobra.Command, args []string) error {
 		// format: local:remote
 		parts := strings.SplitN(m, ":", 2)
 		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-			pterm.Error.Printf("invalid --file mapping: %s\n", m)
-			return nil
+			return fmt.Errorf("invalid --file %q; use local_path:remote_path", m)
 		}
 		mappings = append(mappings, struct {
 			Local string
@@ -3102,12 +3035,10 @@ func runBrowsersComputerScreenshot(cmd *cobra.Command, args []string) error {
 	useRegion := bx || by || bw || bh
 	if useRegion {
 		if !(bx && by && bw && bh) {
-			pterm.Error.Println("if specifying region, you must provide --x, --y, --width, and --height")
-			return nil
+			return fmt.Errorf("screenshot region requires --x, --y, --width, and --height together")
 		}
 		if w <= 0 || h <= 0 {
-			pterm.Error.Println("--width and --height must be greater than zero")
-			return nil
+			return fmt.Errorf("invalid screenshot region %dx%d; --width and --height must be greater than zero", w, h)
 		}
 	}
 	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
@@ -3162,18 +3093,15 @@ func runBrowsersComputerDragMouse(cmd *cobra.Command, args []string) error {
 	for _, p := range points {
 		parts := strings.SplitN(p, ",", 2)
 		if len(parts) != 2 {
-			pterm.Error.Printf("invalid --point value: %s (expected x,y)\n", p)
-			return nil
+			return fmt.Errorf("invalid --point %q; use x,y", p)
 		}
 		x, err := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
 		if err != nil {
-			pterm.Error.Printf("invalid x in --point %s: %v\n", p, err)
-			return nil
+			return fmt.Errorf("invalid x in --point %q; use integer coordinates: %w", p, err)
 		}
 		y, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
 		if err != nil {
-			pterm.Error.Printf("invalid y in --point %s: %v\n", p, err)
-			return nil
+			return fmt.Errorf("invalid y in --point %q; use integer coordinates: %w", p, err)
 		}
 		path = append(path, []int64{x, y})
 	}
@@ -3203,8 +3131,7 @@ func runBrowsersComputerSetCursor(cmd *cobra.Command, args []string) error {
 	case "false", "0", "no":
 		hidden = false
 	default:
-		pterm.Error.Printf("Invalid value for --hidden: %s (expected true or false)\n", hiddenStr)
-		return nil
+		return util.InvalidChoice("--hidden", hiddenStr, "true", "false")
 	}
 
 	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}

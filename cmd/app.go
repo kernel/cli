@@ -115,8 +115,7 @@ func runAppList(cmd *cobra.Command, args []string) error {
 
 	apps, err := client.Apps.List(cmd.Context(), params)
 	if err != nil {
-		pterm.Error.Printf("Failed to list applications: %v\n", err)
-		return nil
+		return util.CleanedUpSdkError{Err: fmt.Errorf("list applications failed; check your auth and retry: %w", err)}
 	}
 
 	if output == "json" {
@@ -314,8 +313,7 @@ func runAppHistory(cmd *cobra.Command, args []string) error {
 
 	deployments, err := client.Deployments.List(cmd.Context(), params)
 	if err != nil {
-		pterm.Error.Printf("Failed to list deployments: %v\n", err)
-		return nil
+		return util.CleanedUpSdkError{Err: fmt.Errorf("list deployments failed; check the app name or run `kernel app list`: %w", err)}
 	}
 
 	if output == "json" {

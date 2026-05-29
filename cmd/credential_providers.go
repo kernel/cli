@@ -138,19 +138,19 @@ func (c CredentialProvidersCmd) Create(ctx context.Context, in CredentialProvide
 	}
 
 	if in.ProviderType == "" {
-		return fmt.Errorf("--provider-type is required")
+		return util.RequiredFlag("--provider-type", "onepassword")
 	}
 	if in.Name == "" {
-		return fmt.Errorf("--name is required")
+		return util.RequiredFlag("--name", "<name>")
 	}
 	if in.Token == "" {
-		return fmt.Errorf("--token is required")
+		return util.RequiredFlag("--token", "<service-account-token>")
 	}
 
 	// Validate provider type
 	providerType := strings.ToLower(in.ProviderType)
 	if providerType != "onepassword" {
-		return fmt.Errorf("invalid provider type: %s (must be 'onepassword')", in.ProviderType)
+		return util.InvalidChoice("--provider-type", in.ProviderType, "onepassword")
 	}
 
 	params := kernel.CredentialProviderNewParams{

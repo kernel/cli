@@ -171,13 +171,13 @@ func (c CredentialsCmd) Create(ctx context.Context, in CredentialsCreateInput) e
 	}
 
 	if in.Name == "" {
-		return fmt.Errorf("--name is required")
+		return util.RequiredFlag("--name", "<name>")
 	}
 	if in.Domain == "" {
-		return fmt.Errorf("--domain is required")
+		return util.RequiredFlag("--domain", "<domain>")
 	}
 	if len(in.Values) == 0 {
-		return fmt.Errorf("at least one --value is required")
+		return util.RequiredFlag("--value", "key=value")
 	}
 
 	params := kernel.CredentialNewParams{
@@ -469,7 +469,7 @@ func runCredentialsCreate(cmd *cobra.Command, args []string) error {
 	for _, pair := range valuePairs {
 		parts := strings.SplitN(pair, "=", 2)
 		if len(parts) != 2 {
-			return fmt.Errorf("invalid value format: %s (expected key=value)", pair)
+			return fmt.Errorf("invalid --value %q; use key=value", pair)
 		}
 		values[parts[0]] = parts[1]
 	}
@@ -499,7 +499,7 @@ func runCredentialsUpdate(cmd *cobra.Command, args []string) error {
 	for _, pair := range valuePairs {
 		parts := strings.SplitN(pair, "=", 2)
 		if len(parts) != 2 {
-			return fmt.Errorf("invalid value format: %s (expected key=value)", pair)
+			return fmt.Errorf("invalid --value %q; use key=value", pair)
 		}
 		values[parts[0]] = parts[1]
 	}

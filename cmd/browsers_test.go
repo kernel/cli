@@ -1639,7 +1639,8 @@ func TestBrowsersCreate_RejectsStartURLFlagToken(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--start-url requires a URL value")
+	assert.Contains(t, err.Error(), "--start-url requires a URL")
+	assert.Contains(t, err.Error(), "use --start-url https://example.com")
 	assert.False(t, called)
 }
 
@@ -1652,9 +1653,9 @@ func TestBrowsersCreate_WithInvalidViewport(t *testing.T) {
 		Viewport: "invalid",
 	})
 
-	assert.NoError(t, err)
-	out := outBuf.String()
-	assert.Contains(t, out, "Invalid viewport format")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `invalid --viewport "invalid"`)
+	assert.Contains(t, err.Error(), "use WIDTHxHEIGHT")
 }
 
 func TestBrowsersUpdate_WithViewportAndForce(t *testing.T) {

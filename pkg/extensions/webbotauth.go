@@ -132,14 +132,10 @@ func extractExtensionID(output string) string {
 // validateToolDependencies checks for required tools (node and npm)
 func validateToolDependencies() error {
 	if _, err := exec.LookPath("node"); err != nil {
-		pterm.Error.Println("Node.js is required but not found in PATH")
-		pterm.Info.Println("Please install Node.js from https://nodejs.org/")
-		return fmt.Errorf("node not found")
+		return fmt.Errorf("node is required to build web-bot-auth; install Node.js from https://nodejs.org/ and retry")
 	}
 	if _, err := exec.LookPath("npm"); err != nil {
-		pterm.Error.Println("npm is required but not found in PATH")
-		pterm.Info.Println("Please install npm (usually comes with Node.js)")
-		return fmt.Errorf("npm not found")
+		return fmt.Errorf("npm is required to build web-bot-auth; install npm and retry")
 	}
 	return nil
 }

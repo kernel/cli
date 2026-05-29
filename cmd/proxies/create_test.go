@@ -139,7 +139,8 @@ func TestProxyCreate_Residential_CityWithoutCountry(t *testing.T) {
 	})
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--country is required when --city is specified")
+	assert.Contains(t, err.Error(), "--country is required when --city is set")
+	assert.Contains(t, err.Error(), "add --country <country-code>")
 }
 
 func TestProxyCreate_Residential_InvalidOS(t *testing.T) {
@@ -152,7 +153,8 @@ func TestProxyCreate_Residential_InvalidOS(t *testing.T) {
 	})
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid OS value: linux (must be windows, macos, or android)")
+	assert.Contains(t, err.Error(), `invalid --os "linux"`)
+	assert.Contains(t, err.Error(), "windows, macos, android")
 }
 
 func TestProxyCreate_Mobile_Success(t *testing.T) {
@@ -236,7 +238,8 @@ func TestProxyCreate_Custom_MissingHost(t *testing.T) {
 	})
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--host is required for custom proxy type")
+	assert.Contains(t, err.Error(), "--host is required for custom proxies")
+	assert.Contains(t, err.Error(), "add --host <hostname>")
 }
 
 func TestProxyCreate_Custom_MissingPort(t *testing.T) {
@@ -250,7 +253,8 @@ func TestProxyCreate_Custom_MissingPort(t *testing.T) {
 	})
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--port is required for custom proxy type")
+	assert.Contains(t, err.Error(), "--port is required for custom proxies")
+	assert.Contains(t, err.Error(), "add --port <port>")
 }
 
 func TestProxyCreate_InvalidType(t *testing.T) {
@@ -262,7 +266,8 @@ func TestProxyCreate_InvalidType(t *testing.T) {
 	})
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid proxy type: invalid")
+	assert.Contains(t, err.Error(), `invalid --type "invalid"`)
+	assert.Contains(t, err.Error(), "datacenter, isp, residential, mobile, custom")
 }
 
 func TestProxyCreate_Protocol_Valid(t *testing.T) {
@@ -309,7 +314,8 @@ func TestProxyCreate_Protocol_Invalid(t *testing.T) {
 	})
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid protocol: ftp")
+	assert.Contains(t, err.Error(), `invalid --protocol "ftp"`)
+	assert.Contains(t, err.Error(), "http, https")
 }
 
 func TestProxyCreate_BypassHosts_Normalized(t *testing.T) {

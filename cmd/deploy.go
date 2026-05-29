@@ -145,7 +145,7 @@ func runDeployGithub(cmd *cobra.Command, args []string) error {
 	for _, kv := range envPairs {
 		parts := strings.SplitN(kv, "=", 2)
 		if len(parts) != 2 {
-			return fmt.Errorf("invalid env variable format: %s (expected KEY=value)", kv)
+			return fmt.Errorf("invalid --env %q; use KEY=value", kv)
 		}
 		envVars[parts[0]] = parts[1]
 	}
@@ -160,14 +160,14 @@ func runDeployGithub(cmd *cobra.Command, args []string) error {
 	// Manually POST multipart with a JSON 'source' field to match backend expectations
 	apiKey := os.Getenv("KERNEL_API_KEY")
 	if strings.TrimSpace(apiKey) == "" {
-		return fmt.Errorf("KERNEL_API_KEY is required for github deploy")
+		return fmt.Errorf("KERNEL_API_KEY is required for GitHub deploy; export KERNEL_API_KEY=<key> and retry")
 	}
 	baseURL := util.GetBaseURL()
 	if region == "" {
 		region = string(kernel.DeploymentNewParamsRegionAwsUsEast1a)
 	}
 	if region != string(kernel.DeploymentNewParamsRegionAwsUsEast1a) {
-		return fmt.Errorf("invalid --region value: %s (must be %s)", region, kernel.DeploymentNewParamsRegionAwsUsEast1a)
+		return util.InvalidChoice("--region", region, string(kernel.DeploymentNewParamsRegionAwsUsEast1a))
 	}
 
 	var body bytes.Buffer
@@ -256,7 +256,7 @@ func runDeploy(cmd *cobra.Command, args []string) (err error) {
 		return fmt.Errorf("failed to resolve entrypoint: %w", err)
 	}
 	if _, err := os.Stat(resolvedEntrypoint); err != nil {
-		return fmt.Errorf("entrypoint %s does not exist", resolvedEntrypoint)
+		return fmt.Errorf("entrypoint %q does not exist; pass a valid file path", resolvedEntrypoint)
 	}
 
 	sourceDir := filepath.Dir(resolvedEntrypoint)
@@ -305,7 +305,7 @@ func runDeploy(cmd *cobra.Command, args []string) (err error) {
 	for _, kv := range envPairs {
 		parts := strings.SplitN(kv, "=", 2)
 		if len(parts) != 2 {
-			return fmt.Errorf("invalid env variable format: %s (expected KEY=value)", kv)
+			return fmt.Errorf("invalid --env %q; use KEY=value", kv)
 		}
 		envVars[parts[0]] = parts[1]
 	}
@@ -324,7 +324,7 @@ func runDeploy(cmd *cobra.Command, args []string) (err error) {
 	}
 	if region != "" {
 		if region != string(kernel.DeploymentNewParamsRegionAwsUsEast1a) {
-			return fmt.Errorf("invalid --region value: %s (must be %s)", region, kernel.DeploymentNewParamsRegionAwsUsEast1a)
+			return util.InvalidChoice("--region", region, string(kernel.DeploymentNewParamsRegionAwsUsEast1a))
 		}
 		params.Region = kernel.DeploymentNewParamsRegion(region)
 	}
@@ -515,7 +515,7 @@ func runDeployHistory(cmd *cobra.Command, args []string) error {
 		appNameFilter = strings.TrimSpace(args[0])
 	}
 	if appVersionFilter != "" && appNameFilter == "" {
-		return fmt.Errorf("--app-version requires app_name")
+		return fmt.Errorf("--app-version requires app_name; use `kernel deploy history <app_name> --app-version <version>`")
 	}
 
 	params := kernel.DeploymentListParams{}
@@ -534,8 +534,7 @@ func runDeployHistory(cmd *cobra.Command, args []string) error {
 	}
 	deployments, err := client.Deployments.List(cmd.Context(), params)
 	if err != nil {
-		pterm.Error.Printf("Failed to list deployments: %v\n", err)
-		return nil
+		return util.CleanedUpSdkError{Err: fmt.Errorf("list deployments failed; check the app name/version or run `kernel app list`: %w", err)}
 	}
 
 	if output == "json" {

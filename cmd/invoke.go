@@ -103,7 +103,7 @@ func init() {
 
 func runInvoke(cmd *cobra.Command, args []string) error {
 	if len(args) != 2 {
-		return fmt.Errorf("requires exactly 2 arguments: <app_name> <action_name>")
+		return util.RequiredArg("app and action", "kernel invoke <app_name> <action_name>")
 	}
 	startTime := time.Now()
 	client := getKernelClient(cmd)
@@ -118,7 +118,7 @@ func runInvoke(cmd *cobra.Command, args []string) error {
 	jsonOutput := output == "json"
 
 	if version == "" {
-		return fmt.Errorf("version cannot be an empty string")
+		return fmt.Errorf("--version cannot be empty; omit --version or pass --version <version>")
 	}
 	isSync, _ := cmd.Flags().GetBool("sync")
 	asyncTimeout, _ := cmd.Flags().GetInt64("async-timeout")
@@ -376,7 +376,7 @@ func getPayload(cmd *cobra.Command) (payload string, hasPayload bool, err error)
 		if payloadStr != "" {
 			var v interface{}
 			if err := json.Unmarshal([]byte(payloadStr), &v); err != nil {
-				return "", false, fmt.Errorf("invalid JSON payload: %w", err)
+				return "", false, fmt.Errorf("invalid --payload JSON; pass a JSON object, array, string, number, boolean, or null: %w", err)
 			}
 		}
 		return payloadStr, true, nil
@@ -390,13 +390,13 @@ func getPayload(cmd *cobra.Command) (payload string, hasPayload bool, err error)
 			// Read from stdin
 			data, err = io.ReadAll(os.Stdin)
 			if err != nil {
-				return "", false, fmt.Errorf("failed to read payload from stdin: %w", err)
+				return "", false, fmt.Errorf("read --payload-file - from stdin failed: %w", err)
 			}
 		} else {
 			// Read from file
 			data, err = os.ReadFile(payloadFile)
 			if err != nil {
-				return "", false, fmt.Errorf("failed to read payload file: %w", err)
+				return "", false, fmt.Errorf("read --payload-file %q failed; check the path and permissions: %w", payloadFile, err)
 			}
 		}
 
@@ -405,7 +405,7 @@ func getPayload(cmd *cobra.Command) (payload string, hasPayload bool, err error)
 		if payloadStr != "" {
 			var v interface{}
 			if err := json.Unmarshal([]byte(payloadStr), &v); err != nil {
-				return "", false, fmt.Errorf("invalid JSON in payload file: %w", err)
+				return "", false, fmt.Errorf("invalid JSON in --payload-file %q; fix the file contents: %w", payloadFile, err)
 			}
 		}
 		return payloadStr, true, nil
@@ -468,7 +468,7 @@ func runInvocationHistory(cmd *cobra.Command, args []string) error {
 		case "failed":
 			params.Status = kernel.InvocationListParamsStatusFailed
 		default:
-			return fmt.Errorf("invalid --status value: %s (must be queued, running, succeeded, or failed)", statusFilter)
+			return util.InvalidChoice("--status", statusFilter, "queued", "running", "succeeded", "failed")
 		}
 	}
 
@@ -488,8 +488,7 @@ func runInvocationHistory(cmd *cobra.Command, args []string) error {
 	// Make a single API call to get invocations
 	invocations, err := client.Invocations.List(cmd.Context(), params)
 	if err != nil {
-		pterm.Error.Printf("Failed to list invocations: %v\n", err)
-		return nil
+		return util.CleanedUpSdkError{Err: fmt.Errorf("list invocations failed; check the app name or run `kernel app list`: %w", err)}
 	}
 
 	if output == "json" {
@@ -640,7 +639,7 @@ func runInvocationUpdate(cmd *cobra.Command, args []string) error {
 	case "failed":
 		parsedStatus = kernel.InvocationUpdateParamsStatusFailed
 	default:
-		return fmt.Errorf("invalid --status value: %s (must be succeeded or failed)", status)
+		return util.InvalidChoice("--status", status, "succeeded", "failed")
 	}
 
 	params := kernel.InvocationUpdateParams{Status: parsedStatus}
@@ -648,7 +647,7 @@ func runInvocationUpdate(cmd *cobra.Command, args []string) error {
 		if strings.TrimSpace(output) != "" {
 			var parsed interface{}
 			if err := json.Unmarshal([]byte(output), &parsed); err != nil {
-				return fmt.Errorf("invalid JSON for --output: %w", err)
+				return fmt.Errorf("invalid --output JSON; pass a JSON string/object/array or omit --output: %w", err)
 			}
 		}
 		params.Output = kernel.Opt(output)

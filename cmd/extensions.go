@@ -122,8 +122,7 @@ func (e ExtensionsCmd) List(ctx context.Context, in ExtensionsListInput) error {
 
 func (e ExtensionsCmd) Delete(ctx context.Context, in ExtensionsDeleteInput) error {
 	if in.Identifier == "" {
-		pterm.Error.Println("Missing identifier")
-		return nil
+		return util.RequiredArg("extension ID or name", "kernel extensions delete <id-or-name>")
 	}
 
 	if !in.SkipConfirm {
@@ -149,8 +148,7 @@ func (e ExtensionsCmd) Delete(ctx context.Context, in ExtensionsDeleteInput) err
 
 func (e ExtensionsCmd) Download(ctx context.Context, in ExtensionsDownloadInput) error {
 	if in.Identifier == "" {
-		pterm.Error.Println("Missing identifier")
-		return nil
+		return util.RequiredArg("extension ID or name", "kernel extensions download <id-or-name> --to <directory>")
 	}
 	res, err := e.extensions.Download(ctx, in.Identifier)
 	if err != nil {
@@ -158,56 +156,48 @@ func (e ExtensionsCmd) Download(ctx context.Context, in ExtensionsDownloadInput)
 	}
 	defer res.Body.Close()
 	if in.Output == "" {
-		pterm.Error.Println("Missing --to output directory")
 		_, _ = io.Copy(io.Discard, res.Body)
-		return nil
+		return util.RequiredFlag("--to", "<directory>")
 	}
 
 	outDir, err := filepath.Abs(in.Output)
 	if err != nil {
-		pterm.Error.Printf("Failed to resolve output path: %v\n", err)
 		_, _ = io.Copy(io.Discard, res.Body)
-		return nil
+		return fmt.Errorf("resolve --to path %q failed; choose a valid directory path: %w", in.Output, err)
 	}
 	// Create directory if not exists; if exists, ensure empty
 	if st, err := os.Stat(outDir); err == nil {
 		if !st.IsDir() {
-			pterm.Error.Printf("Output path exists and is not a directory: %s\n", outDir)
 			_, _ = io.Copy(io.Discard, res.Body)
-			return nil
+			return fmt.Errorf("--to %q is a file; choose an empty directory", outDir)
 		}
 		entries, _ := os.ReadDir(outDir)
 		if len(entries) > 0 {
-			pterm.Error.Printf("Output directory must be empty: %s\n", outDir)
 			_, _ = io.Copy(io.Discard, res.Body)
-			return nil
+			return fmt.Errorf("--to %q is not empty; choose an empty directory", outDir)
 		}
 	} else {
 		if err := os.MkdirAll(outDir, 0o755); err != nil {
-			pterm.Error.Printf("Failed to create output directory: %v\n", err)
 			_, _ = io.Copy(io.Discard, res.Body)
-			return nil
+			return fmt.Errorf("create --to directory %q failed; check parent permissions: %w", outDir, err)
 		}
 	}
 
 	// Write response to a temp zip, then extract
 	tmpZip, err := os.CreateTemp("", "kernel-ext-*.zip")
 	if err != nil {
-		pterm.Error.Printf("Failed to create temp zip: %v\n", err)
 		_, _ = io.Copy(io.Discard, res.Body)
-		return nil
+		return fmt.Errorf("create temporary extension zip failed; check temp directory permissions: %w", err)
 	}
 	tmpName := tmpZip.Name()
 	defer func() { _ = os.Remove(tmpName) }()
 	if _, err := io.Copy(tmpZip, res.Body); err != nil {
 		_ = tmpZip.Close()
-		pterm.Error.Printf("Failed to read response: %v\n", err)
-		return nil
+		return fmt.Errorf("download extension archive failed while reading response: %w", err)
 	}
 	_ = tmpZip.Close()
 	if err := util.Unzip(tmpName, outDir); err != nil {
-		pterm.Error.Printf("Failed to extract zip: %v\n", err)
-		return nil
+		return fmt.Errorf("extract extension archive into %q failed; choose an empty writable directory: %w", outDir, err)
 	}
 	pterm.Success.Printf("Extracted extension to %s\n", outDir)
 	return nil
@@ -215,8 +205,7 @@ func (e ExtensionsCmd) Download(ctx context.Context, in ExtensionsDownloadInput)
 
 func (e ExtensionsCmd) DownloadWebStore(ctx context.Context, in ExtensionsDownloadWebStoreInput) error {
 	if in.URL == "" {
-		pterm.Error.Println("Missing URL argument")
-		return nil
+		return util.RequiredArg("Chrome Web Store URL", "kernel extensions download-web-store <url> --to <directory>")
 	}
 	params := kernel.ExtensionDownloadFromChromeStoreParams{URL: in.URL}
 	switch in.OS {
@@ -227,8 +216,7 @@ func (e ExtensionsCmd) DownloadWebStore(ctx context.Context, in ExtensionsDownlo
 	case string(kernel.ExtensionDownloadFromChromeStoreParamsOsWin):
 		params.Os = kernel.ExtensionDownloadFromChromeStoreParamsOsWin
 	default:
-		pterm.Error.Println("--os must be one of mac, win, linux")
-		return nil
+		return util.InvalidChoice("--os", in.OS, "linux", "mac", "win")
 	}
 
 	res, err := e.extensions.DownloadFromChromeStore(ctx, params)
@@ -238,59 +226,50 @@ func (e ExtensionsCmd) DownloadWebStore(ctx context.Context, in ExtensionsDownlo
 	defer res.Body.Close()
 
 	if in.Output == "" {
-		pterm.Error.Println("Missing --to output directory")
 		_, _ = io.Copy(io.Discard, res.Body)
-		return nil
+		return util.RequiredFlag("--to", "<directory>")
 	}
 
 	outDir, err := filepath.Abs(in.Output)
 	if err != nil {
-		pterm.Error.Printf("Failed to resolve output path: %v\n", err)
 		_, _ = io.Copy(io.Discard, res.Body)
-		return nil
+		return fmt.Errorf("resolve --to path %q failed; choose a valid directory path: %w", in.Output, err)
 	}
 	if st, err := os.Stat(outDir); err == nil {
 		if !st.IsDir() {
-			pterm.Error.Printf("Output path exists and is not a directory: %s\n", outDir)
 			_, _ = io.Copy(io.Discard, res.Body)
-			return nil
+			return fmt.Errorf("--to %q is a file; choose an empty directory", outDir)
 		}
 		entries, _ := os.ReadDir(outDir)
 		if len(entries) > 0 {
-			pterm.Error.Printf("Output directory must be empty: %s\n", outDir)
 			_, _ = io.Copy(io.Discard, res.Body)
-			return nil
+			return fmt.Errorf("--to %q is not empty; choose an empty directory", outDir)
 		}
 	} else {
 		if err := os.MkdirAll(outDir, 0o755); err != nil {
-			pterm.Error.Printf("Failed to create output directory: %v\n", err)
 			_, _ = io.Copy(io.Discard, res.Body)
-			return nil
+			return fmt.Errorf("create --to directory %q failed; check parent permissions: %w", outDir, err)
 		}
 	}
 
 	// Save to temp zip then extract
 	var bodyBuf bytes.Buffer
 	if _, err := io.Copy(&bodyBuf, res.Body); err != nil {
-		pterm.Error.Printf("Failed to read response: %v\n", err)
-		return nil
+		return fmt.Errorf("download Web Store archive failed while reading response: %w", err)
 	}
 	tmpZip, err := os.CreateTemp("", "kernel-webstore-*.zip")
 	if err != nil {
-		pterm.Error.Printf("Failed to create temp zip: %v\n", err)
-		return nil
+		return fmt.Errorf("create temporary Web Store zip failed; check temp directory permissions: %w", err)
 	}
 	tmpName := tmpZip.Name()
 	if _, err := tmpZip.Write(bodyBuf.Bytes()); err != nil {
 		_ = tmpZip.Close()
-		pterm.Error.Printf("Failed to write temp zip: %v\n", err)
-		return nil
+		return fmt.Errorf("write temporary Web Store zip failed; check temp directory permissions: %w", err)
 	}
 	_ = tmpZip.Close()
 	defer os.Remove(tmpName)
 	if err := util.Unzip(tmpName, outDir); err != nil {
-		pterm.Error.Printf("Failed to extract zip: %v\n", err)
-		return nil
+		return fmt.Errorf("extract Web Store archive into %q failed; choose an empty writable directory: %w", outDir, err)
 	}
 	pterm.Success.Printf("Extracted extension to %s\n", outDir)
 	return nil
@@ -302,15 +281,15 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 	}
 
 	if in.Dir == "" {
-		return fmt.Errorf("missing directory argument")
+		return util.RequiredArg("extension directory", "kernel extensions upload <directory>")
 	}
 	absDir, err := filepath.Abs(in.Dir)
 	if err != nil {
-		return fmt.Errorf("failed to resolve directory: %w", err)
+		return fmt.Errorf("resolve extension directory %q failed; pass a valid path: %w", in.Dir, err)
 	}
 	stat, err := os.Stat(absDir)
 	if err != nil || !stat.IsDir() {
-		return fmt.Errorf("directory %s does not exist", absDir)
+		return fmt.Errorf("extension directory %q does not exist; pass an unpacked extension directory", absDir)
 	}
 
 	// Pre-flight size check
@@ -321,14 +300,13 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("kernel_ext_%d.zip", time.Now().UnixNano()))
 
 	if err := util.ZipDirectory(absDir, tmpFile, &defaultExtensionExclusions); err != nil {
-		pterm.Error.Println("Failed to zip directory")
-		return err
+		return fmt.Errorf("zip extension directory %q failed; check the directory contents: %w", absDir, err)
 	}
 	defer os.Remove(tmpFile)
 
 	fileInfo, err := os.Stat(tmpFile)
 	if err != nil {
-		return fmt.Errorf("failed to stat zip: %w", err)
+		return fmt.Errorf("stat extension bundle %q failed: %w", tmpFile, err)
 	}
 
 	if in.Output != "json" {
@@ -342,12 +320,12 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 		pterm.Info.Println("  1. Ensure you're building the extension for production")
 		pterm.Info.Println("  2. Remove unnecessary assets (large images, videos)")
 		pterm.Info.Println("  3. Check manifest.json references only needed files")
-		return fmt.Errorf("bundle exceeds maximum size")
+		return fmt.Errorf("extension bundle is %s; keep it under %s", util.FormatBytes(fileInfo.Size()), util.FormatBytes(MaxExtensionSizeBytes))
 	}
 
 	f, err := os.Open(tmpFile)
 	if err != nil {
-		return fmt.Errorf("failed to open temp zip: %w", err)
+		return fmt.Errorf("open extension bundle %q failed: %w", tmpFile, err)
 	}
 	defer f.Close()
 

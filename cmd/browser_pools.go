@@ -121,8 +121,7 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 
 	profile, err := buildProfileParam(in.ProfileID, in.ProfileName, in.ProfileSaveChanges)
 	if err != nil {
-		pterm.Error.Println(err.Error())
-		return nil
+		return err
 	}
 	if profile != nil {
 		params.Profile = *profile
@@ -139,8 +138,7 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 
 	viewport, err := buildViewportParam(in.Viewport)
 	if err != nil {
-		pterm.Error.Println(err.Error())
-		return nil
+		return err
 	}
 	if viewport != nil {
 		params.Viewport = *viewport
@@ -237,7 +235,7 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 		return err
 	}
 	if in.StartURL != "" && in.ClearStartURL {
-		return fmt.Errorf("cannot specify both --start-url and --clear-start-url")
+		return util.ChooseOnlyOne("--start-url", "--clear-start-url")
 	}
 
 	params := kernel.BrowserPoolUpdateParams{}
@@ -269,8 +267,7 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 
 	profile, err := buildProfileParam(in.ProfileID, in.ProfileName, in.ProfileSaveChanges)
 	if err != nil {
-		pterm.Error.Println(err.Error())
-		return nil
+		return err
 	}
 	if profile != nil {
 		params.Profile = *profile
@@ -289,8 +286,7 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 
 	viewport, err := buildViewportParam(in.Viewport)
 	if err != nil {
-		pterm.Error.Println(err.Error())
-		return nil
+		return err
 	}
 	if viewport != nil {
 		params.Viewport = *viewport
@@ -548,7 +544,7 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	name, _ := cmd.Flags().GetString("name")
 	if len(args) > 0 && args[0] != "" {
 		if cmd.Flags().Changed("name") {
-			return fmt.Errorf("cannot specify pool name as both a positional argument and --name flag")
+			return util.ChooseOnlyOne("<pool-name>", "--name")
 		}
 		name = args[0]
 	}
@@ -677,7 +673,7 @@ func runBrowserPoolsFlush(cmd *cobra.Command, args []string) error {
 
 func buildProfileParam(profileID, profileName string, saveChanges BoolFlag) (*kernel.BrowserProfileParam, error) {
 	if profileID != "" && profileName != "" {
-		return nil, fmt.Errorf("must specify at most one of --profile-id or --profile-name")
+		return nil, util.ChooseOnlyOne("--profile-id", "--profile-name")
 	}
 	if profileID == "" && profileName == "" {
 		return nil, nil
@@ -696,7 +692,7 @@ func buildProfileParam(profileID, profileName string, saveChanges BoolFlag) (*ke
 
 func validateStartURLFlag(startURL string) error {
 	if strings.HasPrefix(startURL, "-") {
-		return fmt.Errorf("--start-url requires a URL value")
+		return fmt.Errorf("--start-url requires a URL; use --start-url https://example.com")
 	}
 	return nil
 }
@@ -730,7 +726,7 @@ func buildViewportParam(viewport string) (*kernel.BrowserViewportParam, error) {
 
 	width, height, refreshRate, err := parseViewport(viewport)
 	if err != nil {
-		return nil, fmt.Errorf("invalid viewport format: %v", err)
+		return nil, fmt.Errorf("invalid --viewport %q; use WIDTHxHEIGHT or WIDTHxHEIGHT@RATE: %v", viewport, err)
 	}
 
 	vp := kernel.BrowserViewportParam{

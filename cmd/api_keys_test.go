@@ -117,7 +117,8 @@ func TestAPIKeysCreateRejectsInvalidDaysToExpire(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--days-to-expire must be between 1 and 3650")
+	assert.Contains(t, err.Error(), "invalid --days-to-expire 0")
+	assert.Contains(t, err.Error(), "use a value from 1 to 3650")
 }
 
 func TestAPIKeysRejectInvalidOutputBeforeCallingAPI(t *testing.T) {

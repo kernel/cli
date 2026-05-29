@@ -141,10 +141,10 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to list apps: %w", err)
 	}
 	if apps == nil || len(apps.Items) == 0 {
-		return fmt.Errorf("app \"%s\" not found", appName)
+		return util.NotFound("App", appName, "kernel app list")
 	}
 	if len(apps.Items) > 1 {
-		return fmt.Errorf("multiple apps found for \"%s\", please specify a version", appName)
+		return fmt.Errorf("multiple app versions found for %q; rerun with --version <version>", appName)
 	}
 	app := apps.Items[0]
 

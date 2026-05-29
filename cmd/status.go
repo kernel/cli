@@ -45,16 +45,15 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(util.GetBaseURL() + "/status")
+	statusURL := util.GetBaseURL() + "/status"
+	resp, err := client.Get(statusURL)
 	if err != nil {
-		pterm.Error.Println("Could not reach Kernel API. Check https://status.kernel.sh for updates.")
-		return nil
+		return fmt.Errorf("could not reach Kernel API at %s; check https://status.kernel.sh and retry: %w", statusURL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		pterm.Error.Println("Could not reach Kernel API. Check https://status.kernel.sh for updates.")
-		return nil
+		return fmt.Errorf("Kernel API status check returned %s; check https://status.kernel.sh and retry", resp.Status)
 	}
 
 	var status statusResponse

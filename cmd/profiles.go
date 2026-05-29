@@ -154,8 +154,7 @@ func (p ProfilesCmd) Get(ctx context.Context, in ProfilesGetInput) error {
 			fmt.Println("null")
 			return nil
 		}
-		pterm.Error.Printf("Profile '%s' not found\n", in.Identifier)
-		return nil
+		return util.NotFound("Profile", in.Identifier, "kernel profiles list")
 	}
 
 	if in.Output == "json" {
@@ -245,7 +244,7 @@ func (p ProfilesCmd) Delete(ctx context.Context, in ProfilesDeleteInput) error {
 
 func (p ProfilesCmd) Download(ctx context.Context, in ProfilesDownloadInput) error {
 	if in.To == "" {
-		return fmt.Errorf("missing required --to <path> for extraction directory")
+		return util.RequiredFlag("--to", "<directory>")
 	}
 
 	res, err := p.profiles.Download(ctx, in.Identifier)
@@ -262,7 +261,7 @@ func (p ProfilesCmd) Download(ctx context.Context, in ProfilesDownloadInput) err
 
 	if res.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(res.Body)
-		return fmt.Errorf("unexpected status %d from profile download: %s", res.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf("profile download returned HTTP %d; retry later or run `kernel profiles get %s`: %s", res.StatusCode, in.Identifier, strings.TrimSpace(string(body)))
 	}
 
 	if err := extractProfileArchive(res.Body, in.To); err != nil {

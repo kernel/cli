@@ -226,7 +226,8 @@ func TestProfilesDownload_MissingTo(t *testing.T) {
 	p := ProfilesCmd{profiles: fake}
 	err := p.Download(context.Background(), ProfilesDownloadInput{Identifier: "p1", To: ""})
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "missing required --to")
+	assert.Contains(t, err.Error(), "--to is required")
+	assert.Contains(t, err.Error(), "add --to <directory>")
 }
 
 func TestProfilesDownload_ExtractSuccess(t *testing.T) {

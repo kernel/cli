@@ -31,7 +31,7 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 	case "custom":
 		proxyType = kernel.ProxyNewParamsTypeCustom
 	default:
-		return fmt.Errorf("invalid proxy type: %s", in.Type)
+		return util.InvalidChoice("--type", in.Type, "datacenter", "isp", "residential", "mobile", "custom")
 	}
 
 	params := kernel.ProxyNewParams{
@@ -70,7 +70,7 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 
 		// Validate that if city is provided, country must also be provided
 		if in.City != "" && in.Country == "" {
-			return fmt.Errorf("--country is required when --city is specified")
+			return fmt.Errorf("--country is required when --city is set; add --country <country-code>")
 		}
 
 		if in.Country != "" {
@@ -94,7 +94,7 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 			case "windows", "macos", "android":
 				config.Os = in.OS
 			default:
-				return fmt.Errorf("invalid OS value: %s (must be windows, macos, or android)", in.OS)
+				return util.InvalidChoice("--os", in.OS, "windows", "macos", "android")
 			}
 		}
 		params.Config = kernel.ProxyNewParamsConfigUnion{
@@ -106,7 +106,7 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 
 		// Validate that if city is provided, country must also be provided
 		if in.City != "" && in.Country == "" {
-			return fmt.Errorf("--country is required when --city is specified")
+			return fmt.Errorf("--country is required when --city is set; add --country <country-code>")
 		}
 
 		if in.Country != "" {
@@ -134,10 +134,10 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 
 	case kernel.ProxyNewParamsTypeCustom:
 		if in.Host == "" {
-			return fmt.Errorf("--host is required for custom proxy type")
+			return fmt.Errorf("--host is required for custom proxies; add --host <hostname>")
 		}
 		if in.Port == 0 {
-			return fmt.Errorf("--port is required for custom proxy type")
+			return fmt.Errorf("--port is required for custom proxies; add --port <port>")
 		}
 
 		config := kernel.ProxyNewParamsConfigCreateCustomProxyConfig{
@@ -164,7 +164,7 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 		case "https":
 			params.Protocol = kernel.ProxyNewParamsProtocolHTTPS
 		default:
-			return fmt.Errorf("invalid protocol: %s (must be http or https)", in.Protocol)
+			return util.InvalidChoice("--protocol", in.Protocol, "http", "https")
 		}
 	}
 
