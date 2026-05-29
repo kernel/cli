@@ -126,14 +126,15 @@ func (c APIKeysCmd) List(ctx context.Context, in APIKeysListInput) error {
 
 	table := pterm.TableData{{"ID", "Name", "Scope", "Project", "Masked Key", "Expires At", "Created At"}}
 	for _, key := range keys {
+		display := newAPIKeyDisplay(key)
 		table = append(table, []string{
-			key.ID,
-			key.Name,
-			formatAPIKeyScope(key),
-			formatAPIKeyProject(key),
-			key.MaskedKey,
-			formatAPIKeyExpiresAt(key),
-			util.FormatLocal(key.CreatedAt),
+			display.ID,
+			display.Name,
+			display.Scope,
+			display.Project,
+			display.MaskedKey,
+			display.ExpiresAt,
+			display.CreatedAt,
 		})
 	}
 	PrintTableNoPad(table, true)
@@ -201,36 +202,69 @@ func (c APIKeysCmd) Delete(ctx context.Context, in APIKeysDeleteInput) error {
 	return nil
 }
 
+type apiKeyDisplay struct {
+	ID           string
+	Name         string
+	PlaintextKey string
+	Scope        string
+	Project      string
+	MaskedKey    string
+	CreatedBy    string
+	ExpiresAt    string
+	CreatedAt    string
+}
+
 func renderCreatedAPIKey(key *kernel.CreatedAPIKey) {
+	display := newCreatedAPIKeyDisplay(key)
 	rows := pterm.TableData{
 		{"Field", "Value"},
-		{"ID", key.ID},
-		{"Name", key.Name},
-		{"Key", key.Key},
-		{"Scope", formatAPIKeyScope(key.APIKey)},
-		{"Project", formatAPIKeyProject(key.APIKey)},
-		{"Masked Key", key.MaskedKey},
-		{"Expires At", formatAPIKeyExpiresAt(key.APIKey)},
+		{"ID", display.ID},
+		{"Name", display.Name},
+		{"Key", display.PlaintextKey},
+		{"Scope", display.Scope},
+		{"Project", display.Project},
+		{"Masked Key", display.MaskedKey},
+		{"Expires At", display.ExpiresAt},
 	}
 	PrintTableNoPad(rows, true)
 }
 
 func renderAPIKeyDetails(key *kernel.APIKey) {
+	display := newAPIKeyDisplay(*key)
 	rows := pterm.TableData{
 		{"Field", "Value"},
-		{"ID", key.ID},
-		{"Name", key.Name},
-		{"Scope", formatAPIKeyScope(*key)},
-		{"Project", formatAPIKeyProject(*key)},
-		{"Masked Key", key.MaskedKey},
-		{"Created By", formatAPIKeyCreator(*key)},
-		{"Expires At", formatAPIKeyExpiresAt(*key)},
-		{"Created At", util.FormatLocal(key.CreatedAt)},
+		{"ID", display.ID},
+		{"Name", display.Name},
+		{"Scope", display.Scope},
+		{"Project", display.Project},
+		{"Masked Key", display.MaskedKey},
+		{"Created By", display.CreatedBy},
+		{"Expires At", display.ExpiresAt},
+		{"Created At", display.CreatedAt},
 	}
 	PrintTableNoPad(rows, true)
 }
 
-func formatAPIKeyProject(key kernel.APIKey) string {
+func newCreatedAPIKeyDisplay(key *kernel.CreatedAPIKey) apiKeyDisplay {
+	display := newAPIKeyDisplay(key.APIKey)
+	display.PlaintextKey = key.Key
+	return display
+}
+
+func newAPIKeyDisplay(key kernel.APIKey) apiKeyDisplay {
+	return apiKeyDisplay{
+		ID:        key.ID,
+		Name:      key.Name,
+		Scope:     apiKeyScope(key),
+		Project:   apiKeyProject(key),
+		MaskedKey: key.MaskedKey,
+		CreatedBy: apiKeyCreator(key),
+		ExpiresAt: apiKeyExpiresAt(key),
+		CreatedAt: util.FormatLocal(key.CreatedAt),
+	}
+}
+
+func apiKeyProject(key kernel.APIKey) string {
 	if key.JSON.ProjectName.Valid() && key.ProjectName != "" {
 		return key.ProjectName
 	}
@@ -240,14 +274,14 @@ func formatAPIKeyProject(key kernel.APIKey) string {
 	return "-"
 }
 
-func formatAPIKeyScope(key kernel.APIKey) string {
+func apiKeyScope(key kernel.APIKey) string {
 	if key.JSON.ProjectID.Valid() && key.ProjectID != "" {
 		return "Project"
 	}
 	return "Org"
 }
 
-func formatAPIKeyCreator(key kernel.APIKey) string {
+func apiKeyCreator(key kernel.APIKey) string {
 	if key.CreatedBy.JSON.Name.Valid() && key.CreatedBy.Name != "" {
 		return key.CreatedBy.Name
 	}
@@ -257,7 +291,7 @@ func formatAPIKeyCreator(key kernel.APIKey) string {
 	return "-"
 }
 
-func formatAPIKeyExpiresAt(key kernel.APIKey) string {
+func apiKeyExpiresAt(key kernel.APIKey) string {
 	if !key.JSON.ExpiresAt.Valid() {
 		return "Never"
 	}

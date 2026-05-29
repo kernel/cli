@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
@@ -194,6 +195,32 @@ func TestAPIKeysListPassesPaginationAndRendersRows(t *testing.T) {
 	assert.Contains(t, out, "key_123")
 	assert.Contains(t, out, "ci")
 	assert.Contains(t, out, "Never")
+}
+
+func TestAPIKeyDisplayNormalizesSDKFields(t *testing.T) {
+	key := apiKeyFromJSON(`{"id":"key_123","name":"ci","masked_key":"sk_...123","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123","email":"dev@example.com","name":"Dev"},"expires_at":"2026-06-27T12:00:00Z","project_id":"proj_123","project_name":"Prod"}`)
+
+	display := newAPIKeyDisplay(*key)
+
+	assert.Equal(t, "key_123", display.ID)
+	assert.Equal(t, "ci", display.Name)
+	assert.Equal(t, "Project", display.Scope)
+	assert.Equal(t, "Prod", display.Project)
+	assert.Equal(t, "sk_...123", display.MaskedKey)
+	assert.Equal(t, "Dev", display.CreatedBy)
+	assert.Equal(t, util.FormatLocal(key.ExpiresAt), display.ExpiresAt)
+	assert.Equal(t, util.FormatLocal(key.CreatedAt), display.CreatedAt)
+}
+
+func TestAPIKeyDisplayFallsBackForAbsentOptionalFields(t *testing.T) {
+	key := apiKeyFromJSON(`{"id":"key_123","name":"ci","masked_key":"sk_...123","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123","email":"dev@example.com","name":null},"expires_at":null,"project_id":null,"project_name":null}`)
+
+	display := newAPIKeyDisplay(*key)
+
+	assert.Equal(t, "Org", display.Scope)
+	assert.Equal(t, "-", display.Project)
+	assert.Equal(t, "dev@example.com", display.CreatedBy)
+	assert.Equal(t, "Never", display.ExpiresAt)
 }
 
 func TestAPIKeysUpdateRequiresName(t *testing.T) {
