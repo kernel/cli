@@ -58,11 +58,11 @@ func init() {
 	appListCmd.Flags().Int("limit", 20, "Max apps to return (default 20)")
 	appListCmd.Flags().Int("per-page", 20, "Items per page (alias of --limit)")
 	appListCmd.Flags().Int("page", 1, "Page number (1-based)")
-	appListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(appListCmd)
 
 	// Limit rows returned for app history (0 = all)
 	appHistoryCmd.Flags().Int("limit", 20, "Max deployments to return (default 20)")
-	appHistoryCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(appHistoryCmd)
 }
 
 func runAppList(cmd *cobra.Command, args []string) error {
@@ -75,8 +75,8 @@ func runAppList(cmd *cobra.Command, args []string) error {
 	page, _ := cmd.Flags().GetInt("page")
 	output, _ := cmd.Flags().GetString("output")
 
-	if output != "" && output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(output); err != nil {
+		return err
 	}
 
 	// Determine pagination inputs: prefer page/per-page if provided; else map legacy --limit
@@ -303,8 +303,8 @@ func runAppHistory(cmd *cobra.Command, args []string) error {
 	lim, _ := cmd.Flags().GetInt("limit")
 	output, _ := cmd.Flags().GetString("output")
 
-	if output != "" && output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(output); err != nil {
+		return err
 	}
 
 	if output != "json" {

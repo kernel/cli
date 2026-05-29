@@ -1,42 +1,16 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"os"
 	"testing"
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/kernel/kernel-go-sdk/packages/respjson"
-	"github.com/pterm/pterm"
 	"github.com/stretchr/testify/assert"
 )
-
-func captureProjectsOutput(t *testing.T) *bytes.Buffer {
-	var buf bytes.Buffer
-	pterm.SetDefaultOutput(&buf)
-	pterm.Info.Writer = &buf
-	pterm.Error.Writer = &buf
-	pterm.Success.Writer = &buf
-	pterm.Warning.Writer = &buf
-	pterm.Debug.Writer = &buf
-	pterm.Fatal.Writer = &buf
-	pterm.DefaultTable = *pterm.DefaultTable.WithWriter(&buf)
-	t.Cleanup(func() {
-		pterm.SetDefaultOutput(os.Stdout)
-		pterm.Info.Writer = os.Stdout
-		pterm.Error.Writer = os.Stdout
-		pterm.Success.Writer = os.Stdout
-		pterm.Warning.Writer = os.Stdout
-		pterm.Debug.Writer = os.Stdout
-		pterm.Fatal.Writer = os.Stdout
-		pterm.DefaultTable = *pterm.DefaultTable.WithWriter(os.Stdout)
-	})
-	return &buf
-}
 
 type FakeProjectsService struct {
 	ListFunc   func(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error)
@@ -93,7 +67,7 @@ func (f *FakeProjectLimitsService) Update(ctx context.Context, id string, body k
 }
 
 func TestProjectsLimitsGet_DefaultOutput(t *testing.T) {
-	buf := captureProjectsOutput(t)
+	buf := capturePtermOutput(t)
 	limits := &kernel.ProjectLimits{
 		MaxConcurrentSessions:    10,
 		MaxConcurrentInvocations: 5,
@@ -129,6 +103,24 @@ func TestProjectsLimitsGet_InvalidOutput(t *testing.T) {
 	assert.Contains(t, err.Error(), "unsupported --output value")
 }
 
+func TestProjectsLimitsSet_InvalidOutput(t *testing.T) {
+	c := ProjectsCmd{
+		projects: &FakeProjectsService{},
+		limits: &FakeProjectLimitsService{
+			UpdateFunc: func(ctx context.Context, id string, body kernel.ProjectLimitUpdateParams, opts ...option.RequestOption) (*kernel.ProjectLimits, error) {
+				t.Fatal("Update should not be called")
+				return nil, nil
+			},
+		},
+	}
+	err := c.LimitsSet(context.Background(), ProjectsLimitsSetInput{
+		Identifier: "a12345678901234567890123",
+		Output:     "yaml",
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported --output value")
+}
+
 func TestProjectsLimitsSet_RejectsNegativeValues(t *testing.T) {
 	c := ProjectsCmd{projects: &FakeProjectsService{}, limits: &FakeProjectLimitsService{}}
 	err := c.LimitsSet(context.Background(), ProjectsLimitsSetInput{
@@ -143,7 +135,7 @@ func TestProjectsLimitsSet_RejectsNegativeValues(t *testing.T) {
 }
 
 func TestProjectsLimitsSet_Success(t *testing.T) {
-	buf := captureProjectsOutput(t)
+	buf := capturePtermOutput(t)
 	fakeProjects := &FakeProjectsService{}
 	fakeLimits := &FakeProjectLimitsService{
 		UpdateFunc: func(ctx context.Context, id string, body kernel.ProjectLimitUpdateParams, opts ...option.RequestOption) (*kernel.ProjectLimits, error) {

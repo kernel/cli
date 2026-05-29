@@ -69,8 +69,8 @@ type CredentialsTotpCodeInput struct {
 }
 
 func (c CredentialsCmd) List(ctx context.Context, in CredentialsListInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	params := kernel.CredentialListParams{}
@@ -132,8 +132,8 @@ func (c CredentialsCmd) List(ctx context.Context, in CredentialsListInput) error
 }
 
 func (c CredentialsCmd) Get(ctx context.Context, in CredentialsGetInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	cred, err := c.credentials.Get(ctx, in.Identifier)
@@ -170,8 +170,8 @@ func (c CredentialsCmd) Get(ctx context.Context, in CredentialsGetInput) error {
 }
 
 func (c CredentialsCmd) Create(ctx context.Context, in CredentialsCreateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if in.Name == "" {
@@ -242,8 +242,8 @@ func (c CredentialsCmd) Create(ctx context.Context, in CredentialsCreateInput) e
 }
 
 func (c CredentialsCmd) Update(ctx context.Context, in CredentialsUpdateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	params := kernel.CredentialUpdateParams{
@@ -302,8 +302,8 @@ func (c CredentialsCmd) Delete(ctx context.Context, in CredentialsDeleteInput) e
 }
 
 func (c CredentialsCmd) TotpCode(ctx context.Context, in CredentialsTotpCodeInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	resp, err := c.credentials.TotpCode(ctx, in.Identifier)
@@ -398,16 +398,16 @@ func init() {
 	credentialsCmd.AddCommand(credentialsTotpCodeCmd)
 
 	// List flags
-	credentialsListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(credentialsListCmd)
 	credentialsListCmd.Flags().String("domain", "", "Filter by domain")
 	credentialsListCmd.Flags().Int("limit", 0, "Maximum number of results to return")
 	credentialsListCmd.Flags().Int("offset", 0, "Number of results to skip")
 
 	// Get flags
-	credentialsGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(credentialsGetCmd)
 
 	// Create flags
-	credentialsCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(credentialsCreateCmd)
 	credentialsCreateCmd.Flags().String("name", "", "Unique name for the credential (required)")
 	credentialsCreateCmd.Flags().String("domain", "", "Target domain this credential is for (required)")
 	credentialsCreateCmd.Flags().StringArray("value", []string{}, "Field name=value pair (repeatable, e.g., --value username=myuser --value password=mypass)")
@@ -417,7 +417,7 @@ func init() {
 	_ = credentialsCreateCmd.MarkFlagRequired("domain")
 
 	// Update flags
-	credentialsUpdateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(credentialsUpdateCmd)
 	credentialsUpdateCmd.Flags().String("name", "", "New name for the credential")
 	credentialsUpdateCmd.Flags().String("sso-provider", "", "SSO provider (set to empty string to remove)")
 	credentialsUpdateCmd.Flags().String("totp-secret", "", "Base32-encoded TOTP secret (set to empty string to remove)")
@@ -427,7 +427,7 @@ func init() {
 	credentialsDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 
 	// TOTP code flags
-	credentialsTotpCodeCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(credentialsTotpCodeCmd)
 }
 
 func runCredentialsList(cmd *cobra.Command, args []string) error {

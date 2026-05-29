@@ -148,8 +148,8 @@ func (c ProjectsCmd) Delete(ctx context.Context, in ProjectsDeleteInput) error {
 }
 
 func (c ProjectsCmd) LimitsGet(ctx context.Context, in ProjectsLimitsGetInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	projectID, err := resolveProjectArg(ctx, c.projects, in.Identifier)
@@ -175,8 +175,8 @@ func (c ProjectsCmd) LimitsGet(ctx context.Context, in ProjectsLimitsGetInput) e
 }
 
 func (c ProjectsCmd) LimitsSet(ctx context.Context, in ProjectsLimitsSetInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	projectID, err := resolveProjectArg(ctx, c.projects, in.Identifier)
@@ -311,15 +311,11 @@ func runProjectsLimitsSet(cmd *cobra.Command, args []string) error {
 	})
 }
 
-func addProjectsLimitsOutputFlag(cmd *cobra.Command) {
-	cmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
-}
-
 func addProjectsLimitsSetFlags(cmd *cobra.Command) {
 	cmd.Flags().Int64("max-concurrent-sessions", 0, "Maximum concurrent browser sessions (0 to remove cap)")
 	cmd.Flags().Int64("max-concurrent-invocations", 0, "Maximum concurrent app invocations (0 to remove cap)")
 	cmd.Flags().Int64("max-pooled-sessions", 0, "Maximum pooled sessions capacity (0 to remove cap)")
-	addProjectsLimitsOutputFlag(cmd)
+	addJSONOutputFlag(cmd)
 }
 
 var projectsCmd = &cobra.Command{
@@ -396,9 +392,9 @@ var projectsSetLimitsCompatCmd = &cobra.Command{
 }
 
 func init() {
-	addProjectsLimitsOutputFlag(projectsLimitsGetCmd)
+	addJSONOutputFlag(projectsLimitsGetCmd)
 	addProjectsLimitsSetFlags(projectsLimitsSetCmd)
-	addProjectsLimitsOutputFlag(projectsGetLimitsCompatCmd)
+	addJSONOutputFlag(projectsGetLimitsCompatCmd)
 	addProjectsLimitsSetFlags(projectsSetLimitsCompatCmd)
 
 	projectsLimitsCmd.AddCommand(projectsLimitsGetCmd)

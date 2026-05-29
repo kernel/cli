@@ -13,8 +13,8 @@ import (
 )
 
 func (p ProxyCmd) List(ctx context.Context, in ProxyListInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if in.Output != "json" {

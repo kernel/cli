@@ -125,6 +125,7 @@ Commands with JSON output support:
 - **Profiles**: `create`, `list`, `get`
 - **Extensions**: `upload`, `list`
 - **Proxies**: `create`, `list`, `get`
+- **API Keys**: `create`, `list`, `get`, `update`
 - **Apps**: `list`, `history`
 - **Deploy**: `deploy` (JSONL streaming), `history`
 - **Invoke**: `invoke` (JSONL streaming), `history`
@@ -511,6 +512,29 @@ Automated authentication for web services. The `run` command orchestrates the fu
 
 - `kernel credentials totp-code <id-or-name>` - Get current TOTP code
   - `--output json`, `-o json` - Output raw JSON object
+
+### API Keys
+
+- `kernel api-keys create` - Create a new API key
+  - `--name <name>` - API key name (required)
+  - `--days-to-expire <days>` - Number of days until expiry (1-3650); omit for never
+  - `--project-id <project_id>` - Create a project-scoped API key for this project ID; omit for org-wide. This is different from global `--project`, which only scopes the CLI request.
+  - `--output json`, `-o json` - Output raw JSON object, including the one-time plaintext key
+
+- `kernel api-keys list` - List API keys
+  - `--limit <n>` - Maximum number of results to return
+  - `--offset <n>` - Number of results to skip
+  - `--output json`, `-o json` - Output raw JSON array
+
+- `kernel api-keys get <id>` - Get an API key
+  - `--output json`, `-o json` - Output raw JSON object
+
+- `kernel api-keys update <id>` - Update an API key
+  - `--name <name>` - New API key name
+  - `--output json`, `-o json` - Output raw JSON object
+
+- `kernel api-keys delete <id>` - Delete an API key
+  - `-y, --yes` - Skip confirmation prompt
 
 ## Examples
 
