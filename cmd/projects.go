@@ -35,7 +35,9 @@ type ProjectsCmd struct {
 	limits   ProjectLimitsService
 }
 
-type ProjectsListInput struct{}
+type ProjectsListInput struct {
+	Output string
+}
 
 type ProjectsCreateInput struct {
 	Name string
@@ -43,6 +45,7 @@ type ProjectsCreateInput struct {
 
 type ProjectsGetInput struct {
 	Identifier string
+	Output     string
 }
 
 type ProjectsDeleteInput struct {
@@ -77,9 +80,17 @@ func resolveProjectArg(ctx context.Context, projects ProjectListService, val str
 }
 
 func (c ProjectsCmd) List(ctx context.Context, in ProjectsListInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+
 	projects, err := c.projects.List(ctx, kernel.ProjectListParams{})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSONPageItems(projects)
 	}
 
 	if projects == nil || len(projects.Items) == 0 {
@@ -110,6 +121,10 @@ func (c ProjectsCmd) Create(ctx context.Context, in ProjectsCreateInput) error {
 }
 
 func (c ProjectsCmd) Get(ctx context.Context, in ProjectsGetInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+
 	projectID, err := resolveProjectArg(ctx, c.projects, in.Identifier)
 	if err != nil {
 		return err
@@ -118,6 +133,14 @@ func (c ProjectsCmd) Get(ctx context.Context, in ProjectsGetInput) error {
 	project, err := c.projects.Get(ctx, projectID)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		if project == nil {
+			fmt.Println("null")
+			return nil
+		}
+		return util.PrintPrettyJSON(project)
 	}
 
 	table := pterm.TableData{
@@ -259,7 +282,8 @@ func getProjectsHandler(cmd *cobra.Command) ProjectsCmd {
 
 func runProjectsList(cmd *cobra.Command, args []string) error {
 	c := getProjectsHandler(cmd)
-	return c.List(cmd.Context(), ProjectsListInput{})
+	output, _ := cmd.Flags().GetString("output")
+	return c.List(cmd.Context(), ProjectsListInput{Output: output})
 }
 
 func runProjectsCreate(cmd *cobra.Command, args []string) error {
@@ -269,7 +293,8 @@ func runProjectsCreate(cmd *cobra.Command, args []string) error {
 
 func runProjectsGet(cmd *cobra.Command, args []string) error {
 	c := getProjectsHandler(cmd)
-	return c.Get(cmd.Context(), ProjectsGetInput{Identifier: args[0]})
+	output, _ := cmd.Flags().GetString("output")
+	return c.Get(cmd.Context(), ProjectsGetInput{Identifier: args[0], Output: output})
 }
 
 func runProjectsDelete(cmd *cobra.Command, args []string) error {
@@ -392,6 +417,8 @@ var projectsSetLimitsCompatCmd = &cobra.Command{
 }
 
 func init() {
+	addJSONOutputFlag(projectsListCmd)
+	addJSONOutputFlag(projectsGetCmd)
 	addJSONOutputFlag(projectsLimitsGetCmd)
 	addProjectsLimitsSetFlags(projectsLimitsSetCmd)
 	addJSONOutputFlag(projectsGetLimitsCompatCmd)

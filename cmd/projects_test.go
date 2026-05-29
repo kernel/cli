@@ -1,8 +1,12 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"os"
 	"testing"
 
 	"github.com/kernel/kernel-go-sdk"
@@ -10,6 +14,7 @@ import (
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/kernel/kernel-go-sdk/packages/respjson"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type FakeProjectsService struct {
@@ -64,6 +69,81 @@ func (f *FakeProjectLimitsService) Update(ctx context.Context, id string, body k
 		return f.UpdateFunc(ctx, id, body, opts...)
 	}
 	return &kernel.ProjectLimits{}, nil
+}
+
+func TestProjectsList_JSONOutput(t *testing.T) {
+	project := mustProject(t, `{"id":"a12345678901234567890123","name":"Default","status":"active","created_at":"2026-05-29T12:00:00Z"}`)
+	c := ProjectsCmd{
+		projects: &FakeProjectsService{
+			ListFunc: func(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error) {
+				return &pagination.OffsetPagination[kernel.Project]{Items: []kernel.Project{project}}, nil
+			},
+		},
+		limits: &FakeProjectLimitsService{},
+	}
+
+	var err error
+	out := captureStdout(t, func() {
+		err = c.List(context.Background(), ProjectsListInput{Output: "json"})
+	})
+
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"id":"a12345678901234567890123","name":"Default","status":"active","created_at":"2026-05-29T12:00:00Z"}]`, out)
+}
+
+func TestProjectsList_InvalidOutput(t *testing.T) {
+	c := ProjectsCmd{
+		projects: &FakeProjectsService{
+			ListFunc: func(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error) {
+				t.Fatal("List should not be called")
+				return nil, nil
+			},
+		},
+		limits: &FakeProjectLimitsService{},
+	}
+
+	err := c.List(context.Background(), ProjectsListInput{Output: "yaml"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported --output value")
+}
+
+func TestProjectsGet_JSONOutput(t *testing.T) {
+	project := mustProject(t, `{"id":"a12345678901234567890123","name":"Default","status":"active","created_at":"2026-05-29T12:00:00Z"}`)
+	c := ProjectsCmd{
+		projects: &FakeProjectsService{
+			GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.Project, error) {
+				assert.Equal(t, "a12345678901234567890123", id)
+				return &project, nil
+			},
+		},
+		limits: &FakeProjectLimitsService{},
+	}
+
+	var err error
+	out := captureStdout(t, func() {
+		err = c.Get(context.Background(), ProjectsGetInput{Identifier: "a12345678901234567890123", Output: "json"})
+	})
+
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"id":"a12345678901234567890123","name":"Default","status":"active","created_at":"2026-05-29T12:00:00Z"}`, out)
+}
+
+func TestProjectsGet_InvalidOutput(t *testing.T) {
+	c := ProjectsCmd{
+		projects: &FakeProjectsService{
+			GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.Project, error) {
+				t.Fatal("Get should not be called")
+				return nil, nil
+			},
+		},
+		limits: &FakeProjectLimitsService{},
+	}
+
+	err := c.Get(context.Background(), ProjectsGetInput{Identifier: "a12345678901234567890123", Output: "yaml"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported --output value")
 }
 
 func TestProjectsLimitsGet_DefaultOutput(t *testing.T) {
@@ -193,4 +273,35 @@ func TestResolveProjectByName_PaginatesAcrossResults(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "proj_target", id)
 	assert.Equal(t, []int64{0, 100}, seenOffsets)
+}
+
+func mustProject(t *testing.T, raw string) kernel.Project {
+	t.Helper()
+
+	var project kernel.Project
+	require.NoError(t, json.Unmarshal([]byte(raw), &project))
+	return project
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	oldStdout := os.Stdout
+	reader, writer, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = writer
+	t.Cleanup(func() {
+		os.Stdout = oldStdout
+	})
+
+	fn()
+
+	require.NoError(t, writer.Close())
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	_, err = io.Copy(&buf, reader)
+	require.NoError(t, err)
+	require.NoError(t, reader.Close())
+	return buf.String()
 }
