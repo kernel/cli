@@ -121,7 +121,7 @@ func (c ProjectsCmd) Get(ctx context.Context, in ProjectsGetInput) error {
 	}
 
 	table := pterm.TableData{
-		{"Field", "Value"},
+		{"Property", "Value"},
 		{"ID", project.ID},
 		{"Name", project.Name},
 		{"Status", string(project.Status)},

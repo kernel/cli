@@ -217,7 +217,7 @@ type apiKeyDisplay struct {
 func renderCreatedAPIKey(key *kernel.CreatedAPIKey) {
 	display := newCreatedAPIKeyDisplay(key)
 	rows := pterm.TableData{
-		{"Field", "Value"},
+		{"Property", "Value"},
 		{"ID", display.ID},
 		{"Name", display.Name},
 		{"Key", display.PlaintextKey},
@@ -232,7 +232,7 @@ func renderCreatedAPIKey(key *kernel.CreatedAPIKey) {
 func renderAPIKeyDetails(key *kernel.APIKey) {
 	display := newAPIKeyDisplay(*key)
 	rows := pterm.TableData{
-		{"Field", "Value"},
+		{"Property", "Value"},
 		{"ID", display.ID},
 		{"Name", display.Name},
 		{"Scope", display.Scope},
