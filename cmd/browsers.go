@@ -891,7 +891,7 @@ func (b BrowsersCmd) ComputerPressKey(ctx context.Context, in BrowsersComputerPr
 		return util.CleanedUpSdkError{Err: err}
 	}
 	if len(in.Keys) == 0 {
-		return util.RequiredArg("keys", "kernel browsers computer press-key <browser> <key> [key...]")
+		return util.RequiredFlag("--key", "<key>")
 	}
 	body := kernel.BrowserComputerPressKeyParams{Keys: in.Keys}
 	if in.Duration > 0 {
@@ -1919,7 +1919,7 @@ func (b BrowsersCmd) FSUpload(ctx context.Context, in BrowsersFSUploadInput) err
 		}
 	}
 	if len(files) == 0 {
-		return fmt.Errorf("no files to upload; pass --file local:remote or --path with --dest-dir")
+		return fmt.Errorf("no files to upload; pass --file local:remote or --paths <local-path> with --dest-dir <remote-dir>")
 	}
 	defer func() {
 		for _, c := range toClose {
@@ -1997,7 +1997,7 @@ func (b BrowsersCmd) ExtensionsUpload(ctx context.Context, in BrowsersExtensions
 	}
 
 	if len(in.ExtensionPaths) == 0 {
-		return util.RequiredArg("extension path", "kernel browsers extensions upload <browser> <extension-dir> [extension-dir...]")
+		return util.RequiredArg("extension path", "kernel browsers extensions upload <id> <extension-path>...")
 	}
 
 	var extensions []kernel.BrowserLoadExtensionsParamsExtension
@@ -2842,7 +2842,7 @@ func runBrowsersPlaywrightExecute(cmd *cobra.Command, args []string) error {
 		// Read code from stdin
 		stat, _ := os.Stdin.Stat()
 		if (stat.Mode() & os.ModeCharDevice) != 0 {
-			return util.RequiredArg("Playwright code", "kernel browsers playwright <browser> '<code>'")
+			return util.RequiredArg("Playwright code", "kernel browsers playwright execute <id> '<code>'")
 		}
 		data, err := io.ReadAll(os.Stdin)
 		if err != nil {

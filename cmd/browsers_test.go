@@ -1302,6 +1302,18 @@ func TestBrowsersFSUpload_MappingAndDestDir_Success(t *testing.T) {
 	assert.Equal(t, 2, len(captured.Files))
 }
 
+func TestBrowsersFSUpload_NoFilesGuidesToActualFlags(t *testing.T) {
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	b := BrowsersCmd{browsers: fakeBrowsers, fs: &FakeFSService{}}
+
+	err := b.FSUpload(context.Background(), BrowsersFSUploadInput{Identifier: "id"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--file local:remote")
+	assert.Contains(t, err.Error(), "--paths <local-path>")
+	assert.Contains(t, err.Error(), "--dest-dir <remote-dir>")
+}
+
 func TestBrowsersFSUploadZip_Success(t *testing.T) {
 	setupStdoutCapture(t)
 	z := __writeTempFile(t, "zipdata")
@@ -1488,6 +1500,17 @@ func TestBrowsersComputerPressKey_PrintsSuccess(t *testing.T) {
 	_ = b.ComputerPressKey(context.Background(), BrowsersComputerPressKeyInput{Identifier: "id", Keys: []string{"Return", "Shift"}, Duration: 25, HoldKeys: []string{"Ctrl"}})
 	out := outBuf.String()
 	assert.Contains(t, out, "Pressed keys: Return,Shift")
+}
+
+func TestBrowsersComputerPressKey_MissingKeysGuidesToKeyFlag(t *testing.T) {
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	b := BrowsersCmd{browsers: fakeBrowsers, computer: &FakeComputerService{}}
+
+	err := b.ComputerPressKey(context.Background(), BrowsersComputerPressKeyInput{Identifier: "id"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--key is required")
+	assert.Contains(t, err.Error(), "add --key <key>")
 }
 
 func TestBrowsersComputerScroll_PrintsSuccess(t *testing.T) {
