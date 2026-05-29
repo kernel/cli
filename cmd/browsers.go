@@ -108,18 +108,6 @@ type BrowserComputerService interface {
 	WriteClipboard(ctx context.Context, id string, body kernel.BrowserComputerWriteClipboardParams, opts ...option.RequestOption) (err error)
 }
 
-// BoolFlag captures whether a boolean flag was set explicitly and its value.
-type BoolFlag struct {
-	Set   bool
-	Value bool
-}
-
-// Int64Flag captures whether an int64 flag was set explicitly and its value.
-type Int64Flag struct {
-	Set   bool
-	Value int64
-}
-
 // Regular expression to validate CUID2 identifiers (starts with a letter, 24 lowercase alphanumeric characters).
 var cuidRegex = regexp.MustCompile(`^[a-z][a-z0-9]{23}$`)
 
@@ -242,8 +230,8 @@ type BrowsersListInput struct {
 }
 
 func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	params := kernel.BrowserListParams{}
@@ -339,8 +327,8 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 }
 
 func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 	if err := validateStartURLFlag(in.StartURL); err != nil {
 		return err
@@ -426,7 +414,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 
 	if in.Telemetry != "" {
-		t, err := buildTelemetryParam(in.Telemetry)
+		t, err := buildNewTelemetryParam(in.Telemetry)
 		if err != nil {
 			return err
 		}
@@ -484,8 +472,8 @@ func (b BrowsersCmd) Delete(ctx context.Context, in BrowsersDeleteInput) error {
 }
 
 func (b BrowsersCmd) View(ctx context.Context, in BrowsersViewInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	browser, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
@@ -518,8 +506,8 @@ func (b BrowsersCmd) View(ctx context.Context, in BrowsersViewInput) error {
 }
 
 func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	query := kernel.BrowserGetParams{}
@@ -570,8 +558,8 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 }
 
 func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	// Validate profile selection: at most one of profile-id or profile-name must be provided
@@ -627,7 +615,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 
 	// Handle telemetry changes
 	if in.Telemetry != "" {
-		t, err := buildTelemetryParam(in.Telemetry)
+		t, err := buildUpdateTelemetryParam(in.Telemetry)
 		if err != nil {
 			return err
 		}
@@ -1086,8 +1074,8 @@ func (b BrowsersCmd) ComputerBatch(ctx context.Context, in BrowsersComputerBatch
 }
 
 func (b BrowsersCmd) ComputerReadClipboard(ctx context.Context, in BrowsersComputerReadClipboardInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 	if b.computer == nil {
 		pterm.Error.Println("computer service not available")
@@ -1151,8 +1139,8 @@ type BrowsersReplaysDownloadInput struct {
 }
 
 func (b BrowsersCmd) ReplaysList(ctx context.Context, in BrowsersReplaysListInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	items, err := b.replays.List(ctx, in.Identifier)
@@ -1181,8 +1169,8 @@ func (b BrowsersCmd) ReplaysList(ctx context.Context, in BrowsersReplaysListInpu
 }
 
 func (b BrowsersCmd) ReplaysStart(ctx context.Context, in BrowsersReplaysStartInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
@@ -1327,8 +1315,8 @@ type BrowsersPlaywrightExecuteInput struct {
 }
 
 func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrightExecuteInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if b.playwright == nil {
@@ -1377,8 +1365,8 @@ func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrigh
 }
 
 func (b BrowsersCmd) ProcessExec(ctx context.Context, in BrowsersProcessExecInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if b.process == nil {
@@ -1444,8 +1432,8 @@ func (b BrowsersCmd) ProcessExec(ctx context.Context, in BrowsersProcessExecInpu
 }
 
 func (b BrowsersCmd) ProcessSpawn(ctx context.Context, in BrowsersProcessSpawnInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if b.process == nil {
@@ -1593,8 +1581,8 @@ func (b BrowsersCmd) ProcessResize(ctx context.Context, in BrowsersProcessResize
 
 // FS Watch
 func (b BrowsersCmd) FSWatchStart(ctx context.Context, in BrowsersFSWatchStartInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if b.fsWatch == nil {
@@ -1834,8 +1822,8 @@ func (b BrowsersCmd) FSDownloadDirZip(ctx context.Context, in BrowsersFSDownload
 }
 
 func (b BrowsersCmd) FSFileInfo(ctx context.Context, in BrowsersFSFileInfoInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if b.fs == nil {
@@ -1861,8 +1849,8 @@ func (b BrowsersCmd) FSFileInfo(ctx context.Context, in BrowsersFSFileInfoInput)
 }
 
 func (b BrowsersCmd) FSListFiles(ctx context.Context, in BrowsersFSListFilesInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if b.fs == nil {
@@ -2238,7 +2226,7 @@ Note: Profiles can only be loaded into sessions that don't already have a profil
 
 func init() {
 	// list flags
-	browsersListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(browsersListCmd)
 	browsersListCmd.Flags().Bool("include-deleted", false, "DEPRECATED: Use --status instead. Include soft-deleted browser sessions in the results")
 	browsersListCmd.Flags().String("status", "", "Filter by status: 'active' (default), 'deleted', or 'all'")
 	browsersListCmd.Flags().Int("limit", 0, "Maximum number of results to return (default 20, max 100)")
@@ -2246,14 +2234,14 @@ func init() {
 	browsersListCmd.Flags().String("query", "", "Search browsers by session ID, profile ID, or proxy ID")
 
 	// get flags
-	browsersGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(browsersGetCmd)
 	browsersGetCmd.Flags().Bool("include-deleted", false, "Include soft-deleted browser sessions in the lookup")
 
 	// view flags
-	browsersViewCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(browsersViewCmd)
 
 	// update flags
-	browsersUpdateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(browsersUpdateCmd)
 	browsersUpdateCmd.Flags().String("proxy-id", "", "ID of the proxy to use for the browser session")
 	browsersUpdateCmd.Flags().Bool("clear-proxy", false, "Remove the proxy from the browser session")
 	browsersUpdateCmd.Flags().String("profile-id", "", "Profile ID to load into the browser session (mutually exclusive with --profile-name)")
@@ -2287,11 +2275,11 @@ func init() {
 	// replays
 	replaysRoot := &cobra.Command{Use: "replays", Short: "Manage browser replays"}
 	replaysList := &cobra.Command{Use: "list <id>", Short: "List replays for a browser", Args: cobra.ExactArgs(1), RunE: runBrowsersReplaysList}
-	replaysList.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(replaysList)
 	replaysStart := &cobra.Command{Use: "start <id>", Short: "Start a replay recording", Args: cobra.ExactArgs(1), RunE: runBrowsersReplaysStart}
 	replaysStart.Flags().Int("framerate", 0, "Recording framerate (fps)")
 	replaysStart.Flags().Int("max-duration", 0, "Maximum duration in seconds")
-	replaysStart.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(replaysStart)
 	replaysStop := &cobra.Command{Use: "stop <id> <replay-id>", Short: "Stop a replay recording", Args: cobra.ExactArgs(2), RunE: runBrowsersReplaysStop}
 	replaysDownload := &cobra.Command{Use: "download <id> <replay-id>", Short: "Download a replay video", Args: cobra.ExactArgs(2), RunE: runBrowsersReplaysDownload}
 	replaysDownload.Flags().StringP("output-file", "f", "", "Output file path for the replay video")
@@ -2307,7 +2295,7 @@ func init() {
 	procExec.Flags().Int("timeout", 0, "Timeout in seconds")
 	procExec.Flags().String("as-user", "", "Run as user")
 	procExec.Flags().Bool("as-root", false, "Run as root")
-	procExec.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(procExec)
 	procSpawn := &cobra.Command{Use: "spawn <id> [--] [command...]", Short: "Execute a command asynchronously", Args: cobra.MinimumNArgs(1), RunE: runBrowsersProcessSpawn}
 	procSpawn.Flags().String("command", "", "Command to execute (optional; if omitted, trailing args are executed via /bin/bash -c)")
 	procSpawn.Flags().StringSlice("args", []string{}, "Command arguments")
@@ -2315,7 +2303,7 @@ func init() {
 	procSpawn.Flags().Int("timeout", 0, "Timeout in seconds")
 	procSpawn.Flags().String("as-user", "", "Run as user")
 	procSpawn.Flags().Bool("as-root", false, "Run as root")
-	procSpawn.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(procSpawn)
 	procKill := &cobra.Command{Use: "kill <id> <process-id>", Short: "Send a signal to a process", Args: cobra.ExactArgs(2), RunE: runBrowsersProcessKill}
 	procKill.Flags().String("signal", "TERM", "Signal to send (TERM, KILL, INT, HUP)")
 	procStatus := &cobra.Command{Use: "status <id> <process-id>", Short: "Get process status", Args: cobra.ExactArgs(2), RunE: runBrowsersProcessStatus}
@@ -2350,11 +2338,11 @@ func init() {
 	fsFileInfo := &cobra.Command{Use: "file-info <id>", Short: "Get file or directory info", Args: cobra.ExactArgs(1), RunE: runBrowsersFSFileInfo}
 	fsFileInfo.Flags().String("path", "", "Absolute file or directory path")
 	_ = fsFileInfo.MarkFlagRequired("path")
-	fsFileInfo.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(fsFileInfo)
 	fsListFiles := &cobra.Command{Use: "list-files <id>", Short: "List files in a directory", Args: cobra.ExactArgs(1), RunE: runBrowsersFSListFiles}
 	fsListFiles.Flags().String("path", "", "Absolute directory path")
 	_ = fsListFiles.MarkFlagRequired("path")
-	fsListFiles.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(fsListFiles)
 	fsMove := &cobra.Command{Use: "move <id>", Short: "Move or rename a file or directory", Args: cobra.ExactArgs(1), RunE: runBrowsersFSMove}
 	fsMove.Flags().String("src", "", "Absolute source path")
 	fsMove.Flags().String("dest", "", "Absolute destination path")
@@ -2399,7 +2387,7 @@ func init() {
 	fsWatchStart.Flags().String("path", "", "Directory to watch (required)")
 	_ = fsWatchStart.MarkFlagRequired("path")
 	fsWatchStart.Flags().Bool("recursive", false, "Watch recursively")
-	fsWatchStart.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(fsWatchStart)
 	fsWatchStop := &cobra.Command{Use: "stop <id> <watch-id>", Short: "Stop watching a directory", Args: cobra.ExactArgs(2), RunE: runBrowsersFSWatchStop}
 	fsWatchEvents := &cobra.Command{Use: "events <id> <watch-id>", Short: "Stream filesystem events", Args: cobra.ExactArgs(2), RunE: runBrowsersFSWatchEvents}
 	fsWatchRoot.AddCommand(fsWatchStart, fsWatchStop, fsWatchEvents)
@@ -2482,7 +2470,7 @@ func init() {
 
 	// computer get-mouse-position
 	computerGetMousePosition := &cobra.Command{Use: "get-mouse-position <id>", Short: "Get current mouse cursor position", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerGetMousePosition}
-	computerGetMousePosition.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(computerGetMousePosition)
 
 	// computer batch
 	computerBatch := &cobra.Command{Use: "batch <id>", Short: "Execute a batch of computer actions from JSON", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerBatch}
@@ -2491,7 +2479,7 @@ func init() {
 
 	// computer read-clipboard
 	computerReadClipboard := &cobra.Command{Use: "read-clipboard <id>", Short: "Read text from the browser clipboard", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerReadClipboard}
-	computerReadClipboard.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(computerReadClipboard)
 
 	// computer write-clipboard
 	computerWriteClipboard := &cobra.Command{Use: "write-clipboard <id>", Short: "Write text to the browser clipboard", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerWriteClipboard}
@@ -2505,12 +2493,12 @@ func init() {
 	playwrightRoot := &cobra.Command{Use: "playwright", Short: "Playwright operations"}
 	playwrightExecute := &cobra.Command{Use: "execute <id> [code]", Short: "Execute Playwright/TypeScript code against the browser", Args: cobra.MinimumNArgs(1), RunE: runBrowsersPlaywrightExecute}
 	playwrightExecute.Flags().Int64("timeout", 0, "Maximum execution time in seconds (default per server)")
-	playwrightExecute.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(playwrightExecute)
 	playwrightRoot.AddCommand(playwrightExecute)
 	browsersCmd.AddCommand(playwrightRoot)
 
 	// Add flags for create command
-	browsersCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(browsersCreateCmd)
 	browsersCreateCmd.Flags().BoolP("stealth", "s", false, "Launch browser in stealth mode to avoid detection")
 	browsersCreateCmd.Flags().BoolP("headless", "H", false, "Launch browser without GUI access")
 	browsersCreateCmd.Flags().Bool("gpu", false, "Launch browser with hardware-accelerated GPU rendering")

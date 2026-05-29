@@ -33,8 +33,8 @@ type BrowserPoolsListInput struct {
 }
 
 func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	pools, err := c.client.List(ctx)
@@ -93,8 +93,8 @@ type BrowserPoolsCreateInput struct {
 }
 
 func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 	if err := validateStartURLFlag(in.StartURL); err != nil {
 		return err
@@ -173,8 +173,8 @@ type BrowserPoolsGetInput struct {
 }
 
 func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	pool, err := c.client.Get(ctx, in.IDOrName)
@@ -234,8 +234,8 @@ type BrowserPoolsUpdateInput struct {
 }
 
 func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 	if err := validateStartURLFlag(in.StartURL); err != nil {
 		return err
@@ -342,8 +342,8 @@ type BrowserPoolsAcquireInput struct {
 }
 
 func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	params := kernel.BrowserPoolAcquireParams{}
@@ -481,9 +481,9 @@ var browserPoolsFlushCmd = &cobra.Command{
 }
 
 func init() {
-	browserPoolsListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(browserPoolsListCmd)
 
-	browserPoolsCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(browserPoolsCreateCmd)
 	browserPoolsCreateCmd.Flags().String("name", "", "Optional unique name for the pool")
 	browserPoolsCreateCmd.Flags().Int64("size", 0, "Number of browsers in the pool")
 	_ = browserPoolsCreateCmd.MarkFlagRequired("size")
@@ -500,7 +500,7 @@ func init() {
 	browserPoolsCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsCreateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
 
-	browserPoolsGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(browserPoolsGetCmd)
 
 	browserPoolsUpdateCmd.Flags().String("name", "", "Update the pool name")
 	browserPoolsUpdateCmd.Flags().Int64("size", 0, "Number of browsers in the pool")
@@ -518,12 +518,12 @@ func init() {
 	browserPoolsUpdateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsUpdateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
 	browserPoolsUpdateCmd.Flags().Bool("discard-all-idle", false, "Discard all idle browsers")
-	browserPoolsUpdateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(browserPoolsUpdateCmd)
 
 	browserPoolsDeleteCmd.Flags().Bool("force", false, "Force delete even if browsers are leased")
 
 	browserPoolsAcquireCmd.Flags().Int64("timeout", 0, "Acquire timeout in seconds")
-	browserPoolsAcquireCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(browserPoolsAcquireCmd)
 
 	browserPoolsReleaseCmd.Flags().String("session-id", "", "Browser session ID to release")
 	_ = browserPoolsReleaseCmd.MarkFlagRequired("session-id")

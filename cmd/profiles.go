@@ -63,8 +63,8 @@ type ProfilesCmd struct {
 }
 
 func (p ProfilesCmd) List(ctx context.Context, in ProfilesListInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	page := in.Page
@@ -145,8 +145,8 @@ func (p ProfilesCmd) List(ctx context.Context, in ProfilesListInput) error {
 }
 
 func (p ProfilesCmd) Get(ctx context.Context, in ProfilesGetInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	item, err := p.profiles.Get(ctx, in.Identifier)
@@ -181,8 +181,8 @@ func (p ProfilesCmd) Get(ctx context.Context, in ProfilesGetInput) error {
 }
 
 func (p ProfilesCmd) Create(ctx context.Context, in ProfilesCreateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	params := kernel.ProfileNewParams{}
@@ -388,12 +388,12 @@ func init() {
 	profilesCmd.AddCommand(profilesDeleteCmd)
 	profilesCmd.AddCommand(profilesDownloadCmd)
 
-	profilesListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(profilesListCmd)
 	profilesListCmd.Flags().Int("per-page", 20, "Items per page (default 20)")
 	profilesListCmd.Flags().Int("page", 1, "Page number (1-based)")
 	profilesListCmd.Flags().String("query", "", "Search profiles by name or ID")
-	profilesGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
-	profilesCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(profilesGetCmd)
+	addJSONOutputFlag(profilesCreateCmd)
 	profilesCreateCmd.Flags().String("name", "", "Optional unique profile name")
 	profilesDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 	profilesDownloadCmd.Flags().String("to", "", "Directory to extract the profile into (required)")

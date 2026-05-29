@@ -64,19 +64,35 @@ func parseTelemetryCategories(s string) (kernel.BrowserTelemetryCategoriesConfig
 	return p, nil
 }
 
-// buildTelemetryParam converts a --telemetry flag value to the API param.
-func buildTelemetryParam(s string) (kernel.BrowserTelemetryRequestConfigParam, error) {
+// buildNewTelemetryParam converts a --telemetry flag value to the create API param.
+func buildNewTelemetryParam(s string) (kernel.BrowserNewParamsTelemetry, error) {
 	switch s {
 	case "all":
-		return kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(true)}, nil
+		return kernel.BrowserNewParamsTelemetry{Enabled: kernel.Opt(true)}, nil
 	case "off":
-		return kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(false)}, nil
+		return kernel.BrowserNewParamsTelemetry{Enabled: kernel.Opt(false)}, nil
 	default:
 		p, err := parseTelemetryCategories(s)
 		if err != nil {
-			return kernel.BrowserTelemetryRequestConfigParam{}, err
+			return kernel.BrowserNewParamsTelemetry{}, err
 		}
-		return kernel.BrowserTelemetryRequestConfigParam{Browser: p}, nil
+		return kernel.BrowserNewParamsTelemetry{Browser: p}, nil
+	}
+}
+
+// buildUpdateTelemetryParam converts a --telemetry flag value to the update API param.
+func buildUpdateTelemetryParam(s string) (kernel.BrowserUpdateParamsTelemetry, error) {
+	switch s {
+	case "all":
+		return kernel.BrowserUpdateParamsTelemetry{Enabled: kernel.Opt(true)}, nil
+	case "off":
+		return kernel.BrowserUpdateParamsTelemetry{Enabled: kernel.Opt(false)}, nil
+	default:
+		p, err := parseTelemetryCategories(s)
+		if err != nil {
+			return kernel.BrowserUpdateParamsTelemetry{}, err
+		}
+		return kernel.BrowserUpdateParamsTelemetry{Browser: p}, nil
 	}
 }
 

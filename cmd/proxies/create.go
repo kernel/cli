@@ -13,8 +13,8 @@ import (
 )
 
 func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	// Validate proxy type

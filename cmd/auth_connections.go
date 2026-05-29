@@ -113,8 +113,8 @@ type AuthConnectionFollowInput struct {
 }
 
 func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if in.Domain == "" {
@@ -222,8 +222,8 @@ func printManagedAuthSummary(auth *kernel.ManagedAuth) {
 }
 
 func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	params := kernel.AuthConnectionUpdateParams{
@@ -304,8 +304,8 @@ func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateIn
 }
 
 func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	auth, err := c.svc.Get(ctx, in.ID)
@@ -426,8 +426,8 @@ func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) e
 }
 
 func (c AuthConnectionCmd) List(ctx context.Context, in AuthConnectionListInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	params := kernel.AuthConnectionListParams{}
@@ -512,8 +512,8 @@ func (c AuthConnectionCmd) Delete(ctx context.Context, in AuthConnectionDeleteIn
 }
 
 func (c AuthConnectionCmd) Login(ctx context.Context, in AuthConnectionLoginInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	params := kernel.AuthConnectionLoginParams{}
@@ -558,8 +558,8 @@ func (c AuthConnectionCmd) Login(ctx context.Context, in AuthConnectionLoginInpu
 }
 
 func (c AuthConnectionCmd) Submit(ctx context.Context, in AuthConnectionSubmitInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	// Validate that we have some input to submit
@@ -653,8 +653,8 @@ func (c AuthConnectionCmd) Submit(ctx context.Context, in AuthConnectionSubmitIn
 }
 
 func (c AuthConnectionCmd) Follow(ctx context.Context, in AuthConnectionFollowInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	stream := c.svc.FollowStreaming(ctx, in.ID)
@@ -797,7 +797,7 @@ var authConnectionsFollowCmd = &cobra.Command{
 
 func init() {
 	// Create flags
-	authConnectionsCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(authConnectionsCreateCmd)
 	authConnectionsCreateCmd.Flags().String("domain", "", "Target domain for authentication (required)")
 	authConnectionsCreateCmd.Flags().String("profile-name", "", "Name of the profile to manage (required)")
 	authConnectionsCreateCmd.Flags().String("login-url", "", "Optional login page URL to skip discovery")
@@ -815,10 +815,10 @@ func init() {
 	authConnectionsCreateCmd.MarkFlagsMutuallyExclusive("credential-name", "credential-provider")
 
 	// Get flags
-	authConnectionsGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(authConnectionsGetCmd)
 
 	// Update flags
-	authConnectionsUpdateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(authConnectionsUpdateCmd)
 	authConnectionsUpdateCmd.Flags().String("login-url", "", "Login page URL (set to empty string to clear)")
 	authConnectionsUpdateCmd.Flags().StringSlice("allowed-domain", []string{}, "Additional allowed domains (replaces existing list)")
 	authConnectionsUpdateCmd.Flags().String("credential-name", "", "Kernel credential name to use")
@@ -834,7 +834,7 @@ func init() {
 	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("save-credentials", "no-save-credentials")
 
 	// List flags
-	authConnectionsListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(authConnectionsListCmd)
 	authConnectionsListCmd.Flags().String("domain", "", "Filter by domain")
 	authConnectionsListCmd.Flags().String("profile-name", "", "Filter by profile name")
 	authConnectionsListCmd.Flags().Int("limit", 0, "Maximum number of results to return")
@@ -844,12 +844,12 @@ func init() {
 	authConnectionsDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 
 	// Login flags
-	authConnectionsLoginCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(authConnectionsLoginCmd)
 	authConnectionsLoginCmd.Flags().String("proxy-id", "", "Proxy ID to use for this login")
 	authConnectionsLoginCmd.Flags().String("proxy-name", "", "Proxy name to use for this login")
 
 	// Submit flags
-	authConnectionsSubmitCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(authConnectionsSubmitCmd)
 	authConnectionsSubmitCmd.Flags().StringArray("field", []string{}, "Field name=value pair (repeatable)")
 	authConnectionsSubmitCmd.Flags().String("mfa-option-id", "", "MFA option ID if user selected an MFA method")
 	authConnectionsSubmitCmd.Flags().String("sign-in-option-id", "", "Sign-in option ID if the flow returned non-MFA choices")
@@ -857,7 +857,7 @@ func init() {
 	authConnectionsSubmitCmd.Flags().String("sso-provider", "", "SSO provider if user chose an SSO button by provider (e.g. google, github)")
 
 	// Follow flags
-	authConnectionsFollowCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(authConnectionsFollowCmd)
 
 	// Wire up commands
 	authConnectionsCmd.AddCommand(authConnectionsCreateCmd)

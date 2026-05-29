@@ -254,21 +254,21 @@ func TestParseTelemetryCategories_WhitespaceTolerance(t *testing.T) {
 // API treats it as a merge rather than a replace.
 func TestBuildTelemetryParam_WireEncoding(t *testing.T) {
 	t.Run("all", func(t *testing.T) {
-		p, err := buildTelemetryParam("all")
+		p, err := buildNewTelemetryParam("all")
 		assert.NoError(t, err)
 		assert.True(t, p.Enabled.Valid())
 		assert.True(t, p.Enabled.Value)
 		assert.False(t, p.Browser.Network.Enabled.Valid())
 	})
 	t.Run("off", func(t *testing.T) {
-		p, err := buildTelemetryParam("off")
+		p, err := buildNewTelemetryParam("off")
 		assert.NoError(t, err)
 		assert.True(t, p.Enabled.Valid())
 		assert.False(t, p.Enabled.Value)
 		assert.False(t, p.Browser.Network.Enabled.Valid())
 	})
 	t.Run("per-category omits Enabled so API merges", func(t *testing.T) {
-		p, err := buildTelemetryParam("network=off")
+		p, err := buildNewTelemetryParam("network=off")
 		assert.NoError(t, err)
 		assert.False(t, p.Enabled.Valid(), "Enabled must be unset so API takes the merge path")
 		assert.True(t, p.Browser.Network.Enabled.Valid())

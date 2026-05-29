@@ -71,8 +71,8 @@ type CredentialProvidersListItemsInput struct {
 }
 
 func (c CredentialProvidersCmd) List(ctx context.Context, in CredentialProvidersListInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	providers, err := c.providers.List(ctx)
@@ -109,8 +109,8 @@ func (c CredentialProvidersCmd) List(ctx context.Context, in CredentialProviders
 }
 
 func (c CredentialProvidersCmd) Get(ctx context.Context, in CredentialProvidersGetInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	provider, err := c.providers.Get(ctx, in.ID)
@@ -137,8 +137,8 @@ func (c CredentialProvidersCmd) Get(ctx context.Context, in CredentialProvidersG
 }
 
 func (c CredentialProvidersCmd) Create(ctx context.Context, in CredentialProvidersCreateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if in.ProviderType == "" {
@@ -197,8 +197,8 @@ func (c CredentialProvidersCmd) Create(ctx context.Context, in CredentialProvide
 }
 
 func (c CredentialProvidersCmd) Update(ctx context.Context, in CredentialProvidersUpdateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	params := kernel.CredentialProviderUpdateParams{
@@ -260,8 +260,8 @@ func (c CredentialProvidersCmd) Delete(ctx context.Context, in CredentialProvide
 }
 
 func (c CredentialProvidersCmd) Test(ctx context.Context, in CredentialProvidersTestInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if in.Output != "json" {
@@ -298,8 +298,8 @@ func (c CredentialProvidersCmd) Test(ctx context.Context, in CredentialProviders
 }
 
 func (c CredentialProvidersCmd) ListItems(ctx context.Context, in CredentialProvidersListItemsInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if in.Output != "json" {
@@ -424,13 +424,13 @@ func init() {
 	credentialProvidersCmd.AddCommand(credentialProvidersListItemsCmd)
 
 	// List flags
-	credentialProvidersListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(credentialProvidersListCmd)
 
 	// Get flags
-	credentialProvidersGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(credentialProvidersGetCmd)
 
 	// Create flags
-	credentialProvidersCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(credentialProvidersCreateCmd)
 	credentialProvidersCreateCmd.Flags().String("name", "", "Human-readable name for this provider instance")
 	credentialProvidersCreateCmd.Flags().String("provider-type", "", "Provider type (e.g., onepassword)")
 	credentialProvidersCreateCmd.Flags().String("token", "", "Service account token for the provider")
@@ -440,7 +440,7 @@ func init() {
 	_ = credentialProvidersCreateCmd.MarkFlagRequired("token")
 
 	// Update flags
-	credentialProvidersUpdateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(credentialProvidersUpdateCmd)
 	credentialProvidersUpdateCmd.Flags().String("name", "", "New human-readable name for this provider instance")
 	credentialProvidersUpdateCmd.Flags().String("token", "", "New service account token (to rotate credentials)")
 	credentialProvidersUpdateCmd.Flags().Int64("cache-ttl", 0, "How long to cache credential lists in seconds")
@@ -451,10 +451,10 @@ func init() {
 	credentialProvidersDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 
 	// Test flags
-	credentialProvidersTestCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(credentialProvidersTestCmd)
 
 	// ListItems flags
-	credentialProvidersListItemsCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(credentialProvidersListItemsCmd)
 }
 
 func runCredentialProvidersList(cmd *cobra.Command, args []string) error {
