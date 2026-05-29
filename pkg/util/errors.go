@@ -10,7 +10,7 @@ import (
 	"github.com/kernel/kernel-go-sdk"
 )
 
-// CleanedUpSdkError extracts a message field from the raw JSON resposne.
+// CleanedUpSdkError extracts a message field from the raw JSON response.
 // This is the convention we use in the API for error response bodies (400s and 500s)
 type CleanedUpSdkError struct {
 	Err error
@@ -31,6 +31,9 @@ func (e CleanedUpSdkError) Error() string {
 			return strings.Replace(e.Err.Error(), raw, cleaned, 1)
 		}
 	}
+	if cleaned, ok := cleanNonJSONAPIResponseError(e.Err.Error()); ok {
+		return cleaned
+	}
 	return e.Err.Error()
 }
 
@@ -44,6 +47,8 @@ func cleanSdkError(kerror *kernel.Error) string {
 		message, _ := m["message"].(string)
 		code, _ := m["code"].(string)
 		return fmt.Sprintf("%s: %s", code, message)
+	} else if cleaned, ok := cleanNonJSONAPIResponseError(kerror.Error()); ok {
+		return cleaned
 	} else if kerror.Response != nil && kerror.Response.Body != nil {
 		// try response body as text
 		body, err := io.ReadAll(kerror.Response.Body)
@@ -52,6 +57,26 @@ func cleanSdkError(kerror *kernel.Error) string {
 		}
 	}
 	return kerror.Error()
+}
+
+func cleanNonJSONAPIResponseError(message string) (string, bool) {
+	if !strings.Contains(message, "not 'application/json'") ||
+		!strings.Contains(message, "content-type 'text/html") {
+		return "", false
+	}
+
+	guidance := fmt.Sprintf(
+		"server returned HTML instead of Kernel API JSON; KERNEL_BASE_URL resolves to %s. Use an API base URL, not the dashboard URL. For production, unset KERNEL_BASE_URL or set it to https://api.onkernel.com.",
+		GetBaseURL(),
+	)
+
+	const sdkDecodeError = ": expected destination type"
+	if idx := strings.LastIndex(message, sdkDecodeError); idx >= 0 {
+		prefix := strings.TrimSuffix(message[:idx], "; check your auth and retry")
+		return prefix + ": " + guidance, true
+	}
+
+	return guidance, true
 }
 
 func RequiredFlag(flag, valueHint string) error {

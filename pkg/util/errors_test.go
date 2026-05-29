@@ -30,6 +30,19 @@ func TestCleanedUpSdkErrorPreservesOuterContext(t *testing.T) {
 	)
 }
 
+func TestCleanedUpSdkErrorExplainsDashboardBaseURL(t *testing.T) {
+	t.Setenv("KERNEL_BASE_URL", "https://dashboard.onkernel.com")
+
+	err := CleanedUpSdkError{
+		Err: fmt.Errorf("list applications failed; check your auth and retry: expected destination type of 'string' or '[]byte' for responses with content-type 'text/html; charset=utf-8' that is not 'application/json'"),
+	}
+
+	assert.Equal(t,
+		"list applications failed: server returned HTML instead of Kernel API JSON; KERNEL_BASE_URL resolves to https://dashboard.onkernel.com. Use an API base URL, not the dashboard URL. For production, unset KERNEL_BASE_URL or set it to https://api.onkernel.com.",
+		err.Error(),
+	)
+}
+
 func newKernelError(t *testing.T, raw string) *kernel.Error {
 	t.Helper()
 
