@@ -1671,8 +1671,7 @@ func TestBrowsersCreate_WithTelemetryCategories(t *testing.T) {
 	err := b.Create(context.Background(), BrowsersCreateInput{Telemetry: "network=on,page=off"})
 
 	assert.NoError(t, err)
-	assert.True(t, captured.Telemetry.Enabled.Valid())
-	assert.True(t, captured.Telemetry.Enabled.Value)
+	assert.False(t, captured.Telemetry.Enabled.Valid(), "per-category must omit Enabled so the API merges")
 	assert.True(t, captured.Telemetry.Browser.Network.Enabled.Valid())
 	assert.True(t, captured.Telemetry.Browser.Network.Enabled.Value)
 	assert.True(t, captured.Telemetry.Browser.Page.Enabled.Valid())

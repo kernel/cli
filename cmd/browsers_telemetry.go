@@ -76,13 +76,16 @@ func buildTelemetryParam(s string) (kernel.BrowserTelemetryRequestConfigParam, e
 		if err != nil {
 			return kernel.BrowserTelemetryRequestConfigParam{}, err
 		}
-		return kernel.BrowserTelemetryRequestConfigParam{Enabled: kernel.Opt(true), Browser: p}, nil
+		return kernel.BrowserTelemetryRequestConfigParam{Browser: p}, nil
 	}
 }
 
 // settableCategories are the categories accepted by --telemetry=<categories>.
 // "system" is always-on and cannot be toggled, but is valid as a --categories stream filter.
 var settableCategories = []string{"console", "interaction", "network", "page"}
+
+// streamFilterCategories are the categories accepted by `telemetry stream --categories`.
+var streamFilterCategories = []string{"console", "interaction", "network", "page", "system"}
 
 // eventCategory derives the category from the event type prefix.
 // "monitor_*" maps to "system"; all others use the prefix before the first "_".
@@ -118,6 +121,11 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 	}
 	if in.Seq < -1 {
 		return fmt.Errorf("--seq must be >= 0 (use --seq=0 to resume from the beginning, or omit to stream from now)")
+	}
+	for _, c := range in.Categories {
+		if !slices.Contains(streamFilterCategories, c) {
+			return fmt.Errorf("unknown --categories value %q: must be one of %s", c, strings.Join(streamFilterCategories, ", "))
+		}
 	}
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {

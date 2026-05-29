@@ -54,20 +54,17 @@ func TestTelemetryStream_NilTelemetryErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "telemetry service not available")
 }
 
-func TestTelemetryStream_UnknownCategoryPassesThrough(t *testing.T) {
-	setupStdoutCapture(t)
-	fake := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
-		return &kernel.BrowserGetResponse{SessionID: id}, nil
-	}}
-	b := BrowsersCmd{browsers: fake, telemetry: &FakeBrowserTelemetryService{}}
+func TestTelemetryStream_UnknownCategoryErrors(t *testing.T) {
+	b := BrowsersCmd{browsers: &FakeBrowsersService{}, telemetry: &FakeBrowserTelemetryService{}}
 
 	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
 		Identifier: "session123",
-		Categories: []string{"future_category"},
+		Categories: []string{"netowrk"},
 		Seq:        -1,
 	})
 
-	assert.NoError(t, err)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown --categories value")
 }
 
 func TestTelemetryStream_SystemCategoryAccepted(t *testing.T) {
@@ -249,4 +246,32 @@ func TestParseTelemetryCategories_WhitespaceTolerance(t *testing.T) {
 	assert.True(t, p.Network.Enabled.Value)
 	assert.True(t, p.Page.Enabled.Valid())
 	assert.False(t, p.Page.Enabled.Value)
+}
+
+// TestBuildTelemetryParam_WireEncoding locks in the three distinct wire shapes
+// the API expects: enable-all sets Enabled=true without Browser, disable-all
+// sets Enabled=false without Browser, and per-category sets only Browser so the
+// API treats it as a merge rather than a replace.
+func TestBuildTelemetryParam_WireEncoding(t *testing.T) {
+	t.Run("all", func(t *testing.T) {
+		p, err := buildTelemetryParam("all")
+		assert.NoError(t, err)
+		assert.True(t, p.Enabled.Valid())
+		assert.True(t, p.Enabled.Value)
+		assert.False(t, p.Browser.Network.Enabled.Valid())
+	})
+	t.Run("off", func(t *testing.T) {
+		p, err := buildTelemetryParam("off")
+		assert.NoError(t, err)
+		assert.True(t, p.Enabled.Valid())
+		assert.False(t, p.Enabled.Value)
+		assert.False(t, p.Browser.Network.Enabled.Valid())
+	})
+	t.Run("per-category omits Enabled so API merges", func(t *testing.T) {
+		p, err := buildTelemetryParam("network=off")
+		assert.NoError(t, err)
+		assert.False(t, p.Enabled.Valid(), "Enabled must be unset so API takes the merge path")
+		assert.True(t, p.Browser.Network.Enabled.Valid())
+		assert.False(t, p.Browser.Network.Enabled.Value)
+	})
 }
