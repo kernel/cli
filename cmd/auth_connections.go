@@ -282,7 +282,7 @@ func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateIn
 	}
 
 	if !hasChanges {
-		return util.SetAtLeastOne("--domain", "--profile-name", "--credential-name", "--credential-provider", "--credential-path", "--credential-auto", "--proxy-id", "--proxy-name")
+		return util.SetAtLeastOne("--login-url", "--allowed-domain", "--credential-name", "--credential-provider", "--credential-path", "--credential-auto", "--proxy-id", "--proxy-name", "--save-credentials", "--no-save-credentials", "--health-check-interval")
 	}
 
 	if in.Output != "json" {

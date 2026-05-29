@@ -19,19 +19,16 @@ type CleanedUpSdkError struct {
 var _ error = CleanedUpSdkError{}
 
 func (e CleanedUpSdkError) Error() string {
+	if kerror, ok := e.Err.(*kernel.Error); ok {
+		return cleanSdkError(kerror)
+	}
+
 	var kerror *kernel.Error
 	if errors.As(e.Err, &kerror) {
-		var m map[string]interface{}
-		if err := json.Unmarshal([]byte(kerror.RawJSON()), &m); err == nil {
-			message, _ := m["message"].(string)
-			code, _ := m["code"].(string)
-			return fmt.Sprintf("%s: %s", code, message)
-		} else if kerror.Response != nil && kerror.Response.Body != nil {
-			// try response body as text
-			body, err := io.ReadAll(kerror.Response.Body)
-			if err == nil && len(body) > 0 {
-				return string(body)
-			}
+		raw := kerror.Error()
+		cleaned := cleanSdkError(kerror)
+		if raw != "" && cleaned != raw {
+			return strings.Replace(e.Err.Error(), raw, cleaned, 1)
 		}
 	}
 	return e.Err.Error()
@@ -39,6 +36,22 @@ func (e CleanedUpSdkError) Error() string {
 
 func (e CleanedUpSdkError) Unwrap() error {
 	return e.Err
+}
+
+func cleanSdkError(kerror *kernel.Error) string {
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(kerror.RawJSON()), &m); err == nil {
+		message, _ := m["message"].(string)
+		code, _ := m["code"].(string)
+		return fmt.Sprintf("%s: %s", code, message)
+	} else if kerror.Response != nil && kerror.Response.Body != nil {
+		// try response body as text
+		body, err := io.ReadAll(kerror.Response.Body)
+		if err == nil && len(body) > 0 {
+			return string(body)
+		}
+	}
+	return kerror.Error()
 }
 
 func RequiredFlag(flag, valueHint string) error {
