@@ -192,8 +192,7 @@ func (c APIKeysCmd) Delete(ctx context.Context, in APIKeysDeleteInput) error {
 
 	if err := c.apiKeys.Delete(ctx, in.ID); err != nil {
 		if util.IsNotFound(err) {
-			pterm.Info.Printf("API key '%s' not found\n", in.ID)
-			return nil
+			return fmt.Errorf("API key %q not found", in.ID)
 		}
 		return util.CleanedUpSdkError{Err: err}
 	}

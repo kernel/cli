@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/kernel/kernel-go-sdk"
@@ -238,6 +239,20 @@ func TestAPIKeysDeleteSkipsConfirmation(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, deleted)
 	assert.Contains(t, buf.String(), "Deleted API key: key_123")
+}
+
+func TestAPIKeysDeleteReturnsNotFoundError(t *testing.T) {
+	fake := &FakeAPIKeysService{
+		DeleteFunc: func(ctx context.Context, id string, opts ...option.RequestOption) error {
+			assert.Equal(t, "missing_key", id)
+			return &kernel.Error{StatusCode: http.StatusNotFound}
+		},
+	}
+	c := APIKeysCmd{apiKeys: fake}
+
+	err := c.Delete(context.Background(), APIKeysDeleteInput{ID: "missing_key", SkipConfirm: true})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `API key "missing_key" not found`)
 }
 
 func TestAPIKeysDeleteReturnsAPIError(t *testing.T) {
