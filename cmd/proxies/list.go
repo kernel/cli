@@ -27,11 +27,7 @@ func (p ProxyCmd) List(ctx context.Context, in ProxyListInput) error {
 	}
 
 	if in.Output == "json" {
-		if items == nil || len(*items) == 0 {
-			fmt.Println("[]")
-			return nil
-		}
-		return util.PrintPrettyJSONSlice(*items)
+		return util.PrintPrettyJSONPointerSlice(items)
 	}
 
 	if items == nil || len(*items) == 0 {

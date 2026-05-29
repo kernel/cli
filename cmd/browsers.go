@@ -1129,11 +1129,7 @@ func (b BrowsersCmd) ReplaysList(ctx context.Context, in BrowsersReplaysListInpu
 	}
 
 	if in.Output == "json" {
-		if items == nil || len(*items) == 0 {
-			fmt.Println("[]")
-			return nil
-		}
-		return util.PrintPrettyJSONSlice(*items)
+		return util.PrintPrettyJSONPointerSlice(items)
 	}
 
 	if items == nil || len(*items) == 0 {
@@ -1847,11 +1843,7 @@ func (b BrowsersCmd) FSListFiles(ctx context.Context, in BrowsersFSListFilesInpu
 	}
 
 	if in.Output == "json" {
-		if res == nil || len(*res) == 0 {
-			fmt.Println("[]")
-			return nil
-		}
-		return util.PrintPrettyJSONSlice(*res)
+		return util.PrintPrettyJSONPointerSlice(res)
 	}
 
 	if res == nil || len(*res) == 0 {

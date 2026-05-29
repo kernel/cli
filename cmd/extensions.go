@@ -95,11 +95,7 @@ func (e ExtensionsCmd) List(ctx context.Context, in ExtensionsListInput) error {
 	}
 
 	if in.Output == "json" {
-		if items == nil || len(*items) == 0 {
-			fmt.Println("[]")
-			return nil
-		}
-		return util.PrintPrettyJSONSlice(*items)
+		return util.PrintPrettyJSONPointerSlice(items)
 	}
 
 	if items == nil || len(*items) == 0 {
@@ -519,7 +515,7 @@ func init() {
 	extensionsCmd.AddCommand(extensionsBuildWebBotAuthCmd)
 
 	addJSONOutputFlag(extensionsListCmd)
-	extensionsDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+	util.AddSkipConfirmFlag(extensionsDeleteCmd)
 	extensionsDownloadCmd.Flags().String("to", "", "Output zip file path")
 	extensionsDownloadWebStoreCmd.Flags().String("to", "", "Output zip file path for the downloaded archive")
 	extensionsDownloadWebStoreCmd.Flags().String("os", "", "Target OS: mac, win, or linux (default linux)")

@@ -7,6 +7,7 @@ import (
 )
 
 const JSONOutputFlagDescription = "Output format: json for raw API response"
+const SkipConfirmFlagDescription = "Skip confirmation prompt"
 
 func ValidateJSONOutput(output string) error {
 	if output == "" || output == "json" {
@@ -17,4 +18,8 @@ func ValidateJSONOutput(output string) error {
 
 func AddJSONOutputFlag(cmd *cobra.Command) {
 	cmd.Flags().StringP("output", "o", "", JSONOutputFlagDescription)
+}
+
+func AddSkipConfirmFlag(cmd *cobra.Command) {
+	cmd.Flags().BoolP("yes", "y", false, SkipConfirmFlagDescription)
 }

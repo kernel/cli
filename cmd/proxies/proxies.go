@@ -1,6 +1,7 @@
 package proxies
 
 import (
+	"github.com/kernel/cli/pkg/util"
 	"github.com/spf13/cobra"
 )
 
@@ -111,7 +112,7 @@ func init() {
 	proxiesCreateCmd.Flags().StringSlice("bypass-host", nil, "Hostname(s) to bypass proxy and connect directly (repeat or comma-separated)")
 
 	// Delete flags
-	proxiesDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+	util.AddSkipConfirmFlag(proxiesDeleteCmd)
 
 	// Check flags
 	addJSONOutputFlag(proxiesCheckCmd)

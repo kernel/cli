@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 )
 
 // RawJSONProvider is an interface for SDK types that provide raw JSON responses.
@@ -64,4 +66,24 @@ func PrintPrettyJSONSlice[T RawJSONProvider](items []T) error {
 	buf.WriteString("]")
 	fmt.Println(buf.String())
 	return nil
+}
+
+// PrintPrettyJSONPointerSlice prints a pointer-to-slice SDK response as a JSON
+// array, treating nil as an empty list.
+func PrintPrettyJSONPointerSlice[T RawJSONProvider](items *[]T) error {
+	if items == nil {
+		fmt.Println("[]")
+		return nil
+	}
+	return PrintPrettyJSONSlice(*items)
+}
+
+// PrintPrettyJSONPageItems prints the item slice from a paginated SDK response,
+// treating a nil page as an empty list.
+func PrintPrettyJSONPageItems[T RawJSONProvider](page *pagination.OffsetPagination[T]) error {
+	if page == nil {
+		fmt.Println("[]")
+		return nil
+	}
+	return PrintPrettyJSONSlice(page.Items)
 }

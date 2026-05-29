@@ -95,10 +95,6 @@ func (c CredentialsCmd) List(ctx context.Context, in CredentialsListInput) error
 	}
 
 	if in.Output == "json" {
-		if len(credentials) == 0 {
-			fmt.Println("[]")
-			return nil
-		}
 		return util.PrintPrettyJSONSlice(credentials)
 	}
 
@@ -424,7 +420,7 @@ func init() {
 	credentialsUpdateCmd.Flags().StringArray("value", []string{}, "Field name=value pair to update (repeatable)")
 
 	// Delete flags
-	credentialsDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+	util.AddSkipConfirmFlag(credentialsDeleteCmd)
 
 	// TOTP code flags
 	addJSONOutputFlag(credentialsTotpCodeCmd)

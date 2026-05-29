@@ -455,16 +455,8 @@ func (c AuthConnectionCmd) List(ctx context.Context, in AuthConnectionListInput)
 	}
 
 	if in.Output == "json" {
-		if page == nil {
-			fmt.Println("[]")
-			return nil
-		}
-		if page.RawJSON() != "" {
+		if page != nil && page.RawJSON() != "" {
 			return util.PrintPrettyJSON(page)
-		}
-		if len(auths) == 0 {
-			fmt.Println("[]")
-			return nil
 		}
 		return util.PrintPrettyJSONSlice(auths)
 	}
@@ -841,7 +833,7 @@ func init() {
 	authConnectionsListCmd.Flags().Int("offset", 0, "Number of results to skip")
 
 	// Delete flags
-	authConnectionsDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+	util.AddSkipConfirmFlag(authConnectionsDeleteCmd)
 
 	// Login flags
 	addJSONOutputFlag(authConnectionsLoginCmd)

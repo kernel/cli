@@ -43,11 +43,7 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 	}
 
 	if in.Output == "json" {
-		if pools == nil || len(*pools) == 0 {
-			fmt.Println("[]")
-			return nil
-		}
-		return util.PrintPrettyJSONSlice(*pools)
+		return util.PrintPrettyJSONPointerSlice(pools)
 	}
 
 	if pools == nil || len(*pools) == 0 {

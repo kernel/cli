@@ -49,7 +49,7 @@ func init() {
 
 	// Flags for delete
 	appDeleteCmd.Flags().String("version", "", "Only delete deployments for this version (default: all versions)")
-	appDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+	util.AddSkipConfirmFlag(appDeleteCmd)
 
 	// Add optional filters for list
 	appListCmd.Flags().String("name", "", "Filter by application name")
@@ -120,11 +120,7 @@ func runAppList(cmd *cobra.Command, args []string) error {
 	}
 
 	if output == "json" {
-		if apps == nil || len(apps.Items) == 0 {
-			fmt.Println("[]")
-			return nil
-		}
-		return util.PrintPrettyJSONSlice(apps.Items)
+		return util.PrintPrettyJSONPageItems(apps)
 	}
 
 	if apps == nil || len(apps.Items) == 0 {
@@ -323,11 +319,7 @@ func runAppHistory(cmd *cobra.Command, args []string) error {
 	}
 
 	if output == "json" {
-		if deployments == nil || len(deployments.Items) == 0 {
-			fmt.Println("[]")
-			return nil
-		}
-		return util.PrintPrettyJSONSlice(deployments.Items)
+		return util.PrintPrettyJSONPageItems(deployments)
 	}
 
 	if deployments == nil || len(deployments.Items) == 0 {

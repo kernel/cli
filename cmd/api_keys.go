@@ -414,7 +414,7 @@ func init() {
 	apiKeysUpdateCmd.Flags().String("name", "", "New API key name (required)")
 	_ = apiKeysUpdateCmd.MarkFlagRequired("name")
 
-	apiKeysDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+	util.AddSkipConfirmFlag(apiKeysDeleteCmd)
 
 	apiKeysCmd.AddCommand(apiKeysCreateCmd)
 	apiKeysCmd.AddCommand(apiKeysListCmd)

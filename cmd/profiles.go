@@ -104,10 +104,6 @@ func (p ProfilesCmd) List(ctx context.Context, in ProfilesListInput) error {
 	itemsThisPage := len(items)
 
 	if in.Output == "json" {
-		if len(items) == 0 {
-			fmt.Println("[]")
-			return nil
-		}
 		return util.PrintPrettyJSONSlice(items)
 	}
 
@@ -395,7 +391,7 @@ func init() {
 	addJSONOutputFlag(profilesGetCmd)
 	addJSONOutputFlag(profilesCreateCmd)
 	profilesCreateCmd.Flags().String("name", "", "Optional unique profile name")
-	profilesDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+	util.AddSkipConfirmFlag(profilesDeleteCmd)
 	profilesDownloadCmd.Flags().String("to", "", "Directory to extract the profile into (required)")
 	_ = profilesDownloadCmd.MarkFlagRequired("to")
 }

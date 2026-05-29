@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"github.com/kernel/cli/pkg/table"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -38,7 +39,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		{"HTTP (recommended)", KernelMCPURL},
 		{"stdio (via mcp-remote)", "npx -y mcp-remote " + KernelMCPURL},
 	}
-	_ = pterm.DefaultTable.WithHasHeader().WithData(rows).Render()
+	table.PrintTableNoPad(rows, true)
 
 	pterm.Println()
 	pterm.DefaultSection.Println("Quick Install")

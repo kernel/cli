@@ -85,7 +85,7 @@ func init() {
 	deployLogsCmd.Flags().BoolP("with-timestamps", "t", false, "Include timestamps in each log line")
 	deployCmd.AddCommand(deployLogsCmd)
 
-	deployDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+	util.AddSkipConfirmFlag(deployDeleteCmd)
 	deployCmd.AddCommand(deployDeleteCmd)
 
 	deployHistoryCmd.Flags().Int("limit", 20, "Max deployments to return (default 20)")
@@ -539,11 +539,7 @@ func runDeployHistory(cmd *cobra.Command, args []string) error {
 	}
 
 	if output == "json" {
-		if deployments == nil || len(deployments.Items) == 0 {
-			fmt.Println("[]")
-			return nil
-		}
-		return util.PrintPrettyJSONSlice(deployments.Items)
+		return util.PrintPrettyJSONPageItems(deployments)
 	}
 
 	if deployments == nil || len(deployments.Items) == 0 {
@@ -572,7 +568,7 @@ func runDeployHistory(cmd *cobra.Command, args []string) error {
 			dep.StatusReason,
 		})
 	}
-	pterm.DefaultTable.WithHasHeader().WithData(table).Render()
+	PrintTableNoPad(table, true)
 
 	pterm.Printf("\nPage: %d  Per-page: %d  Items this page: %d  Has more: %s\n", page, perPage, itemsThisPage, lo.Ternary(hasMore, "yes", "no"))
 	if hasMore {

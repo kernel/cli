@@ -493,10 +493,6 @@ func runInvocationHistory(cmd *cobra.Command, args []string) error {
 	}
 
 	if output == "json" {
-		if len(invocations.Items) == 0 {
-			fmt.Println("[]")
-			return nil
-		}
 		return util.PrintPrettyJSONSlice(invocations.Items)
 	}
 
@@ -542,7 +538,7 @@ func runInvocationHistory(cmd *cobra.Command, args []string) error {
 	if len(table) == 1 {
 		pterm.Info.Println("No invocations found.")
 	} else {
-		pterm.DefaultTable.WithHasHeader().WithData(table).Render()
+		PrintTableNoPad(table, true)
 	}
 	return nil
 }
@@ -567,10 +563,6 @@ func runInvocationBrowsers(cmd *cobra.Command, args []string) error {
 	}
 
 	if output == "json" {
-		if len(resp.Browsers) == 0 {
-			fmt.Println("[]")
-			return nil
-		}
 		return util.PrintPrettyJSONSlice(resp.Browsers)
 	}
 
@@ -600,7 +592,7 @@ func runInvocationBrowsers(cmd *cobra.Command, args []string) error {
 	}
 
 	pterm.Info.Printf("Browsers for invocation %s:\n", invocationID)
-	pterm.DefaultTable.WithHasHeader().WithData(table).Render()
+	PrintTableNoPad(table, true)
 	return nil
 }
 

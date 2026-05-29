@@ -81,11 +81,7 @@ func (c CredentialProvidersCmd) List(ctx context.Context, in CredentialProviders
 	}
 
 	if in.Output == "json" {
-		if providers == nil || len(*providers) == 0 {
-			fmt.Println("[]")
-			return nil
-		}
-		return util.PrintPrettyJSONSlice(*providers)
+		return util.PrintPrettyJSONPointerSlice(providers)
 	}
 
 	if providers == nil || len(*providers) == 0 {
@@ -312,10 +308,6 @@ func (c CredentialProvidersCmd) ListItems(ctx context.Context, in CredentialProv
 	}
 
 	if in.Output == "json" {
-		if len(result.Items) == 0 {
-			fmt.Println("[]")
-			return nil
-		}
 		return util.PrintPrettyJSONSlice(result.Items)
 	}
 
@@ -448,7 +440,7 @@ func init() {
 	credentialProvidersUpdateCmd.Flags().Int64("priority", 0, "Priority order for credential lookups (lower numbers are checked first)")
 
 	// Delete flags
-	credentialProvidersDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+	util.AddSkipConfirmFlag(credentialProvidersDeleteCmd)
 
 	// Test flags
 	addJSONOutputFlag(credentialProvidersTestCmd)
