@@ -22,6 +22,7 @@ type ProjectsService interface {
 	ProjectListService
 	New(ctx context.Context, body kernel.ProjectNewParams, opts ...option.RequestOption) (res *kernel.Project, err error)
 	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.Project, err error)
+	Update(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (res *kernel.Project, err error)
 	Delete(ctx context.Context, id string, opts ...option.RequestOption) (err error)
 }
 
@@ -45,6 +46,12 @@ type ProjectsCreateInput struct {
 
 type ProjectsGetInput struct {
 	Identifier string
+	Output     string
+}
+
+type ProjectsUpdateInput struct {
+	Identifier string
+	Name       string
 	Output     string
 }
 
@@ -152,6 +159,40 @@ func (c ProjectsCmd) Get(ctx context.Context, in ProjectsGetInput) error {
 		{"Updated At", util.FormatLocal(project.UpdatedAt)},
 	}
 	PrintTableNoPad(table, true)
+	return nil
+}
+
+func (c ProjectsCmd) Update(ctx context.Context, in ProjectsUpdateInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+	if in.Name == "" {
+		return util.RequiredFlag("--name", "<name>")
+	}
+
+	projectID, err := resolveProjectArg(ctx, c.projects, in.Identifier)
+	if err != nil {
+		return err
+	}
+
+	project, err := c.projects.Update(ctx, projectID, kernel.ProjectUpdateParams{
+		UpdateProjectRequest: kernel.UpdateProjectRequestParam{
+			Name: kernel.String(in.Name),
+		},
+	})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		if project == nil {
+			fmt.Println("null")
+			return nil
+		}
+		return util.PrintPrettyJSON(project)
+	}
+
+	pterm.Success.Printf("Updated project: %s (ID: %s)\n", project.Name, project.ID)
 	return nil
 }
 
@@ -297,6 +338,17 @@ func runProjectsGet(cmd *cobra.Command, args []string) error {
 	return c.Get(cmd.Context(), ProjectsGetInput{Identifier: args[0], Output: output})
 }
 
+func runProjectsUpdate(cmd *cobra.Command, args []string) error {
+	c := getProjectsHandler(cmd)
+	name, _ := cmd.Flags().GetString("name")
+	output, _ := cmd.Flags().GetString("output")
+	return c.Update(cmd.Context(), ProjectsUpdateInput{
+		Identifier: args[0],
+		Name:       name,
+		Output:     output,
+	})
+}
+
 func runProjectsDelete(cmd *cobra.Command, args []string) error {
 	c := getProjectsHandler(cmd)
 	return c.Delete(cmd.Context(), ProjectsDeleteInput{Identifier: args[0]})
@@ -371,6 +423,13 @@ var projectsGetCmd = &cobra.Command{
 	RunE:  runProjectsGet,
 }
 
+var projectsUpdateCmd = &cobra.Command{
+	Use:   "update <id-or-name>",
+	Short: "Update a project",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runProjectsUpdate,
+}
+
 var projectsDeleteCmd = &cobra.Command{
 	Use:   "delete <id-or-name>",
 	Short: "Delete a project",
@@ -419,6 +478,9 @@ var projectsSetLimitsCompatCmd = &cobra.Command{
 func init() {
 	addJSONOutputFlag(projectsListCmd)
 	addJSONOutputFlag(projectsGetCmd)
+	addJSONOutputFlag(projectsUpdateCmd)
+	projectsUpdateCmd.Flags().String("name", "", "New project name (required)")
+	_ = projectsUpdateCmd.MarkFlagRequired("name")
 	addJSONOutputFlag(projectsLimitsGetCmd)
 	addProjectsLimitsSetFlags(projectsLimitsSetCmd)
 	addJSONOutputFlag(projectsGetLimitsCompatCmd)
@@ -430,6 +492,7 @@ func init() {
 	projectsCmd.AddCommand(projectsListCmd)
 	projectsCmd.AddCommand(projectsCreateCmd)
 	projectsCmd.AddCommand(projectsGetCmd)
+	projectsCmd.AddCommand(projectsUpdateCmd)
 	projectsCmd.AddCommand(projectsDeleteCmd)
 	projectsCmd.AddCommand(projectsLimitsCmd)
 	projectsCmd.AddCommand(projectsGetLimitsCompatCmd)

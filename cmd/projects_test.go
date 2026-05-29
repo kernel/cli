@@ -21,6 +21,7 @@ type FakeProjectsService struct {
 	ListFunc   func(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error)
 	NewFunc    func(ctx context.Context, body kernel.ProjectNewParams, opts ...option.RequestOption) (*kernel.Project, error)
 	GetFunc    func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.Project, error)
+	UpdateFunc func(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (*kernel.Project, error)
 	DeleteFunc func(ctx context.Context, id string, opts ...option.RequestOption) error
 }
 
@@ -43,6 +44,13 @@ func (f *FakeProjectsService) Get(ctx context.Context, id string, opts ...option
 		return f.GetFunc(ctx, id, opts...)
 	}
 	return &kernel.Project{ID: id, Name: "default"}, nil
+}
+
+func (f *FakeProjectsService) Update(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (*kernel.Project, error) {
+	if f.UpdateFunc != nil {
+		return f.UpdateFunc(ctx, id, body, opts...)
+	}
+	return &kernel.Project{ID: id, Name: body.UpdateProjectRequest.Name.Value}, nil
 }
 
 func (f *FakeProjectsService) Delete(ctx context.Context, id string, opts ...option.RequestOption) error {
@@ -141,6 +149,116 @@ func TestProjectsGet_InvalidOutput(t *testing.T) {
 	}
 
 	err := c.Get(context.Background(), ProjectsGetInput{Identifier: "a12345678901234567890123", Output: "yaml"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported --output value")
+}
+
+func TestProjectsUpdate_Success(t *testing.T) {
+	buf := capturePtermOutput(t)
+	c := ProjectsCmd{
+		projects: &FakeProjectsService{
+			UpdateFunc: func(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (*kernel.Project, error) {
+				assert.Equal(t, "a12345678901234567890123", id)
+				assert.True(t, body.UpdateProjectRequest.Name.Valid())
+				assert.Equal(t, "Renamed", body.UpdateProjectRequest.Name.Value)
+				return &kernel.Project{ID: id, Name: body.UpdateProjectRequest.Name.Value}, nil
+			},
+		},
+	}
+
+	err := c.Update(context.Background(), ProjectsUpdateInput{
+		Identifier: "a12345678901234567890123",
+		Name:       "Renamed",
+	})
+
+	require.NoError(t, err)
+	out := buf.String()
+	assert.Contains(t, out, "Updated project: Renamed")
+	assert.Contains(t, out, "a12345678901234567890123")
+}
+
+func TestProjectsUpdate_JSONOutput(t *testing.T) {
+	project := mustProject(t, `{"id":"a12345678901234567890123","name":"Renamed","status":"active","created_at":"2026-05-29T12:00:00Z","updated_at":"2026-05-29T12:30:00Z"}`)
+	c := ProjectsCmd{
+		projects: &FakeProjectsService{
+			UpdateFunc: func(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (*kernel.Project, error) {
+				assert.Equal(t, "a12345678901234567890123", id)
+				assert.True(t, body.UpdateProjectRequest.Name.Valid())
+				assert.Equal(t, "Renamed", body.UpdateProjectRequest.Name.Value)
+				return &project, nil
+			},
+		},
+	}
+
+	var err error
+	out := captureStdout(t, func() {
+		err = c.Update(context.Background(), ProjectsUpdateInput{
+			Identifier: "a12345678901234567890123",
+			Name:       "Renamed",
+			Output:     "json",
+		})
+	})
+
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"id":"a12345678901234567890123","name":"Renamed","status":"active","created_at":"2026-05-29T12:00:00Z","updated_at":"2026-05-29T12:30:00Z"}`, out)
+}
+
+func TestProjectsUpdate_ResolvesName(t *testing.T) {
+	c := ProjectsCmd{
+		projects: &FakeProjectsService{
+			ListFunc: func(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error) {
+				return &pagination.OffsetPagination[kernel.Project]{
+					Items: []kernel.Project{{ID: "a12345678901234567890123", Name: "Default"}},
+				}, nil
+			},
+			UpdateFunc: func(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (*kernel.Project, error) {
+				assert.Equal(t, "a12345678901234567890123", id)
+				return &kernel.Project{ID: id, Name: body.UpdateProjectRequest.Name.Value}, nil
+			},
+		},
+	}
+
+	err := c.Update(context.Background(), ProjectsUpdateInput{
+		Identifier: "default",
+		Name:       "Renamed",
+	})
+
+	require.NoError(t, err)
+}
+
+func TestProjectsUpdate_RequiresName(t *testing.T) {
+	c := ProjectsCmd{
+		projects: &FakeProjectsService{
+			UpdateFunc: func(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (*kernel.Project, error) {
+				t.Fatal("Update should not be called")
+				return nil, nil
+			},
+		},
+	}
+
+	err := c.Update(context.Background(), ProjectsUpdateInput{Identifier: "a12345678901234567890123"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--name is required")
+	assert.Contains(t, err.Error(), "add --name <name>")
+}
+
+func TestProjectsUpdate_InvalidOutput(t *testing.T) {
+	c := ProjectsCmd{
+		projects: &FakeProjectsService{
+			UpdateFunc: func(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (*kernel.Project, error) {
+				t.Fatal("Update should not be called")
+				return nil, nil
+			},
+		},
+	}
+
+	err := c.Update(context.Background(), ProjectsUpdateInput{
+		Identifier: "a12345678901234567890123",
+		Name:       "Renamed",
+		Output:     "yaml",
+	})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported --output value")
