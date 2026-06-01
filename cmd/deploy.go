@@ -77,7 +77,7 @@ func init() {
 	deployCmd.Flags().StringP("output", "o", "", "Output format: json for JSONL streaming output")
 
 	// Subcommands under deploy
-	deployGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(deployGetCmd)
 	deployCmd.AddCommand(deployGetCmd)
 
 	deployLogsCmd.Flags().BoolP("follow", "f", false, "Follow logs in real-time (stream continuously)")
@@ -92,7 +92,7 @@ func init() {
 	deployHistoryCmd.Flags().Int("per-page", 20, "Items per page (alias of --limit)")
 	deployHistoryCmd.Flags().Int("page", 1, "Page number (1-based)")
 	deployHistoryCmd.Flags().String("app-version", "", "Filter by application version (requires app_name)")
-	deployHistoryCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(deployHistoryCmd)
 	deployCmd.AddCommand(deployHistoryCmd)
 
 	// Flags for GitHub deploy
@@ -122,8 +122,8 @@ func runDeployGithub(cmd *cobra.Command, args []string) error {
 	force, _ := cmd.Flags().GetBool("force")
 	output, _ := cmd.Flags().GetString("output")
 
-	if output != "" && output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(output); err != nil {
+		return err
 	}
 
 	// Collect env vars similar to runDeploy
@@ -244,8 +244,8 @@ func runDeploy(cmd *cobra.Command, args []string) (err error) {
 	region, _ := cmd.Flags().GetString("region")
 	output, _ := cmd.Flags().GetString("output")
 
-	if output != "" && output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(output); err != nil {
+		return err
 	}
 
 	if version == "" {
@@ -341,8 +341,8 @@ func runDeployGet(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	output, _ := cmd.Flags().GetString("output")
 
-	if output != "" && output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(output); err != nil {
+		return err
 	}
 
 	deployment, err := client.Deployments.Get(cmd.Context(), args[0])
@@ -489,8 +489,8 @@ func runDeployHistory(cmd *cobra.Command, args []string) error {
 	appVersionFilter, _ := cmd.Flags().GetString("app-version")
 	output, _ := cmd.Flags().GetString("output")
 
-	if output != "" && output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(output); err != nil {
+		return err
 	}
 
 	// Prefer page/per-page when provided; map legacy --limit otherwise

@@ -6,10 +6,15 @@ from loop import sampling_loop
 from session import KernelBrowserSession
 
 
-class QueryInput(TypedDict):
-    query: str
+class _QueryInputOptional(TypedDict, total=False):
     record_replay: Optional[bool]
     kiosk: Optional[bool]
+    user_timezone: Optional[str]
+    user_location: Optional[str]
+
+
+class QueryInput(_QueryInputOptional):
+    query: str
 
 
 class QueryOutput(TypedDict):
@@ -37,6 +42,9 @@ async def cua_task(
         payload: An object containing:
             - query: The task/query string to process
             - record_replay: Optional boolean to enable video replay recording
+            - kiosk: Optional boolean to launch in kiosk mode
+            - user_timezone: Optional IANA tz (e.g. "America/New_York")
+            - user_location: Optional free-text location for model context
 
     Returns:
         A dictionary containing:
@@ -57,16 +65,22 @@ async def cua_task(
     ) as session:
         print("Kernel browser live view url:", session.live_view_url)
 
-        loop_result = await sampling_loop(
-            model="n1.5-latest",
-            task=payload["query"],
-            api_key=str(api_key),
-            kernel=session.kernel,
-            session_id=str(session.session_id),
-            viewport_width=session.viewport_width,
-            viewport_height=session.viewport_height,
-            kiosk_mode=kiosk_mode,
-        )
+        loop_kwargs: dict = {
+            "model": "n1.5-latest",
+            "task": payload["query"],
+            "api_key": str(api_key),
+            "kernel": session.kernel,
+            "session_id": str(session.session_id),
+            "viewport_width": session.viewport_width,
+            "viewport_height": session.viewport_height,
+            "kiosk_mode": kiosk_mode,
+        }
+        if payload.get("user_timezone"):
+            loop_kwargs["user_timezone"] = payload["user_timezone"]
+        if payload.get("user_location"):
+            loop_kwargs["user_location"] = payload["user_location"]
+
+        loop_result = await sampling_loop(**loop_kwargs)
 
         final_answer = loop_result.get("final_answer")
         messages = loop_result.get("messages", [])
@@ -74,7 +88,6 @@ async def cua_task(
         if final_answer:
             result = final_answer
         else:
-            # Extract last assistant message
             result = _extract_last_assistant_message(messages)
 
     return {

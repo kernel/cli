@@ -21,6 +21,8 @@ import { ComputerTool, type N15Action, type ToolResult } from './tools/computer'
 const DISABLED_TOOLS = ['extract_elements', 'find', 'set_element_value', 'execute_js'];
 const TOOL_SET = 'browser_tools_core-20260403';
 
+const NAVIGATOR_COORDINATE_SCALE = 1000;
+
 // Screenshot-trimming defaults mirror Yutori's reference loop:
 // https://github.com/yutori-ai/yutori-sdk-python/blob/main/yutori/navigator/payload.py
 // Trimming is size-triggered — we only drop old screenshots when the payload
@@ -44,9 +46,11 @@ interface SamplingLoopOptions {
   viewportWidth?: number;
   viewportHeight?: number;
   kioskMode?: boolean;
+  userTimezone?: string;
+  userLocation?: string;
 }
 
-interface SamplingLoopResult {
+export interface SamplingLoopResult {
   messages: OpenAI.ChatCompletionMessageParam[];
   finalAnswer?: string;
 }
@@ -58,10 +62,12 @@ export async function samplingLoop({
   kernel,
   sessionId,
   maxCompletionTokens = 4096,
-  maxIterations = 50,
+  maxIterations = 100,
   viewportWidth = 1280,
   viewportHeight = 800,
   kioskMode = false,
+  userTimezone = 'America/Los_Angeles',
+  userLocation = 'San Francisco, CA, US',
 }: SamplingLoopOptions): Promise<SamplingLoopResult> {
   const client = new OpenAI({
     apiKey,
@@ -72,11 +78,16 @@ export async function samplingLoop({
 
   const initialScreenshot = await computerTool.screenshot();
 
+  // Append location/timezone/current-date context to the task — mirrors Yutori's
+  // format_task_with_context helper and helps the model with date-sensitive
+  // judgments. https://github.com/yutori-ai/yutori-sdk-python/blob/main/yutori/navigator/context.py
+  const taskWithContext = formatTaskWithContext(task, userTimezone, userLocation);
+
   const conversationMessages: OpenAI.ChatCompletionMessageParam[] = [
     {
       role: 'user',
       content: [
-        { type: 'text', text: task },
+        { type: 'text', text: taskWithContext },
         ...(initialScreenshot.base64Image
           ? [{
               type: 'image_url' as const,
@@ -129,8 +140,7 @@ export async function samplingLoop({
       throw new Error('No choices in API response');
     }
 
-    const choice = response.choices[0];
-    const assistantMessage = choice.message;
+    const assistantMessage = response.choices[0]?.message;
     if (!assistantMessage) {
       throw new Error('No response from model');
     }
@@ -213,8 +223,41 @@ export async function samplingLoop({
     }
   }
 
-  if (iteration >= maxIterations) {
-    console.log('Max iterations reached');
+  // If the loop exhausted iterations, prompt the model for a final summary so
+  // the caller gets a usable answer instead of empty content. Mirrors Yutori's
+  // format_stop_and_summarize helper.
+  if (iteration >= maxIterations && !finalAnswer) {
+    console.log('Max iterations reached — requesting summary');
+    try {
+      const finalScreenshot = await computerTool.screenshot();
+      conversationMessages.push({
+        role: 'user',
+        content: [
+          { type: 'text', text: formatStopAndSummarize(task) },
+          ...(finalScreenshot.base64Image
+            ? [{
+                type: 'image_url' as const,
+                image_url: { url: `data:image/webp;base64,${finalScreenshot.base64Image}` },
+              }]
+            : []),
+        ],
+      });
+      const { messages: summaryMessages } = trimmedForRequest(conversationMessages);
+      const summaryResponse = await client.chat.completions.create({
+        model,
+        messages: summaryMessages,
+        max_completion_tokens: maxCompletionTokens,
+        temperature: 0.3,
+        ...({ tool_set: TOOL_SET, disable_tools: DISABLED_TOOLS } satisfies YutoriExtras),
+      });
+      const summary = summaryResponse.choices[0]?.message;
+      if (summary) {
+        conversationMessages.push(summary);
+        finalAnswer = summary.content || undefined;
+      }
+    } catch (error) {
+      console.error('Stop-and-summarize call failed:', error);
+    }
   }
 
   return {
@@ -223,24 +266,81 @@ export async function samplingLoop({
   };
 }
 
+function formatTaskWithContext(task: string, userTimezone: string, userLocation: string): string {
+  const now = new Date();
+  const tzLabel = resolveTimezone(userTimezone);
+  const timeFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: tzLabel,
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZoneName: 'short',
+  });
+  const dateFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: tzLabel,
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+  const weekdayFormatter = new Intl.DateTimeFormat('en-US', { timeZone: tzLabel, weekday: 'long' });
+
+  const context = [
+    `User's location: ${userLocation}`,
+    `User's timezone: ${tzLabel}`,
+    `Current Date: ${dateFormatter.format(now)}`,
+    `Current Time: ${timeFormatter.format(now)}`,
+    `Today is: ${weekdayFormatter.format(now)}`,
+  ].join('\n');
+
+  return `${task}\n\n${context}`;
+}
+
+function resolveTimezone(userTimezone: string): string {
+  for (const timeZone of [userTimezone, 'America/Los_Angeles', 'UTC']) {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone }).format(new Date());
+      return timeZone;
+    } catch {
+      // Try the next fallback.
+    }
+  }
+  return 'UTC';
+}
+
+function formatStopAndSummarize(task: string): string {
+  return (
+    `Stop here. ` +
+    `Summarize your current progress and list in detail all the findings ` +
+    `relevant to the given task:\n${task}\n` +
+    `Provide URLs for all relevant results you find and return them in your response. ` +
+    `If there is no specific URL for a result, ` +
+    `cite the page URL that the information was found on.`
+  );
+}
+
 function scaleCoordinates(action: N15Action, viewportWidth: number, viewportHeight: number): N15Action {
   const scaled = { ...action };
 
   if (scaled.coordinates) {
-    scaled.coordinates = [
-      Math.round((scaled.coordinates[0] / 1000) * viewportWidth),
-      Math.round((scaled.coordinates[1] / 1000) * viewportHeight),
-    ];
+    scaled.coordinates = denormalize(scaled.coordinates, viewportWidth, viewportHeight);
   }
 
   if (scaled.start_coordinates) {
-    scaled.start_coordinates = [
-      Math.round((scaled.start_coordinates[0] / 1000) * viewportWidth),
-      Math.round((scaled.start_coordinates[1] / 1000) * viewportHeight),
-    ];
+    scaled.start_coordinates = denormalize(scaled.start_coordinates, viewportWidth, viewportHeight);
   }
 
   return scaled;
+}
+
+// Map [0, 1000] coordinates into viewport pixels and clamp to [0, dim-1] so a
+// boundary value like 1000 doesn't land one pixel outside the viewport.
+function denormalize(coords: [number, number], width: number, height: number): [number, number] {
+  const rawX = Math.round((coords[0] / NAVIGATOR_COORDINATE_SCALE) * width);
+  const rawY = Math.round((coords[1] / NAVIGATOR_COORDINATE_SCALE) * height);
+  const x = Math.max(0, Math.min(width - 1, rawX));
+  const y = Math.max(0, Math.min(height - 1, rawY));
+  return [x, y];
 }
 
 interface ImagePart {
@@ -300,7 +400,7 @@ function trimmedForRequest(
 
   const imageIndices: number[] = [];
   for (let i = 0; i < trimmed.length; i++) {
-    if (messageHasImage(trimmed[i])) imageIndices.push(i);
+    if (messageHasImage(trimmed[i]!)) imageIndices.push(i);
   }
   if (imageIndices.length === 0) return { messages: trimmed, removed: 0 };
 
@@ -311,7 +411,7 @@ function trimmedForRequest(
   for (const idx of imageIndices) {
     if (size <= MAX_REQUEST_BYTES) break;
     if (protectedIdx.has(idx)) continue;
-    if (stripOneImage(trimmed[idx])) {
+    if (stripOneImage(trimmed[idx]!)) {
       removed++;
       size = estimateSize(trimmed);
     }
@@ -319,11 +419,11 @@ function trimmedForRequest(
 
   // If still over, strip from the protected window too — but always keep the latest.
   if (size > MAX_REQUEST_BYTES) {
-    const lastIdx = imageIndices[imageIndices.length - 1];
+    const lastIdx = imageIndices[imageIndices.length - 1]!;
     for (const idx of imageIndices) {
       if (size <= MAX_REQUEST_BYTES) break;
       if (idx === lastIdx) continue;
-      if (stripOneImage(trimmed[idx])) {
+      if (stripOneImage(trimmed[idx]!)) {
         removed++;
         size = estimateSize(trimmed);
       }

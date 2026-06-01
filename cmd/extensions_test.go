@@ -14,33 +14,8 @@ import (
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
-	"github.com/pterm/pterm"
 	"github.com/stretchr/testify/assert"
 )
-
-// captureExtensionsOutput sets pterm writers for tests in this file
-func captureExtensionsOutput(t *testing.T) *bytes.Buffer {
-	var buf bytes.Buffer
-	pterm.SetDefaultOutput(&buf)
-	pterm.Info.Writer = &buf
-	pterm.Error.Writer = &buf
-	pterm.Success.Writer = &buf
-	pterm.Warning.Writer = &buf
-	pterm.Debug.Writer = &buf
-	pterm.Fatal.Writer = &buf
-	pterm.DefaultTable = *pterm.DefaultTable.WithWriter(&buf)
-	t.Cleanup(func() {
-		pterm.SetDefaultOutput(os.Stdout)
-		pterm.Info.Writer = os.Stdout
-		pterm.Error.Writer = os.Stdout
-		pterm.Success.Writer = os.Stdout
-		pterm.Warning.Writer = os.Stdout
-		pterm.Debug.Writer = os.Stdout
-		pterm.Fatal.Writer = os.Stdout
-		pterm.DefaultTable = *pterm.DefaultTable.WithWriter(os.Stdout)
-	})
-	return &buf
-}
 
 // FakeExtensionsService implements ExtensionsService
 type FakeExtensionsService struct {
@@ -84,7 +59,7 @@ func (f *FakeExtensionsService) Upload(ctx context.Context, body kernel.Extensio
 }
 
 func TestExtensionsList_Empty(t *testing.T) {
-	buf := captureExtensionsOutput(t)
+	buf := capturePtermOutput(t)
 	fake := &FakeExtensionsService{}
 	e := ExtensionsCmd{extensions: fake}
 	_ = e.List(context.Background(), ExtensionsListInput{})
@@ -92,7 +67,7 @@ func TestExtensionsList_Empty(t *testing.T) {
 }
 
 func TestExtensionsList_WithRows(t *testing.T) {
-	buf := captureExtensionsOutput(t)
+	buf := capturePtermOutput(t)
 	created := time.Unix(0, 0)
 	rows := []kernel.ExtensionListResponse{{ID: "e1", Name: "alpha", CreatedAt: created, SizeBytes: 10}, {ID: "e2", Name: "", CreatedAt: created, SizeBytes: 20}}
 	fake := &FakeExtensionsService{ListFunc: func(ctx context.Context, opts ...option.RequestOption) (*[]kernel.ExtensionListResponse, error) {
@@ -107,7 +82,7 @@ func TestExtensionsList_WithRows(t *testing.T) {
 }
 
 func TestExtensionsDelete_SkipConfirm(t *testing.T) {
-	buf := captureExtensionsOutput(t)
+	buf := capturePtermOutput(t)
 	fake := &FakeExtensionsService{}
 	e := ExtensionsCmd{extensions: fake}
 	_ = e.Delete(context.Background(), ExtensionsDeleteInput{Identifier: "e1", SkipConfirm: true})
@@ -115,7 +90,7 @@ func TestExtensionsDelete_SkipConfirm(t *testing.T) {
 }
 
 func TestExtensionsDelete_NotFound(t *testing.T) {
-	buf := captureExtensionsOutput(t)
+	buf := capturePtermOutput(t)
 	fake := &FakeExtensionsService{DeleteFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) error {
 		return &kernel.Error{StatusCode: http.StatusNotFound}
 	}}
@@ -125,7 +100,7 @@ func TestExtensionsDelete_NotFound(t *testing.T) {
 }
 
 func TestExtensionsDownload_MissingOutput(t *testing.T) {
-	buf := captureExtensionsOutput(t)
+	buf := capturePtermOutput(t)
 	fake := &FakeExtensionsService{DownloadFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("content")), Header: http.Header{}}, nil
 	}}
@@ -135,7 +110,7 @@ func TestExtensionsDownload_MissingOutput(t *testing.T) {
 }
 
 func TestExtensionsDownload_ExtractsToDir(t *testing.T) {
-	buf := captureExtensionsOutput(t)
+	buf := capturePtermOutput(t)
 	// Create a small in-memory zip
 	var zbuf bytes.Buffer
 	zw := zip.NewWriter(&zbuf)
@@ -160,7 +135,7 @@ func TestExtensionsDownload_ExtractsToDir(t *testing.T) {
 }
 
 func TestExtensionsDownloadWebStore_ExtractsToDir(t *testing.T) {
-	buf := captureExtensionsOutput(t)
+	buf := capturePtermOutput(t)
 	var zbuf bytes.Buffer
 	zw := zip.NewWriter(&zbuf)
 	w, _ := zw.Create("manifest.json")
@@ -183,7 +158,7 @@ func TestExtensionsDownloadWebStore_ExtractsToDir(t *testing.T) {
 }
 
 func TestExtensionsDownloadWebStore_InvalidOS(t *testing.T) {
-	buf := captureExtensionsOutput(t)
+	buf := capturePtermOutput(t)
 	fake := &FakeExtensionsService{}
 	e := ExtensionsCmd{extensions: fake}
 	_ = e.DownloadWebStore(context.Background(), ExtensionsDownloadWebStoreInput{URL: "https://store/link", Output: "x", OS: "freebsd"})
@@ -191,7 +166,7 @@ func TestExtensionsDownloadWebStore_InvalidOS(t *testing.T) {
 }
 
 func TestExtensionsUpload_Success(t *testing.T) {
-	buf := captureExtensionsOutput(t)
+	buf := capturePtermOutput(t)
 	dir := t.TempDir()
 	// create a sample file inside dir
 	err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte("{}"), 0644)
