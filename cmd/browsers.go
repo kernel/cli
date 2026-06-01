@@ -2542,6 +2542,15 @@ followed automatically by Chromium.`,
 	curlCmd.Flags().BoolP("silent", "s", false, "Suppress progress output")
 	browsersCmd.AddCommand(curlCmd)
 
+	telemetryRoot := &cobra.Command{Use: "telemetry", Short: "Browser telemetry operations"}
+	telemetryStream := &cobra.Command{Use: "stream <id>", Short: "Stream live telemetry events", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStream}
+	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by API event category (console,network,page,interaction,system); system covers all monitor_* events")
+	telemetryStream.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error)")
+	telemetryStream.Flags().Int64("seq", -1, "Resume stream from sequence number (Last-Event-ID); 0 means from the beginning")
+	telemetryStream.Flags().StringP("output", "o", "", "Output format: json for newline-delimited JSON envelopes")
+	telemetryRoot.AddCommand(telemetryStream)
+	browsersCmd.AddCommand(telemetryRoot)
+
 	// no flags for view; it takes a single positional argument
 }
 
