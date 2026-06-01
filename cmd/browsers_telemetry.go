@@ -106,7 +106,7 @@ func buildUpdateTelemetryParam(s string) (kernel.BrowserUpdateParamsTelemetry, e
 var settableCategories = []string{"console", "interaction", "network", "page"}
 
 // streamFilterCategories are the categories accepted by `telemetry stream --categories`.
-var streamFilterCategories = []string{"console", "interaction", "network", "page", "system"}
+var streamFilterCategories = []string{"api", "console", "interaction", "network", "page", "system"}
 
 // eventCategory returns the category field from the event JSON.
 // Falls back to the type prefix if the field is absent (older API responses).
@@ -129,11 +129,11 @@ func eventCategory(ev kernel.BrowserTelemetryEventUnion) string {
 }
 
 // shouldEmit applies client-side category/type filters to a telemetry event.
-func shouldEmit(ev kernel.BrowserTelemetryEventUnion, categories, types []string) bool {
-	if len(categories) > 0 && !slices.Contains(categories, eventCategory(ev)) {
+func shouldEmit(category, eventType string, categories, types []string) bool {
+	if len(categories) > 0 && !slices.Contains(categories, category) {
 		return false
 	}
-	if len(types) > 0 && !slices.Contains(types, ev.Type) {
+	if len(types) > 0 && !slices.Contains(types, eventType) {
 		return false
 	}
 	return true
@@ -147,7 +147,7 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 		return err
 	}
 	if in.Seq < -1 {
-		return fmt.Errorf("invalid --seq value %d: must be >= 0 (use --seq=0 to resume from the beginning, or omit to stream from now)", in.Seq)
+		return fmt.Errorf("invalid --seq value %d: must be >= 0 (use --seq=1 to replay from the first event, or omit to stream from now)", in.Seq)
 	}
 	for _, c := range in.Categories {
 		if !slices.Contains(streamFilterCategories, c) {
@@ -168,7 +168,8 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 	defer stream.Close()
 	for stream.Next() {
 		ev := stream.Current()
-		if !shouldEmit(ev.Event, in.Categories, in.Types) {
+		cat := eventCategory(ev.Event)
+		if !shouldEmit(cat, ev.Event.Type, in.Categories, in.Types) {
 			continue
 		}
 		if in.Output == "json" {
@@ -178,7 +179,7 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 			continue
 		}
 		ts := time.UnixMicro(ev.Event.Ts).Local().Format("2006-01-02 15:04:05")
-		pterm.Printf("%s\t[%s]\t%s\n", ts, eventCategory(ev.Event), ev.Event.Type)
+		pterm.Printf("%s\t[%s]\t%s\n", ts, cat, ev.Event.Type)
 	}
 	if err := stream.Err(); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {

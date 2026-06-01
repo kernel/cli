@@ -313,7 +313,7 @@ func TestShouldEmit(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ev := makeEvent(t, tc.raw)
-			assert.Equal(t, tc.want, shouldEmit(ev, tc.categories, tc.types))
+			assert.Equal(t, tc.want, shouldEmit(eventCategory(ev), ev.Type, tc.categories, tc.types))
 		})
 	}
 }

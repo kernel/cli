@@ -301,9 +301,9 @@ Telemetry config is a sub-field of the browser session. Use `browsers create` or
 Per-category updates are partial — only categories you name are changed; others retain their current state. `--telemetry=all` and `--telemetry=off` reset the entire config.
 
 - `kernel browsers telemetry stream <id>` - Stream live telemetry events (NDJSON with `-o json`)
-  - `--categories <list>` - Filter by event category (`console`, `network`, `page`, `interaction`, `system`); `system` matches `monitor_*` event types
+  - `--categories <list>` - Filter by event category (`api`, `console`, `interaction`, `network`, `page`, `system`); `system` matches `monitor_*` and `cdp_*` event types
   - `--types <list>` - Filter by event type (e.g. `network_response`, `console_error`)
-  - `--seq <n>` - Resume from sequence number (Last-Event-ID); `--seq=0` replays from the beginning. Omit to stream from now.
+  - `--seq <n>` - Resume from sequence number (Last-Event-ID); `--seq=1` replays from the first event. Omit to stream from now.
   - `-o, --output json` - Output newline-delimited JSON envelopes
   - Default output: tab-separated `<time>\t[<category>]\t<type>`, e.g. `15:04:05  [network]  network_response`
 
