@@ -54,6 +54,19 @@ func TestTelemetryStream_NilTelemetryErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "telemetry service not available")
 }
 
+func TestTelemetryStream_UnsupportedOutputErrors(t *testing.T) {
+	b := BrowsersCmd{browsers: &FakeBrowsersService{}, telemetry: &FakeBrowserTelemetryService{}}
+
+	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
+		Identifier: "session123",
+		Output:     "yaml",
+		Seq:        -1,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported --output value")
+}
+
 func TestTelemetryStream_UnknownCategoryErrors(t *testing.T) {
 	b := BrowsersCmd{browsers: &FakeBrowsersService{}, telemetry: &FakeBrowserTelemetryService{}}
 

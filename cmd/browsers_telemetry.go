@@ -139,8 +139,8 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 	if b.telemetry == nil {
 		return fmt.Errorf("telemetry service not available")
 	}
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 	if in.Seq < -1 {
 		return fmt.Errorf("--seq must be >= 0 (use --seq=0 to resume from the beginning, or omit to stream from now)")
