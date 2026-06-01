@@ -3,10 +3,14 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"os/signal"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kernel/cli/pkg/util"
@@ -150,6 +154,8 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 			return fmt.Errorf("unknown --categories value %q: must be one of %s", c, strings.Join(streamFilterCategories, ", "))
 		}
 	}
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -175,6 +181,9 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 		pterm.Printf("%s\t[%s]\t%s\n", ts, eventCategory(ev.Event), ev.Event.Type)
 	}
 	if err := stream.Err(); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+			return nil
+		}
 		return util.CleanedUpSdkError{Err: err}
 	}
 	return nil

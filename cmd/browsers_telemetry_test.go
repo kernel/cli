@@ -54,6 +54,23 @@ func TestTelemetryStream_NilTelemetryErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "telemetry service not available")
 }
 
+func TestTelemetryStream_ContextCanceledExitsCleanly(t *testing.T) {
+	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return &kernel.BrowserGetResponse{SessionID: id}, nil
+	}}
+	fakeTelemetry := &FakeBrowserTelemetryService{StreamFunc: func() *ssestream.Stream[kernel.BrowserTelemetryStreamResponse] {
+		return ssestream.NewStream[kernel.BrowserTelemetryStreamResponse](&testDecoder{}, context.Canceled)
+	}}
+	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
+
+	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
+		Identifier: "session123",
+		Seq:        -1,
+	})
+
+	assert.NoError(t, err)
+}
+
 func TestTelemetryStream_NegativeSeqErrors(t *testing.T) {
 	b := BrowsersCmd{browsers: &FakeBrowsersService{}, telemetry: &FakeBrowserTelemetryService{}}
 
