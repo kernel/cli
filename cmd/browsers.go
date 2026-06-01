@@ -334,9 +334,6 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		return err
 	}
 
-	if in.Output != "json" {
-		pterm.Info.Println("Creating browser session...")
-	}
 	params := kernel.BrowserNewParams{}
 	if in.TimeoutSeconds > 0 {
 		params.TimeoutSeconds = kernel.Opt(int64(in.TimeoutSeconds))
@@ -421,6 +418,9 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		params.Telemetry = t
 	}
 
+	if in.Output != "json" {
+		pterm.Info.Println("Creating browser session...")
+	}
 	browser, err := b.browsers.New(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
