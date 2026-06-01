@@ -177,7 +177,7 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 			}
 			continue
 		}
-		ts := time.UnixMicro(ev.Event.Ts).Local().Format("15:04:05")
+		ts := time.UnixMicro(ev.Event.Ts).Local().Format("2006-01-02 15:04:05")
 		pterm.Printf("%s\t[%s]\t%s\n", ts, eventCategory(ev.Event), ev.Event.Type)
 	}
 	if err := stream.Err(); err != nil {
