@@ -132,6 +132,64 @@ func TestTelemetryStream_EventsFlow_JSON(t *testing.T) {
 	assert.Contains(t, out, "network_response")
 }
 
+func TestTelemetryStream_FiltersDropNonMatchingEvents(t *testing.T) {
+	setupStdoutCapture(t)
+	consoleEvent := kernel.BrowserTelemetryStreamResponse{}
+	if err := json.Unmarshal([]byte(`{"event":{"type":"console_log","category":"console","ts":1000000}}`), &consoleEvent); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	networkEvent := kernel.BrowserTelemetryStreamResponse{}
+	if err := json.Unmarshal([]byte(`{"event":{"type":"network_response","category":"network","ts":2000000}}`), &networkEvent); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return &kernel.BrowserGetResponse{SessionID: id}, nil
+	}}
+	fakeTelemetry := &FakeBrowserTelemetryService{StreamFunc: func() *ssestream.Stream[kernel.BrowserTelemetryStreamResponse] {
+		return makeStream([]kernel.BrowserTelemetryStreamResponse{consoleEvent, networkEvent})
+	}}
+	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
+
+	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
+		Identifier: "session123",
+		Categories: []string{"network"},
+		Seq:        -1,
+	})
+
+	assert.NoError(t, err)
+	assert.Contains(t, outBuf.String(), "network_response")
+	assert.NotContains(t, outBuf.String(), "console_log")
+}
+
+func TestTelemetryStream_TypesFilterDropsNonMatching(t *testing.T) {
+	setupStdoutCapture(t)
+	req := kernel.BrowserTelemetryStreamResponse{}
+	if err := json.Unmarshal([]byte(`{"event":{"type":"network_request","category":"network","ts":1000000}}`), &req); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	resp := kernel.BrowserTelemetryStreamResponse{}
+	if err := json.Unmarshal([]byte(`{"event":{"type":"network_response","category":"network","ts":2000000}}`), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return &kernel.BrowserGetResponse{SessionID: id}, nil
+	}}
+	fakeTelemetry := &FakeBrowserTelemetryService{StreamFunc: func() *ssestream.Stream[kernel.BrowserTelemetryStreamResponse] {
+		return makeStream([]kernel.BrowserTelemetryStreamResponse{req, resp})
+	}}
+	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
+
+	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
+		Identifier: "session123",
+		Types:      []string{"network_response"},
+		Seq:        -1,
+	})
+
+	assert.NoError(t, err)
+	assert.Contains(t, outBuf.String(), "network_response")
+	assert.NotContains(t, outBuf.String(), "network_request")
+}
+
 type capturingTelemetryService struct {
 	captured kernel.BrowserTelemetryStreamParams
 }
