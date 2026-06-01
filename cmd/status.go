@@ -50,9 +50,10 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if h, err := client.Get(util.GetBaseURL() + "/health"); err == nil {
-			h.Body.Close()
-			if h.StatusCode >= 200 && h.StatusCode < 300 {
+		healthClient := &http.Client{Timeout: 3 * time.Second}
+		if healthResp, err := healthClient.Get(util.GetBaseURL() + "/health"); err == nil {
+			healthResp.Body.Close()
+			if healthResp.StatusCode >= 200 && healthResp.StatusCode < 300 {
 				pterm.Error.Println("Kernel API is responding but /status is unavailable. Check https://status.kernel.sh for updates.")
 				return nil
 			}
