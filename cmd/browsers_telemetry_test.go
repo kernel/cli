@@ -54,6 +54,18 @@ func TestTelemetryStream_NilTelemetryErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "telemetry service not available")
 }
 
+func TestTelemetryStream_NegativeSeqErrors(t *testing.T) {
+	b := BrowsersCmd{browsers: &FakeBrowsersService{}, telemetry: &FakeBrowserTelemetryService{}}
+
+	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
+		Identifier: "session123",
+		Seq:        -2,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid --seq value -2")
+}
+
 func TestTelemetryStream_UnsupportedOutputErrors(t *testing.T) {
 	b := BrowsersCmd{browsers: &FakeBrowsersService{}, telemetry: &FakeBrowserTelemetryService{}}
 

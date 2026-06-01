@@ -143,7 +143,7 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 		return err
 	}
 	if in.Seq < -1 {
-		return fmt.Errorf("--seq must be >= 0 (use --seq=0 to resume from the beginning, or omit to stream from now)")
+		return fmt.Errorf("invalid --seq value %d: must be >= 0 (use --seq=0 to resume from the beginning, or omit to stream from now)", in.Seq)
 	}
 	for _, c := range in.Categories {
 		if !slices.Contains(streamFilterCategories, c) {
