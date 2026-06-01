@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
@@ -103,10 +104,16 @@ var settableCategories = []string{"console", "interaction", "network", "page"}
 // streamFilterCategories are the categories accepted by `telemetry stream --categories`.
 var streamFilterCategories = []string{"console", "interaction", "network", "page", "system"}
 
-// eventCategory derives the category from the event type prefix.
-// "monitor_*" maps to "system"; all others use the prefix before the first "_".
+// eventCategory returns the category field from the event JSON.
+// Falls back to the type prefix if the field is absent (older API responses).
 // TODO(sdk): kernel-go-sdk should surface Category directly on BrowserTelemetryEventUnion.
 func eventCategory(ev kernel.BrowserTelemetryEventUnion) string {
+	var wire struct {
+		Category string `json:"category"`
+	}
+	if err := json.Unmarshal([]byte(ev.RawJSON()), &wire); err == nil && wire.Category != "" {
+		return wire.Category
+	}
 	prefix, _, ok := strings.Cut(ev.Type, "_")
 	if !ok {
 		return ev.Type

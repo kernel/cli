@@ -230,6 +230,13 @@ func TestEventCategory(t *testing.T) {
 		raw  string
 		want string
 	}{
+		// Wire category wins when present.
+		{`{"type":"network_response","category":"network","ts":0}`, "network"},
+		{`{"type":"monitor_screenshot","category":"system","ts":0}`, "system"},
+		// Wire category overrides what a naive type-prefix split would return,
+		// e.g. cdp_* events the server classifies as system.
+		{`{"type":"cdp_attached","category":"system","ts":0}`, "system"},
+		// Fallback to prefix when wire category is absent.
 		{`{"type":"monitor_screenshot","ts":0}`, "system"},
 		{`{"type":"monitor_disconnected","ts":0}`, "system"},
 		{`{"type":"network_response","ts":0}`, "network"},
