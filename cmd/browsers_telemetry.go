@@ -51,7 +51,7 @@ func parseTelemetryCategories(s string) (kernel.BrowserTelemetryCategoriesConfig
 		case "off":
 			enabled = false
 		default:
-			return p, fmt.Errorf("invalid value %q for category %q: must be 'on' or 'off'", val, name)
+			return p, fmt.Errorf("invalid value %q for category %q: must be \"on\" or \"off\"", val, name)
 		}
 		switch name {
 		case "console":
@@ -151,7 +151,7 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 	}
 	for _, c := range in.Categories {
 		if !slices.Contains(streamFilterCategories, c) {
-			return fmt.Errorf("unknown --categories value %q: must be one of %s", c, strings.Join(streamFilterCategories, ", "))
+			return fmt.Errorf("invalid --categories value %q: must be one of %s", c, strings.Join(streamFilterCategories, ", "))
 		}
 	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)

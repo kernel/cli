@@ -106,7 +106,7 @@ func TestTelemetryStream_UnknownCategoryErrors(t *testing.T) {
 	})
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown --categories value")
+	assert.Contains(t, err.Error(), "invalid --categories value")
 }
 
 func TestTelemetryStream_SystemCategoryAccepted(t *testing.T) {
@@ -342,7 +342,7 @@ func TestParseTelemetryCategories_InvalidValue(t *testing.T) {
 	_, err := parseTelemetryCategories("network=yes")
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "must be 'on' or 'off'")
+	assert.Contains(t, err.Error(), `must be "on" or "off"`)
 }
 
 func TestParseTelemetryCategories_WhitespaceTolerance(t *testing.T) {
