@@ -146,8 +146,8 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
 	}
-	if in.Seq < -1 {
-		return fmt.Errorf("invalid --seq value %d: must be >= 0 (use --seq=1 to replay from the first event, or omit to stream from now)", in.Seq)
+	if in.Seq != -1 && in.Seq < 1 {
+		return fmt.Errorf("invalid --seq value %d: must be >= 1 (resumes after sequence N; omit --seq to stream from now)", in.Seq)
 	}
 	for _, c := range in.Categories {
 		if !slices.Contains(streamFilterCategories, c) {

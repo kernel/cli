@@ -2546,7 +2546,7 @@ followed automatically by Chromium.`,
 	telemetryStream := &cobra.Command{Use: "stream <id>", Short: "Stream live telemetry events", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStream}
 	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by API event category (api,console,interaction,network,page,system); system covers monitor_* and cdp_* events")
 	telemetryStream.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error)")
-	telemetryStream.Flags().Int64("seq", -1, "Resume stream from sequence number (Last-Event-ID); --seq=1 replays from the first event, default -1 streams from now")
+	telemetryStream.Flags().Int64("seq", -1, "Resume after sequence number N (Last-Event-ID); replays events with seq > N. Default -1 streams from now")
 	telemetryStream.Flags().StringP("output", "o", "", "Output format: json for newline-delimited JSON envelopes")
 	telemetryRoot.AddCommand(telemetryStream)
 	browsersCmd.AddCommand(telemetryRoot)

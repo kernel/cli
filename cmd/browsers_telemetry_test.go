@@ -232,30 +232,17 @@ func TestTelemetryStream_TypesFilterDropsNonMatching(t *testing.T) {
 	assert.NotContains(t, outBuf.String(), "network_request")
 }
 
-type capturingTelemetryService struct {
-	captured kernel.BrowserTelemetryStreamParams
-}
-
-func (c *capturingTelemetryService) StreamStreaming(ctx context.Context, id string, query kernel.BrowserTelemetryStreamParams, opts ...option.RequestOption) *ssestream.Stream[kernel.BrowserTelemetryStreamResponse] {
-	c.captured = query
-	return makeStream([]kernel.BrowserTelemetryStreamResponse{})
-}
-
-func TestTelemetryStream_SeqZeroSetsLastEventID(t *testing.T) {
-	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
-		return &kernel.BrowserGetResponse{SessionID: id}, nil
-	}}
-	capSvc := &capturingTelemetryService{}
-	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: capSvc}
+func TestTelemetryStream_SeqZeroErrors(t *testing.T) {
+	b := BrowsersCmd{browsers: &FakeBrowsersService{}, telemetry: &FakeBrowserTelemetryService{}}
 
 	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
 		Identifier: "session123",
 		Seq:        0,
 	})
 
-	assert.NoError(t, err)
-	assert.True(t, capSvc.captured.LastEventID.Valid())
-	assert.Equal(t, "0", capSvc.captured.LastEventID.Value)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid --seq value 0")
+	assert.Contains(t, err.Error(), "must be >= 1")
 }
 
 func makeEvent(t *testing.T, raw string) kernel.BrowserTelemetryEventUnion {
