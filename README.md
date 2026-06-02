@@ -130,6 +130,7 @@ Commands with JSON output support:
 - **Deploy**: `deploy` (JSONL streaming), `history`
 - **Invoke**: `invoke` (JSONL streaming), `history`
 - **Browser Sub-commands**: `replays list/start`, `process exec/spawn`, `fs file-info/list-files`
+- **Browser NDJSON streaming**: `telemetry stream`
 
 ### Authentication
 
@@ -212,12 +213,20 @@ Commands with JSON output support:
   - `--start-url <url>` - Initial page to open on launch
   - `--pool-id <id>` - Acquire a browser from the specified pool (mutually exclusive with --pool-name; ignores other session flags)
   - `--pool-name <name>` - Acquire a browser from the pool name (mutually exclusive with --pool-id; ignores other session flags)
+  - `--telemetry=all` - Enable telemetry for all categories
+  - `--telemetry=off` - Disable telemetry
+  - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`
   - `--output json`, `-o json` - Output raw JSON object
   - _Note: When a pool is specified, omit other session configuration flags—pool settings determine profile, proxy, viewport, etc._
 - `kernel browsers delete <id>` - Delete a browser
 - `kernel browsers view <id>` - Get live view URL for a browser
   - `--output json`, `-o json` - Output JSON with liveViewUrl
 - `kernel browsers get <id>` - Get detailed browser session info
+  - `--output json`, `-o json` - Output raw JSON object
+- `kernel browsers update <id>` - Update a running browser session
+  - `--telemetry=all` - Enable telemetry for all categories
+  - `--telemetry=off` - Disable telemetry
+  - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers curl <id> <url>` - Make HTTP requests through a browser session's Chrome network stack
   - `-X, --request <method>` - HTTP method (default: GET; defaults to POST when `--data` is set)
@@ -280,6 +289,23 @@ Commands with JSON output support:
 - `kernel browsers replays stop <id> <replay-id>` - Stop a replay recording
 - `kernel browsers replays download <id> <replay-id>` - Download a replay video
   - `-f, --output-file <path>` - Output file path for the replay video
+
+### Browser Telemetry
+
+Telemetry config is a sub-field of the browser session. Use `browsers create` or `browsers update` to enable, disable, or configure it, and `browsers get` to inspect the current state.
+
+- Enable all categories: `kernel browsers update <id> --telemetry=all`
+- Disable: `kernel browsers update <id> --telemetry=off`
+- Per-category: `kernel browsers update <id> --telemetry=network=on,page=off` (valid: `console`, `interaction`, `network`, `page`; `system` always emits and cannot be toggled)
+
+Per-category updates are partial — only categories you name are changed; others retain their current state. `--telemetry=all` and `--telemetry=off` reset the entire config.
+
+- `kernel browsers telemetry stream <id>` - Stream live telemetry events (NDJSON with `-o json`)
+  - `--categories <list>` - Filter by event category (`api`, `console`, `interaction`, `network`, `page`, `system`); `system` matches `monitor_*` and `cdp_*` event types
+  - `--types <list>` - Filter by event type (e.g. `network_response`, `console_error`)
+  - `--seq <n>` - Resume after sequence number N (Last-Event-ID); replays events with `seq > N`. Omit to stream from now.
+  - `-o, --output json` - Output newline-delimited JSON envelopes
+  - Default output: tab-separated `<time>\t[<category>]\t<type>`, e.g. `15:04:05  [network]  network_response`
 
 ### Browser Process Control
 

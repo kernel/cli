@@ -1,0 +1,208 @@
+package cmd
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/signal"
+	"slices"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/kernel/cli/pkg/util"
+	kernel "github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/ssestream"
+	"github.com/pterm/pterm"
+	"github.com/spf13/cobra"
+)
+
+// BrowserTelemetryService defines the subset we use for browser telemetry streaming.
+type BrowserTelemetryService interface {
+	StreamStreaming(ctx context.Context, id string, query kernel.BrowserTelemetryStreamParams, opts ...option.RequestOption) (stream *ssestream.Stream[kernel.BrowserTelemetryStreamResponse])
+}
+
+type BrowsersTelemetryStreamInput struct {
+	Identifier string
+	Categories []string
+	Types      []string
+	Seq        int64
+	Output     string
+}
+
+// parseTelemetryCategories parses a comma-separated "name=on|off" string into
+// a BrowserTelemetryCategoriesConfigParam. Unmentioned categories are omitted.
+func parseTelemetryCategories(s string) (kernel.BrowserTelemetryCategoriesConfigParam, error) {
+	p := kernel.BrowserTelemetryCategoriesConfigParam{}
+	for _, part := range strings.Split(s, ",") {
+		name, val, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
+			return p, fmt.Errorf("invalid category assignment %q: expected name=on or name=off", part)
+		}
+		name, val = strings.TrimSpace(name), strings.TrimSpace(val)
+		var enabled bool
+		switch val {
+		case "on":
+			enabled = true
+		case "off":
+			enabled = false
+		default:
+			return p, fmt.Errorf("invalid value %q for category %q: must be \"on\" or \"off\"", val, name)
+		}
+		switch name {
+		case "console":
+			p.Console = kernel.BrowserTelemetryCategoryConfigParam{Enabled: kernel.Opt(enabled)}
+		case "interaction":
+			p.Interaction = kernel.BrowserTelemetryCategoryConfigParam{Enabled: kernel.Opt(enabled)}
+		case "network":
+			p.Network = kernel.BrowserTelemetryCategoryConfigParam{Enabled: kernel.Opt(enabled)}
+		case "page":
+			p.Page = kernel.BrowserTelemetryCategoryConfigParam{Enabled: kernel.Opt(enabled)}
+		default:
+			return p, fmt.Errorf("unknown category %q: must be one of %s", name, strings.Join(settableCategories, ", "))
+		}
+	}
+	return p, nil
+}
+
+// buildNewTelemetryParam converts a --telemetry flag value to the create API param.
+func buildNewTelemetryParam(s string) (kernel.BrowserNewParamsTelemetry, error) {
+	switch s {
+	case "all":
+		return kernel.BrowserNewParamsTelemetry{Enabled: kernel.Opt(true)}, nil
+	case "off":
+		return kernel.BrowserNewParamsTelemetry{Enabled: kernel.Opt(false)}, nil
+	default:
+		p, err := parseTelemetryCategories(s)
+		if err != nil {
+			return kernel.BrowserNewParamsTelemetry{}, err
+		}
+		return kernel.BrowserNewParamsTelemetry{Browser: p}, nil
+	}
+}
+
+// buildUpdateTelemetryParam converts a --telemetry flag value to the update API param.
+func buildUpdateTelemetryParam(s string) (kernel.BrowserUpdateParamsTelemetry, error) {
+	switch s {
+	case "all":
+		return kernel.BrowserUpdateParamsTelemetry{Enabled: kernel.Opt(true)}, nil
+	case "off":
+		return kernel.BrowserUpdateParamsTelemetry{Enabled: kernel.Opt(false)}, nil
+	default:
+		p, err := parseTelemetryCategories(s)
+		if err != nil {
+			return kernel.BrowserUpdateParamsTelemetry{}, err
+		}
+		return kernel.BrowserUpdateParamsTelemetry{Browser: p}, nil
+	}
+}
+
+// settableCategories are the categories accepted by --telemetry=<categories>.
+// "system" is always-on and cannot be toggled, but is valid as a --categories stream filter.
+var settableCategories = []string{"console", "interaction", "network", "page"}
+
+// streamFilterCategories are the categories accepted by `telemetry stream --categories`.
+var streamFilterCategories = []string{"api", "console", "interaction", "network", "page", "system"}
+
+// eventCategory returns the category field from the event JSON.
+// Falls back to the type prefix if the field is absent (older API responses).
+// TODO(sdk): kernel-go-sdk should surface Category directly on BrowserTelemetryEventUnion.
+func eventCategory(ev kernel.BrowserTelemetryEventUnion) string {
+	var wire struct {
+		Category string `json:"category"`
+	}
+	if err := json.Unmarshal([]byte(ev.RawJSON()), &wire); err == nil && wire.Category != "" {
+		return wire.Category
+	}
+	prefix, _, ok := strings.Cut(ev.Type, "_")
+	if !ok {
+		return ev.Type
+	}
+	if prefix == "monitor" {
+		return "system"
+	}
+	return prefix
+}
+
+// shouldEmit applies client-side category/type filters to a telemetry event.
+func shouldEmit(category, eventType string, categories, types []string) bool {
+	if len(categories) > 0 && !slices.Contains(categories, category) {
+		return false
+	}
+	if len(types) > 0 && !slices.Contains(types, eventType) {
+		return false
+	}
+	return true
+}
+
+func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetryStreamInput) error {
+	if b.telemetry == nil {
+		return fmt.Errorf("telemetry service not available")
+	}
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+	if in.Seq != -1 && in.Seq < 1 {
+		return fmt.Errorf("invalid --seq value %d: must be >= 1 (resumes after sequence N; omit --seq to stream from now)", in.Seq)
+	}
+	for _, c := range in.Categories {
+		if !slices.Contains(streamFilterCategories, c) {
+			return fmt.Errorf("invalid --categories value %q: must be one of %s", c, strings.Join(streamFilterCategories, ", "))
+		}
+	}
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	params := kernel.BrowserTelemetryStreamParams{}
+	if in.Seq >= 0 {
+		params.LastEventID = kernel.Opt(strconv.FormatInt(in.Seq, 10))
+	}
+	stream := b.telemetry.StreamStreaming(ctx, br.SessionID, params)
+	defer stream.Close()
+	for stream.Next() {
+		ev := stream.Current()
+		cat := eventCategory(ev.Event)
+		if !shouldEmit(cat, ev.Event.Type, in.Categories, in.Types) {
+			continue
+		}
+		if in.Output == "json" {
+			if err := util.PrintCompactJSONLine(ev); err != nil {
+				return err
+			}
+			continue
+		}
+		ts := time.UnixMicro(ev.Event.Ts).Local().Format("2006-01-02 15:04:05")
+		pterm.Printf("%s\t[%s]\t%s\n", ts, cat, ev.Event.Type)
+	}
+	if err := stream.Err(); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+			return nil
+		}
+		return util.CleanedUpSdkError{Err: err}
+	}
+	return nil
+}
+
+func runBrowsersTelemetryStream(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	out, _ := cmd.Flags().GetString("output")
+	categories, _ := cmd.Flags().GetStringSlice("categories")
+	types, _ := cmd.Flags().GetStringSlice("types")
+	seq, _ := cmd.Flags().GetInt64("seq")
+	b := BrowsersCmd{browsers: &svc, telemetry: &svc.Telemetry}
+	return b.TelemetryStream(cmd.Context(), BrowsersTelemetryStreamInput{
+		Identifier: args[0],
+		Categories: categories,
+		Types:      types,
+		Seq:        seq,
+		Output:     out,
+	})
+}
