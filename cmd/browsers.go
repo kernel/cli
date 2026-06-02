@@ -175,6 +175,7 @@ type BrowsersCreateInput struct {
 	StartURL           string
 	Extensions         []string
 	Viewport           string
+	Telemetry          string
 	Output             string
 }
 
@@ -202,6 +203,7 @@ type BrowsersUpdateInput struct {
 	ProfileSaveChanges BoolFlag
 	Viewport           string
 	Force              bool
+	Telemetry          string
 	Output             string
 }
 
@@ -215,6 +217,7 @@ type BrowsersCmd struct {
 	logs       BrowserLogService
 	computer   BrowserComputerService
 	playwright BrowserPlaywrightService
+	telemetry  BrowserTelemetryService
 }
 
 type BrowsersListInput struct {
@@ -331,9 +334,6 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		return err
 	}
 
-	if in.Output != "json" {
-		pterm.Info.Println("Creating browser session...")
-	}
 	params := kernel.BrowserNewParams{}
 	if in.TimeoutSeconds > 0 {
 		params.TimeoutSeconds = kernel.Opt(int64(in.TimeoutSeconds))
@@ -410,6 +410,17 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		}
 	}
 
+	if in.Telemetry != "" {
+		t, err := buildNewTelemetryParam(in.Telemetry)
+		if err != nil {
+			return err
+		}
+		params.Telemetry = t
+	}
+
+	if in.Output != "json" {
+		pterm.Info.Println("Creating browser session...")
+	}
 	browser, err := b.browsers.New(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -576,8 +587,8 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	// Validate that at least one update option is provided
-	if !hasProxyChange && !hasProfileChange && !hasViewportChange {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --profile-id, --profile-name, or --viewport")
+	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" {
+		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --profile-id, --profile-name, --viewport, or --telemetry")
 	}
 
 	params := kernel.BrowserUpdateParams{}
@@ -600,6 +611,15 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		if in.ProfileSaveChanges.Set {
 			params.Profile.SaveChanges = kernel.Opt(in.ProfileSaveChanges.Value)
 		}
+	}
+
+	// Handle telemetry changes
+	if in.Telemetry != "" {
+		t, err := buildUpdateTelemetryParam(in.Telemetry)
+		if err != nil {
+			return err
+		}
+		params.Telemetry = t
 	}
 
 	// Handle viewport changes
@@ -2229,6 +2249,7 @@ func init() {
 	browsersUpdateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
 	browsersUpdateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersUpdateCmd.Flags().Bool("force", false, "Force viewport resize even when a live view or recording/replay is active")
+	browsersUpdateCmd.Flags().String("telemetry", "", "Update telemetry: --telemetry=all to enable, --telemetry=off to disable, --telemetry=network=on,page=off for per-category")
 
 	browsersCmd.AddCommand(browsersListCmd)
 	browsersCmd.AddCommand(browsersCreateCmd)
@@ -2494,6 +2515,7 @@ func init() {
 	browsersCreateCmd.Flags().Bool("viewport-interactive", false, "Interactively select viewport size from list")
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
+	browsersCreateCmd.Flags().String("telemetry", "", "Configure telemetry: --telemetry=all to enable, --telemetry=off to disable, --telemetry=network=on,page=off for per-category")
 
 	// curl
 	curlCmd := &cobra.Command{
@@ -2519,6 +2541,15 @@ followed automatically by Chromium.`,
 	curlCmd.Flags().BoolP("fail", "f", false, "Fail with no body output on HTTP errors")
 	curlCmd.Flags().BoolP("silent", "s", false, "Suppress progress output")
 	browsersCmd.AddCommand(curlCmd)
+
+	telemetryRoot := &cobra.Command{Use: "telemetry", Short: "Browser telemetry operations"}
+	telemetryStream := &cobra.Command{Use: "stream <id>", Short: "Stream live telemetry events", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStream}
+	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by API event category (api,console,interaction,network,page,system); system covers monitor_* and cdp_* events")
+	telemetryStream.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error)")
+	telemetryStream.Flags().Int64("seq", -1, "Resume after sequence number N (Last-Event-ID); replays events with seq > N. Default -1 streams from now")
+	telemetryStream.Flags().StringP("output", "o", "", "Output format: json for newline-delimited JSON envelopes")
+	telemetryRoot.AddCommand(telemetryStream)
+	browsersCmd.AddCommand(telemetryRoot)
 
 	// no flags for view; it takes a single positional argument
 }
@@ -2563,6 +2594,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	viewportInteractive, _ := cmd.Flags().GetBool("viewport-interactive")
 	poolID, _ := cmd.Flags().GetString("pool-id")
 	poolName, _ := cmd.Flags().GetString("pool-name")
+	telemetry, _ := cmd.Flags().GetString("telemetry")
 	output, _ := cmd.Flags().GetString("output")
 
 	if poolID != "" && poolName != "" {
@@ -2672,6 +2704,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		StartURL:           startURL,
 		Extensions:         extensions,
 		Viewport:           viewport,
+		Telemetry:          telemetry,
 		Output:             output,
 	}
 
@@ -2730,6 +2763,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	saveChanges, _ := cmd.Flags().GetBool("save-changes")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	force, _ := cmd.Flags().GetBool("force")
+	telemetry, _ := cmd.Flags().GetString("telemetry")
 
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
@@ -2742,6 +2776,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
 		Viewport:           viewport,
 		Force:              force,
+		Telemetry:          telemetry,
 		Output:             out,
 	})
 }
