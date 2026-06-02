@@ -82,8 +82,8 @@ type ExtensionsCmd struct {
 }
 
 func (e ExtensionsCmd) List(ctx context.Context, in ExtensionsListInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if in.Output != "json" {
@@ -301,8 +301,8 @@ func (e ExtensionsCmd) DownloadWebStore(ctx context.Context, in ExtensionsDownlo
 }
 
 func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if in.Dir == "" {
@@ -518,12 +518,12 @@ func init() {
 	extensionsCmd.AddCommand(extensionsUploadCmd)
 	extensionsCmd.AddCommand(extensionsBuildWebBotAuthCmd)
 
-	extensionsListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(extensionsListCmd)
 	extensionsDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 	extensionsDownloadCmd.Flags().String("to", "", "Output zip file path")
 	extensionsDownloadWebStoreCmd.Flags().String("to", "", "Output zip file path for the downloaded archive")
 	extensionsDownloadWebStoreCmd.Flags().String("os", "", "Target OS: mac, win, or linux (default linux)")
-	extensionsUploadCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(extensionsUploadCmd)
 	extensionsUploadCmd.Flags().String("name", "", "Optional unique extension name")
 	extensionsBuildWebBotAuthCmd.Flags().String("to", "./web-bot-auth", "Output directory for the prepared extension")
 	extensionsBuildWebBotAuthCmd.Flags().String("url", "http://127.0.0.1:10001", "Base URL for update.xml and policy templates")

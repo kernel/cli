@@ -35,11 +35,14 @@ var statusCmd = &cobra.Command{
 }
 
 func init() {
-	statusCmd.Flags().StringP("output", "o", "", "Output format (json)")
+	addJSONOutputFlag(statusCmd)
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
+	if err := validateJSONOutput(output); err != nil {
+		return err
+	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(util.GetBaseURL() + "/status")
