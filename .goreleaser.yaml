@@ -26,17 +26,15 @@ archives:
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
-brews:
+homebrew_casks:
   - name: kernel
     repository:
       owner: kernel
       name: homebrew-tap
       branch: main
-    directory: Formula
+    directory: Casks
     description: "Kernel CLI"
     homepage: "https://github.com/kernel/cli"
-    test: |
-      system "#{bin}/kernel", "--version"
 
 npms:
   - name: "@onkernel/cli"
