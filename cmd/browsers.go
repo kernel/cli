@@ -498,6 +498,9 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 
 	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.StartURL, browser.Name, browser.Tags)
+	if in.Telemetry != "" {
+		printTelemetrySummary(browser.Telemetry)
+	}
 	return nil
 }
 
@@ -731,6 +734,9 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	pterm.Success.Printf("Updated browser %s\n", browser.SessionID)
+	if in.Telemetry != "" {
+		printTelemetrySummary(browser.Telemetry)
+	}
 	return nil
 }
 
@@ -2325,7 +2331,7 @@ func init() {
 	browsersUpdateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
 	browsersUpdateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersUpdateCmd.Flags().Bool("force", false, "Force viewport resize even when a live view or recording/replay is active")
-	browsersUpdateCmd.Flags().String("telemetry", "", "Update telemetry: --telemetry=all to enable, --telemetry=off to disable, --telemetry=network=on,page=off for per-category")
+	browsersUpdateCmd.Flags().String("telemetry", "", "Update telemetry (opt-in, replaces current selection): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
 
 	browsersCmd.AddCommand(browsersListCmd)
 	browsersCmd.AddCommand(browsersCreateCmd)
@@ -2591,7 +2597,7 @@ func init() {
 	browsersCreateCmd.Flags().Bool("viewport-interactive", false, "Interactively select viewport size from list")
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
-	browsersCreateCmd.Flags().String("telemetry", "", "Configure telemetry: --telemetry=all to enable, --telemetry=off to disable, --telemetry=network=on,page=off for per-category")
+	browsersCreateCmd.Flags().String("telemetry", "", "Configure telemetry (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
 	browsersCreateCmd.Flags().String("name", "", "Optional unique name for the browser session (used to find it later; set at creation only)")
 	browsersCreateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the session (repeatable; up to 50 pairs)")
 
@@ -2622,7 +2628,7 @@ followed automatically by Chromium.`,
 
 	telemetryRoot := &cobra.Command{Use: "telemetry", Short: "Browser telemetry operations"}
 	telemetryStream := &cobra.Command{Use: "stream <id>", Short: "Stream live telemetry events", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStream}
-	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by API event category (api,console,interaction,network,page,system); system covers monitor_* and cdp_* events")
+	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,connection,system,screenshot,captcha,monitor)")
 	telemetryStream.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error)")
 	telemetryStream.Flags().Int64("seq", -1, "Resume after sequence number N (Last-Event-ID); replays events with seq > N. Default -1 streams from now")
 	telemetryStream.Flags().StringP("output", "o", "", "Output format: json for newline-delimited JSON envelopes")

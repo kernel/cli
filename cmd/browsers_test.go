@@ -1803,16 +1803,16 @@ func TestBrowsersCreate_WithTelemetryCategories(t *testing.T) {
 	}}
 	b := BrowsersCmd{browsers: fake}
 
-	err := b.Create(context.Background(), BrowsersCreateInput{Telemetry: "network=on,page=off"})
+	err := b.Create(context.Background(), BrowsersCreateInput{Telemetry: "network,page"})
 
 	assert.NoError(t, err)
-	assert.False(t, captured.Telemetry.Enabled.Valid(), "per-category must omit Enabled so the API merges")
+	assert.False(t, captured.Telemetry.Enabled.Valid(), "an opt-in selection must omit Enabled so the API captures exactly the listed categories")
 	assert.True(t, captured.Telemetry.Browser.Network.Enabled.Valid())
 	assert.True(t, captured.Telemetry.Browser.Network.Enabled.Value)
 	assert.True(t, captured.Telemetry.Browser.Page.Enabled.Valid())
-	assert.False(t, captured.Telemetry.Browser.Page.Enabled.Value)
-	assert.False(t, captured.Telemetry.Browser.Console.Enabled.Valid())
-	assert.False(t, captured.Telemetry.Browser.Interaction.Enabled.Valid())
+	assert.True(t, captured.Telemetry.Browser.Page.Enabled.Value)
+	assert.False(t, captured.Telemetry.Browser.Console.Enabled.Valid(), "unlisted categories stay omitted")
+	assert.False(t, captured.Telemetry.Browser.Interaction.Enabled.Valid(), "unlisted categories stay omitted")
 }
 
 func TestBrowsersCreate_WithTelemetryOff(t *testing.T) {

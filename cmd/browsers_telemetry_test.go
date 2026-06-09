@@ -254,32 +254,6 @@ func makeEvent(t *testing.T, raw string) kernel.BrowserTelemetryEventUnion {
 	return ev
 }
 
-func TestEventCategory(t *testing.T) {
-	cases := []struct {
-		raw  string
-		want string
-	}{
-		// Wire category wins when present.
-		{`{"type":"network_response","category":"network","ts":0}`, "network"},
-		{`{"type":"monitor_screenshot","category":"system","ts":0}`, "system"},
-		// Wire category overrides what a naive type-prefix split would return,
-		// e.g. cdp_* events the server classifies as system.
-		{`{"type":"cdp_attached","category":"system","ts":0}`, "system"},
-		// Fallback to prefix when wire category is absent.
-		{`{"type":"monitor_screenshot","ts":0}`, "system"},
-		{`{"type":"monitor_disconnected","ts":0}`, "system"},
-		{`{"type":"network_response","ts":0}`, "network"},
-		{`{"type":"console_log","ts":0}`, "console"},
-		{`{"type":"page_navigation","ts":0}`, "page"},
-		{`{"type":"interaction_click","ts":0}`, "interaction"},
-		{`{"type":"nounderscore","ts":0}`, "nounderscore"},
-	}
-	for _, tc := range cases {
-		ev := makeEvent(t, tc.raw)
-		assert.Equal(t, tc.want, eventCategory(ev), "type=%s", ev.Type)
-	}
-}
-
 func TestShouldEmit(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -291,7 +265,8 @@ func TestShouldEmit(t *testing.T) {
 		{"no filters passes", `{"type":"network_response","category":"network","ts":0}`, nil, nil, true},
 		{"matching category passes", `{"type":"network_response","category":"network","ts":0}`, []string{"network"}, nil, true},
 		{"non-matching category drops", `{"type":"console_log","category":"console","ts":0}`, []string{"network"}, nil, false},
-		{"system category matches monitor_screenshot", `{"type":"monitor_screenshot","category":"system","ts":0}`, []string{"system"}, nil, true},
+		{"monitor category matches monitor_disconnected", `{"type":"monitor_disconnected","category":"monitor","ts":0}`, []string{"monitor"}, nil, true},
+		{"connection category matches cdp_connect", `{"type":"cdp_connect","category":"connection","ts":0}`, []string{"connection"}, nil, true},
 		{"matching type passes", `{"type":"console_log","category":"console","ts":0}`, nil, []string{"console_log"}, true},
 		{"non-matching type drops", `{"type":"network_response","category":"network","ts":0}`, nil, []string{"console_log"}, false},
 		{"both filters pass when both match", `{"type":"network_response","category":"network","ts":0}`, []string{"network"}, []string{"network_response"}, true},
@@ -300,52 +275,47 @@ func TestShouldEmit(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ev := makeEvent(t, tc.raw)
-			assert.Equal(t, tc.want, shouldEmit(eventCategory(ev), ev.Type, tc.categories, tc.types))
+			assert.Equal(t, tc.want, shouldEmit(ev.Category, ev.Type, tc.categories, tc.types))
 		})
 	}
 }
 
-func TestParseTelemetryCategories_PartialCategories(t *testing.T) {
-	p, err := parseTelemetryCategories("network=on,page=off")
+func TestParseTelemetryCategories_OptInList(t *testing.T) {
+	p, err := parseTelemetryCategories("network,control,captcha")
 
 	assert.NoError(t, err)
-	assert.True(t, p.Network.Enabled.Valid())
-	assert.True(t, p.Network.Enabled.Value)
-	assert.True(t, p.Page.Enabled.Valid())
-	assert.False(t, p.Page.Enabled.Value)
-	// Unspecified categories omitted — server retains their state
+	// Listed categories are enabled.
+	for _, c := range []kernel.BrowserTelemetryCategoryConfigParam{p.Network, p.Control, p.Captcha} {
+		assert.True(t, c.Enabled.Valid())
+		assert.True(t, c.Enabled.Value)
+	}
+	// Unlisted categories are omitted (opt-in: the instance treats them as off).
 	assert.False(t, p.Console.Enabled.Valid())
-	assert.False(t, p.Interaction.Enabled.Valid())
+	assert.False(t, p.Page.Enabled.Valid())
+	assert.False(t, p.Screenshot.Enabled.Valid())
 }
 
 func TestParseTelemetryCategories_InvalidCategory(t *testing.T) {
-	_, err := parseTelemetryCategories("foo=on")
+	_, err := parseTelemetryCategories("foo")
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown category")
 }
 
-func TestParseTelemetryCategories_InvalidValue(t *testing.T) {
-	_, err := parseTelemetryCategories("network=yes")
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), `must be "on" or "off"`)
-}
-
 func TestParseTelemetryCategories_WhitespaceTolerance(t *testing.T) {
-	p, err := parseTelemetryCategories(" network = on , page = off ")
+	p, err := parseTelemetryCategories(" network , page ")
 
 	assert.NoError(t, err)
 	assert.True(t, p.Network.Enabled.Valid())
 	assert.True(t, p.Network.Enabled.Value)
 	assert.True(t, p.Page.Enabled.Valid())
-	assert.False(t, p.Page.Enabled.Value)
+	assert.True(t, p.Page.Enabled.Value)
 }
 
-// TestBuildTelemetryParam_WireEncoding locks in the three distinct wire shapes
-// the API expects: enable-all sets Enabled=true without Browser, disable-all
-// sets Enabled=false without Browser, and per-category sets only Browser so the
-// API treats it as a merge rather than a replace.
+// TestBuildTelemetryParam_WireEncoding locks in the three wire shapes the API
+// expects: "all" sets Enabled=true without Browser (default set), "off" sets
+// Enabled=false without Browser, and an opt-in list sets only Browser with the
+// listed categories enabled (Enabled unset).
 func TestBuildTelemetryParam_WireEncoding(t *testing.T) {
 	t.Run("all", func(t *testing.T) {
 		p, err := buildNewTelemetryParam("all")
@@ -361,11 +331,22 @@ func TestBuildTelemetryParam_WireEncoding(t *testing.T) {
 		assert.False(t, p.Enabled.Value)
 		assert.False(t, p.Browser.Network.Enabled.Valid())
 	})
-	t.Run("per-category omits Enabled so API merges", func(t *testing.T) {
-		p, err := buildNewTelemetryParam("network=off")
+	t.Run("opt-in list sets only Browser", func(t *testing.T) {
+		p, err := buildNewTelemetryParam("network,control")
 		assert.NoError(t, err)
-		assert.False(t, p.Enabled.Valid(), "Enabled must be unset so API takes the merge path")
+		assert.False(t, p.Enabled.Valid(), "Enabled must be unset for an opt-in selection")
 		assert.True(t, p.Browser.Network.Enabled.Valid())
-		assert.False(t, p.Browser.Network.Enabled.Value)
+		assert.True(t, p.Browser.Network.Enabled.Value)
+		assert.True(t, p.Browser.Control.Enabled.Valid())
+		assert.True(t, p.Browser.Control.Enabled.Value)
 	})
+}
+
+func TestTelemetryEnabledCategories(t *testing.T) {
+	var cfg kernel.BrowserTelemetryConfig
+	raw := `{"browser":{"control":{"enabled":true},"system":{"enabled":true},"network":{"enabled":false}}}`
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	assert.Equal(t, []string{"control", "system"}, telemetryEnabledCategories(cfg))
 }
