@@ -457,10 +457,9 @@ Per-category updates are partial — only categories you name are changed; other
   - `--country <code>` - ISO 3166 country code or "EU" (location-based types)
   - `--city <name>` - City name (no spaces, e.g. sanfrancisco) (residential, mobile; requires `--country`)
   - `--state <code>` - Two-letter state code (residential, mobile)
-  - `--zip <zip>` - US ZIP code (residential, mobile)
-  - `--asn <asn>` - Autonomous system number (e.g., AS15169) (residential, mobile)
+  - `--zip <zip>` - US ZIP code (residential)
+  - `--asn <asn>` - Autonomous system number (e.g., AS15169) (residential)
   - `--os <os>` - Operating system: windows, macos, android (residential)
-  - `--carrier <carrier>` - Mobile carrier (mobile)
   - `--host <host>` - Proxy host (custom; required)
   - `--port <port>` - Proxy port (custom; required)
   - `--username <username>` - Username for proxy authentication (custom)
@@ -781,8 +780,8 @@ kernel proxies create --type custom --host proxy.example.com --port 8080 --usern
 # Create a residential proxy with location and OS
 kernel proxies create --type residential --country US --city sanfrancisco --state CA --zip 94107 --asn AS15169 --os windows --name "SF Residential"
 
-# Create a mobile proxy with carrier
-kernel proxies create --type mobile --country US --carrier verizon --name "US Mobile"
+# Create a mobile proxy
+kernel proxies create --type mobile --country US --city sanfrancisco --name "US Mobile"
 
 # Get proxy details
 kernel proxies get prx_123

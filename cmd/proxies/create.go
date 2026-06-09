@@ -48,25 +48,25 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 	// Build config based on type
 	switch proxyType {
 	case kernel.ProxyNewParamsTypeDatacenter:
-		config := kernel.ProxyNewParamsConfigDatacenterProxyConfig{}
+		config := kernel.ProxyNewParamsConfigDatacenter{}
 		if in.Country != "" {
 			config.Country = kernel.Opt(in.Country)
 		}
 		params.Config = kernel.ProxyNewParamsConfigUnion{
-			OfProxyNewsConfigDatacenterProxyConfig: &config,
+			OfDatacenter: &config,
 		}
 
 	case kernel.ProxyNewParamsTypeIsp:
-		config := kernel.ProxyNewParamsConfigIspProxyConfig{}
+		config := kernel.ProxyNewParamsConfigIsp{}
 		if in.Country != "" {
 			config.Country = kernel.Opt(in.Country)
 		}
 		params.Config = kernel.ProxyNewParamsConfigUnion{
-			OfProxyNewsConfigIspProxyConfig: &config,
+			OfIsp: &config,
 		}
 
 	case kernel.ProxyNewParamsTypeResidential:
-		config := kernel.ProxyNewParamsConfigResidentialProxyConfig{}
+		config := kernel.ProxyNewParamsConfigResidential{}
 
 		// Validate that if city is provided, country must also be provided
 		if in.City != "" && in.Country == "" {
@@ -98,15 +98,18 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 			}
 		}
 		params.Config = kernel.ProxyNewParamsConfigUnion{
-			OfProxyNewsConfigResidentialProxyConfig: &config,
+			OfResidential: &config,
 		}
 
 	case kernel.ProxyNewParamsTypeMobile:
-		config := kernel.ProxyNewParamsConfigMobileProxyConfig{}
+		config := kernel.ProxyNewParamsConfigMobile{}
 
 		// Validate that if city is provided, country must also be provided
 		if in.City != "" && in.Country == "" {
 			return fmt.Errorf("--country is required when --city is specified")
+		}
+		if in.Zip != "" || in.ASN != "" {
+			pterm.Warning.Println("--zip and --asn are not supported for mobile proxies and will be ignored")
 		}
 
 		if in.Country != "" {
@@ -118,18 +121,8 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 		if in.State != "" {
 			config.State = kernel.Opt(in.State)
 		}
-		if in.Zip != "" {
-			config.Zip = kernel.Opt(in.Zip)
-		}
-		if in.ASN != "" {
-			config.Asn = kernel.Opt(in.ASN)
-		}
-		if in.Carrier != "" {
-			// The API will validate the carrier value
-			config.Carrier = in.Carrier
-		}
 		params.Config = kernel.ProxyNewParamsConfigUnion{
-			OfProxyNewsConfigMobileProxyConfig: &config,
+			OfMobile: &config,
 		}
 
 	case kernel.ProxyNewParamsTypeCustom:
@@ -140,7 +133,7 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 			return fmt.Errorf("--port is required for custom proxy type")
 		}
 
-		config := kernel.ProxyNewParamsConfigCreateCustomProxyConfig{
+		config := kernel.ProxyNewParamsConfigCustom{
 			Host: in.Host,
 			Port: int64(in.Port),
 		}
@@ -151,7 +144,7 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 			config.Password = kernel.Opt(in.Password)
 		}
 		params.Config = kernel.ProxyNewParamsConfigUnion{
-			OfProxyNewsConfigCreateCustomProxyConfig: &config,
+			OfCustom: &config,
 		}
 	}
 
@@ -219,7 +212,6 @@ func runProxiesCreate(cmd *cobra.Command, args []string) error {
 	zip, _ := cmd.Flags().GetString("zip")
 	asn, _ := cmd.Flags().GetString("asn")
 	os, _ := cmd.Flags().GetString("os")
-	carrier, _ := cmd.Flags().GetString("carrier")
 	host, _ := cmd.Flags().GetString("host")
 	port, _ := cmd.Flags().GetInt("port")
 	username, _ := cmd.Flags().GetString("username")
@@ -241,7 +233,6 @@ func runProxiesCreate(cmd *cobra.Command, args []string) error {
 		Zip:         zip,
 		ASN:         asn,
 		OS:          os,
-		Carrier:     carrier,
 		Host:        host,
 		Port:        port,
 		Username:    username,
