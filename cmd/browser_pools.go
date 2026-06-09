@@ -354,7 +354,26 @@ func (c BrowserPoolsCmd) Delete(ctx context.Context, in BrowserPoolsDeleteInput)
 type BrowserPoolsAcquireInput struct {
 	IDOrName       string
 	TimeoutSeconds int64
+	Name           string
+	Tags           map[string]string
 	Output         string
+}
+
+// buildAcquireParams builds the SDK params for acquiring a browser from a pool.
+// Shared by `browser-pools acquire` and the `browsers create --pool-id/--pool-name`
+// path so the per-lease name/tags forwarding cannot silently diverge between them.
+func buildAcquireParams(name string, tags map[string]string, timeoutSeconds int64) kernel.BrowserPoolAcquireParams {
+	params := kernel.BrowserPoolAcquireParams{}
+	if timeoutSeconds > 0 {
+		params.AcquireTimeoutSeconds = kernel.Int(timeoutSeconds)
+	}
+	if name != "" {
+		params.Name = kernel.Opt(name)
+	}
+	if len(tags) > 0 {
+		params.Tags = kernel.Tags(tags)
+	}
+	return params
 }
 
 func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInput) error {
@@ -362,10 +381,7 @@ func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInpu
 		return err
 	}
 
-	params := kernel.BrowserPoolAcquireParams{}
-	if in.TimeoutSeconds > 0 {
-		params.AcquireTimeoutSeconds = kernel.Int(in.TimeoutSeconds)
-	}
+	params := buildAcquireParams(in.Name, in.Tags, in.TimeoutSeconds)
 	resp, err := c.client.Acquire(ctx, in.IDOrName, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -386,11 +402,19 @@ func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInpu
 	tableData := pterm.TableData{
 		{"Property", "Value"},
 		{"Session ID", resp.SessionID},
-		{"CDP WebSocket URL", resp.CdpWsURL},
-		{"Live View URL", resp.BrowserLiveViewURL},
 	}
+	if resp.Name != "" {
+		tableData = append(tableData, []string{"Name", resp.Name})
+	}
+	tableData = append(tableData,
+		[]string{"CDP WebSocket URL", resp.CdpWsURL},
+		[]string{"Live View URL", resp.BrowserLiveViewURL},
+	)
 	if resp.StartURL != "" {
 		tableData = append(tableData, []string{"Start URL", resp.StartURL})
+	}
+	if len(resp.Tags) > 0 {
+		tableData = append(tableData, []string{"Tags", formatTags(resp.Tags)})
 	}
 	PrintTableNoPad(tableData, true)
 	return nil
@@ -541,6 +565,8 @@ func init() {
 	browserPoolsDeleteCmd.Flags().Bool("force", false, "Force delete even if browsers are leased")
 
 	browserPoolsAcquireCmd.Flags().Int64("timeout", 0, "Acquire timeout in seconds")
+	browserPoolsAcquireCmd.Flags().String("name", "", "Optional name for the acquired session (applies to this lease; cleared on release)")
+	browserPoolsAcquireCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the acquired session (repeatable; applies to this lease)")
 	addJSONOutputFlag(browserPoolsAcquireCmd)
 
 	browserPoolsReleaseCmd.Flags().String("session-id", "", "Browser session ID to release")
@@ -676,9 +702,17 @@ func runBrowserPoolsDelete(cmd *cobra.Command, args []string) error {
 func runBrowserPoolsAcquire(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	timeout, _ := cmd.Flags().GetInt64("timeout")
+	name, _ := cmd.Flags().GetString("name")
+	tags := tagsFromFlag(cmd, "tag")
 	output, _ := cmd.Flags().GetString("output")
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
-	return c.Acquire(cmd.Context(), BrowserPoolsAcquireInput{IDOrName: args[0], TimeoutSeconds: timeout, Output: output})
+	return c.Acquire(cmd.Context(), BrowserPoolsAcquireInput{
+		IDOrName:       args[0],
+		TimeoutSeconds: timeout,
+		Name:           name,
+		Tags:           tags,
+		Output:         output,
+	})
 }
 
 func runBrowserPoolsRelease(cmd *cobra.Command, args []string) error {

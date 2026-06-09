@@ -20,6 +20,7 @@ import (
 	"github.com/kernel/kernel-go-sdk/packages/ssestream"
 	"github.com/kernel/kernel-go-sdk/shared"
 	"github.com/pterm/pterm"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -447,6 +448,140 @@ func TestBrowsersList_WithQuery_PassesParam(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, captured.Query.Valid())
 	assert.Equal(t, "sess-matched", captured.Query.Value)
+}
+
+func TestBrowsersCreate_WithNameAndTags(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{
+				SessionID: "sess-new",
+				CdpWsURL:  "ws://cdp-new",
+				Name:      "my-session",
+				Tags:      kernel.Tags{"team": "backend", "env": "staging"},
+			}, nil
+		},
+	}
+
+	b := BrowsersCmd{browsers: fake}
+	err := b.Create(context.Background(), BrowsersCreateInput{
+		Name: "my-session",
+		Tags: map[string]string{"team": "backend", "env": "staging"},
+	})
+	assert.NoError(t, err)
+
+	// Name and tags are forwarded to the SDK request.
+	assert.True(t, captured.Name.Valid())
+	assert.Equal(t, "my-session", captured.Name.Value)
+	assert.Equal(t, "backend", captured.Tags["team"])
+	assert.Equal(t, "staging", captured.Tags["env"])
+
+	// And surfaced in the result table (tags rendered sorted).
+	out := outBuf.String()
+	assert.Contains(t, out, "my-session")
+	assert.Contains(t, out, "Tags")
+	assert.Contains(t, out, "env=staging, team=backend")
+}
+
+func TestBrowsersList_WithTags_PassesParamAndShowsName(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserListParams
+	fake := &FakeBrowsersService{
+		ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
+			captured = query
+			return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: []kernel.BrowserListResponse{
+				{SessionID: "sess-1", Name: "alpha"},
+			}}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+	err := b.List(context.Background(), BrowsersListInput{Tags: map[string]string{"team": "backend"}})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "backend", captured.Tags["team"])
+
+	// The Name column is populated.
+	out := outBuf.String()
+	assert.Contains(t, out, "alpha")
+}
+
+func TestBrowsersGet_ShowsNameAndTags(t *testing.T) {
+	setupStdoutCapture(t)
+
+	fake := &FakeBrowsersService{
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			// Lookup works by id or name; echo it back.
+			return &kernel.BrowserGetResponse{
+				SessionID: "sess-1",
+				CdpWsURL:  "ws://cdp-1",
+				Name:      "my-session",
+				Tags:      kernel.Tags{"env": "prod"},
+			}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+	err := b.Get(context.Background(), BrowsersGetInput{Identifier: "my-session"})
+
+	assert.NoError(t, err)
+	out := outBuf.String()
+	assert.Contains(t, out, "my-session")
+	assert.Contains(t, out, "Tags")
+	assert.Contains(t, out, "env=prod")
+}
+
+func TestParseKeyValueSpecs(t *testing.T) {
+	tags, malformed := parseKeyValueSpecs([]string{"team=backend", "env=staging", "bad", "=novalue", "k=v=w"})
+
+	assert.Equal(t, map[string]string{"team": "backend", "env": "staging", "k": "v=w"}, tags)
+	assert.Equal(t, []string{"bad", "=novalue"}, malformed)
+}
+
+func TestTagsFromFlag_WarnsOnMalformed(t *testing.T) {
+	setupStdoutCapture(t)
+
+	cmd := &cobra.Command{}
+	cmd.Flags().StringArray("tag", []string{"team=backend", "oops", "env=staging"}, "")
+
+	tags := tagsFromFlag(cmd, "tag")
+
+	assert.Equal(t, map[string]string{"team": "backend", "env": "staging"}, tags)
+	assert.Contains(t, outBuf.String(), "Ignoring malformed tag: oops")
+}
+
+func TestBrowsersGet_JSONOutput_IncludesNameAndTags(t *testing.T) {
+	setupStdoutCapture(t)
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	t.Cleanup(func() { os.Stdout = oldStdout })
+
+	fake := &FakeBrowsersService{
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			// Unmarshal so RawJSON() (used by the json output path) is populated.
+			jsonData := `{"session_id":"sess-json","cdp_ws_url":"ws://cdp","name":"my-session","tags":{"env":"prod"},"created_at":"2024-01-01T00:00:00Z","headless":false,"stealth":false,"timeout_seconds":60}`
+			var resp kernel.BrowserGetResponse
+			if err := json.Unmarshal([]byte(jsonData), &resp); err != nil {
+				t.Fatalf("failed to unmarshal test response: %v", err)
+			}
+			return &resp, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+	_ = b.Get(context.Background(), BrowsersGetInput{Identifier: "my-session", Output: "json"})
+
+	w.Close()
+	var stdoutBuf bytes.Buffer
+	io.Copy(&stdoutBuf, r)
+
+	out := stdoutBuf.String()
+	assert.Contains(t, out, "\"name\"")
+	assert.Contains(t, out, "my-session")
+	assert.Contains(t, out, "\"tags\"")
+	assert.Contains(t, out, "prod")
 }
 
 func TestBrowsersCreate_PrintsResponse(t *testing.T) {

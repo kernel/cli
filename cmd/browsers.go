@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -31,11 +32,11 @@ import (
 // BrowsersService defines the subset of the Kernel SDK browser client that we use.
 // See https://github.com/kernel/kernel-go-sdk/blob/main/browser.go
 type BrowsersService interface {
-	Get(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (res *kernel.BrowserGetResponse, err error)
+	Get(ctx context.Context, idOrName string, query kernel.BrowserGetParams, opts ...option.RequestOption) (res *kernel.BrowserGetResponse, err error)
 	List(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.BrowserListResponse], err error)
 	New(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (res *kernel.BrowserNewResponse, err error)
-	Update(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (res *kernel.BrowserUpdateResponse, err error)
-	DeleteByID(ctx context.Context, id string, opts ...option.RequestOption) (err error)
+	Update(ctx context.Context, idOrName string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (res *kernel.BrowserUpdateResponse, err error)
+	DeleteByID(ctx context.Context, idOrName string, opts ...option.RequestOption) (err error)
 	HTTPClient(id string, opts ...option.RequestOption) (*http.Client, error)
 	LoadExtensions(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) (err error)
 }
@@ -160,6 +161,58 @@ func parseViewport(viewport string) (width, height, refreshRate int64, err error
 	return w, h, refreshRate, nil
 }
 
+// parseKeyValueSpecs parses repeated KEY=VALUE flag values into a map. It
+// returns the parsed pairs along with any specs that were malformed (missing
+// "=" or an empty key), mirroring the kernel hypeman CLI convention.
+func parseKeyValueSpecs(specs []string) (map[string]string, []string) {
+	values := make(map[string]string)
+	var malformed []string
+	for _, spec := range specs {
+		parts := strings.SplitN(spec, "=", 2)
+		if len(parts) != 2 || parts[0] == "" {
+			malformed = append(malformed, spec)
+			continue
+		}
+		values[parts[0]] = parts[1]
+	}
+	return values, malformed
+}
+
+// tagsFromFlag reads a repeated KEY=VALUE flag and parses it into a map,
+// warning about any malformed entries. Returns nil when no valid tags are set.
+func tagsFromFlag(cmd *cobra.Command, flagName string) map[string]string {
+	specs, _ := cmd.Flags().GetStringArray(flagName)
+	if len(specs) == 0 {
+		return nil
+	}
+	tags, malformed := parseKeyValueSpecs(specs)
+	for _, invalid := range malformed {
+		pterm.Warning.Printf("Ignoring malformed tag: %s\n", invalid)
+	}
+	if len(tags) == 0 {
+		return nil
+	}
+	return tags
+}
+
+// formatTags renders tags as a deterministic "k=v, k2=v2" string with keys
+// sorted, for display in detail tables.
+func formatTags(tags kernel.Tags) string {
+	if len(tags) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(tags))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%s", k, tags[k]))
+	}
+	return strings.Join(parts, ", ")
+}
+
 // Inputs for each command
 type BrowsersCreateInput struct {
 	TimeoutSeconds     int
@@ -176,6 +229,8 @@ type BrowsersCreateInput struct {
 	Extensions         []string
 	Viewport           string
 	Telemetry          string
+	Name               string
+	Tags               map[string]string
 	Output             string
 }
 
@@ -227,6 +282,7 @@ type BrowsersListInput struct {
 	Limit          int
 	Offset         int
 	Query          string
+	Tags           map[string]string
 }
 
 func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
@@ -259,6 +315,9 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	if in.Query != "" {
 		params.Query = kernel.Opt(in.Query)
 	}
+	if len(in.Tags) > 0 {
+		params.Tags = in.Tags
+	}
 
 	page, err := b.browsers.List(ctx, params)
 	if err != nil {
@@ -280,7 +339,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	}
 
 	// Prepare table data
-	headers := []string{"Browser ID", "Created At", "Profile", "Pool", "CDP WS URL", "Live View URL"}
+	headers := []string{"Browser ID", "Name", "Created At", "Profile", "Pool", "CDP WS URL", "Live View URL"}
 	showDeletedAt := in.IncludeDeleted || in.Status == "deleted" || in.Status == "all"
 	if showDeletedAt {
 		headers = append(headers, "Deleted At")
@@ -304,6 +363,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 
 		row := []string{
 			browser.SessionID,
+			util.OrDash(browser.Name),
 			util.FormatLocal(browser.CreatedAt),
 			profile,
 			pool,
@@ -418,6 +478,13 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		params.Telemetry = t
 	}
 
+	if in.Name != "" {
+		params.Name = kernel.Opt(in.Name)
+	}
+	if len(in.Tags) > 0 {
+		params.Tags = kernel.Tags(in.Tags)
+	}
+
 	if in.Output != "json" {
 		pterm.Info.Println("Creating browser session...")
 	}
@@ -430,22 +497,25 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		return util.PrintPrettyJSON(browser)
 	}
 
-	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.StartURL)
+	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.StartURL, browser.Name, browser.Tags)
 	return nil
 }
 
-func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, startURL string) {
-	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, profile, startURL)
+func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, startURL, name string, tags kernel.Tags) {
+	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, profile, startURL, name, tags)
 	PrintTableNoPad(tableData, true)
 }
 
 // buildBrowserTableData creates a base table with common browser session fields.
-func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, startURL string) pterm.TableData {
+func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, startURL, name string, tags kernel.Tags) pterm.TableData {
 	tableData := pterm.TableData{
 		{"Property", "Value"},
 		{"Session ID", sessionID},
-		{"CDP WebSocket URL", cdpURL},
 	}
+	if name != "" {
+		tableData = append(tableData, []string{"Name", name})
+	}
+	tableData = append(tableData, []string{"CDP WebSocket URL", cdpURL})
 	if liveViewURL != "" {
 		tableData = append(tableData, []string{"Live View URL", liveViewURL})
 	}
@@ -458,6 +528,9 @@ func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, profile kernel
 	}
 	if startURL != "" {
 		tableData = append(tableData, []string{"Start URL", startURL})
+	}
+	if len(tags) > 0 {
+		tableData = append(tableData, []string{"Tags", formatTags(tags)})
 	}
 	return tableData
 }
@@ -530,6 +603,8 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		browser.BrowserLiveViewURL,
 		browser.Profile,
 		browser.StartURL,
+		browser.Name,
+		browser.Tags,
 	)
 
 	// Append additional detailed fields
@@ -2179,30 +2254,30 @@ var browsersCreateCmd = &cobra.Command{
 }
 
 var browsersDeleteCmd = &cobra.Command{
-	Use:   "delete <id> [ids...]",
-	Short: "Delete a browser",
+	Use:   "delete <id-or-name> [ids-or-names...]",
+	Short: "Delete a browser by ID or name",
 	Args:  cobra.MinimumNArgs(1),
 	RunE:  runBrowsersDelete,
 }
 
 var browsersViewCmd = &cobra.Command{
-	Use:   "view <id>",
-	Short: "Get the live view URL for a browser",
+	Use:   "view <id-or-name>",
+	Short: "Get the live view URL for a browser by ID or name",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runBrowsersView,
 }
 
 var browsersGetCmd = &cobra.Command{
-	Use:   "get <id>",
-	Short: "Get detailed information about a browser session",
-	Long:  "Retrieve and display detailed information about a specific browser session including configuration, URLs, and status.",
+	Use:   "get <id-or-name>",
+	Short: "Get detailed information about a browser session by ID or name",
+	Long:  "Retrieve and display detailed information about a specific browser session (by ID or name) including configuration, URLs, and status.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runBrowsersGet,
 }
 
 var browsersUpdateCmd = &cobra.Command{
-	Use:   "update <id>",
-	Short: "Update a browser session",
+	Use:   "update <id-or-name>",
+	Short: "Update a browser session by ID or name",
 	Long: `Update a running browser session.
 
 Supported operations:
@@ -2214,10 +2289,10 @@ Supported operations:
 Note: Profiles can only be loaded into sessions that don't already have a profile.`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
-			return fmt.Errorf("missing required argument: browser ID\n\nUsage: kernel browsers update <id> [flags]")
+			return fmt.Errorf("missing required argument: browser ID or name\n\nUsage: kernel browsers update <id-or-name> [flags]")
 		}
 		if len(args) > 1 {
-			return fmt.Errorf("expected 1 argument (browser ID), got %d", len(args))
+			return fmt.Errorf("expected 1 argument (browser ID or name), got %d", len(args))
 		}
 		return nil
 	},
@@ -2231,7 +2306,8 @@ func init() {
 	browsersListCmd.Flags().String("status", "", "Filter by status: 'active' (default), 'deleted', or 'all'")
 	browsersListCmd.Flags().Int("limit", 0, "Maximum number of results to return (default 20, max 100)")
 	browsersListCmd.Flags().Int("offset", 0, "Number of results to skip (for pagination)")
-	browsersListCmd.Flags().String("query", "", "Search browsers by session ID, profile ID, or proxy ID")
+	browsersListCmd.Flags().String("query", "", "Search browsers by name, session ID, profile ID, proxy ID, or pool name")
+	browsersListCmd.Flags().StringArray("tag", nil, "Filter by tag KEY=VALUE (repeatable; a session must match every pair)")
 
 	// get flags
 	addJSONOutputFlag(browsersGetCmd)
@@ -2516,6 +2592,8 @@ func init() {
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
 	browsersCreateCmd.Flags().String("telemetry", "", "Configure telemetry: --telemetry=all to enable, --telemetry=off to disable, --telemetry=network=on,page=off for per-category")
+	browsersCreateCmd.Flags().String("name", "", "Optional unique name for the browser session (used to find it later; set at creation only)")
+	browsersCreateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the session (repeatable; up to 50 pairs)")
 
 	// curl
 	curlCmd := &cobra.Command{
@@ -2564,6 +2642,7 @@ func runBrowsersList(cmd *cobra.Command, args []string) error {
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
 	query, _ := cmd.Flags().GetString("query")
+	tags := tagsFromFlag(cmd, "tag")
 	return b.List(cmd.Context(), BrowsersListInput{
 		Output:         out,
 		IncludeDeleted: includeDeleted,
@@ -2571,6 +2650,7 @@ func runBrowsersList(cmd *cobra.Command, args []string) error {
 		Limit:          limit,
 		Offset:         offset,
 		Query:          query,
+		Tags:           tags,
 	})
 }
 
@@ -2595,6 +2675,8 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	poolID, _ := cmd.Flags().GetString("pool-id")
 	poolName, _ := cmd.Flags().GetString("pool-name")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
+	name, _ := cmd.Flags().GetString("name")
+	tags := tagsFromFlag(cmd, "tag")
 	output, _ := cmd.Flags().GetString("output")
 
 	if poolID != "" && poolName != "" {
@@ -2603,11 +2685,14 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	if poolID != "" || poolName != "" {
-		// When using a pool, configuration comes from the pool itself.
+		// When using a pool, configuration comes from the pool itself, but
+		// name and tags apply per-lease to the acquired session.
 		allowedFlags := map[string]bool{
 			"pool-id":   true,
 			"pool-name": true,
 			"timeout":   true,
+			"name":      true,
+			"tag":       true,
 			"output":    true,
 			// Global persistent flags that don't configure browsers
 			"no-color":  true,
@@ -2649,10 +2734,11 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		}
 		poolSvc := client.BrowserPools
 
-		acquireParams := kernel.BrowserPoolAcquireParams{}
+		var acquireTimeout int64
 		if cmd.Flags().Changed("timeout") && timeout > 0 {
-			acquireParams.AcquireTimeoutSeconds = kernel.Int(int64(timeout))
+			acquireTimeout = int64(timeout)
 		}
+		acquireParams := buildAcquireParams(name, tags, acquireTimeout)
 
 		resp, err := (&poolSvc).Acquire(cmd.Context(), pool, acquireParams)
 		if err != nil {
@@ -2669,7 +2755,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if output == "json" {
 			return util.PrintPrettyJSON(resp)
 		}
-		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.StartURL)
+		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.StartURL, resp.Name, resp.Tags)
 		return nil
 	}
 
@@ -2705,6 +2791,8 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		Extensions:         extensions,
 		Viewport:           viewport,
 		Telemetry:          telemetry,
+		Name:               name,
+		Tags:               tags,
 		Output:             output,
 	}
 
