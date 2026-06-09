@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -34,34 +33,38 @@ type BrowsersTelemetryStreamInput struct {
 	Output     string
 }
 
-// parseTelemetryCategories parses a comma-separated "name=on|off" string into
-// a BrowserTelemetryCategoriesConfigParam. Unmentioned categories are omitted.
+// parseTelemetryCategories parses a comma-separated list of category names to
+// enable into a BrowserTelemetryCategoriesConfigParam. Selection is opt-in:
+// only the listed categories are captured; everything else is off.
 func parseTelemetryCategories(s string) (kernel.BrowserTelemetryCategoriesConfigParam, error) {
 	p := kernel.BrowserTelemetryCategoriesConfigParam{}
+	on := func() kernel.BrowserTelemetryCategoryConfigParam {
+		return kernel.BrowserTelemetryCategoryConfigParam{Enabled: kernel.Opt(true)}
+	}
 	for _, part := range strings.Split(s, ",") {
-		name, val, ok := strings.Cut(strings.TrimSpace(part), "=")
-		if !ok {
-			return p, fmt.Errorf("invalid category assignment %q: expected name=on or name=off", part)
-		}
-		name, val = strings.TrimSpace(name), strings.TrimSpace(val)
-		var enabled bool
-		switch val {
-		case "on":
-			enabled = true
-		case "off":
-			enabled = false
-		default:
-			return p, fmt.Errorf("invalid value %q for category %q: must be \"on\" or \"off\"", val, name)
+		name := strings.TrimSpace(part)
+		if name == "" {
+			continue
 		}
 		switch name {
 		case "console":
-			p.Console = kernel.BrowserTelemetryCategoryConfigParam{Enabled: kernel.Opt(enabled)}
-		case "interaction":
-			p.Interaction = kernel.BrowserTelemetryCategoryConfigParam{Enabled: kernel.Opt(enabled)}
+			p.Console = on()
 		case "network":
-			p.Network = kernel.BrowserTelemetryCategoryConfigParam{Enabled: kernel.Opt(enabled)}
+			p.Network = on()
 		case "page":
-			p.Page = kernel.BrowserTelemetryCategoryConfigParam{Enabled: kernel.Opt(enabled)}
+			p.Page = on()
+		case "interaction":
+			p.Interaction = on()
+		case "control":
+			p.Control = on()
+		case "connection":
+			p.Connection = on()
+		case "system":
+			p.System = on()
+		case "screenshot":
+			p.Screenshot = on()
+		case "captcha":
+			p.Captcha = on()
 		default:
 			return p, fmt.Errorf("unknown category %q: must be one of %s", name, strings.Join(settableCategories, ", "))
 		}
@@ -102,30 +105,53 @@ func buildUpdateTelemetryParam(s string) (kernel.BrowserUpdateParamsTelemetry, e
 }
 
 // settableCategories are the categories accepted by --telemetry=<categories>.
-// "system" is always-on and cannot be toggled, but is valid as a --categories stream filter.
-var settableCategories = []string{"console", "interaction", "network", "page"}
+// The monitor category is not settable: it is collector-health metadata that
+// flows automatically whenever a CDP category is captured.
+var settableCategories = []string{
+	"console", "network", "page", "interaction",
+	"control", "connection", "system", "screenshot", "captcha",
+}
 
 // streamFilterCategories are the categories accepted by `telemetry stream --categories`.
-var streamFilterCategories = []string{"api", "console", "interaction", "network", "page", "system"}
+// This is the full set of categories an event may carry, including the auto-managed monitor.
+var streamFilterCategories = append(append([]string{}, settableCategories...), "monitor")
 
-// eventCategory returns the category field from the event JSON.
-// Falls back to the type prefix if the field is absent (older API responses).
-// TODO(sdk): kernel-go-sdk should surface Category directly on BrowserTelemetryEventUnion.
-func eventCategory(ev kernel.BrowserTelemetryEventUnion) string {
-	var wire struct {
-		Category string `json:"category"`
+// telemetryEnabledCategories returns the categories captured by a session's
+// telemetry config, in display order.
+func telemetryEnabledCategories(cfg kernel.BrowserTelemetryConfig) []string {
+	b := cfg.Browser
+	ordered := []struct {
+		name string
+		on   bool
+	}{
+		{"console", b.Console.Enabled},
+		{"network", b.Network.Enabled},
+		{"page", b.Page.Enabled},
+		{"interaction", b.Interaction.Enabled},
+		{"control", b.Control.Enabled},
+		{"connection", b.Connection.Enabled},
+		{"system", b.System.Enabled},
+		{"screenshot", b.Screenshot.Enabled},
+		{"captcha", b.Captcha.Enabled},
 	}
-	if err := json.Unmarshal([]byte(ev.RawJSON()), &wire); err == nil && wire.Category != "" {
-		return wire.Category
+	on := make([]string, 0, len(ordered))
+	for _, c := range ordered {
+		if c.on {
+			on = append(on, c.name)
+		}
 	}
-	prefix, _, ok := strings.Cut(ev.Type, "_")
-	if !ok {
-		return ev.Type
+	return on
+}
+
+// printTelemetrySummary echoes the categories telemetry will capture, so the
+// effect of an opt-in selection is obvious after create/update.
+func printTelemetrySummary(cfg kernel.BrowserTelemetryConfig) {
+	on := telemetryEnabledCategories(cfg)
+	if len(on) == 0 {
+		pterm.Info.Println("Telemetry: disabled")
+		return
 	}
-	if prefix == "monitor" {
-		return "system"
-	}
-	return prefix
+	pterm.Info.Printf("Telemetry capturing: %s\n", strings.Join(on, ", "))
 }
 
 // shouldEmit applies client-side category/type filters to a telemetry event.
@@ -168,7 +194,7 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 	defer stream.Close()
 	for stream.Next() {
 		ev := stream.Current()
-		cat := eventCategory(ev.Event)
+		cat := ev.Event.Category
 		if !shouldEmit(cat, ev.Event.Type, in.Categories, in.Types) {
 			continue
 		}
