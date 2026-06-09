@@ -14,6 +14,7 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -43,7 +44,7 @@ var defaultExtensionExclusions = util.ZipOptions{
 
 // ExtensionsService defines the subset of the Kernel SDK extension client that we use.
 type ExtensionsService interface {
-	List(ctx context.Context, opts ...option.RequestOption) (res *[]kernel.ExtensionListResponse, err error)
+	List(ctx context.Context, query kernel.ExtensionListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.ExtensionListResponse], err error)
 	Delete(ctx context.Context, idOrName string, opts ...option.RequestOption) (err error)
 	Download(ctx context.Context, idOrName string, opts ...option.RequestOption) (res *http.Response, err error)
 	DownloadFromChromeStore(ctx context.Context, query kernel.ExtensionDownloadFromChromeStoreParams, opts ...option.RequestOption) (res *http.Response, err error)
@@ -51,6 +52,8 @@ type ExtensionsService interface {
 }
 
 type ExtensionsListInput struct {
+	Limit  int
+	Offset int
 	Output string
 }
 
@@ -89,25 +92,37 @@ func (e ExtensionsCmd) List(ctx context.Context, in ExtensionsListInput) error {
 	if in.Output != "json" {
 		pterm.Info.Println("Fetching extensions...")
 	}
-	items, err := e.extensions.List(ctx)
+	params := kernel.ExtensionListParams{}
+	if in.Limit > 0 {
+		params.Limit = kernel.Int(int64(in.Limit))
+	}
+	if in.Offset > 0 {
+		params.Offset = kernel.Int(int64(in.Offset))
+	}
+	page, err := e.extensions.List(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
+	var items []kernel.ExtensionListResponse
+	if page != nil {
+		items = page.Items
+	}
+
 	if in.Output == "json" {
-		if items == nil || len(*items) == 0 {
+		if len(items) == 0 {
 			fmt.Println("[]")
 			return nil
 		}
-		return util.PrintPrettyJSONSlice(*items)
+		return util.PrintPrettyJSONSlice(items)
 	}
 
-	if items == nil || len(*items) == 0 {
+	if len(items) == 0 {
 		pterm.Info.Println("No extensions found")
 		return nil
 	}
 	rows := pterm.TableData{{"Extension ID", "Name", "Created At", "Size (bytes)", "Last Used At"}}
-	for _, it := range *items {
+	for _, it := range items {
 		name := it.Name
 		if name == "" {
 			name = "-"
@@ -402,9 +417,11 @@ var extensionsListCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := getKernelClient(cmd)
 		output, _ := cmd.Flags().GetString("output")
+		limit, _ := cmd.Flags().GetInt("limit")
+		offset, _ := cmd.Flags().GetInt("offset")
 		svc := client.Extensions
 		e := ExtensionsCmd{extensions: &svc}
-		return e.List(cmd.Context(), ExtensionsListInput{Output: output})
+		return e.List(cmd.Context(), ExtensionsListInput{Limit: limit, Offset: offset, Output: output})
 	},
 }
 
@@ -519,6 +536,8 @@ func init() {
 	extensionsCmd.AddCommand(extensionsBuildWebBotAuthCmd)
 
 	addJSONOutputFlag(extensionsListCmd)
+	extensionsListCmd.Flags().Int("limit", 0, "Maximum number of extensions to return")
+	extensionsListCmd.Flags().Int("offset", 0, "Number of extensions to skip (for pagination)")
 	extensionsDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 	extensionsDownloadCmd.Flags().String("to", "", "Output zip file path")
 	extensionsDownloadWebStoreCmd.Flags().String("to", "", "Output zip file path for the downloaded archive")

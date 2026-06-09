@@ -81,6 +81,8 @@ func init() {
 
 	// Add output flags
 	addJSONOutputFlag(proxiesListCmd)
+	proxiesListCmd.Flags().Int("limit", 0, "Maximum number of proxies to return")
+	proxiesListCmd.Flags().Int("offset", 0, "Number of proxies to skip (for pagination)")
 	addJSONOutputFlag(proxiesGetCmd)
 	addJSONOutputFlag(proxiesCreateCmd)
 
@@ -99,9 +101,6 @@ func init() {
 
 	// OS flag (residential)
 	proxiesCreateCmd.Flags().String("os", "", "Operating system (windows|macos|android)")
-
-	// Carrier flag (mobile)
-	proxiesCreateCmd.Flags().String("carrier", "", "Mobile carrier (see help for full list)")
 
 	// Custom proxy flags
 	proxiesCreateCmd.Flags().String("host", "", "Proxy host address or IP")

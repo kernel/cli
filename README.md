@@ -205,25 +205,29 @@ Commands with JSON output support:
 ### Browser Management
 
 - `kernel browsers list` - List running browsers
+  - `--query <q>` - Search by name, session ID, profile ID, proxy ID, or pool name
+  - `--tag <KEY=VALUE>` - Filter by tag, repeatable; a session must match every pair
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel browsers create` - Create a new browser session
   - `-s, --stealth` - Launch browser in stealth mode to avoid detection
   - `-H, --headless` - Launch browser without GUI access
   - `--kiosk` - Launch browser in kiosk mode
   - `--start-url <url>` - Initial page to open on launch
-  - `--pool-id <id>` - Acquire a browser from the specified pool (mutually exclusive with --pool-name; ignores other session flags)
+  - `--name <name>` - Optional unique name for the session (set at creation; used to find it later by name)
+  - `--tag <KEY=VALUE>` - Set a tag on the session, repeatable; up to 50 pairs
+  - `--pool-id <id>` - Acquire a browser from the specified pool (mutually exclusive with --pool-name; ignores other session flags). `--name`/`--tag` still apply to the acquired session.
   - `--pool-name <name>` - Acquire a browser from the pool name (mutually exclusive with --pool-id; ignores other session flags)
   - `--telemetry=all` - Enable telemetry for all categories
   - `--telemetry=off` - Disable telemetry
   - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`
   - `--output json`, `-o json` - Output raw JSON object
   - _Note: When a pool is specified, omit other session configuration flags—pool settings determine profile, proxy, viewport, etc._
-- `kernel browsers delete <id>` - Delete a browser
-- `kernel browsers view <id>` - Get live view URL for a browser
+- `kernel browsers delete <id-or-name>` - Delete a browser by ID or name
+- `kernel browsers view <id-or-name>` - Get live view URL for a browser by ID or name
   - `--output json`, `-o json` - Output JSON with liveViewUrl
-- `kernel browsers get <id>` - Get detailed browser session info
+- `kernel browsers get <id-or-name>` - Get detailed browser session info by ID or name
   - `--output json`, `-o json` - Output raw JSON object
-- `kernel browsers update <id>` - Update a running browser session
+- `kernel browsers update <id-or-name>` - Update a running browser session by ID or name
   - `--telemetry=all` - Enable telemetry for all categories
   - `--telemetry=off` - Disable telemetry
   - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`
@@ -264,6 +268,8 @@ Commands with JSON output support:
   - `--force` - Force delete even if browsers are leased
 - `kernel browser-pools acquire <id-or-name>` - Acquire a browser from the pool
   - `--timeout <seconds>` - Acquire timeout before returning 204
+  - `--name <name>` - Optional name for the acquired session (applies to this lease; cleared on release)
+  - `--tag <KEY=VALUE>` - Set a tag on the acquired session, repeatable; applies to this lease
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools release <id-or-name>` - Release a browser back to the pool
   - `--session-id <id>` - Browser session ID to release (required)
@@ -457,10 +463,9 @@ Per-category updates are partial — only categories you name are changed; other
   - `--country <code>` - ISO 3166 country code or "EU" (location-based types)
   - `--city <name>` - City name (no spaces, e.g. sanfrancisco) (residential, mobile; requires `--country`)
   - `--state <code>` - Two-letter state code (residential, mobile)
-  - `--zip <zip>` - US ZIP code (residential, mobile)
-  - `--asn <asn>` - Autonomous system number (e.g., AS15169) (residential, mobile)
+  - `--zip <zip>` - US ZIP code (residential)
+  - `--asn <asn>` - Autonomous system number (e.g., AS15169) (residential)
   - `--os <os>` - Operating system: windows, macos, android (residential)
-  - `--carrier <carrier>` - Mobile carrier (mobile)
   - `--host <host>` - Proxy host (custom; required)
   - `--port <port>` - Proxy port (custom; required)
   - `--username <username>` - Username for proxy authentication (custom)
@@ -781,8 +786,8 @@ kernel proxies create --type custom --host proxy.example.com --port 8080 --usern
 # Create a residential proxy with location and OS
 kernel proxies create --type residential --country US --city sanfrancisco --state CA --zip 94107 --asn AS15169 --os windows --name "SF Residential"
 
-# Create a mobile proxy with carrier
-kernel proxies create --type mobile --country US --carrier verizon --name "US Mobile"
+# Create a mobile proxy
+kernel proxies create --type mobile --country US --city sanfrancisco --name "US Mobile"
 
 # Get proxy details
 kernel proxies get prx_123

@@ -128,9 +128,6 @@ func getProxyCheckConfigRows(proxy *kernel.ProxyCheckResponse) [][]string {
 		if config.Asn != "" {
 			rows = append(rows, []string{"ASN", config.Asn})
 		}
-		if config.Carrier != "" {
-			rows = append(rows, []string{"Carrier", config.Carrier})
-		}
 	case kernel.ProxyCheckResponseTypeCustom:
 		if config.Host != "" {
 			rows = append(rows, []string{"Host", config.Host})
