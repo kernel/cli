@@ -21,7 +21,7 @@ func TestProxyCreate_Datacenter_Success(t *testing.T) {
 			assert.Equal(t, []string{"localhost", "internal.service.local"}, body.BypassHosts)
 
 			// Check config
-			dcConfig := body.Config.OfProxyNewsConfigDatacenterProxyConfig
+			dcConfig := body.Config.OfDatacenter
 			assert.NotNil(t, dcConfig)
 			assert.Equal(t, "US", dcConfig.Country.Value)
 
@@ -64,7 +64,7 @@ func TestProxyCreate_Datacenter_WithoutCountry(t *testing.T) {
 			assert.Equal(t, "My DC Proxy", body.Name.Value)
 
 			// Check config - country should not be set (it should be zero/nil)
-			dcConfig := body.Config.OfProxyNewsConfigDatacenterProxyConfig
+			dcConfig := body.Config.OfDatacenter
 			assert.NotNil(t, dcConfig)
 
 			return &kernel.ProxyNewResponse{
@@ -94,7 +94,7 @@ func TestProxyCreate_Residential_Success(t *testing.T) {
 	fake := &FakeProxyService{
 		NewFunc: func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error) {
 			// Verify residential config
-			resConfig := body.Config.OfProxyNewsConfigResidentialProxyConfig
+			resConfig := body.Config.OfResidential
 			assert.NotNil(t, resConfig)
 			assert.Equal(t, "US", resConfig.Country.Value)
 			assert.Equal(t, "sanfrancisco", resConfig.City.Value)
@@ -161,10 +161,10 @@ func TestProxyCreate_Mobile_Success(t *testing.T) {
 	fake := &FakeProxyService{
 		NewFunc: func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error) {
 			// Verify mobile config
-			mobConfig := body.Config.OfProxyNewsConfigMobileProxyConfig
+			mobConfig := body.Config.OfMobile
 			assert.NotNil(t, mobConfig)
 			assert.Equal(t, "US", mobConfig.Country.Value)
-			assert.Equal(t, "verizon", mobConfig.Carrier)
+			assert.Equal(t, "newyork", mobConfig.City.Value)
 
 			return &kernel.ProxyNewResponse{
 				ID:   "mobile-new",
@@ -179,7 +179,7 @@ func TestProxyCreate_Mobile_Success(t *testing.T) {
 		Name:    "Mobile Proxy",
 		Type:    "mobile",
 		Country: "US",
-		Carrier: "verizon",
+		City:    "newyork",
 	})
 
 	assert.NoError(t, err)
@@ -194,7 +194,7 @@ func TestProxyCreate_Custom_Success(t *testing.T) {
 	fake := &FakeProxyService{
 		NewFunc: func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error) {
 			// Verify custom config
-			customConfig := body.Config.OfProxyNewsConfigCreateCustomProxyConfig
+			customConfig := body.Config.OfCustom
 			assert.NotNil(t, customConfig)
 			assert.Equal(t, "proxy.example.com", customConfig.Host)
 			assert.Equal(t, int64(8080), customConfig.Port)
@@ -359,7 +359,7 @@ func TestProxyCreate_ISP_Success(t *testing.T) {
 	fake := &FakeProxyService{
 		NewFunc: func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error) {
 			// Verify ISP config
-			ispConfig := body.Config.OfProxyNewsConfigIspProxyConfig
+			ispConfig := body.Config.OfIsp
 			assert.NotNil(t, ispConfig)
 			assert.Equal(t, "EU", ispConfig.Country.Value)
 
@@ -390,7 +390,7 @@ func TestProxyCreate_ISP_WithoutCountry(t *testing.T) {
 	fake := &FakeProxyService{
 		NewFunc: func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error) {
 			// Verify ISP config
-			ispConfig := body.Config.OfProxyNewsConfigIspProxyConfig
+			ispConfig := body.Config.OfIsp
 			assert.NotNil(t, ispConfig)
 
 			return &kernel.ProxyNewResponse{

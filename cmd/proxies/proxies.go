@@ -100,9 +100,6 @@ func init() {
 	// OS flag (residential)
 	proxiesCreateCmd.Flags().String("os", "", "Operating system (windows|macos|android)")
 
-	// Carrier flag (mobile)
-	proxiesCreateCmd.Flags().String("carrier", "", "Mobile carrier (see help for full list)")
-
 	// Custom proxy flags
 	proxiesCreateCmd.Flags().String("host", "", "Proxy host address or IP")
 	proxiesCreateCmd.Flags().Int("port", 0, "Proxy port")

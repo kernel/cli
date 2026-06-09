@@ -8,13 +8,14 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
 
 // BrowserPoolsService defines the subset of the Kernel SDK browser pools client that we use.
 type BrowserPoolsService interface {
-	List(ctx context.Context, opts ...option.RequestOption) (res *[]kernel.BrowserPool, err error)
+	List(ctx context.Context, query kernel.BrowserPoolListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.BrowserPool], err error)
 	New(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (res *kernel.BrowserPool, err error)
 	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.BrowserPool, err error)
 	Update(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (res *kernel.BrowserPool, err error)
@@ -37,20 +38,25 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 		return err
 	}
 
-	pools, err := c.client.List(ctx)
+	page, err := c.client.List(ctx, kernel.BrowserPoolListParams{})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
+	var pools []kernel.BrowserPool
+	if page != nil {
+		pools = page.Items
+	}
+
 	if in.Output == "json" {
-		if pools == nil || len(*pools) == 0 {
+		if len(pools) == 0 {
 			fmt.Println("[]")
 			return nil
 		}
-		return util.PrintPrettyJSONSlice(*pools)
+		return util.PrintPrettyJSONSlice(pools)
 	}
 
-	if pools == nil || len(*pools) == 0 {
+	if len(pools) == 0 {
 		pterm.Info.Println("No browser pools found")
 		return nil
 	}
@@ -59,7 +65,7 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 		{"ID", "Name", "Available", "Acquired", "Created At", "Size"},
 	}
 
-	for _, p := range *pools {
+	for _, p := range pools {
 		tableData = append(tableData, []string{
 			p.ID,
 			util.OrDash(p.Name),
@@ -250,7 +256,7 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 		params.Name = kernel.String(in.Name)
 	}
 	if in.Size > 0 {
-		params.Size = in.Size
+		params.Size = kernel.Int(in.Size)
 	}
 	if in.FillRate > 0 {
 		params.FillRatePerMinute = kernel.Int(in.FillRate)

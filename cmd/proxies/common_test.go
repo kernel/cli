@@ -8,6 +8,7 @@ import (
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/pterm/pterm"
 )
 
@@ -37,19 +38,23 @@ func captureOutput(t *testing.T) *bytes.Buffer {
 
 // FakeProxyService implements ProxyService for testing
 type FakeProxyService struct {
-	ListFunc   func(ctx context.Context, opts ...option.RequestOption) (*[]kernel.ProxyListResponse, error)
+	ListFunc   func(ctx context.Context, query kernel.ProxyListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ProxyListResponse], error)
 	GetFunc    func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ProxyGetResponse, error)
 	NewFunc    func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error)
 	DeleteFunc func(ctx context.Context, id string, opts ...option.RequestOption) error
 	CheckFunc  func(ctx context.Context, id string, body kernel.ProxyCheckParams, opts ...option.RequestOption) (*kernel.ProxyCheckResponse, error)
 }
 
-func (f *FakeProxyService) List(ctx context.Context, opts ...option.RequestOption) (*[]kernel.ProxyListResponse, error) {
+func (f *FakeProxyService) List(ctx context.Context, query kernel.ProxyListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ProxyListResponse], error) {
 	if f.ListFunc != nil {
-		return f.ListFunc(ctx, opts...)
+		return f.ListFunc(ctx, query, opts...)
 	}
-	empty := []kernel.ProxyListResponse{}
-	return &empty, nil
+	return &pagination.OffsetPagination[kernel.ProxyListResponse]{}, nil
+}
+
+// proxyListPage wraps proxies in an OffsetPagination page for test fakes.
+func proxyListPage(proxies []kernel.ProxyListResponse) *pagination.OffsetPagination[kernel.ProxyListResponse] {
+	return &pagination.OffsetPagination[kernel.ProxyListResponse]{Items: proxies}
 }
 
 func (f *FakeProxyService) Get(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ProxyGetResponse, error) {

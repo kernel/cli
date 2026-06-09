@@ -8,6 +8,7 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -17,7 +18,7 @@ type CredentialProvidersService interface {
 	New(ctx context.Context, body kernel.CredentialProviderNewParams, opts ...option.RequestOption) (res *kernel.CredentialProvider, err error)
 	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.CredentialProvider, err error)
 	Update(ctx context.Context, id string, body kernel.CredentialProviderUpdateParams, opts ...option.RequestOption) (res *kernel.CredentialProvider, err error)
-	List(ctx context.Context, opts ...option.RequestOption) (res *[]kernel.CredentialProvider, err error)
+	List(ctx context.Context, query kernel.CredentialProviderListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.CredentialProvider], err error)
 	Delete(ctx context.Context, id string, opts ...option.RequestOption) (err error)
 	Test(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.CredentialProviderTestResult, err error)
 	ListItems(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.CredentialProviderListItemsResponse, err error)
@@ -75,26 +76,31 @@ func (c CredentialProvidersCmd) List(ctx context.Context, in CredentialProviders
 		return err
 	}
 
-	providers, err := c.providers.List(ctx)
+	page, err := c.providers.List(ctx, kernel.CredentialProviderListParams{})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
+	var providers []kernel.CredentialProvider
+	if page != nil {
+		providers = page.Items
+	}
+
 	if in.Output == "json" {
-		if providers == nil || len(*providers) == 0 {
+		if len(providers) == 0 {
 			fmt.Println("[]")
 			return nil
 		}
-		return util.PrintPrettyJSONSlice(*providers)
+		return util.PrintPrettyJSONSlice(providers)
 	}
 
-	if providers == nil || len(*providers) == 0 {
+	if len(providers) == 0 {
 		pterm.Info.Println("No credential providers found")
 		return nil
 	}
 
 	tableData := pterm.TableData{{"ID", "Provider Type", "Enabled", "Priority", "Created At"}}
-	for _, p := range *providers {
+	for _, p := range providers {
 		tableData = append(tableData, []string{
 			p.ID,
 			string(p.ProviderType),

@@ -14,24 +14,24 @@ import (
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/stretchr/testify/assert"
 )
 
 // FakeExtensionsService implements ExtensionsService
 type FakeExtensionsService struct {
-	ListFunc                  func(ctx context.Context, opts ...option.RequestOption) (*[]kernel.ExtensionListResponse, error)
+	ListFunc                  func(ctx context.Context, query kernel.ExtensionListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ExtensionListResponse], error)
 	DeleteFunc                func(ctx context.Context, idOrName string, opts ...option.RequestOption) error
 	DownloadFunc              func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*http.Response, error)
 	DownloadFromChromeStoreFn func(ctx context.Context, query kernel.ExtensionDownloadFromChromeStoreParams, opts ...option.RequestOption) (*http.Response, error)
 	UploadFunc                func(ctx context.Context, body kernel.ExtensionUploadParams, opts ...option.RequestOption) (*kernel.ExtensionUploadResponse, error)
 }
 
-func (f *FakeExtensionsService) List(ctx context.Context, opts ...option.RequestOption) (*[]kernel.ExtensionListResponse, error) {
+func (f *FakeExtensionsService) List(ctx context.Context, query kernel.ExtensionListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ExtensionListResponse], error) {
 	if f.ListFunc != nil {
-		return f.ListFunc(ctx, opts...)
+		return f.ListFunc(ctx, query, opts...)
 	}
-	empty := []kernel.ExtensionListResponse{}
-	return &empty, nil
+	return &pagination.OffsetPagination[kernel.ExtensionListResponse]{}, nil
 }
 func (f *FakeExtensionsService) Delete(ctx context.Context, idOrName string, opts ...option.RequestOption) error {
 	if f.DeleteFunc != nil {
@@ -70,8 +70,8 @@ func TestExtensionsList_WithRows(t *testing.T) {
 	buf := capturePtermOutput(t)
 	created := time.Unix(0, 0)
 	rows := []kernel.ExtensionListResponse{{ID: "e1", Name: "alpha", CreatedAt: created, SizeBytes: 10}, {ID: "e2", Name: "", CreatedAt: created, SizeBytes: 20}}
-	fake := &FakeExtensionsService{ListFunc: func(ctx context.Context, opts ...option.RequestOption) (*[]kernel.ExtensionListResponse, error) {
-		return &rows, nil
+	fake := &FakeExtensionsService{ListFunc: func(ctx context.Context, query kernel.ExtensionListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ExtensionListResponse], error) {
+		return &pagination.OffsetPagination[kernel.ExtensionListResponse]{Items: rows}, nil
 	}}
 	e := ExtensionsCmd{extensions: fake}
 	_ = e.List(context.Background(), ExtensionsListInput{})

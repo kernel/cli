@@ -14,6 +14,7 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -43,7 +44,7 @@ var defaultExtensionExclusions = util.ZipOptions{
 
 // ExtensionsService defines the subset of the Kernel SDK extension client that we use.
 type ExtensionsService interface {
-	List(ctx context.Context, opts ...option.RequestOption) (res *[]kernel.ExtensionListResponse, err error)
+	List(ctx context.Context, query kernel.ExtensionListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.ExtensionListResponse], err error)
 	Delete(ctx context.Context, idOrName string, opts ...option.RequestOption) (err error)
 	Download(ctx context.Context, idOrName string, opts ...option.RequestOption) (res *http.Response, err error)
 	DownloadFromChromeStore(ctx context.Context, query kernel.ExtensionDownloadFromChromeStoreParams, opts ...option.RequestOption) (res *http.Response, err error)
@@ -89,25 +90,30 @@ func (e ExtensionsCmd) List(ctx context.Context, in ExtensionsListInput) error {
 	if in.Output != "json" {
 		pterm.Info.Println("Fetching extensions...")
 	}
-	items, err := e.extensions.List(ctx)
+	page, err := e.extensions.List(ctx, kernel.ExtensionListParams{})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
+	var items []kernel.ExtensionListResponse
+	if page != nil {
+		items = page.Items
+	}
+
 	if in.Output == "json" {
-		if items == nil || len(*items) == 0 {
+		if len(items) == 0 {
 			fmt.Println("[]")
 			return nil
 		}
-		return util.PrintPrettyJSONSlice(*items)
+		return util.PrintPrettyJSONSlice(items)
 	}
 
-	if items == nil || len(*items) == 0 {
+	if len(items) == 0 {
 		pterm.Info.Println("No extensions found")
 		return nil
 	}
 	rows := pterm.TableData{{"Extension ID", "Name", "Created At", "Size (bytes)", "Last Used At"}}
-	for _, it := range *items {
+	for _, it := range items {
 		name := it.Name
 		if name == "" {
 			name = "-"

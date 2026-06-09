@@ -7,15 +7,15 @@ import (
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestProxyList_Empty(t *testing.T) {
 	buf := captureOutput(t)
 	fake := &FakeProxyService{
-		ListFunc: func(ctx context.Context, opts ...option.RequestOption) (*[]kernel.ProxyListResponse, error) {
-			empty := []kernel.ProxyListResponse{}
-			return &empty, nil
+		ListFunc: func(ctx context.Context, query kernel.ProxyListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ProxyListResponse], error) {
+			return proxyListPage(nil), nil
 		},
 	}
 
@@ -40,7 +40,7 @@ func TestProxyList_WithProxies(t *testing.T) {
 			BypassHosts: []string{"abc"},
 			Config: kernel.ProxyListResponseConfigUnion{
 				Country: "US",
-				Carrier: "verizon",
+				City:    "newyork",
 			},
 		},
 		{
@@ -54,8 +54,8 @@ func TestProxyList_WithProxies(t *testing.T) {
 	}
 
 	fake := &FakeProxyService{
-		ListFunc: func(ctx context.Context, opts ...option.RequestOption) (*[]kernel.ProxyListResponse, error) {
-			return &proxies, nil
+		ListFunc: func(ctx context.Context, query kernel.ProxyListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ProxyListResponse], error) {
+			return proxyListPage(proxies), nil
 		},
 	}
 
@@ -97,7 +97,7 @@ func TestProxyList_Error(t *testing.T) {
 	_ = captureOutput(t)
 
 	fake := &FakeProxyService{
-		ListFunc: func(ctx context.Context, opts ...option.RequestOption) (*[]kernel.ProxyListResponse, error) {
+		ListFunc: func(ctx context.Context, query kernel.ProxyListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ProxyListResponse], error) {
 			return nil, errors.New("API error")
 		},
 	}
