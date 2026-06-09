@@ -486,6 +486,159 @@ func TestBrowsersCreate_WithNameAndTags(t *testing.T) {
 	assert.Contains(t, out, "env=staging, team=backend")
 }
 
+func TestBrowsersCreate_WithChromePolicy(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-cp", CdpWsURL: "ws://cdp-cp"}, nil
+		},
+	}
+
+	b := BrowsersCmd{browsers: fake}
+	err := b.Create(context.Background(), BrowsersCreateInput{
+		ChromePolicy: `{"BookmarkBarEnabled": false}`,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]any{"BookmarkBarEnabled": false}, captured.ChromePolicy)
+
+	// The policy reaches the wire.
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "chrome_policy")
+	assert.Contains(t, string(raw), "BookmarkBarEnabled")
+}
+
+func TestBrowsersCreate_ChromePolicyEmptyObjectOmitted(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-cp"}, nil
+		},
+	}
+
+	b := BrowsersCmd{browsers: fake}
+	// An empty object must not be sent: omitzero only drops a nil map, so the len>0 guard
+	// at the call site is what keeps "chrome_policy":{} off the wire.
+	err := b.Create(context.Background(), BrowsersCreateInput{ChromePolicy: "{}"})
+	assert.NoError(t, err)
+	assert.Nil(t, captured.ChromePolicy)
+
+	// Verify the actual serialized contract, not just the Go field: no chrome_policy key.
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "chrome_policy")
+}
+
+func TestBrowsersCreate_ChromePolicyInvalidJSON(t *testing.T) {
+	setupStdoutCapture(t)
+
+	called := false
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			called = true
+			return &kernel.BrowserNewResponse{}, nil
+		},
+	}
+
+	b := BrowsersCmd{browsers: fake}
+	err := b.Create(context.Background(), BrowsersCreateInput{ChromePolicy: "not json"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid JSON")
+	assert.False(t, called, "request should not be sent when the policy is invalid")
+}
+
+func TestParseChromePolicy(t *testing.T) {
+	t.Run("inline object", func(t *testing.T) {
+		got, err := parseChromePolicy(`{"BookmarkBarEnabled": false}`, "")
+		require.NoError(t, err)
+		assert.Equal(t, map[string]any{"BookmarkBarEnabled": false}, got)
+	})
+
+	t.Run("from file", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "policy.json")
+		require.NoError(t, os.WriteFile(path, []byte(`{"BookmarkBarEnabled": true}`), 0o600))
+		got, err := parseChromePolicy("", path)
+		require.NoError(t, err)
+		assert.Equal(t, map[string]any{"BookmarkBarEnabled": true}, got)
+	})
+
+	t.Run("both empty returns nil", func(t *testing.T) {
+		got, err := parseChromePolicy("", "")
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+
+	t.Run("whitespace-only returns nil", func(t *testing.T) {
+		got, err := parseChromePolicy("  \n\t ", "")
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+
+	t.Run("empty object parses to a non-nil empty map", func(t *testing.T) {
+		got, err := parseChromePolicy("{}", "")
+		require.NoError(t, err)
+		assert.NotNil(t, got)
+		assert.Len(t, got, 0)
+	})
+
+	t.Run("invalid JSON errors", func(t *testing.T) {
+		_, err := parseChromePolicy("not json", "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid JSON")
+	})
+
+	t.Run("top-level array is rejected", func(t *testing.T) {
+		_, err := parseChromePolicy("[1, 2, 3]", "")
+		require.Error(t, err)
+	})
+
+	t.Run("null literal is rejected", func(t *testing.T) {
+		_, err := parseChromePolicy("null", "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "must be a JSON object")
+	})
+
+	t.Run("from stdin via -", func(t *testing.T) {
+		r, w, err := os.Pipe()
+		require.NoError(t, err)
+		_, err = w.WriteString(`{"BookmarkBarEnabled": true}`)
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+
+		orig := os.Stdin
+		os.Stdin = r
+		t.Cleanup(func() { os.Stdin = orig })
+
+		got, err := parseChromePolicy("", "-")
+		require.NoError(t, err)
+		assert.Equal(t, map[string]any{"BookmarkBarEnabled": true}, got)
+	})
+
+	t.Run("missing file errors", func(t *testing.T) {
+		_, err := parseChromePolicy("", filepath.Join(t.TempDir(), "nope.json"))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to read")
+	})
+}
+
+func TestPoolLeaseAllowedFlags_ExcludesChromePolicy(t *testing.T) {
+	allowed := poolLeaseAllowedFlags()
+	// Chrome policy is session-only config; it must NOT be allowed on the pool-lease path so
+	// that `browsers create --pool-id ... --chrome-policy ...` trips the conflict warning.
+	assert.False(t, allowed["chrome-policy"])
+	assert.False(t, allowed["chrome-policy-file"])
+	// The flags that genuinely apply per-lease stay allowed.
+	assert.True(t, allowed["pool-id"])
+	assert.True(t, allowed["name"])
+	assert.True(t, allowed["tag"])
+}
+
 func TestBrowsersList_WithTags_PassesParamAndShowsName(t *testing.T) {
 	setupStdoutCapture(t)
 
