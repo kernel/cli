@@ -36,6 +36,13 @@ jobs:
           curl https://cursor.com/install -fsS | bash
           echo "$HOME/.cursor/bin" >> $GITHUB_PATH
 
+      - name: Enable Cursor Max Mode
+        run: |
+          CFG_DIR="$HOME/.cursor"
+          mkdir -p "$CFG_DIR"
+          echo '{"maxMode": true}' > "$CFG_DIR/cli-config.json"
+          echo "CURSOR_CONFIG_DIR=$CFG_DIR" >> "$GITHUB_ENV"
+
       - name: Configure git identity
         run: |
           git config user.name "kernel-internal[bot]"
