@@ -2086,3 +2086,263 @@ func TestBrowsersUpdate_ForceWithProxyButNoViewport_Errors(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "--force requires --viewport")
 }
+
+func captureUpdateParams(t *testing.T) (*FakeBrowsersService, *kernel.BrowserUpdateParams) {
+	t.Helper()
+	captured := &kernel.BrowserUpdateParams{}
+	fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+		*captured = body
+		return &kernel.BrowserUpdateResponse{SessionID: "session123", Name: body.Name.Value, Tags: body.Tags}, nil
+	}}
+	return fake, captured
+}
+
+func TestBrowsersUpdate_WithName_ForwardsParam(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Name:       "new-name",
+		SetName:    true,
+	})
+
+	assert.NoError(t, err)
+	assert.True(t, captured.Name.Valid())
+	assert.Equal(t, "new-name", captured.Name.Value)
+}
+
+func TestBrowsersUpdate_ClearName_SendsEmptyName(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		ClearName:  true,
+	})
+
+	assert.NoError(t, err)
+	raw, marshalErr := json.Marshal(*captured)
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(raw), `"name":""`)
+}
+
+func TestBrowsersUpdate_WithTags_ReplacesTagSet(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Tags:       map[string]string{"team": "backend", "env": "staging"},
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "backend", captured.Tags["team"])
+	assert.Equal(t, "staging", captured.Tags["env"])
+	assert.Len(t, captured.Tags, 2)
+}
+
+func TestBrowsersUpdate_ClearTags_SendsEmptyObject(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		ClearTags:  true,
+	})
+
+	assert.NoError(t, err)
+	raw, marshalErr := json.Marshal(*captured)
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(raw), `"tags":{}`)
+}
+
+func TestBrowsersUpdate_NameAndClearName_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Name:       "x",
+		SetName:    true,
+		ClearName:  true,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot specify both --name and --clear-name")
+}
+
+func TestBrowsersUpdate_TagAndClearTags_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Tags:       map[string]string{"a": "1"},
+		ClearTags:  true,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot specify both --tag and --clear-tags")
+}
+
+func TestBrowsersUpdate_EmptyName_WithoutClear_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Name:       "",
+		SetName:    true,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "use --clear-name")
+}
+
+func TestBrowsersUpdate_NameOnly_SatisfiesAtLeastOne(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Name:       "renamed",
+		SetName:    true,
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "renamed", captured.Name.Value)
+}
+
+func TestBrowsersUpdate_NoOptions_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{Identifier: "session123"})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "must specify at least one")
+}
+
+func TestBrowsersUpdate_NameAndTagsWithProxy_AllForwarded(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		ProxyID:    "proxy-123",
+		Name:       "combo",
+		SetName:    true,
+		Tags:       map[string]string{"k": "v"},
+		SetTags:    true,
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "combo", captured.Name.Value)
+	assert.Equal(t, "v", captured.Tags["k"])
+	assert.Equal(t, "proxy-123", captured.ProxyID.Value)
+}
+
+// Regression guard: a non-name/non-tags update must omit both fields entirely
+// (omit = leave unchanged), never sending an accidental empty name or tags.
+func TestBrowsersUpdate_OmitNameAndTags_NotSent(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		ProxyID:    "proxy-123",
+	})
+
+	assert.NoError(t, err)
+	assert.False(t, captured.Name.Valid())
+	assert.Nil(t, captured.Tags)
+	raw, marshalErr := json.Marshal(*captured)
+	require.NoError(t, marshalErr)
+	assert.NotContains(t, string(raw), `"name"`)
+	assert.NotContains(t, string(raw), `"tags"`)
+}
+
+func TestBrowsersUpdate_ClearNameWithSetTags_BothForwarded(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		ClearName:  true,
+		Tags:       map[string]string{"env": "prod"},
+		SetTags:    true,
+	})
+
+	assert.NoError(t, err)
+	raw, marshalErr := json.Marshal(*captured)
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(raw), `"name":""`)
+	assert.Contains(t, string(raw), `"env":"prod"`)
+}
+
+func TestBrowsersUpdate_SetNameWithClearTags_BothForwarded(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Name:       "renamed",
+		SetName:    true,
+		ClearTags:  true,
+	})
+
+	assert.NoError(t, err)
+	raw, marshalErr := json.Marshal(*captured)
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(raw), `"name":"renamed"`)
+	assert.Contains(t, string(raw), `"tags":{}`)
+}
+
+// A malformed-only --tag (tagsFromFlag drops it to nil) combined with
+// --clear-tags must still be rejected as contradictory, not silently clear.
+func TestBrowsersUpdate_MalformedTagWithClearTags_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		SetTags:    true, // --tag was provided...
+		Tags:       nil,  // ...but every value was malformed and dropped
+		ClearTags:  true,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot specify both --tag and --clear-tags")
+}
+
+// --tag provided but every value malformed (parsed to zero pairs) is a user
+// error, not a no-op or a misleading "must specify at least one" message.
+func TestBrowsersUpdate_AllMalformedTags_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		SetTags:    true,
+		Tags:       nil,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no valid --tag")
+}

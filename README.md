@@ -213,7 +213,7 @@ Commands with JSON output support:
   - `-H, --headless` - Launch browser without GUI access
   - `--kiosk` - Launch browser in kiosk mode
   - `--start-url <url>` - Initial page to open on launch
-  - `--name <name>` - Optional unique name for the session (set at creation; used to find it later by name)
+  - `--name <name>` - Optional unique name for the session (used to find it later by name; can be changed with `browsers update --name`)
   - `--tag <KEY=VALUE>` - Set a tag on the session, repeatable; up to 50 pairs
   - `--pool-id <id>` - Acquire a browser from the specified pool (mutually exclusive with --pool-name; ignores other session flags). `--name`/`--tag` still apply to the acquired session.
   - `--pool-name <name>` - Acquire a browser from the pool name (mutually exclusive with --pool-id; ignores other session flags)
@@ -230,6 +230,10 @@ Commands with JSON output support:
 - `kernel browsers get <id-or-name>` - Get detailed browser session info by ID or name
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers update <id-or-name>` - Update a running browser session by ID or name
+  - `--name <name>` - Set a new unique name for the session (mutually exclusive with `--clear-name`)
+  - `--clear-name` - Clear the session name
+  - `--tag <KEY=VALUE>` - Set a tag, repeatable; up to 50 pairs. Replaces the entire tag set (not merged); mutually exclusive with `--clear-tags`
+  - `--clear-tags` - Remove all tags from the session
   - `--telemetry=all` - Enable telemetry for all categories
   - `--telemetry=off` - Disable telemetry
   - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`

@@ -298,6 +298,12 @@ type BrowsersUpdateInput struct {
 	Viewport           string
 	Force              bool
 	Telemetry          string
+	Name               string
+	SetName            bool
+	ClearName          bool
+	Tags               map[string]string
+	SetTags            bool
+	ClearTags          bool
 	Output             string
 }
 
@@ -697,9 +703,37 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("cannot specify both --proxy-id and --clear-proxy")
 	}
 
+	// Cannot specify both --name and --clear-name
+	if in.SetName && in.ClearName {
+		return fmt.Errorf("cannot specify both --name and --clear-name")
+	}
+
+	// Cannot specify both --tag and --clear-tags. Use SetTags (the raw flag
+	// signal) as well as the parsed map so the check still fires when every
+	// --tag value was malformed and dropped to an empty map.
+	if (in.SetTags || len(in.Tags) > 0) && in.ClearTags {
+		return fmt.Errorf("cannot specify both --tag and --clear-tags")
+	}
+
+	// --tag was provided but parsed to zero valid pairs (every value malformed).
+	// Treat as a user error rather than silently leaving tags unchanged.
+	if in.SetTags && len(in.Tags) == 0 {
+		return fmt.Errorf("no valid --tag KEY=VALUE pairs provided")
+	}
+
+	// --name must carry a value; clearing is done explicitly via --clear-name.
+	// (A set name combined with --clear-name is already rejected above, so the
+	// ClearName case cannot reach here.)
+	if in.SetName && in.Name == "" {
+		return fmt.Errorf("--name requires a non-empty value; use --clear-name to clear the name")
+	}
+
 	hasProxyChange := in.ProxyID != "" || in.ClearProxy
 	hasProfileChange := in.ProfileID != "" || in.ProfileName != ""
 	hasViewportChange := in.Viewport != ""
+	// By this point a set name is guaranteed non-empty (the guard above rejects --name "").
+	hasNameChange := in.SetName || in.ClearName
+	hasTagsChange := len(in.Tags) > 0 || in.ClearTags
 
 	// Validate --save-changes is only used with a profile
 	if in.ProfileSaveChanges.Set && !hasProfileChange {
@@ -712,11 +746,26 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	// Validate that at least one update option is provided
-	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --profile-id, --profile-name, --viewport, or --telemetry")
+	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && !hasNameChange && !hasTagsChange {
+		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --profile-id, --profile-name, --viewport, --telemetry, --name, --clear-name, --tag, or --clear-tags")
 	}
 
 	params := kernel.BrowserUpdateParams{}
+
+	// Handle name changes
+	if in.ClearName {
+		params.Name = kernel.Opt("")
+	} else if in.SetName {
+		params.Name = kernel.Opt(in.Name)
+	}
+
+	// Handle tag changes. Tags are a full replace, not a merge: providing --tag
+	// replaces the entire set, and --clear-tags removes all tags.
+	if in.ClearTags {
+		params.Tags = kernel.Tags{}
+	} else if len(in.Tags) > 0 {
+		params.Tags = kernel.Tags(in.Tags)
+	}
 
 	// Handle proxy changes
 	if in.ClearProxy {
@@ -781,6 +830,12 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	pterm.Success.Printf("Updated browser %s\n", browser.SessionID)
+	if hasNameChange {
+		pterm.Info.Printf("Name: %s\n", util.OrDash(browser.Name))
+	}
+	if hasTagsChange {
+		pterm.Info.Printf("Tags: %s\n", util.OrDash(formatTags(browser.Tags)))
+	}
 	if in.Telemetry != "" {
 		printTelemetrySummary(browser.Telemetry)
 	}
@@ -2338,8 +2393,12 @@ Supported operations:
   - Load a profile into a session that doesn't have one (--profile-id or --profile-name)
   - Change viewport dimensions (--viewport)
   - Force viewport resize during active live view or recording (--force with --viewport)
+  - Rename or clear the session name (--name or --clear-name)
+  - Replace or clear the session tags (--tag or --clear-tags)
 
-Note: Profiles can only be loaded into sessions that don't already have a profile.`,
+Notes:
+  - Profiles can only be loaded into sessions that don't already have a profile.
+  - --tag replaces the entire tag set (it is not merged with existing tags).`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			return fmt.Errorf("missing required argument: browser ID or name\n\nUsage: kernel browsers update <id-or-name> [flags]")
@@ -2379,6 +2438,10 @@ func init() {
 	browsersUpdateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersUpdateCmd.Flags().Bool("force", false, "Force viewport resize even when a live view or recording/replay is active")
 	browsersUpdateCmd.Flags().String("telemetry", "", "Update telemetry: --telemetry=all (reset to default set), --telemetry=off (disable), or --telemetry=console,network (merge those categories into the current selection)")
+	browsersUpdateCmd.Flags().String("name", "", "Set a new unique name for the browser session (mutually exclusive with --clear-name)")
+	browsersUpdateCmd.Flags().Bool("clear-name", false, "Clear the browser session name")
+	browsersUpdateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE (repeatable; up to 50 pairs). Replaces the entire tag set; mutually exclusive with --clear-tags")
+	browsersUpdateCmd.Flags().Bool("clear-tags", false, "Remove all tags from the browser session")
 
 	browsersCmd.AddCommand(browsersListCmd)
 	browsersCmd.AddCommand(browsersCreateCmd)
@@ -2645,7 +2708,7 @@ func init() {
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
 	browsersCreateCmd.Flags().String("telemetry", "", "Configure telemetry (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
-	browsersCreateCmd.Flags().String("name", "", "Optional unique name for the browser session (used to find it later; set at creation only)")
+	browsersCreateCmd.Flags().String("name", "", "Optional unique name for the browser session (used to find it later; can be changed with 'browsers update --name')")
 	browsersCreateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the session (repeatable; up to 50 pairs)")
 	browsersCreateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
 	browsersCreateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
@@ -2921,6 +2984,10 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	viewport, _ := cmd.Flags().GetString("viewport")
 	force, _ := cmd.Flags().GetBool("force")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
+	name, _ := cmd.Flags().GetString("name")
+	clearName, _ := cmd.Flags().GetBool("clear-name")
+	tags := tagsFromFlag(cmd, "tag")
+	clearTags, _ := cmd.Flags().GetBool("clear-tags")
 
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
@@ -2934,6 +3001,12 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 		Viewport:           viewport,
 		Force:              force,
 		Telemetry:          telemetry,
+		Name:               name,
+		SetName:            cmd.Flags().Changed("name"),
+		ClearName:          clearName,
+		Tags:               tags,
+		SetTags:            cmd.Flags().Changed("tag"),
+		ClearTags:          clearTags,
 		Output:             out,
 	})
 }
