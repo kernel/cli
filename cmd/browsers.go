@@ -216,20 +216,22 @@ func parseKeyValueSpecs(specs []string) (map[string]string, []string) {
 }
 
 // tagsFromFlag reads a repeated KEY=VALUE flag and parses it into a map,
-// warning about any malformed entries. Returns nil when no valid tags are set.
-func tagsFromFlag(cmd *cobra.Command, flagName string) map[string]string {
+// warning about any malformed entries. It returns the parsed tags (nil when no
+// valid pairs are set) and whether the flag was provided at least once,
+// independent of whether its values parsed.
+func tagsFromFlag(cmd *cobra.Command, flagName string) (map[string]string, bool) {
 	specs, _ := cmd.Flags().GetStringArray(flagName)
 	if len(specs) == 0 {
-		return nil
+		return nil, false
 	}
 	tags, malformed := parseKeyValueSpecs(specs)
 	for _, invalid := range malformed {
 		pterm.Warning.Printf("Ignoring malformed tag: %s\n", invalid)
 	}
 	if len(tags) == 0 {
-		return nil
+		return nil, true // provided, but all values malformed
 	}
-	return tags
+	return tags, true
 }
 
 // formatTags renders tags as a deterministic "k=v, k2=v2" string with keys
@@ -302,7 +304,7 @@ type BrowsersUpdateInput struct {
 	SetName            bool
 	ClearName          bool
 	Tags               map[string]string
-	SetTags            bool
+	TagsProvided       bool
 	ClearTags          bool
 	Output             string
 }
@@ -708,16 +710,16 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("cannot specify both --name and --clear-name")
 	}
 
-	// Cannot specify both --tag and --clear-tags. Use SetTags (the raw flag
-	// signal) as well as the parsed map so the check still fires when every
+	// Cannot specify both --tag and --clear-tags. TagsProvided (whether the flag
+	// was passed) is the authoritative signal so the check still fires when every
 	// --tag value was malformed and dropped to an empty map.
-	if (in.SetTags || len(in.Tags) > 0) && in.ClearTags {
+	if (in.TagsProvided || len(in.Tags) > 0) && in.ClearTags {
 		return fmt.Errorf("cannot specify both --tag and --clear-tags")
 	}
 
 	// --tag was provided but parsed to zero valid pairs (every value malformed).
 	// Treat as a user error rather than silently leaving tags unchanged.
-	if in.SetTags && len(in.Tags) == 0 {
+	if in.TagsProvided && len(in.Tags) == 0 {
 		return fmt.Errorf("no valid --tag KEY=VALUE pairs provided")
 	}
 
@@ -2761,7 +2763,7 @@ func runBrowsersList(cmd *cobra.Command, args []string) error {
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
 	query, _ := cmd.Flags().GetString("query")
-	tags := tagsFromFlag(cmd, "tag")
+	tags, _ := tagsFromFlag(cmd, "tag")
 	return b.List(cmd.Context(), BrowsersListInput{
 		Output:         out,
 		IncludeDeleted: includeDeleted,
@@ -2814,7 +2816,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	poolName, _ := cmd.Flags().GetString("pool-name")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 	name, _ := cmd.Flags().GetString("name")
-	tags := tagsFromFlag(cmd, "tag")
+	tags, _ := tagsFromFlag(cmd, "tag")
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
 	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
 	output, _ := cmd.Flags().GetString("output")
@@ -2986,7 +2988,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 	name, _ := cmd.Flags().GetString("name")
 	clearName, _ := cmd.Flags().GetBool("clear-name")
-	tags := tagsFromFlag(cmd, "tag")
+	tags, tagsProvided := tagsFromFlag(cmd, "tag")
 	clearTags, _ := cmd.Flags().GetBool("clear-tags")
 
 	svc := client.Browsers
@@ -3005,7 +3007,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 		SetName:            cmd.Flags().Changed("name"),
 		ClearName:          clearName,
 		Tags:               tags,
-		SetTags:            cmd.Flags().Changed("tag"),
+		TagsProvided:       tagsProvided,
 		ClearTags:          clearTags,
 		Output:             out,
 	})

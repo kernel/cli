@@ -699,10 +699,34 @@ func TestTagsFromFlag_WarnsOnMalformed(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.Flags().StringArray("tag", []string{"team=backend", "oops", "env=staging"}, "")
 
-	tags := tagsFromFlag(cmd, "tag")
+	tags, provided := tagsFromFlag(cmd, "tag")
 
+	assert.True(t, provided)
 	assert.Equal(t, map[string]string{"team": "backend", "env": "staging"}, tags)
 	assert.Contains(t, outBuf.String(), "Ignoring malformed tag: oops")
+}
+
+func TestTagsFromFlag_NotProvided_ReportsFalse(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().StringArray("tag", nil, "")
+
+	tags, provided := tagsFromFlag(cmd, "tag")
+
+	assert.False(t, provided)
+	assert.Nil(t, tags)
+}
+
+func TestTagsFromFlag_AllMalformed_ReportsProvidedWithNoTags(t *testing.T) {
+	setupStdoutCapture(t)
+
+	cmd := &cobra.Command{}
+	cmd.Flags().StringArray("tag", []string{"foo"}, "")
+
+	tags, provided := tagsFromFlag(cmd, "tag")
+
+	assert.True(t, provided)
+	assert.Empty(t, tags)
+	assert.Contains(t, outBuf.String(), "Ignoring malformed tag: foo")
 }
 
 func TestBrowsersGet_JSONOutput_IncludesNameAndTags(t *testing.T) {
@@ -2239,12 +2263,12 @@ func TestBrowsersUpdate_NameAndTagsWithProxy_AllForwarded(t *testing.T) {
 	b := BrowsersCmd{browsers: fake}
 
 	err := b.Update(context.Background(), BrowsersUpdateInput{
-		Identifier: "session123",
-		ProxyID:    "proxy-123",
-		Name:       "combo",
-		SetName:    true,
-		Tags:       map[string]string{"k": "v"},
-		SetTags:    true,
+		Identifier:   "session123",
+		ProxyID:      "proxy-123",
+		Name:         "combo",
+		SetName:      true,
+		Tags:         map[string]string{"k": "v"},
+		TagsProvided: true,
 	})
 
 	assert.NoError(t, err)
@@ -2280,10 +2304,10 @@ func TestBrowsersUpdate_ClearNameWithSetTags_BothForwarded(t *testing.T) {
 	b := BrowsersCmd{browsers: fake}
 
 	err := b.Update(context.Background(), BrowsersUpdateInput{
-		Identifier: "session123",
-		ClearName:  true,
-		Tags:       map[string]string{"env": "prod"},
-		SetTags:    true,
+		Identifier:   "session123",
+		ClearName:    true,
+		Tags:         map[string]string{"env": "prod"},
+		TagsProvided: true,
 	})
 
 	assert.NoError(t, err)
@@ -2320,10 +2344,10 @@ func TestBrowsersUpdate_MalformedTagWithClearTags_Errors(t *testing.T) {
 	b := BrowsersCmd{browsers: fake}
 
 	err := b.Update(context.Background(), BrowsersUpdateInput{
-		Identifier: "session123",
-		SetTags:    true, // --tag was provided...
-		Tags:       nil,  // ...but every value was malformed and dropped
-		ClearTags:  true,
+		Identifier:   "session123",
+		TagsProvided: true, // --tag was provided...
+		Tags:         nil,  // ...but every value was malformed and dropped
+		ClearTags:    true,
 	})
 
 	assert.Error(t, err)
@@ -2338,9 +2362,9 @@ func TestBrowsersUpdate_AllMalformedTags_Errors(t *testing.T) {
 	b := BrowsersCmd{browsers: fake}
 
 	err := b.Update(context.Background(), BrowsersUpdateInput{
-		Identifier: "session123",
-		SetTags:    true,
-		Tags:       nil,
+		Identifier:   "session123",
+		TagsProvided: true,
+		Tags:         nil,
 	})
 
 	assert.Error(t, err)
