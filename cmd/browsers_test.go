@@ -693,11 +693,22 @@ func TestParseKeyValueSpecs(t *testing.T) {
 	assert.Equal(t, []string{"bad", "=novalue"}, malformed)
 }
 
+// tagsCmdWithArgs builds a command with a StringArray --tag flag and parses the
+// given args through pflag, so cmd.Flags().Changed("tag") reflects real
+// command-line usage (the default-value injection pattern would leave Changed
+// false and not exercise the provided signal).
+func tagsCmdWithArgs(t *testing.T, args ...string) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{}
+	cmd.Flags().StringArray("tag", nil, "")
+	require.NoError(t, cmd.Flags().Parse(args))
+	return cmd
+}
+
 func TestTagsFromFlag_WarnsOnMalformed(t *testing.T) {
 	setupStdoutCapture(t)
 
-	cmd := &cobra.Command{}
-	cmd.Flags().StringArray("tag", []string{"team=backend", "oops", "env=staging"}, "")
+	cmd := tagsCmdWithArgs(t, "--tag=team=backend", "--tag=oops", "--tag=env=staging")
 
 	tags, provided := tagsFromFlag(cmd, "tag")
 
@@ -707,8 +718,7 @@ func TestTagsFromFlag_WarnsOnMalformed(t *testing.T) {
 }
 
 func TestTagsFromFlag_NotProvided_ReportsFalse(t *testing.T) {
-	cmd := &cobra.Command{}
-	cmd.Flags().StringArray("tag", nil, "")
+	cmd := tagsCmdWithArgs(t)
 
 	tags, provided := tagsFromFlag(cmd, "tag")
 
@@ -719,14 +729,29 @@ func TestTagsFromFlag_NotProvided_ReportsFalse(t *testing.T) {
 func TestTagsFromFlag_AllMalformed_ReportsProvidedWithNoTags(t *testing.T) {
 	setupStdoutCapture(t)
 
-	cmd := &cobra.Command{}
-	cmd.Flags().StringArray("tag", []string{"foo"}, "")
+	cmd := tagsCmdWithArgs(t, "--tag=foo")
 
 	tags, provided := tagsFromFlag(cmd, "tag")
 
 	assert.True(t, provided)
 	assert.Empty(t, tags)
 	assert.Contains(t, outBuf.String(), "Ignoring malformed tag: foo")
+}
+
+// Regression (PR #186 review): an empty `--tag=` leaves pflag's StringArray
+// slice empty while marking the flag Changed. tagsFromFlag must report it as
+// provided so the update path rejects a lone `--tag=` and `--tag= --clear-tags`
+// instead of silently ignoring them — matching the prior Changed("tag") signal.
+func TestTagsFromFlag_EmptyValue_ReportsProvided(t *testing.T) {
+	setupStdoutCapture(t)
+
+	cmd := tagsCmdWithArgs(t, "--tag=")
+
+	tags, provided := tagsFromFlag(cmd, "tag")
+
+	assert.True(t, provided)
+	assert.Empty(t, tags)
+	assert.NotContains(t, outBuf.String(), "Ignoring malformed tag")
 }
 
 func TestBrowsersGet_JSONOutput_IncludesNameAndTags(t *testing.T) {

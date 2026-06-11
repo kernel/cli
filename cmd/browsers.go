@@ -217,21 +217,22 @@ func parseKeyValueSpecs(specs []string) (map[string]string, []string) {
 
 // tagsFromFlag reads a repeated KEY=VALUE flag and parses it into a map,
 // warning about any malformed entries. It returns the parsed tags (nil when no
-// valid pairs are set) and whether the flag was provided at least once,
-// independent of whether its values parsed.
+// valid pairs are set) and whether the flag was provided on the command line.
+//
+// "Provided" keys off Changed, not len(specs): pflag records an empty `--tag=`
+// as Changed-but-empty, and that must still count as provided so the update
+// path rejects it (or `--tag= --clear-tags`) instead of silently ignoring it.
 func tagsFromFlag(cmd *cobra.Command, flagName string) (map[string]string, bool) {
+	provided := cmd.Flags().Changed(flagName)
 	specs, _ := cmd.Flags().GetStringArray(flagName)
-	if len(specs) == 0 {
-		return nil, false
-	}
 	tags, malformed := parseKeyValueSpecs(specs)
 	for _, invalid := range malformed {
 		pterm.Warning.Printf("Ignoring malformed tag: %s\n", invalid)
 	}
 	if len(tags) == 0 {
-		return nil, true // provided, but all values malformed
+		return nil, provided
 	}
-	return tags, true
+	return tags, provided
 }
 
 // formatTags renders tags as a deterministic "k=v, k2=v2" string with keys
