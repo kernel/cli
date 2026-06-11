@@ -742,7 +742,7 @@ func runBrowserPoolsAcquire(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	timeout, _ := cmd.Flags().GetInt64("timeout")
 	name, _ := cmd.Flags().GetString("name")
-	tags := tagsFromFlag(cmd, "tag")
+	tags, _ := tagsFromFlag(cmd, "tag")
 	output, _ := cmd.Flags().GetString("output")
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
 	return c.Acquire(cmd.Context(), BrowserPoolsAcquireInput{

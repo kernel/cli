@@ -693,16 +693,65 @@ func TestParseKeyValueSpecs(t *testing.T) {
 	assert.Equal(t, []string{"bad", "=novalue"}, malformed)
 }
 
+// tagsCmdWithArgs builds a command with a StringArray --tag flag and parses the
+// given args through pflag, so cmd.Flags().Changed("tag") reflects real
+// command-line usage (the default-value injection pattern would leave Changed
+// false and not exercise the provided signal).
+func tagsCmdWithArgs(t *testing.T, args ...string) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{}
+	cmd.Flags().StringArray("tag", nil, "")
+	require.NoError(t, cmd.Flags().Parse(args))
+	return cmd
+}
+
 func TestTagsFromFlag_WarnsOnMalformed(t *testing.T) {
 	setupStdoutCapture(t)
 
-	cmd := &cobra.Command{}
-	cmd.Flags().StringArray("tag", []string{"team=backend", "oops", "env=staging"}, "")
+	cmd := tagsCmdWithArgs(t, "--tag=team=backend", "--tag=oops", "--tag=env=staging")
 
-	tags := tagsFromFlag(cmd, "tag")
+	tags, provided := tagsFromFlag(cmd, "tag")
 
+	assert.True(t, provided)
 	assert.Equal(t, map[string]string{"team": "backend", "env": "staging"}, tags)
 	assert.Contains(t, outBuf.String(), "Ignoring malformed tag: oops")
+}
+
+func TestTagsFromFlag_NotProvided_ReportsFalse(t *testing.T) {
+	cmd := tagsCmdWithArgs(t)
+
+	tags, provided := tagsFromFlag(cmd, "tag")
+
+	assert.False(t, provided)
+	assert.Nil(t, tags)
+}
+
+func TestTagsFromFlag_AllMalformed_ReportsProvidedWithNoTags(t *testing.T) {
+	setupStdoutCapture(t)
+
+	cmd := tagsCmdWithArgs(t, "--tag=foo")
+
+	tags, provided := tagsFromFlag(cmd, "tag")
+
+	assert.True(t, provided)
+	assert.Empty(t, tags)
+	assert.Contains(t, outBuf.String(), "Ignoring malformed tag: foo")
+}
+
+// Regression (PR #186 review): an empty `--tag=` leaves pflag's StringArray
+// slice empty while marking the flag Changed. tagsFromFlag must report it as
+// provided so the update path rejects a lone `--tag=` and `--tag= --clear-tags`
+// instead of silently ignoring them — matching the prior Changed("tag") signal.
+func TestTagsFromFlag_EmptyValue_ReportsProvided(t *testing.T) {
+	setupStdoutCapture(t)
+
+	cmd := tagsCmdWithArgs(t, "--tag=")
+
+	tags, provided := tagsFromFlag(cmd, "tag")
+
+	assert.True(t, provided)
+	assert.Empty(t, tags)
+	assert.NotContains(t, outBuf.String(), "Ignoring malformed tag")
 }
 
 func TestBrowsersGet_JSONOutput_IncludesNameAndTags(t *testing.T) {
@@ -2239,12 +2288,12 @@ func TestBrowsersUpdate_NameAndTagsWithProxy_AllForwarded(t *testing.T) {
 	b := BrowsersCmd{browsers: fake}
 
 	err := b.Update(context.Background(), BrowsersUpdateInput{
-		Identifier: "session123",
-		ProxyID:    "proxy-123",
-		Name:       "combo",
-		SetName:    true,
-		Tags:       map[string]string{"k": "v"},
-		SetTags:    true,
+		Identifier:   "session123",
+		ProxyID:      "proxy-123",
+		Name:         "combo",
+		SetName:      true,
+		Tags:         map[string]string{"k": "v"},
+		TagsProvided: true,
 	})
 
 	assert.NoError(t, err)
@@ -2280,10 +2329,10 @@ func TestBrowsersUpdate_ClearNameWithSetTags_BothForwarded(t *testing.T) {
 	b := BrowsersCmd{browsers: fake}
 
 	err := b.Update(context.Background(), BrowsersUpdateInput{
-		Identifier: "session123",
-		ClearName:  true,
-		Tags:       map[string]string{"env": "prod"},
-		SetTags:    true,
+		Identifier:   "session123",
+		ClearName:    true,
+		Tags:         map[string]string{"env": "prod"},
+		TagsProvided: true,
 	})
 
 	assert.NoError(t, err)
@@ -2320,10 +2369,10 @@ func TestBrowsersUpdate_MalformedTagWithClearTags_Errors(t *testing.T) {
 	b := BrowsersCmd{browsers: fake}
 
 	err := b.Update(context.Background(), BrowsersUpdateInput{
-		Identifier: "session123",
-		SetTags:    true, // --tag was provided...
-		Tags:       nil,  // ...but every value was malformed and dropped
-		ClearTags:  true,
+		Identifier:   "session123",
+		TagsProvided: true, // --tag was provided...
+		Tags:         nil,  // ...but every value was malformed and dropped
+		ClearTags:    true,
 	})
 
 	assert.Error(t, err)
@@ -2338,9 +2387,9 @@ func TestBrowsersUpdate_AllMalformedTags_Errors(t *testing.T) {
 	b := BrowsersCmd{browsers: fake}
 
 	err := b.Update(context.Background(), BrowsersUpdateInput{
-		Identifier: "session123",
-		SetTags:    true,
-		Tags:       nil,
+		Identifier:   "session123",
+		TagsProvided: true,
+		Tags:         nil,
 	})
 
 	assert.Error(t, err)
