@@ -161,6 +161,43 @@ func parseViewport(viewport string) (width, height, refreshRate int64, err error
 	return w, h, refreshRate, nil
 }
 
+// parseChromePolicy resolves the --chrome-policy / --chrome-policy-file inputs into a
+// custom Chrome enterprise policy object. The two inputs are mutually exclusive (enforced
+// by cobra); a file path of "-" reads stdin. It returns a nil map when neither input is
+// set or the content is empty. An explicit empty object ("{}") yields a non-nil empty map,
+// so callers must guard the SDK assignment with len>0: chrome_policy uses omitzero, which
+// drops only a nil map, not an empty one.
+func parseChromePolicy(inline, file string) (map[string]any, error) {
+	data := strings.TrimSpace(inline)
+	if file != "" {
+		var b []byte
+		var err error
+		if file == "-" {
+			b, err = io.ReadAll(os.Stdin)
+		} else {
+			b, err = os.ReadFile(file)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read chrome policy file: %w", err)
+		}
+		data = strings.TrimSpace(string(b))
+	}
+
+	if data == "" {
+		return nil, nil
+	}
+
+	policy := map[string]any{}
+	if err := json.Unmarshal([]byte(data), &policy); err != nil {
+		return nil, fmt.Errorf("invalid JSON in chrome policy (must be a JSON object): %w", err)
+	}
+	if policy == nil {
+		// json.Unmarshal of the literal `null` succeeds but nils the map.
+		return nil, fmt.Errorf("chrome policy must be a JSON object, not null")
+	}
+	return policy, nil
+}
+
 // parseKeyValueSpecs parses repeated KEY=VALUE flag values into a map. It
 // returns the parsed pairs along with any specs that were malformed (missing
 // "=" or an empty key), mirroring the kernel hypeman CLI convention.
@@ -229,6 +266,8 @@ type BrowsersCreateInput struct {
 	Extensions         []string
 	Viewport           string
 	Telemetry          string
+	ChromePolicy       string
+	ChromePolicyFile   string
 	Name               string
 	Tags               map[string]string
 	Output             string
@@ -482,6 +521,14 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 			return err
 		}
 		params.Telemetry = t
+	}
+
+	chromePolicy, err := parseChromePolicy(in.ChromePolicy, in.ChromePolicyFile)
+	if err != nil {
+		return err
+	}
+	if len(chromePolicy) > 0 {
+		params.ChromePolicy = chromePolicy
 	}
 
 	if in.Name != "" {
@@ -2663,6 +2710,9 @@ func init() {
 	browsersCreateCmd.Flags().String("telemetry", "", "Configure telemetry (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
 	browsersCreateCmd.Flags().String("name", "", "Optional unique name for the browser session (used to find it later; can be changed with 'browsers update --name')")
 	browsersCreateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the session (repeatable; up to 50 pairs)")
+	browsersCreateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
+	browsersCreateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
+	browsersCreateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
 
 	// curl
 	curlCmd := &cobra.Command{
@@ -2723,6 +2773,25 @@ func runBrowsersList(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// poolLeaseAllowedFlags returns the `browsers create` flags that are compatible with
+// acquiring a session from a pool (--pool-id/--pool-name). When a pool flag is set, the
+// pool determines browser configuration, so any other browser-config flag set alongside it
+// triggers a conflict warning. Session-only flags like --chrome-policy must stay out of
+// this set so they correctly surface that warning rather than being silently ignored.
+func poolLeaseAllowedFlags() map[string]bool {
+	return map[string]bool{
+		"pool-id":   true,
+		"pool-name": true,
+		"timeout":   true,
+		"name":      true,
+		"tag":       true,
+		"output":    true,
+		// Global persistent flags that don't configure browsers
+		"no-color":  true,
+		"log-level": true,
+	}
+}
+
 func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 
@@ -2746,6 +2815,8 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 	name, _ := cmd.Flags().GetString("name")
 	tags := tagsFromFlag(cmd, "tag")
+	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
+	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
 	output, _ := cmd.Flags().GetString("output")
 
 	if poolID != "" && poolName != "" {
@@ -2756,17 +2827,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	if poolID != "" || poolName != "" {
 		// When using a pool, configuration comes from the pool itself, but
 		// name and tags apply per-lease to the acquired session.
-		allowedFlags := map[string]bool{
-			"pool-id":   true,
-			"pool-name": true,
-			"timeout":   true,
-			"name":      true,
-			"tag":       true,
-			"output":    true,
-			// Global persistent flags that don't configure browsers
-			"no-color":  true,
-			"log-level": true,
-		}
+		allowedFlags := poolLeaseAllowedFlags()
 
 		// Check if any browser configuration flags were set (which would conflict).
 		var conflicts []string
@@ -2860,6 +2921,8 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		Extensions:         extensions,
 		Viewport:           viewport,
 		Telemetry:          telemetry,
+		ChromePolicy:       chromePolicy,
+		ChromePolicyFile:   chromePolicyFile,
 		Name:               name,
 		Tags:               tags,
 		Output:             output,

@@ -220,6 +220,8 @@ Commands with JSON output support:
   - `--telemetry=all` - Enable telemetry for all categories
   - `--telemetry=off` - Disable telemetry
   - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`
+  - `--chrome-policy <json>` - Custom Chrome enterprise policy as a JSON object. Kernel-managed policies (extensions, proxy, automation) are rejected server-side.
+  - `--chrome-policy-file <path>` - Read the Chrome enterprise policy from a file (use `-` for stdin). Mutually exclusive with `--chrome-policy`.
   - `--output json`, `-o json` - Output raw JSON object
   - _Note: When a pool is specified, omit other session configuration flags—pool settings determine profile, proxy, viewport, etc._
 - `kernel browsers delete <id-or-name>` - Delete a browser by ID or name
@@ -262,11 +264,12 @@ Commands with JSON output support:
   - `--timeout <seconds>` - Idle timeout for browsers acquired from the pool
   - `--stealth`, `--headless`, `--kiosk` - Default pool configuration
   - `--profile-id`, `--profile-name`, `--save-changes`, `--proxy-id`, `--start-url`, `--extension`, `--viewport` - Same semantics as `kernel browsers create`
+  - `--chrome-policy <json>` / `--chrome-policy-file <path>` - Custom Chrome enterprise policy applied to every browser in the pool, as a JSON object or from a file (`-` for stdin). Same semantics as `kernel browsers create`.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools get <id-or-name>` - Get pool details
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools update <id-or-name>` - Update pool configuration
-  - Same flags as create plus `--clear-start-url` (remove the pool's start URL) and `--discard-all-idle` (discard all idle browsers and refill)
+  - Same flags as create plus `--clear-start-url` (remove the pool's start URL) and `--discard-all-idle` (discard all idle browsers and refill). An empty `--chrome-policy '{}'` is ignored and does not clear an existing policy; recreate the pool to remove one.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools delete <id-or-name>` - Delete a pool
   - `--force` - Force delete even if browsers are leased
@@ -660,6 +663,10 @@ kernel browsers create --kiosk
 
 # Create a browser with a profile for session state
 kernel browsers create --profile-name my-profile
+
+# Create a browser with a custom Chrome enterprise policy
+kernel browsers create --chrome-policy '{"BookmarkBarEnabled": false}'
+kernel browsers create --chrome-policy-file policy.json
 
 # Delete a browser
 kernel browsers delete browser123
