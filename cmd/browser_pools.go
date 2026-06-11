@@ -334,7 +334,7 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 	}
 	if len(chromePolicy) > 0 {
 		params.ChromePolicy = chromePolicy
-	} else if (in.ChromePolicy != "" || in.ChromePolicyFile != "") && in.Output != "json" {
+	} else if chromePolicy != nil && in.Output != "json" {
 		// An empty policy ({}) cannot clear an existing one: omitzero drops it before it
 		// reaches the server. Warn instead of silently doing nothing, but stay quiet on the
 		// json path so stdout remains valid JSON.

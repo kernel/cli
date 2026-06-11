@@ -234,3 +234,24 @@ func TestBrowserPoolsUpdate_EmptyChromePolicyQuietInJSONMode(t *testing.T) {
 	// The warning must not leak onto stdout in json mode, where it would corrupt the payload.
 	assert.NotContains(t, outBuf.String(), "does not clear")
 }
+
+func TestBrowserPoolsUpdate_BlankChromePolicyDoesNotWarn(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolUpdateParams
+	fake := &FakeBrowserPoolsService{
+		UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: id}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Update(context.Background(), BrowserPoolsUpdateInput{
+		IDOrName:     "pool-1",
+		ChromePolicy: "  \n\t ",
+	})
+	assert.NoError(t, err)
+	assert.Nil(t, captured.ChromePolicy)
+	assert.NotContains(t, outBuf.String(), "does not clear")
+}
