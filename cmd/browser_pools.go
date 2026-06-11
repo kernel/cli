@@ -105,6 +105,8 @@ type BrowserPoolsCreateInput struct {
 	StartURL           string
 	Extensions         []string
 	Viewport           string
+	ChromePolicy       string
+	ChromePolicyFile   string
 	Output             string
 }
 
@@ -164,6 +166,14 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 	}
 	if viewport != nil {
 		params.Viewport = *viewport
+	}
+
+	chromePolicy, err := parseChromePolicy(in.ChromePolicy, in.ChromePolicyFile)
+	if err != nil {
+		return err
+	}
+	if len(chromePolicy) > 0 {
+		params.ChromePolicy = chromePolicy
 	}
 
 	pool, err := c.client.New(ctx, params)
@@ -245,6 +255,8 @@ type BrowserPoolsUpdateInput struct {
 	ClearStartURL      bool
 	Extensions         []string
 	Viewport           string
+	ChromePolicy       string
+	ChromePolicyFile   string
 	DiscardAllIdle     BoolFlag
 	Output             string
 }
@@ -314,6 +326,19 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 	}
 	if viewport != nil {
 		params.Viewport = *viewport
+	}
+
+	chromePolicy, err := parseChromePolicy(in.ChromePolicy, in.ChromePolicyFile)
+	if err != nil {
+		return err
+	}
+	if len(chromePolicy) > 0 {
+		params.ChromePolicy = chromePolicy
+	} else if (in.ChromePolicy != "" || in.ChromePolicyFile != "") && in.Output != "json" {
+		// An empty policy ({}) cannot clear an existing one: omitzero drops it before it
+		// reaches the server. Warn instead of silently doing nothing, but stay quiet on the
+		// json path so stdout remains valid JSON.
+		pterm.Warning.Println("An empty chrome policy is ignored and does not clear the pool's existing policy; recreate the pool to remove a policy.")
 	}
 
 	pool, err := c.client.Update(ctx, in.IDOrName, params)
@@ -541,6 +566,9 @@ func init() {
 	browserPoolsCreateCmd.Flags().String("start-url", "", "Initial page to open for new browsers")
 	browserPoolsCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsCreateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
+	browserPoolsCreateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
+	browserPoolsCreateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
+	browserPoolsCreateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
 
 	addJSONOutputFlag(browserPoolsGetCmd)
 
@@ -559,6 +587,9 @@ func init() {
 	browserPoolsUpdateCmd.Flags().Bool("clear-start-url", false, "Clear the pool start URL")
 	browserPoolsUpdateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsUpdateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
+	browserPoolsUpdateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
+	browserPoolsUpdateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
+	browserPoolsUpdateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
 	browserPoolsUpdateCmd.Flags().Bool("discard-all-idle", false, "Discard all idle browsers")
 	addJSONOutputFlag(browserPoolsUpdateCmd)
 
@@ -615,6 +646,8 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
+	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
+	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
 	output, _ := cmd.Flags().GetString("output")
 
 	in := BrowserPoolsCreateInput{
@@ -632,6 +665,8 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 		StartURL:           startURL,
 		Extensions:         extensions,
 		Viewport:           viewport,
+		ChromePolicy:       chromePolicy,
+		ChromePolicyFile:   chromePolicyFile,
 		Output:             output,
 	}
 
@@ -664,6 +699,8 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 	clearStartURL, _ := cmd.Flags().GetBool("clear-start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
+	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
+	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
 	discardIdle, _ := cmd.Flags().GetBool("discard-all-idle")
 	output, _ := cmd.Flags().GetString("output")
 
@@ -684,6 +721,8 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 		ClearStartURL:      clearStartURL,
 		Extensions:         extensions,
 		Viewport:           viewport,
+		ChromePolicy:       chromePolicy,
+		ChromePolicyFile:   chromePolicyFile,
 		DiscardAllIdle:     BoolFlag{Set: cmd.Flags().Changed("discard-all-idle"), Value: discardIdle},
 		Output:             output,
 	}
@@ -703,7 +742,7 @@ func runBrowserPoolsAcquire(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	timeout, _ := cmd.Flags().GetInt64("timeout")
 	name, _ := cmd.Flags().GetString("name")
-	tags := tagsFromFlag(cmd, "tag")
+	tags, _ := tagsFromFlag(cmd, "tag")
 	output, _ := cmd.Flags().GetString("output")
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
 	return c.Acquire(cmd.Context(), BrowserPoolsAcquireInput{

@@ -213,13 +213,15 @@ Commands with JSON output support:
   - `-H, --headless` - Launch browser without GUI access
   - `--kiosk` - Launch browser in kiosk mode
   - `--start-url <url>` - Initial page to open on launch
-  - `--name <name>` - Optional unique name for the session (set at creation; used to find it later by name)
+  - `--name <name>` - Optional unique name for the session (used to find it later by name; can be changed with `browsers update --name`)
   - `--tag <KEY=VALUE>` - Set a tag on the session, repeatable; up to 50 pairs
   - `--pool-id <id>` - Acquire a browser from the specified pool (mutually exclusive with --pool-name; ignores other session flags). `--name`/`--tag` still apply to the acquired session.
   - `--pool-name <name>` - Acquire a browser from the pool name (mutually exclusive with --pool-id; ignores other session flags)
   - `--telemetry=all` - Enable telemetry for all categories
   - `--telemetry=off` - Disable telemetry
   - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`
+  - `--chrome-policy <json>` - Custom Chrome enterprise policy as a JSON object. Kernel-managed policies (extensions, proxy, automation) are rejected server-side.
+  - `--chrome-policy-file <path>` - Read the Chrome enterprise policy from a file (use `-` for stdin). Mutually exclusive with `--chrome-policy`.
   - `--output json`, `-o json` - Output raw JSON object
   - _Note: When a pool is specified, omit other session configuration flags—pool settings determine profile, proxy, viewport, etc._
 - `kernel browsers delete <id-or-name>` - Delete a browser by ID or name
@@ -228,6 +230,10 @@ Commands with JSON output support:
 - `kernel browsers get <id-or-name>` - Get detailed browser session info by ID or name
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers update <id-or-name>` - Update a running browser session by ID or name
+  - `--name <name>` - Set a new unique name for the session (mutually exclusive with `--clear-name`)
+  - `--clear-name` - Clear the session name
+  - `--tag <KEY=VALUE>` - Set a tag, repeatable; up to 50 pairs. Replaces the entire tag set (not merged); mutually exclusive with `--clear-tags`
+  - `--clear-tags` - Remove all tags from the session
   - `--telemetry=all` - Enable telemetry for all categories
   - `--telemetry=off` - Disable telemetry
   - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`
@@ -258,11 +264,12 @@ Commands with JSON output support:
   - `--timeout <seconds>` - Idle timeout for browsers acquired from the pool
   - `--stealth`, `--headless`, `--kiosk` - Default pool configuration
   - `--profile-id`, `--profile-name`, `--save-changes`, `--proxy-id`, `--start-url`, `--extension`, `--viewport` - Same semantics as `kernel browsers create`
+  - `--chrome-policy <json>` / `--chrome-policy-file <path>` - Custom Chrome enterprise policy applied to every browser in the pool, as a JSON object or from a file (`-` for stdin). Same semantics as `kernel browsers create`.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools get <id-or-name>` - Get pool details
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools update <id-or-name>` - Update pool configuration
-  - Same flags as create plus `--clear-start-url` (remove the pool's start URL) and `--discard-all-idle` (discard all idle browsers and refill)
+  - Same flags as create plus `--clear-start-url` (remove the pool's start URL) and `--discard-all-idle` (discard all idle browsers and refill). An empty `--chrome-policy '{}'` is ignored and does not clear an existing policy; recreate the pool to remove one.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools delete <id-or-name>` - Delete a pool
   - `--force` - Force delete even if browsers are leased
@@ -300,14 +307,14 @@ Commands with JSON output support:
 
 Telemetry config is a sub-field of the browser session. Use `browsers create` or `browsers update` to enable, disable, or configure it, and `browsers get` to inspect the current state.
 
-- Enable all categories: `kernel browsers update <id> --telemetry=all`
+- Enable the default set: `kernel browsers update <id> --telemetry=all`
 - Disable: `kernel browsers update <id> --telemetry=off`
-- Per-category: `kernel browsers update <id> --telemetry=network=on,page=off` (valid: `console`, `interaction`, `network`, `page`; `system` always emits and cannot be toggled)
+- Capture specific categories: `kernel browsers update <id> --telemetry=console,network` (any of: `console`, `network`, `page`, `interaction`, `control`, `connection`, `system`, `screenshot`, `captcha`)
 
 Per-category updates are partial — only categories you name are changed; others retain their current state. `--telemetry=all` and `--telemetry=off` reset the entire config.
 
 - `kernel browsers telemetry stream <id>` - Stream live telemetry events (NDJSON with `-o json`)
-  - `--categories <list>` - Filter by event category (`api`, `console`, `interaction`, `network`, `page`, `system`); `system` matches `monitor_*` and `cdp_*` event types
+  - `--categories <list>` - Filter by event category (`console`, `network`, `page`, `interaction`, `control`, `connection`, `system`, `screenshot`, `captcha`, `monitor`)
   - `--types <list>` - Filter by event type (e.g. `network_response`, `console_error`)
   - `--seq <n>` - Resume after sequence number N (Last-Event-ID); replays events with `seq > N`. Omit to stream from now.
   - `-o, --output json` - Output newline-delimited JSON envelopes
@@ -656,6 +663,10 @@ kernel browsers create --kiosk
 
 # Create a browser with a profile for session state
 kernel browsers create --profile-name my-profile
+
+# Create a browser with a custom Chrome enterprise policy
+kernel browsers create --chrome-policy '{"BookmarkBarEnabled": false}'
+kernel browsers create --chrome-policy-file policy.json
 
 # Delete a browser
 kernel browsers delete browser123
