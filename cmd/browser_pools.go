@@ -8,13 +8,14 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
 
 // BrowserPoolsService defines the subset of the Kernel SDK browser pools client that we use.
 type BrowserPoolsService interface {
-	List(ctx context.Context, opts ...option.RequestOption) (res *[]kernel.BrowserPool, err error)
+	List(ctx context.Context, query kernel.BrowserPoolListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.BrowserPool], err error)
 	New(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (res *kernel.BrowserPool, err error)
 	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.BrowserPool, err error)
 	Update(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (res *kernel.BrowserPool, err error)
@@ -29,6 +30,8 @@ type BrowserPoolsCmd struct {
 }
 
 type BrowserPoolsListInput struct {
+	Limit  int
+	Offset int
 	Output string
 }
 
@@ -37,20 +40,33 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 		return err
 	}
 
-	pools, err := c.client.List(ctx)
+	params := kernel.BrowserPoolListParams{}
+	if in.Limit > 0 {
+		params.Limit = kernel.Int(int64(in.Limit))
+	}
+	if in.Offset > 0 {
+		params.Offset = kernel.Int(int64(in.Offset))
+	}
+
+	page, err := c.client.List(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
+	var pools []kernel.BrowserPool
+	if page != nil {
+		pools = page.Items
+	}
+
 	if in.Output == "json" {
-		if pools == nil || len(*pools) == 0 {
+		if len(pools) == 0 {
 			fmt.Println("[]")
 			return nil
 		}
-		return util.PrintPrettyJSONSlice(*pools)
+		return util.PrintPrettyJSONSlice(pools)
 	}
 
-	if pools == nil || len(*pools) == 0 {
+	if len(pools) == 0 {
 		pterm.Info.Println("No browser pools found")
 		return nil
 	}
@@ -59,7 +75,7 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 		{"ID", "Name", "Available", "Acquired", "Created At", "Size"},
 	}
 
-	for _, p := range *pools {
+	for _, p := range pools {
 		tableData = append(tableData, []string{
 			p.ID,
 			util.OrDash(p.Name),
@@ -89,6 +105,8 @@ type BrowserPoolsCreateInput struct {
 	StartURL           string
 	Extensions         []string
 	Viewport           string
+	ChromePolicy       string
+	ChromePolicyFile   string
 	Output             string
 }
 
@@ -148,6 +166,14 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 	}
 	if viewport != nil {
 		params.Viewport = *viewport
+	}
+
+	chromePolicy, err := parseChromePolicy(in.ChromePolicy, in.ChromePolicyFile)
+	if err != nil {
+		return err
+	}
+	if len(chromePolicy) > 0 {
+		params.ChromePolicy = chromePolicy
 	}
 
 	pool, err := c.client.New(ctx, params)
@@ -229,6 +255,8 @@ type BrowserPoolsUpdateInput struct {
 	ClearStartURL      bool
 	Extensions         []string
 	Viewport           string
+	ChromePolicy       string
+	ChromePolicyFile   string
 	DiscardAllIdle     BoolFlag
 	Output             string
 }
@@ -250,7 +278,7 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 		params.Name = kernel.String(in.Name)
 	}
 	if in.Size > 0 {
-		params.Size = in.Size
+		params.Size = kernel.Int(in.Size)
 	}
 	if in.FillRate > 0 {
 		params.FillRatePerMinute = kernel.Int(in.FillRate)
@@ -300,6 +328,19 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 		params.Viewport = *viewport
 	}
 
+	chromePolicy, err := parseChromePolicy(in.ChromePolicy, in.ChromePolicyFile)
+	if err != nil {
+		return err
+	}
+	if len(chromePolicy) > 0 {
+		params.ChromePolicy = chromePolicy
+	} else if (in.ChromePolicy != "" || in.ChromePolicyFile != "") && in.Output != "json" {
+		// An empty policy ({}) cannot clear an existing one: omitzero drops it before it
+		// reaches the server. Warn instead of silently doing nothing, but stay quiet on the
+		// json path so stdout remains valid JSON.
+		pterm.Warning.Println("An empty chrome policy is ignored and does not clear the pool's existing policy; recreate the pool to remove a policy.")
+	}
+
 	pool, err := c.client.Update(ctx, in.IDOrName, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -338,7 +379,26 @@ func (c BrowserPoolsCmd) Delete(ctx context.Context, in BrowserPoolsDeleteInput)
 type BrowserPoolsAcquireInput struct {
 	IDOrName       string
 	TimeoutSeconds int64
+	Name           string
+	Tags           map[string]string
 	Output         string
+}
+
+// buildAcquireParams builds the SDK params for acquiring a browser from a pool.
+// Shared by `browser-pools acquire` and the `browsers create --pool-id/--pool-name`
+// path so the per-lease name/tags forwarding cannot silently diverge between them.
+func buildAcquireParams(name string, tags map[string]string, timeoutSeconds int64) kernel.BrowserPoolAcquireParams {
+	params := kernel.BrowserPoolAcquireParams{}
+	if timeoutSeconds > 0 {
+		params.AcquireTimeoutSeconds = kernel.Int(timeoutSeconds)
+	}
+	if name != "" {
+		params.Name = kernel.Opt(name)
+	}
+	if len(tags) > 0 {
+		params.Tags = kernel.Tags(tags)
+	}
+	return params
 }
 
 func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInput) error {
@@ -346,10 +406,7 @@ func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInpu
 		return err
 	}
 
-	params := kernel.BrowserPoolAcquireParams{}
-	if in.TimeoutSeconds > 0 {
-		params.AcquireTimeoutSeconds = kernel.Int(in.TimeoutSeconds)
-	}
+	params := buildAcquireParams(in.Name, in.Tags, in.TimeoutSeconds)
 	resp, err := c.client.Acquire(ctx, in.IDOrName, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -370,11 +427,19 @@ func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInpu
 	tableData := pterm.TableData{
 		{"Property", "Value"},
 		{"Session ID", resp.SessionID},
-		{"CDP WebSocket URL", resp.CdpWsURL},
-		{"Live View URL", resp.BrowserLiveViewURL},
 	}
+	if resp.Name != "" {
+		tableData = append(tableData, []string{"Name", resp.Name})
+	}
+	tableData = append(tableData,
+		[]string{"CDP WebSocket URL", resp.CdpWsURL},
+		[]string{"Live View URL", resp.BrowserLiveViewURL},
+	)
 	if resp.StartURL != "" {
 		tableData = append(tableData, []string{"Start URL", resp.StartURL})
+	}
+	if len(resp.Tags) > 0 {
+		tableData = append(tableData, []string{"Tags", formatTags(resp.Tags)})
 	}
 	PrintTableNoPad(tableData, true)
 	return nil
@@ -482,6 +547,8 @@ var browserPoolsFlushCmd = &cobra.Command{
 
 func init() {
 	addJSONOutputFlag(browserPoolsListCmd)
+	browserPoolsListCmd.Flags().Int("limit", 0, "Maximum number of pools to return")
+	browserPoolsListCmd.Flags().Int("offset", 0, "Number of pools to skip (for pagination)")
 
 	addJSONOutputFlag(browserPoolsCreateCmd)
 	browserPoolsCreateCmd.Flags().String("name", "", "Optional unique name for the pool")
@@ -499,6 +566,9 @@ func init() {
 	browserPoolsCreateCmd.Flags().String("start-url", "", "Initial page to open for new browsers")
 	browserPoolsCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsCreateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
+	browserPoolsCreateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
+	browserPoolsCreateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
+	browserPoolsCreateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
 
 	addJSONOutputFlag(browserPoolsGetCmd)
 
@@ -517,12 +587,17 @@ func init() {
 	browserPoolsUpdateCmd.Flags().Bool("clear-start-url", false, "Clear the pool start URL")
 	browserPoolsUpdateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsUpdateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
+	browserPoolsUpdateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
+	browserPoolsUpdateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
+	browserPoolsUpdateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
 	browserPoolsUpdateCmd.Flags().Bool("discard-all-idle", false, "Discard all idle browsers")
 	addJSONOutputFlag(browserPoolsUpdateCmd)
 
 	browserPoolsDeleteCmd.Flags().Bool("force", false, "Force delete even if browsers are leased")
 
 	browserPoolsAcquireCmd.Flags().Int64("timeout", 0, "Acquire timeout in seconds")
+	browserPoolsAcquireCmd.Flags().String("name", "", "Optional name for the acquired session (applies to this lease; cleared on release)")
+	browserPoolsAcquireCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the acquired session (repeatable; applies to this lease)")
 	addJSONOutputFlag(browserPoolsAcquireCmd)
 
 	browserPoolsReleaseCmd.Flags().String("session-id", "", "Browser session ID to release")
@@ -542,8 +617,10 @@ func init() {
 func runBrowserPoolsList(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	out, _ := cmd.Flags().GetString("output")
+	limit, _ := cmd.Flags().GetInt("limit")
+	offset, _ := cmd.Flags().GetInt("offset")
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
-	return c.List(cmd.Context(), BrowserPoolsListInput{Output: out})
+	return c.List(cmd.Context(), BrowserPoolsListInput{Limit: limit, Offset: offset, Output: out})
 }
 
 func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
@@ -569,6 +646,8 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
+	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
+	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
 	output, _ := cmd.Flags().GetString("output")
 
 	in := BrowserPoolsCreateInput{
@@ -586,6 +665,8 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 		StartURL:           startURL,
 		Extensions:         extensions,
 		Viewport:           viewport,
+		ChromePolicy:       chromePolicy,
+		ChromePolicyFile:   chromePolicyFile,
 		Output:             output,
 	}
 
@@ -618,6 +699,8 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 	clearStartURL, _ := cmd.Flags().GetBool("clear-start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
+	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
+	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
 	discardIdle, _ := cmd.Flags().GetBool("discard-all-idle")
 	output, _ := cmd.Flags().GetString("output")
 
@@ -638,6 +721,8 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 		ClearStartURL:      clearStartURL,
 		Extensions:         extensions,
 		Viewport:           viewport,
+		ChromePolicy:       chromePolicy,
+		ChromePolicyFile:   chromePolicyFile,
 		DiscardAllIdle:     BoolFlag{Set: cmd.Flags().Changed("discard-all-idle"), Value: discardIdle},
 		Output:             output,
 	}
@@ -656,9 +741,17 @@ func runBrowserPoolsDelete(cmd *cobra.Command, args []string) error {
 func runBrowserPoolsAcquire(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	timeout, _ := cmd.Flags().GetInt64("timeout")
+	name, _ := cmd.Flags().GetString("name")
+	tags, _ := tagsFromFlag(cmd, "tag")
 	output, _ := cmd.Flags().GetString("output")
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
-	return c.Acquire(cmd.Context(), BrowserPoolsAcquireInput{IDOrName: args[0], TimeoutSeconds: timeout, Output: output})
+	return c.Acquire(cmd.Context(), BrowserPoolsAcquireInput{
+		IDOrName:       args[0],
+		TimeoutSeconds: timeout,
+		Name:           name,
+		Tags:           tags,
+		Output:         output,
+	})
 }
 
 func runBrowserPoolsRelease(cmd *cobra.Command, args []string) error {

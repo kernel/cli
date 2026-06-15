@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "dependencies": {
-    "@browserbasehq/stagehand": "^3.0.6",
+    "@browserbasehq/stagehand": "^3.5.0",
     "@onkernel/sdk": "^0.23.0",
     "zod": "^4.2.0"
   },

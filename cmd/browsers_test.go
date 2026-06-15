@@ -20,6 +20,7 @@ import (
 	"github.com/kernel/kernel-go-sdk/packages/ssestream"
 	"github.com/kernel/kernel-go-sdk/shared"
 	"github.com/pterm/pterm"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -447,6 +448,342 @@ func TestBrowsersList_WithQuery_PassesParam(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, captured.Query.Valid())
 	assert.Equal(t, "sess-matched", captured.Query.Value)
+}
+
+func TestBrowsersCreate_WithNameAndTags(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{
+				SessionID: "sess-new",
+				CdpWsURL:  "ws://cdp-new",
+				Name:      "my-session",
+				Tags:      kernel.Tags{"team": "backend", "env": "staging"},
+			}, nil
+		},
+	}
+
+	b := BrowsersCmd{browsers: fake}
+	err := b.Create(context.Background(), BrowsersCreateInput{
+		Name: "my-session",
+		Tags: map[string]string{"team": "backend", "env": "staging"},
+	})
+	assert.NoError(t, err)
+
+	// Name and tags are forwarded to the SDK request.
+	assert.True(t, captured.Name.Valid())
+	assert.Equal(t, "my-session", captured.Name.Value)
+	assert.Equal(t, "backend", captured.Tags["team"])
+	assert.Equal(t, "staging", captured.Tags["env"])
+
+	// And surfaced in the result table (tags rendered sorted).
+	out := outBuf.String()
+	assert.Contains(t, out, "my-session")
+	assert.Contains(t, out, "Tags")
+	assert.Contains(t, out, "env=staging, team=backend")
+}
+
+func TestBrowsersCreate_WithChromePolicy(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-cp", CdpWsURL: "ws://cdp-cp"}, nil
+		},
+	}
+
+	b := BrowsersCmd{browsers: fake}
+	err := b.Create(context.Background(), BrowsersCreateInput{
+		ChromePolicy: `{"BookmarkBarEnabled": false}`,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]any{"BookmarkBarEnabled": false}, captured.ChromePolicy)
+
+	// The policy reaches the wire.
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "chrome_policy")
+	assert.Contains(t, string(raw), "BookmarkBarEnabled")
+}
+
+func TestBrowsersCreate_ChromePolicyEmptyObjectOmitted(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-cp"}, nil
+		},
+	}
+
+	b := BrowsersCmd{browsers: fake}
+	// An empty object must not be sent: omitzero only drops a nil map, so the len>0 guard
+	// at the call site is what keeps "chrome_policy":{} off the wire.
+	err := b.Create(context.Background(), BrowsersCreateInput{ChromePolicy: "{}"})
+	assert.NoError(t, err)
+	assert.Nil(t, captured.ChromePolicy)
+
+	// Verify the actual serialized contract, not just the Go field: no chrome_policy key.
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "chrome_policy")
+}
+
+func TestBrowsersCreate_ChromePolicyInvalidJSON(t *testing.T) {
+	setupStdoutCapture(t)
+
+	called := false
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			called = true
+			return &kernel.BrowserNewResponse{}, nil
+		},
+	}
+
+	b := BrowsersCmd{browsers: fake}
+	err := b.Create(context.Background(), BrowsersCreateInput{ChromePolicy: "not json"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid JSON")
+	assert.False(t, called, "request should not be sent when the policy is invalid")
+}
+
+func TestParseChromePolicy(t *testing.T) {
+	t.Run("inline object", func(t *testing.T) {
+		got, err := parseChromePolicy(`{"BookmarkBarEnabled": false}`, "")
+		require.NoError(t, err)
+		assert.Equal(t, map[string]any{"BookmarkBarEnabled": false}, got)
+	})
+
+	t.Run("from file", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "policy.json")
+		require.NoError(t, os.WriteFile(path, []byte(`{"BookmarkBarEnabled": true}`), 0o600))
+		got, err := parseChromePolicy("", path)
+		require.NoError(t, err)
+		assert.Equal(t, map[string]any{"BookmarkBarEnabled": true}, got)
+	})
+
+	t.Run("both empty returns nil", func(t *testing.T) {
+		got, err := parseChromePolicy("", "")
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+
+	t.Run("whitespace-only returns nil", func(t *testing.T) {
+		got, err := parseChromePolicy("  \n\t ", "")
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+
+	t.Run("empty object parses to a non-nil empty map", func(t *testing.T) {
+		got, err := parseChromePolicy("{}", "")
+		require.NoError(t, err)
+		assert.NotNil(t, got)
+		assert.Len(t, got, 0)
+	})
+
+	t.Run("invalid JSON errors", func(t *testing.T) {
+		_, err := parseChromePolicy("not json", "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid JSON")
+	})
+
+	t.Run("top-level array is rejected", func(t *testing.T) {
+		_, err := parseChromePolicy("[1, 2, 3]", "")
+		require.Error(t, err)
+	})
+
+	t.Run("null literal is rejected", func(t *testing.T) {
+		_, err := parseChromePolicy("null", "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "must be a JSON object")
+	})
+
+	t.Run("from stdin via -", func(t *testing.T) {
+		r, w, err := os.Pipe()
+		require.NoError(t, err)
+		_, err = w.WriteString(`{"BookmarkBarEnabled": true}`)
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+
+		orig := os.Stdin
+		os.Stdin = r
+		t.Cleanup(func() { os.Stdin = orig })
+
+		got, err := parseChromePolicy("", "-")
+		require.NoError(t, err)
+		assert.Equal(t, map[string]any{"BookmarkBarEnabled": true}, got)
+	})
+
+	t.Run("missing file errors", func(t *testing.T) {
+		_, err := parseChromePolicy("", filepath.Join(t.TempDir(), "nope.json"))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to read")
+	})
+}
+
+func TestPoolLeaseAllowedFlags_ExcludesChromePolicy(t *testing.T) {
+	allowed := poolLeaseAllowedFlags()
+	// Chrome policy is session-only config; it must NOT be allowed on the pool-lease path so
+	// that `browsers create --pool-id ... --chrome-policy ...` trips the conflict warning.
+	assert.False(t, allowed["chrome-policy"])
+	assert.False(t, allowed["chrome-policy-file"])
+	// The flags that genuinely apply per-lease stay allowed.
+	assert.True(t, allowed["pool-id"])
+	assert.True(t, allowed["name"])
+	assert.True(t, allowed["tag"])
+}
+
+func TestBrowsersList_WithTags_PassesParamAndShowsName(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserListParams
+	fake := &FakeBrowsersService{
+		ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
+			captured = query
+			return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: []kernel.BrowserListResponse{
+				{SessionID: "sess-1", Name: "alpha"},
+			}}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+	err := b.List(context.Background(), BrowsersListInput{Tags: map[string]string{"team": "backend"}})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "backend", captured.Tags["team"])
+
+	// The Name column is populated.
+	out := outBuf.String()
+	assert.Contains(t, out, "alpha")
+}
+
+func TestBrowsersGet_ShowsNameAndTags(t *testing.T) {
+	setupStdoutCapture(t)
+
+	fake := &FakeBrowsersService{
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			// Lookup works by id or name; echo it back.
+			return &kernel.BrowserGetResponse{
+				SessionID: "sess-1",
+				CdpWsURL:  "ws://cdp-1",
+				Name:      "my-session",
+				Tags:      kernel.Tags{"env": "prod"},
+			}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+	err := b.Get(context.Background(), BrowsersGetInput{Identifier: "my-session"})
+
+	assert.NoError(t, err)
+	out := outBuf.String()
+	assert.Contains(t, out, "my-session")
+	assert.Contains(t, out, "Tags")
+	assert.Contains(t, out, "env=prod")
+}
+
+func TestParseKeyValueSpecs(t *testing.T) {
+	tags, malformed := parseKeyValueSpecs([]string{"team=backend", "env=staging", "bad", "=novalue", "k=v=w"})
+
+	assert.Equal(t, map[string]string{"team": "backend", "env": "staging", "k": "v=w"}, tags)
+	assert.Equal(t, []string{"bad", "=novalue"}, malformed)
+}
+
+// tagsCmdWithArgs builds a command with a StringArray --tag flag and parses the
+// given args through pflag, so cmd.Flags().Changed("tag") reflects real
+// command-line usage (the default-value injection pattern would leave Changed
+// false and not exercise the provided signal).
+func tagsCmdWithArgs(t *testing.T, args ...string) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{}
+	cmd.Flags().StringArray("tag", nil, "")
+	require.NoError(t, cmd.Flags().Parse(args))
+	return cmd
+}
+
+func TestTagsFromFlag_WarnsOnMalformed(t *testing.T) {
+	setupStdoutCapture(t)
+
+	cmd := tagsCmdWithArgs(t, "--tag=team=backend", "--tag=oops", "--tag=env=staging")
+
+	tags, provided := tagsFromFlag(cmd, "tag")
+
+	assert.True(t, provided)
+	assert.Equal(t, map[string]string{"team": "backend", "env": "staging"}, tags)
+	assert.Contains(t, outBuf.String(), "Ignoring malformed tag: oops")
+}
+
+func TestTagsFromFlag_NotProvided_ReportsFalse(t *testing.T) {
+	cmd := tagsCmdWithArgs(t)
+
+	tags, provided := tagsFromFlag(cmd, "tag")
+
+	assert.False(t, provided)
+	assert.Nil(t, tags)
+}
+
+func TestTagsFromFlag_AllMalformed_ReportsProvidedWithNoTags(t *testing.T) {
+	setupStdoutCapture(t)
+
+	cmd := tagsCmdWithArgs(t, "--tag=foo")
+
+	tags, provided := tagsFromFlag(cmd, "tag")
+
+	assert.True(t, provided)
+	assert.Empty(t, tags)
+	assert.Contains(t, outBuf.String(), "Ignoring malformed tag: foo")
+}
+
+// Regression (PR #186 review): an empty `--tag=` leaves pflag's StringArray
+// slice empty while marking the flag Changed. tagsFromFlag must report it as
+// provided so the update path rejects a lone `--tag=` and `--tag= --clear-tags`
+// instead of silently ignoring them — matching the prior Changed("tag") signal.
+func TestTagsFromFlag_EmptyValue_ReportsProvided(t *testing.T) {
+	setupStdoutCapture(t)
+
+	cmd := tagsCmdWithArgs(t, "--tag=")
+
+	tags, provided := tagsFromFlag(cmd, "tag")
+
+	assert.True(t, provided)
+	assert.Empty(t, tags)
+	assert.NotContains(t, outBuf.String(), "Ignoring malformed tag")
+}
+
+func TestBrowsersGet_JSONOutput_IncludesNameAndTags(t *testing.T) {
+	setupStdoutCapture(t)
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	t.Cleanup(func() { os.Stdout = oldStdout })
+
+	fake := &FakeBrowsersService{
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			// Unmarshal so RawJSON() (used by the json output path) is populated.
+			jsonData := `{"session_id":"sess-json","cdp_ws_url":"ws://cdp","name":"my-session","tags":{"env":"prod"},"created_at":"2024-01-01T00:00:00Z","headless":false,"stealth":false,"timeout_seconds":60}`
+			var resp kernel.BrowserGetResponse
+			if err := json.Unmarshal([]byte(jsonData), &resp); err != nil {
+				t.Fatalf("failed to unmarshal test response: %v", err)
+			}
+			return &resp, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+	_ = b.Get(context.Background(), BrowsersGetInput{Identifier: "my-session", Output: "json"})
+
+	w.Close()
+	var stdoutBuf bytes.Buffer
+	io.Copy(&stdoutBuf, r)
+
+	out := stdoutBuf.String()
+	assert.Contains(t, out, "\"name\"")
+	assert.Contains(t, out, "my-session")
+	assert.Contains(t, out, "\"tags\"")
+	assert.Contains(t, out, "prod")
 }
 
 func TestBrowsersCreate_PrintsResponse(t *testing.T) {
@@ -1643,6 +1980,74 @@ func TestBrowsersCreate_RejectsStartURLFlagToken(t *testing.T) {
 	assert.False(t, called)
 }
 
+func TestBrowsersCreate_WithTelemetry(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+		captured = body
+		return &kernel.BrowserNewResponse{SessionID: "session123", CdpWsURL: "ws://example"}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{Telemetry: "all"})
+
+	assert.NoError(t, err)
+	assert.True(t, captured.Telemetry.Enabled.Valid())
+	assert.True(t, captured.Telemetry.Enabled.Value)
+}
+
+func TestBrowsersCreate_WithTelemetryCategories(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+		captured = body
+		return &kernel.BrowserNewResponse{SessionID: "session123", CdpWsURL: "ws://example"}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{Telemetry: "network,page"})
+
+	assert.NoError(t, err)
+	assert.False(t, captured.Telemetry.Enabled.Valid(), "an opt-in selection must omit Enabled so the API captures exactly the listed categories")
+	assert.True(t, captured.Telemetry.Browser.Network.Enabled.Valid())
+	assert.True(t, captured.Telemetry.Browser.Network.Enabled.Value)
+	assert.True(t, captured.Telemetry.Browser.Page.Enabled.Valid())
+	assert.True(t, captured.Telemetry.Browser.Page.Enabled.Value)
+	assert.False(t, captured.Telemetry.Browser.Console.Enabled.Valid(), "unlisted categories stay omitted")
+	assert.False(t, captured.Telemetry.Browser.Interaction.Enabled.Valid(), "unlisted categories stay omitted")
+}
+
+func TestBrowsersCreate_WithTelemetryOff(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+		captured = body
+		return &kernel.BrowserNewResponse{SessionID: "session123", CdpWsURL: "ws://example"}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{Telemetry: "off"})
+
+	assert.NoError(t, err)
+	assert.True(t, captured.Telemetry.Enabled.Valid())
+	assert.False(t, captured.Telemetry.Enabled.Value)
+}
+
+func TestBrowsersCreate_WithoutTelemetry(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+		captured = body
+		return &kernel.BrowserNewResponse{SessionID: "session123", CdpWsURL: "ws://example"}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{})
+
+	assert.NoError(t, err)
+	assert.False(t, captured.Telemetry.Enabled.Valid())
+}
+
 func TestBrowsersCreate_WithInvalidViewport(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeBrowsersService{}
@@ -1729,4 +2134,264 @@ func TestBrowsersUpdate_ForceWithProxyButNoViewport_Errors(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "--force requires --viewport")
+}
+
+func captureUpdateParams(t *testing.T) (*FakeBrowsersService, *kernel.BrowserUpdateParams) {
+	t.Helper()
+	captured := &kernel.BrowserUpdateParams{}
+	fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+		*captured = body
+		return &kernel.BrowserUpdateResponse{SessionID: "session123", Name: body.Name.Value, Tags: body.Tags}, nil
+	}}
+	return fake, captured
+}
+
+func TestBrowsersUpdate_WithName_ForwardsParam(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Name:       "new-name",
+		SetName:    true,
+	})
+
+	assert.NoError(t, err)
+	assert.True(t, captured.Name.Valid())
+	assert.Equal(t, "new-name", captured.Name.Value)
+}
+
+func TestBrowsersUpdate_ClearName_SendsEmptyName(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		ClearName:  true,
+	})
+
+	assert.NoError(t, err)
+	raw, marshalErr := json.Marshal(*captured)
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(raw), `"name":""`)
+}
+
+func TestBrowsersUpdate_WithTags_ReplacesTagSet(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Tags:       map[string]string{"team": "backend", "env": "staging"},
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "backend", captured.Tags["team"])
+	assert.Equal(t, "staging", captured.Tags["env"])
+	assert.Len(t, captured.Tags, 2)
+}
+
+func TestBrowsersUpdate_ClearTags_SendsEmptyObject(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		ClearTags:  true,
+	})
+
+	assert.NoError(t, err)
+	raw, marshalErr := json.Marshal(*captured)
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(raw), `"tags":{}`)
+}
+
+func TestBrowsersUpdate_NameAndClearName_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Name:       "x",
+		SetName:    true,
+		ClearName:  true,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot specify both --name and --clear-name")
+}
+
+func TestBrowsersUpdate_TagAndClearTags_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Tags:       map[string]string{"a": "1"},
+		ClearTags:  true,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot specify both --tag and --clear-tags")
+}
+
+func TestBrowsersUpdate_EmptyName_WithoutClear_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Name:       "",
+		SetName:    true,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "use --clear-name")
+}
+
+func TestBrowsersUpdate_NameOnly_SatisfiesAtLeastOne(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Name:       "renamed",
+		SetName:    true,
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "renamed", captured.Name.Value)
+}
+
+func TestBrowsersUpdate_NoOptions_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{Identifier: "session123"})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "must specify at least one")
+}
+
+func TestBrowsersUpdate_NameAndTagsWithProxy_AllForwarded(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier:   "session123",
+		ProxyID:      "proxy-123",
+		Name:         "combo",
+		SetName:      true,
+		Tags:         map[string]string{"k": "v"},
+		TagsProvided: true,
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "combo", captured.Name.Value)
+	assert.Equal(t, "v", captured.Tags["k"])
+	assert.Equal(t, "proxy-123", captured.ProxyID.Value)
+}
+
+// Regression guard: a non-name/non-tags update must omit both fields entirely
+// (omit = leave unchanged), never sending an accidental empty name or tags.
+func TestBrowsersUpdate_OmitNameAndTags_NotSent(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		ProxyID:    "proxy-123",
+	})
+
+	assert.NoError(t, err)
+	assert.False(t, captured.Name.Valid())
+	assert.Nil(t, captured.Tags)
+	raw, marshalErr := json.Marshal(*captured)
+	require.NoError(t, marshalErr)
+	assert.NotContains(t, string(raw), `"name"`)
+	assert.NotContains(t, string(raw), `"tags"`)
+}
+
+func TestBrowsersUpdate_ClearNameWithSetTags_BothForwarded(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier:   "session123",
+		ClearName:    true,
+		Tags:         map[string]string{"env": "prod"},
+		TagsProvided: true,
+	})
+
+	assert.NoError(t, err)
+	raw, marshalErr := json.Marshal(*captured)
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(raw), `"name":""`)
+	assert.Contains(t, string(raw), `"env":"prod"`)
+}
+
+func TestBrowsersUpdate_SetNameWithClearTags_BothForwarded(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Name:       "renamed",
+		SetName:    true,
+		ClearTags:  true,
+	})
+
+	assert.NoError(t, err)
+	raw, marshalErr := json.Marshal(*captured)
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(raw), `"name":"renamed"`)
+	assert.Contains(t, string(raw), `"tags":{}`)
+}
+
+// A malformed-only --tag (tagsFromFlag drops it to nil) combined with
+// --clear-tags must still be rejected as contradictory, not silently clear.
+func TestBrowsersUpdate_MalformedTagWithClearTags_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier:   "session123",
+		TagsProvided: true, // --tag was provided...
+		Tags:         nil,  // ...but every value was malformed and dropped
+		ClearTags:    true,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot specify both --tag and --clear-tags")
+}
+
+// --tag provided but every value malformed (parsed to zero pairs) is a user
+// error, not a no-op or a misleading "must specify at least one" message.
+func TestBrowsersUpdate_AllMalformedTags_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier:   "session123",
+		TagsProvided: true,
+		Tags:         nil,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no valid --tag")
 }

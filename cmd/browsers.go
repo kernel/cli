@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -31,11 +32,11 @@ import (
 // BrowsersService defines the subset of the Kernel SDK browser client that we use.
 // See https://github.com/kernel/kernel-go-sdk/blob/main/browser.go
 type BrowsersService interface {
-	Get(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (res *kernel.BrowserGetResponse, err error)
+	Get(ctx context.Context, idOrName string, query kernel.BrowserGetParams, opts ...option.RequestOption) (res *kernel.BrowserGetResponse, err error)
 	List(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.BrowserListResponse], err error)
 	New(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (res *kernel.BrowserNewResponse, err error)
-	Update(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (res *kernel.BrowserUpdateResponse, err error)
-	DeleteByID(ctx context.Context, id string, opts ...option.RequestOption) (err error)
+	Update(ctx context.Context, idOrName string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (res *kernel.BrowserUpdateResponse, err error)
+	DeleteByID(ctx context.Context, idOrName string, opts ...option.RequestOption) (err error)
 	HTTPClient(id string, opts ...option.RequestOption) (*http.Client, error)
 	LoadExtensions(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) (err error)
 }
@@ -160,6 +161,98 @@ func parseViewport(viewport string) (width, height, refreshRate int64, err error
 	return w, h, refreshRate, nil
 }
 
+// parseChromePolicy resolves the --chrome-policy / --chrome-policy-file inputs into a
+// custom Chrome enterprise policy object. The two inputs are mutually exclusive (enforced
+// by cobra); a file path of "-" reads stdin. It returns a nil map when neither input is
+// set or the content is empty. An explicit empty object ("{}") yields a non-nil empty map,
+// so callers must guard the SDK assignment with len>0: chrome_policy uses omitzero, which
+// drops only a nil map, not an empty one.
+func parseChromePolicy(inline, file string) (map[string]any, error) {
+	data := strings.TrimSpace(inline)
+	if file != "" {
+		var b []byte
+		var err error
+		if file == "-" {
+			b, err = io.ReadAll(os.Stdin)
+		} else {
+			b, err = os.ReadFile(file)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read chrome policy file: %w", err)
+		}
+		data = strings.TrimSpace(string(b))
+	}
+
+	if data == "" {
+		return nil, nil
+	}
+
+	policy := map[string]any{}
+	if err := json.Unmarshal([]byte(data), &policy); err != nil {
+		return nil, fmt.Errorf("invalid JSON in chrome policy (must be a JSON object): %w", err)
+	}
+	if policy == nil {
+		// json.Unmarshal of the literal `null` succeeds but nils the map.
+		return nil, fmt.Errorf("chrome policy must be a JSON object, not null")
+	}
+	return policy, nil
+}
+
+// parseKeyValueSpecs parses repeated KEY=VALUE flag values into a map. It
+// returns the parsed pairs along with any specs that were malformed (missing
+// "=" or an empty key), mirroring the kernel hypeman CLI convention.
+func parseKeyValueSpecs(specs []string) (map[string]string, []string) {
+	values := make(map[string]string)
+	var malformed []string
+	for _, spec := range specs {
+		parts := strings.SplitN(spec, "=", 2)
+		if len(parts) != 2 || parts[0] == "" {
+			malformed = append(malformed, spec)
+			continue
+		}
+		values[parts[0]] = parts[1]
+	}
+	return values, malformed
+}
+
+// tagsFromFlag reads a repeated KEY=VALUE flag and parses it into a map,
+// warning about any malformed entries. It returns the parsed tags (nil when no
+// valid pairs are set) and whether the flag was provided on the command line.
+//
+// "Provided" keys off Changed, not len(specs): pflag records an empty `--tag=`
+// as Changed-but-empty, and that must still count as provided so the update
+// path rejects it (or `--tag= --clear-tags`) instead of silently ignoring it.
+func tagsFromFlag(cmd *cobra.Command, flagName string) (map[string]string, bool) {
+	provided := cmd.Flags().Changed(flagName)
+	specs, _ := cmd.Flags().GetStringArray(flagName)
+	tags, malformed := parseKeyValueSpecs(specs)
+	for _, invalid := range malformed {
+		pterm.Warning.Printf("Ignoring malformed tag: %s\n", invalid)
+	}
+	if len(tags) == 0 {
+		return nil, provided
+	}
+	return tags, provided
+}
+
+// formatTags renders tags as a deterministic "k=v, k2=v2" string with keys
+// sorted, for display in detail tables.
+func formatTags(tags kernel.Tags) string {
+	if len(tags) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(tags))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%s", k, tags[k]))
+	}
+	return strings.Join(parts, ", ")
+}
+
 // Inputs for each command
 type BrowsersCreateInput struct {
 	TimeoutSeconds     int
@@ -175,6 +268,11 @@ type BrowsersCreateInput struct {
 	StartURL           string
 	Extensions         []string
 	Viewport           string
+	Telemetry          string
+	ChromePolicy       string
+	ChromePolicyFile   string
+	Name               string
+	Tags               map[string]string
 	Output             string
 }
 
@@ -202,6 +300,13 @@ type BrowsersUpdateInput struct {
 	ProfileSaveChanges BoolFlag
 	Viewport           string
 	Force              bool
+	Telemetry          string
+	Name               string
+	SetName            bool
+	ClearName          bool
+	Tags               map[string]string
+	TagsProvided       bool
+	ClearTags          bool
 	Output             string
 }
 
@@ -215,6 +320,7 @@ type BrowsersCmd struct {
 	logs       BrowserLogService
 	computer   BrowserComputerService
 	playwright BrowserPlaywrightService
+	telemetry  BrowserTelemetryService
 }
 
 type BrowsersListInput struct {
@@ -224,6 +330,7 @@ type BrowsersListInput struct {
 	Limit          int
 	Offset         int
 	Query          string
+	Tags           map[string]string
 }
 
 func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
@@ -256,6 +363,9 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	if in.Query != "" {
 		params.Query = kernel.Opt(in.Query)
 	}
+	if len(in.Tags) > 0 {
+		params.Tags = in.Tags
+	}
 
 	page, err := b.browsers.List(ctx, params)
 	if err != nil {
@@ -277,7 +387,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	}
 
 	// Prepare table data
-	headers := []string{"Browser ID", "Created At", "Profile", "Pool", "CDP WS URL", "Live View URL"}
+	headers := []string{"Browser ID", "Name", "Created At", "Profile", "Pool", "CDP WS URL", "Live View URL"}
 	showDeletedAt := in.IncludeDeleted || in.Status == "deleted" || in.Status == "all"
 	if showDeletedAt {
 		headers = append(headers, "Deleted At")
@@ -301,6 +411,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 
 		row := []string{
 			browser.SessionID,
+			util.OrDash(browser.Name),
 			util.FormatLocal(browser.CreatedAt),
 			profile,
 			pool,
@@ -331,9 +442,6 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		return err
 	}
 
-	if in.Output != "json" {
-		pterm.Info.Println("Creating browser session...")
-	}
 	params := kernel.BrowserNewParams{}
 	if in.TimeoutSeconds > 0 {
 		params.TimeoutSeconds = kernel.Opt(int64(in.TimeoutSeconds))
@@ -410,6 +518,32 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		}
 	}
 
+	if in.Telemetry != "" {
+		t, err := buildNewTelemetryParam(in.Telemetry)
+		if err != nil {
+			return err
+		}
+		params.Telemetry = t
+	}
+
+	chromePolicy, err := parseChromePolicy(in.ChromePolicy, in.ChromePolicyFile)
+	if err != nil {
+		return err
+	}
+	if len(chromePolicy) > 0 {
+		params.ChromePolicy = chromePolicy
+	}
+
+	if in.Name != "" {
+		params.Name = kernel.Opt(in.Name)
+	}
+	if len(in.Tags) > 0 {
+		params.Tags = kernel.Tags(in.Tags)
+	}
+
+	if in.Output != "json" {
+		pterm.Info.Println("Creating browser session...")
+	}
 	browser, err := b.browsers.New(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -419,22 +553,28 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		return util.PrintPrettyJSON(browser)
 	}
 
-	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.StartURL)
+	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.StartURL, browser.Name, browser.Tags)
+	if in.Telemetry != "" {
+		printTelemetrySummary(browser.Telemetry)
+	}
 	return nil
 }
 
-func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, startURL string) {
-	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, profile, startURL)
+func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, startURL, name string, tags kernel.Tags) {
+	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, profile, startURL, name, tags)
 	PrintTableNoPad(tableData, true)
 }
 
 // buildBrowserTableData creates a base table with common browser session fields.
-func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, startURL string) pterm.TableData {
+func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, startURL, name string, tags kernel.Tags) pterm.TableData {
 	tableData := pterm.TableData{
 		{"Property", "Value"},
 		{"Session ID", sessionID},
-		{"CDP WebSocket URL", cdpURL},
 	}
+	if name != "" {
+		tableData = append(tableData, []string{"Name", name})
+	}
+	tableData = append(tableData, []string{"CDP WebSocket URL", cdpURL})
 	if liveViewURL != "" {
 		tableData = append(tableData, []string{"Live View URL", liveViewURL})
 	}
@@ -447,6 +587,9 @@ func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, profile kernel
 	}
 	if startURL != "" {
 		tableData = append(tableData, []string{"Start URL", startURL})
+	}
+	if len(tags) > 0 {
+		tableData = append(tableData, []string{"Tags", formatTags(tags)})
 	}
 	return tableData
 }
@@ -519,6 +662,8 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		browser.BrowserLiveViewURL,
 		browser.Profile,
 		browser.StartURL,
+		browser.Name,
+		browser.Tags,
 	)
 
 	// Append additional detailed fields
@@ -561,9 +706,37 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("cannot specify both --proxy-id and --clear-proxy")
 	}
 
+	// Cannot specify both --name and --clear-name
+	if in.SetName && in.ClearName {
+		return fmt.Errorf("cannot specify both --name and --clear-name")
+	}
+
+	// Cannot specify both --tag and --clear-tags. TagsProvided (whether the flag
+	// was passed) is the authoritative signal so the check still fires when every
+	// --tag value was malformed and dropped to an empty map.
+	if (in.TagsProvided || len(in.Tags) > 0) && in.ClearTags {
+		return fmt.Errorf("cannot specify both --tag and --clear-tags")
+	}
+
+	// --tag was provided but parsed to zero valid pairs (every value malformed).
+	// Treat as a user error rather than silently leaving tags unchanged.
+	if in.TagsProvided && len(in.Tags) == 0 {
+		return fmt.Errorf("no valid --tag KEY=VALUE pairs provided")
+	}
+
+	// --name must carry a value; clearing is done explicitly via --clear-name.
+	// (A set name combined with --clear-name is already rejected above, so the
+	// ClearName case cannot reach here.)
+	if in.SetName && in.Name == "" {
+		return fmt.Errorf("--name requires a non-empty value; use --clear-name to clear the name")
+	}
+
 	hasProxyChange := in.ProxyID != "" || in.ClearProxy
 	hasProfileChange := in.ProfileID != "" || in.ProfileName != ""
 	hasViewportChange := in.Viewport != ""
+	// By this point a set name is guaranteed non-empty (the guard above rejects --name "").
+	hasNameChange := in.SetName || in.ClearName
+	hasTagsChange := len(in.Tags) > 0 || in.ClearTags
 
 	// Validate --save-changes is only used with a profile
 	if in.ProfileSaveChanges.Set && !hasProfileChange {
@@ -576,11 +749,26 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	// Validate that at least one update option is provided
-	if !hasProxyChange && !hasProfileChange && !hasViewportChange {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --profile-id, --profile-name, or --viewport")
+	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && !hasNameChange && !hasTagsChange {
+		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --profile-id, --profile-name, --viewport, --telemetry, --name, --clear-name, --tag, or --clear-tags")
 	}
 
 	params := kernel.BrowserUpdateParams{}
+
+	// Handle name changes
+	if in.ClearName {
+		params.Name = kernel.Opt("")
+	} else if in.SetName {
+		params.Name = kernel.Opt(in.Name)
+	}
+
+	// Handle tag changes. Tags are a full replace, not a merge: providing --tag
+	// replaces the entire set, and --clear-tags removes all tags.
+	if in.ClearTags {
+		params.Tags = kernel.Tags{}
+	} else if len(in.Tags) > 0 {
+		params.Tags = kernel.Tags(in.Tags)
+	}
 
 	// Handle proxy changes
 	if in.ClearProxy {
@@ -600,6 +788,15 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		if in.ProfileSaveChanges.Set {
 			params.Profile.SaveChanges = kernel.Opt(in.ProfileSaveChanges.Value)
 		}
+	}
+
+	// Handle telemetry changes
+	if in.Telemetry != "" {
+		t, err := buildUpdateTelemetryParam(in.Telemetry)
+		if err != nil {
+			return err
+		}
+		params.Telemetry = t
 	}
 
 	// Handle viewport changes
@@ -636,6 +833,15 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	pterm.Success.Printf("Updated browser %s\n", browser.SessionID)
+	if hasNameChange {
+		pterm.Info.Printf("Name: %s\n", util.OrDash(browser.Name))
+	}
+	if hasTagsChange {
+		pterm.Info.Printf("Tags: %s\n", util.OrDash(formatTags(browser.Tags)))
+	}
+	if in.Telemetry != "" {
+		printTelemetrySummary(browser.Telemetry)
+	}
 	return nil
 }
 
@@ -2159,30 +2365,30 @@ var browsersCreateCmd = &cobra.Command{
 }
 
 var browsersDeleteCmd = &cobra.Command{
-	Use:   "delete <id> [ids...]",
-	Short: "Delete a browser",
+	Use:   "delete <id-or-name> [ids-or-names...]",
+	Short: "Delete a browser by ID or name",
 	Args:  cobra.MinimumNArgs(1),
 	RunE:  runBrowsersDelete,
 }
 
 var browsersViewCmd = &cobra.Command{
-	Use:   "view <id>",
-	Short: "Get the live view URL for a browser",
+	Use:   "view <id-or-name>",
+	Short: "Get the live view URL for a browser by ID or name",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runBrowsersView,
 }
 
 var browsersGetCmd = &cobra.Command{
-	Use:   "get <id>",
-	Short: "Get detailed information about a browser session",
-	Long:  "Retrieve and display detailed information about a specific browser session including configuration, URLs, and status.",
+	Use:   "get <id-or-name>",
+	Short: "Get detailed information about a browser session by ID or name",
+	Long:  "Retrieve and display detailed information about a specific browser session (by ID or name) including configuration, URLs, and status.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runBrowsersGet,
 }
 
 var browsersUpdateCmd = &cobra.Command{
-	Use:   "update <id>",
-	Short: "Update a browser session",
+	Use:   "update <id-or-name>",
+	Short: "Update a browser session by ID or name",
 	Long: `Update a running browser session.
 
 Supported operations:
@@ -2190,14 +2396,18 @@ Supported operations:
   - Load a profile into a session that doesn't have one (--profile-id or --profile-name)
   - Change viewport dimensions (--viewport)
   - Force viewport resize during active live view or recording (--force with --viewport)
+  - Rename or clear the session name (--name or --clear-name)
+  - Replace or clear the session tags (--tag or --clear-tags)
 
-Note: Profiles can only be loaded into sessions that don't already have a profile.`,
+Notes:
+  - Profiles can only be loaded into sessions that don't already have a profile.
+  - --tag replaces the entire tag set (it is not merged with existing tags).`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
-			return fmt.Errorf("missing required argument: browser ID\n\nUsage: kernel browsers update <id> [flags]")
+			return fmt.Errorf("missing required argument: browser ID or name\n\nUsage: kernel browsers update <id-or-name> [flags]")
 		}
 		if len(args) > 1 {
-			return fmt.Errorf("expected 1 argument (browser ID), got %d", len(args))
+			return fmt.Errorf("expected 1 argument (browser ID or name), got %d", len(args))
 		}
 		return nil
 	},
@@ -2211,7 +2421,8 @@ func init() {
 	browsersListCmd.Flags().String("status", "", "Filter by status: 'active' (default), 'deleted', or 'all'")
 	browsersListCmd.Flags().Int("limit", 0, "Maximum number of results to return (default 20, max 100)")
 	browsersListCmd.Flags().Int("offset", 0, "Number of results to skip (for pagination)")
-	browsersListCmd.Flags().String("query", "", "Search browsers by session ID, profile ID, or proxy ID")
+	browsersListCmd.Flags().String("query", "", "Search browsers by name, session ID, profile ID, proxy ID, or pool name")
+	browsersListCmd.Flags().StringArray("tag", nil, "Filter by tag KEY=VALUE (repeatable; a session must match every pair)")
 
 	// get flags
 	addJSONOutputFlag(browsersGetCmd)
@@ -2229,6 +2440,11 @@ func init() {
 	browsersUpdateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
 	browsersUpdateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersUpdateCmd.Flags().Bool("force", false, "Force viewport resize even when a live view or recording/replay is active")
+	browsersUpdateCmd.Flags().String("telemetry", "", "Update telemetry: --telemetry=all (reset to default set), --telemetry=off (disable), or --telemetry=console,network (merge those categories into the current selection)")
+	browsersUpdateCmd.Flags().String("name", "", "Set a new unique name for the browser session (mutually exclusive with --clear-name)")
+	browsersUpdateCmd.Flags().Bool("clear-name", false, "Clear the browser session name")
+	browsersUpdateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE (repeatable; up to 50 pairs). Replaces the entire tag set; mutually exclusive with --clear-tags")
+	browsersUpdateCmd.Flags().Bool("clear-tags", false, "Remove all tags from the browser session")
 
 	browsersCmd.AddCommand(browsersListCmd)
 	browsersCmd.AddCommand(browsersCreateCmd)
@@ -2494,6 +2710,12 @@ func init() {
 	browsersCreateCmd.Flags().Bool("viewport-interactive", false, "Interactively select viewport size from list")
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
+	browsersCreateCmd.Flags().String("telemetry", "", "Configure telemetry (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
+	browsersCreateCmd.Flags().String("name", "", "Optional unique name for the browser session (used to find it later; can be changed with 'browsers update --name')")
+	browsersCreateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the session (repeatable; up to 50 pairs)")
+	browsersCreateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
+	browsersCreateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
+	browsersCreateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
 
 	// curl
 	curlCmd := &cobra.Command{
@@ -2520,6 +2742,15 @@ followed automatically by Chromium.`,
 	curlCmd.Flags().BoolP("silent", "s", false, "Suppress progress output")
 	browsersCmd.AddCommand(curlCmd)
 
+	telemetryRoot := &cobra.Command{Use: "telemetry", Short: "Browser telemetry operations"}
+	telemetryStream := &cobra.Command{Use: "stream <id>", Short: "Stream live telemetry events", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStream}
+	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,connection,system,screenshot,captcha,monitor)")
+	telemetryStream.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error)")
+	telemetryStream.Flags().Int64("seq", -1, "Resume after sequence number N (Last-Event-ID); replays events with seq > N. Default -1 streams from now")
+	telemetryStream.Flags().StringP("output", "o", "", "Output format: json for newline-delimited JSON envelopes")
+	telemetryRoot.AddCommand(telemetryStream)
+	browsersCmd.AddCommand(telemetryRoot)
+
 	// no flags for view; it takes a single positional argument
 }
 
@@ -2533,6 +2764,7 @@ func runBrowsersList(cmd *cobra.Command, args []string) error {
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
 	query, _ := cmd.Flags().GetString("query")
+	tags, _ := tagsFromFlag(cmd, "tag")
 	return b.List(cmd.Context(), BrowsersListInput{
 		Output:         out,
 		IncludeDeleted: includeDeleted,
@@ -2540,7 +2772,27 @@ func runBrowsersList(cmd *cobra.Command, args []string) error {
 		Limit:          limit,
 		Offset:         offset,
 		Query:          query,
+		Tags:           tags,
 	})
+}
+
+// poolLeaseAllowedFlags returns the `browsers create` flags that are compatible with
+// acquiring a session from a pool (--pool-id/--pool-name). When a pool flag is set, the
+// pool determines browser configuration, so any other browser-config flag set alongside it
+// triggers a conflict warning. Session-only flags like --chrome-policy must stay out of
+// this set so they correctly surface that warning rather than being silently ignored.
+func poolLeaseAllowedFlags() map[string]bool {
+	return map[string]bool{
+		"pool-id":   true,
+		"pool-name": true,
+		"timeout":   true,
+		"name":      true,
+		"tag":       true,
+		"output":    true,
+		// Global persistent flags that don't configure browsers
+		"no-color":  true,
+		"log-level": true,
+	}
 }
 
 func runBrowsersCreate(cmd *cobra.Command, args []string) error {
@@ -2563,6 +2815,11 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	viewportInteractive, _ := cmd.Flags().GetBool("viewport-interactive")
 	poolID, _ := cmd.Flags().GetString("pool-id")
 	poolName, _ := cmd.Flags().GetString("pool-name")
+	telemetry, _ := cmd.Flags().GetString("telemetry")
+	name, _ := cmd.Flags().GetString("name")
+	tags, _ := tagsFromFlag(cmd, "tag")
+	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
+	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
 	output, _ := cmd.Flags().GetString("output")
 
 	if poolID != "" && poolName != "" {
@@ -2571,16 +2828,9 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	if poolID != "" || poolName != "" {
-		// When using a pool, configuration comes from the pool itself.
-		allowedFlags := map[string]bool{
-			"pool-id":   true,
-			"pool-name": true,
-			"timeout":   true,
-			"output":    true,
-			// Global persistent flags that don't configure browsers
-			"no-color":  true,
-			"log-level": true,
-		}
+		// When using a pool, configuration comes from the pool itself, but
+		// name and tags apply per-lease to the acquired session.
+		allowedFlags := poolLeaseAllowedFlags()
 
 		// Check if any browser configuration flags were set (which would conflict).
 		var conflicts []string
@@ -2617,10 +2867,11 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		}
 		poolSvc := client.BrowserPools
 
-		acquireParams := kernel.BrowserPoolAcquireParams{}
+		var acquireTimeout int64
 		if cmd.Flags().Changed("timeout") && timeout > 0 {
-			acquireParams.AcquireTimeoutSeconds = kernel.Int(int64(timeout))
+			acquireTimeout = int64(timeout)
 		}
+		acquireParams := buildAcquireParams(name, tags, acquireTimeout)
 
 		resp, err := (&poolSvc).Acquire(cmd.Context(), pool, acquireParams)
 		if err != nil {
@@ -2637,7 +2888,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if output == "json" {
 			return util.PrintPrettyJSON(resp)
 		}
-		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.StartURL)
+		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.StartURL, resp.Name, resp.Tags)
 		return nil
 	}
 
@@ -2672,6 +2923,11 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		StartURL:           startURL,
 		Extensions:         extensions,
 		Viewport:           viewport,
+		Telemetry:          telemetry,
+		ChromePolicy:       chromePolicy,
+		ChromePolicyFile:   chromePolicyFile,
+		Name:               name,
+		Tags:               tags,
 		Output:             output,
 	}
 
@@ -2730,6 +2986,11 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	saveChanges, _ := cmd.Flags().GetBool("save-changes")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	force, _ := cmd.Flags().GetBool("force")
+	telemetry, _ := cmd.Flags().GetString("telemetry")
+	name, _ := cmd.Flags().GetString("name")
+	clearName, _ := cmd.Flags().GetBool("clear-name")
+	tags, tagsProvided := tagsFromFlag(cmd, "tag")
+	clearTags, _ := cmd.Flags().GetBool("clear-tags")
 
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
@@ -2742,6 +3003,13 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
 		Viewport:           viewport,
 		Force:              force,
+		Telemetry:          telemetry,
+		Name:               name,
+		SetName:            cmd.Flags().Changed("name"),
+		ClearName:          clearName,
+		Tags:               tags,
+		TagsProvided:       tagsProvided,
+		ClearTags:          clearTags,
 		Output:             out,
 	})
 }

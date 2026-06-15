@@ -21,20 +21,32 @@ func (p ProxyCmd) List(ctx context.Context, in ProxyListInput) error {
 		pterm.Info.Println("Fetching proxy configurations...")
 	}
 
-	items, err := p.proxies.List(ctx)
+	params := kernel.ProxyListParams{}
+	if in.Limit > 0 {
+		params.Limit = kernel.Int(int64(in.Limit))
+	}
+	if in.Offset > 0 {
+		params.Offset = kernel.Int(int64(in.Offset))
+	}
+	page, err := p.proxies.List(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
+	var items []kernel.ProxyListResponse
+	if page != nil {
+		items = page.Items
+	}
+
 	if in.Output == "json" {
-		if items == nil || len(*items) == 0 {
+		if len(items) == 0 {
 			fmt.Println("[]")
 			return nil
 		}
-		return util.PrintPrettyJSONSlice(*items)
+		return util.PrintPrettyJSONSlice(items)
 	}
 
-	if items == nil || len(*items) == 0 {
+	if len(items) == 0 {
 		pterm.Info.Println("No proxy configurations found")
 		return nil
 	}
@@ -44,7 +56,7 @@ func (p ProxyCmd) List(ctx context.Context, in ProxyListInput) error {
 		{"ID", "Name", "Type", "Protocol", "Bypass Hosts", "Config", "Status", "Last Checked"},
 	}
 
-	for _, proxy := range *items {
+	for _, proxy := range items {
 		name := proxy.Name
 		if name == "" {
 			name = "-"
@@ -114,8 +126,11 @@ func formatProxyConfig(proxy *kernel.ProxyListResponse) string {
 		if config.Country != "" {
 			parts = append(parts, fmt.Sprintf("Country: %s", config.Country))
 		}
-		if config.Carrier != "" {
-			parts = append(parts, fmt.Sprintf("Carrier: %s", config.Carrier))
+		if config.City != "" {
+			parts = append(parts, fmt.Sprintf("City: %s", config.City))
+		}
+		if config.State != "" {
+			parts = append(parts, fmt.Sprintf("State: %s", config.State))
 		}
 		if len(parts) > 0 {
 			return strings.Join(parts, ", ")
@@ -135,7 +150,9 @@ func formatProxyConfig(proxy *kernel.ProxyListResponse) string {
 func runProxiesList(cmd *cobra.Command, args []string) error {
 	client := util.GetKernelClient(cmd)
 	output, _ := cmd.Flags().GetString("output")
+	limit, _ := cmd.Flags().GetInt("limit")
+	offset, _ := cmd.Flags().GetInt("offset")
 	svc := client.Proxies
 	p := ProxyCmd{proxies: &svc}
-	return p.List(cmd.Context(), ProxyListInput{Output: output})
+	return p.List(cmd.Context(), ProxyListInput{Limit: limit, Offset: offset, Output: output})
 }

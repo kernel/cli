@@ -15,6 +15,7 @@ import (
 	"github.com/kernel/cli/cmd/mcp"
 	"github.com/kernel/cli/cmd/proxies"
 	"github.com/kernel/cli/pkg/auth"
+	"github.com/kernel/cli/pkg/table"
 	"github.com/kernel/cli/pkg/update"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
@@ -177,9 +178,22 @@ func init() {
 	}
 }
 
+// shouldEnableColor decides whether pterm color styling should be on.
+// NO_COLOR (any non-empty value) always wins per https://no-color.org.
+// Otherwise color is enabled only when stdout is an interactive terminal.
+func shouldEnableColor(noColorEnv string, isTTY bool) bool {
+	if noColorEnv != "" {
+		return false
+	}
+	return isTTY
+}
+
 func initConfig() {
-	// Placeholder for future configuration (env vars, config files, etc.)
-	pterm.EnableStyling() // ensure pterm is initialised in case env disables it
+	if shouldEnableColor(os.Getenv("NO_COLOR"), table.IsStdoutTTY()) {
+		pterm.EnableStyling()
+	} else {
+		pterm.DisableStyling()
+	}
 }
 
 // Execute executes the root command.
