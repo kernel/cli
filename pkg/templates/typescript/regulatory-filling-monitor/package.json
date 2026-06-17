@@ -1,0 +1,16 @@
+{
+  "name": "ts-regulatory-filling-monitor",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
+    "@onkernel/sdk": "^0.24.0",
+    "luxon": "^3.7.2"
+  },
+  "devDependencies": {
+    "@types/luxon": "^3.4.2",
+    "@types/node": "^22.15.17",
+    "typescript": "^5.9.3"
+  }
+}
