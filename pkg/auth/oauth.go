@@ -22,7 +22,18 @@ import (
 )
 
 //go:embed success.html
-var successHTML string
+var successHTMLTemplate string
+
+//go:embed favicon.svg
+var faviconSVG string
+
+// Inlined as a data URI because the callback server shuts down before the browser could fetch a served icon.
+var successHTML = strings.Replace(
+	successHTMLTemplate,
+	"__KERNEL_FAVICON__",
+	"data:image/svg+xml;base64,"+base64.StdEncoding.EncodeToString([]byte(faviconSVG)),
+	1,
+)
 
 const (
 	// MCP Server OAuth endpoints (which proxy to Clerk)
