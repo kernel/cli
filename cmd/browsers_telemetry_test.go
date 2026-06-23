@@ -34,9 +34,11 @@ func captureStdout(t *testing.T, fn func()) string {
 
 type FakeBrowserTelemetryService struct {
 	StreamFunc func() *ssestream.Stream[kernel.BrowserTelemetryStreamResponse]
+	LastQuery  kernel.BrowserTelemetryStreamParams
 }
 
 func (f *FakeBrowserTelemetryService) StreamStreaming(ctx context.Context, id string, query kernel.BrowserTelemetryStreamParams, opts ...option.RequestOption) *ssestream.Stream[kernel.BrowserTelemetryStreamResponse] {
+	f.LastQuery = query
 	if f.StreamFunc != nil {
 		return f.StreamFunc()
 	}
@@ -81,6 +83,54 @@ func TestTelemetryStream_NegativeSeqErrors(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid --seq value -2")
+}
+
+func TestTelemetryStream_ReplayAllWithSeqErrors(t *testing.T) {
+	b := BrowsersCmd{browsers: &FakeBrowsersService{}, telemetry: &FakeBrowserTelemetryService{}}
+
+	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
+		Identifier: "session123",
+		Seq:        5,
+		ReplayAll:  true,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot combine --replay-all with --seq")
+}
+
+func TestTelemetryStream_ReplayAllSetsReplayParam(t *testing.T) {
+	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return &kernel.BrowserGetResponse{SessionID: id}, nil
+	}}
+	fakeTelemetry := &FakeBrowserTelemetryService{}
+	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
+
+	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
+		Identifier: "session123",
+		Seq:        -1,
+		ReplayAll:  true,
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "all", fakeTelemetry.LastQuery.Replay.Or(""))
+	assert.False(t, fakeTelemetry.LastQuery.LastEventID.Valid(), "Last-Event-ID must not be set with --replay-all")
+}
+
+func TestTelemetryStream_SeqSetsLastEventID(t *testing.T) {
+	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return &kernel.BrowserGetResponse{SessionID: id}, nil
+	}}
+	fakeTelemetry := &FakeBrowserTelemetryService{}
+	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
+
+	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
+		Identifier: "session123",
+		Seq:        5,
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "5", fakeTelemetry.LastQuery.LastEventID.Or(""))
+	assert.False(t, fakeTelemetry.LastQuery.Replay.Valid(), "replay must not be set with --seq")
 }
 
 func TestTelemetryStream_UnsupportedOutputErrors(t *testing.T) {
