@@ -317,6 +317,7 @@ Per-category updates are partial — only categories you name are changed; other
   - `--categories <list>` - Filter by event category (`console`, `network`, `page`, `interaction`, `control`, `connection`, `system`, `screenshot`, `captcha`, `monitor`)
   - `--types <list>` - Filter by event type (e.g. `network_response`, `console_error`)
   - `--seq <n>` - Resume after sequence number N (Last-Event-ID); replays events with `seq > N`. Omit to stream from now.
+  - `--replay-all` - Replay from the oldest retained event instead of streaming from now. Mutually exclusive with `--seq`. The buffer is bounded, so the first event may not be `seq 1` if older events were evicted.
   - `-o, --output json` - Output newline-delimited JSON envelopes
   - Default output: tab-separated `<time>\t[<category>]\t<type>`, e.g. `15:04:05  [network]  network_response`
 
