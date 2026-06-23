@@ -2747,6 +2747,7 @@ followed automatically by Chromium.`,
 	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,connection,system,screenshot,captcha,monitor)")
 	telemetryStream.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error)")
 	telemetryStream.Flags().Int64("seq", -1, "Resume after sequence number N (Last-Event-ID); replays events with seq > N. Default -1 streams from now")
+	telemetryStream.Flags().Bool("replay-all", false, "Replay from the oldest retained event instead of streaming from now. Mutually exclusive with --seq")
 	telemetryStream.Flags().StringP("output", "o", "", "Output format: json for newline-delimited JSON envelopes")
 	telemetryRoot.AddCommand(telemetryStream)
 	browsersCmd.AddCommand(telemetryRoot)

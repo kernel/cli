@@ -30,6 +30,7 @@ type BrowsersTelemetryStreamInput struct {
 	Categories []string
 	Types      []string
 	Seq        int64
+	ReplayAll  bool
 	Output     string
 }
 
@@ -172,6 +173,9 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
 	}
+	if in.ReplayAll && in.Seq != -1 {
+		return fmt.Errorf("cannot combine --replay-all with --seq: --replay-all starts from the oldest retained event, --seq resumes after a specific sequence")
+	}
 	if in.Seq != -1 && in.Seq < 1 {
 		return fmt.Errorf("invalid --seq value %d: must be >= 1 (resumes after sequence N; omit --seq to stream from now)", in.Seq)
 	}
@@ -187,8 +191,11 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 		return util.CleanedUpSdkError{Err: err}
 	}
 	params := kernel.BrowserTelemetryStreamParams{}
-	if in.Seq >= 0 {
+	switch {
+	case in.Seq >= 0:
 		params.LastEventID = kernel.Opt(strconv.FormatInt(in.Seq, 10))
+	case in.ReplayAll:
+		params.Replay = kernel.Opt("all")
 	}
 	stream := b.telemetry.StreamStreaming(ctx, br.SessionID, params)
 	defer stream.Close()
@@ -223,12 +230,14 @@ func runBrowsersTelemetryStream(cmd *cobra.Command, args []string) error {
 	categories, _ := cmd.Flags().GetStringSlice("categories")
 	types, _ := cmd.Flags().GetStringSlice("types")
 	seq, _ := cmd.Flags().GetInt64("seq")
+	replayAll, _ := cmd.Flags().GetBool("replay-all")
 	b := BrowsersCmd{browsers: &svc, telemetry: &svc.Telemetry}
 	return b.TelemetryStream(cmd.Context(), BrowsersTelemetryStreamInput{
 		Identifier: args[0],
 		Categories: categories,
 		Types:      types,
 		Seq:        seq,
+		ReplayAll:  replayAll,
 		Output:     out,
 	})
 }
