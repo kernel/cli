@@ -98,7 +98,7 @@ func TestTelemetryStream_ReplayAllWithSeqErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "cannot combine --replay-all with --seq")
 }
 
-func TestTelemetryStream_ReplayAllSetsReplayParam(t *testing.T) {
+func TestTelemetryStream_ReplayAllSetsLastEventID(t *testing.T) {
 	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
 		return &kernel.BrowserGetResponse{SessionID: id}, nil
 	}}
@@ -112,8 +112,7 @@ func TestTelemetryStream_ReplayAllSetsReplayParam(t *testing.T) {
 	})
 
 	assert.NoError(t, err)
-	assert.Equal(t, "all", fakeTelemetry.LastQuery.Replay.Or(""))
-	assert.False(t, fakeTelemetry.LastQuery.LastEventID.Valid(), "Last-Event-ID must not be set with --replay-all")
+	assert.Equal(t, "0", fakeTelemetry.LastQuery.LastEventID.Or(""), "--replay-all resumes from seq 0 to replay the full retained buffer")
 }
 
 func TestTelemetryStream_SeqSetsLastEventID(t *testing.T) {
@@ -130,7 +129,6 @@ func TestTelemetryStream_SeqSetsLastEventID(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, "5", fakeTelemetry.LastQuery.LastEventID.Or(""))
-	assert.False(t, fakeTelemetry.LastQuery.Replay.Valid(), "replay must not be set with --seq")
 }
 
 func TestTelemetryStream_UnsupportedOutputErrors(t *testing.T) {

@@ -195,7 +195,8 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 	case in.Seq >= 0:
 		params.LastEventID = kernel.Opt(strconv.FormatInt(in.Seq, 10))
 	case in.ReplayAll:
-		params.Replay = kernel.Opt("all")
+		// Last-Event-ID resumes with seq > N, so 0 replays the entire retained buffer.
+		params.LastEventID = kernel.Opt("0")
 	}
 	stream := b.telemetry.StreamStreaming(ctx, br.SessionID, params)
 	defer stream.Close()
