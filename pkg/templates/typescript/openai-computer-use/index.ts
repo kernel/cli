@@ -28,7 +28,7 @@ app.action<CuaInput, CuaOutput>(
 
     const browser = await kernel.browsers.create({
       invocation_id: ctx.invocation_id,
-      viewport: { width: 1920, height: 1080 },
+      viewport: { width: 1280, height: 800 },
     });
     console.log('Kernel browser live view url:', browser.browser_live_view_url);
 
