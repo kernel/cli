@@ -26,7 +26,10 @@ app.action<CuaInput, CuaOutput>(
     const start = Date.now();
     if (!payload?.task) throw new Error('task is required');
 
-    const browser = await kernel.browsers.create({ invocation_id: ctx.invocation_id });
+    const browser = await kernel.browsers.create({
+      invocation_id: ctx.invocation_id,
+      viewport: { width: 1920, height: 1080 },
+    });
     console.log('Kernel browser live view url:', browser.browser_live_view_url);
 
     const replay = await maybeStartReplay(kernel, browser.session_id, {
