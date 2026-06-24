@@ -23,6 +23,25 @@ Add `"replay": true` to your payload to capture a video of the browser session. 
 kernel invoke ts-openai-cua cua-task -p '{"task":"Go to https://news.ycombinator.com", "replay": true}'
 ```
 
+## Playwright escape hatch
+
+Some steps are awkward as raw clicks and keystrokes — precise DOM reads, form fills, data extraction, or waiting on a selector. Pass `playwright: true` when constructing the agent in `index.ts` to add a `playwright_execute` tool that runs Playwright/TypeScript directly against the live browser session:
+
+```ts
+const agent = new CuaAgent({
+  browser,
+  client: kernel,
+  computerUseExtra: true,
+  playwright: true,
+  initialState: {
+    model: 'openai:gpt-5.5',
+    systemPrompt: `...`,
+  },
+});
+```
+
+Inside `playwright_execute`, `page`, `context`, and `browser` are in scope and the code may `return` a JSON-serializable value. Each call runs in a fresh context (locals don't persist across calls), and no screenshot is returned automatically — the model can request one on a follow-up turn. See [`@onkernel/cua-agent`](https://www.npmjs.com/package/@onkernel/cua-agent) for details and per-model support status.
+
 ## Resources
 
 - [@onkernel/cua-agent](https://www.npmjs.com/package/@onkernel/cua-agent)

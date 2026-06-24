@@ -35,6 +35,24 @@ kernel invoke ts-anthropic-cua cua-task --payload '{"query": "Navigate to https:
 
 When enabled, the response will include a `replay_url` field with a link to view the recorded session.
 
+## Playwright escape hatch
+
+Some steps are awkward as raw clicks and keystrokes — precise DOM reads, form fills, data extraction, or waiting on a selector. Pass `playwright: true` when constructing the agent in `index.ts` to add a `playwright_execute` tool that runs Playwright/TypeScript directly against the live browser session:
+
+```ts
+const agent = new CuaAgent({
+  browser: session.browser,
+  client: kernel,
+  playwright: true,
+  initialState: {
+    model: 'anthropic:claude-sonnet-4-6',
+    systemPrompt: SYSTEM_PROMPT,
+  },
+});
+```
+
+Inside `playwright_execute`, `page`, `context`, and `browser` are in scope and the code may `return` a JSON-serializable value. Each call runs in a fresh context (locals don't persist across calls), and no screenshot is returned automatically — the model can request one on a follow-up turn. See [`@onkernel/cua-agent`](https://www.npmjs.com/package/@onkernel/cua-agent) for details and per-model support status.
+
 ## Resources
 
 - [@onkernel/cua-agent](https://www.npmjs.com/package/@onkernel/cua-agent)
