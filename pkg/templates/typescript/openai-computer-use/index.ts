@@ -42,6 +42,8 @@ app.action<CuaInput, CuaOutput>(
         // OpenAI's computer tool has no native URL navigation; this exposes a
         // goto/back/forward/url helper so the model can open pages directly.
         computerUseExtra: true,
+        // Set to true to expose a playwright_execute tool for DOM reads, form fills, and selector waits.
+        playwright: false,
         initialState: {
           model: 'openai:gpt-5.5',
           systemPrompt: `You are operating a Chromium browser on a Kernel cloud VM. Use the navigation tool to open URLs directly, and review the screenshot after each action before continuing. The current date and time is ${new Date().toISOString()}.`,

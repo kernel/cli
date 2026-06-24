@@ -75,6 +75,8 @@ app.action<QueryInput, QueryOutput>(
       const agent = new CuaAgent({
         browser: session.browser,
         client: kernel,
+        // Set to true to expose a playwright_execute tool for DOM reads, form fills, and selector waits.
+        playwright: false,
         initialState: {
           model: 'anthropic:claude-sonnet-4-6',
           systemPrompt: SYSTEM_PROMPT,

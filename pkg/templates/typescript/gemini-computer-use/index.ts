@@ -60,6 +60,8 @@ The current date is ${currentDate}.`;
       const agent = new CuaAgent({
         browser: session.browser,
         client: kernel,
+        // Set to true to expose a playwright_execute tool for DOM reads, form fills, and selector waits.
+        playwright: false,
         initialState: {
           model: 'google:gemini-3-flash-preview',
           systemPrompt,
