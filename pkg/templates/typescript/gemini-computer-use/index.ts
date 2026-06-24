@@ -1,5 +1,6 @@
 import { Kernel, type KernelContext } from '@onkernel/sdk';
-import { samplingLoop } from './loop';
+import { CuaAgent } from '@onkernel/cua-agent';
+import type { AssistantMessage } from '@onkernel/cua-ai';
 import { KernelBrowserSession } from './session';
 
 const kernel = new Kernel();
@@ -14,16 +15,12 @@ interface QueryInput {
 interface QueryOutput {
   result: string;
   replay_url?: string;
-  error?: string;
 }
 
-// API Key for Gemini
-// - GOOGLE_API_KEY: Required for Gemini Computer Use model
-// Set via environment variables or `kernel deploy <filename> --env-file .env`
+// CuaAgent reads GOOGLE_API_KEY (or GEMINI_API_KEY) from the environment by default.
+// Set it via environment variable or `kernel deploy index.ts --env-file .env`.
 // See https://www.kernel.sh/docs/launch/deploy#environment-variables
-const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
-
-if (!GOOGLE_API_KEY) {
+if (!process.env.GOOGLE_API_KEY && !process.env.GEMINI_API_KEY) {
   throw new Error(
     'GOOGLE_API_KEY is not set. ' +
     'Set it via environment variable or deploy with: kernel deploy index.ts --env-file .env'
@@ -47,62 +44,47 @@ app.action<QueryInput, QueryOutput>(
     await session.start();
     console.log('Kernel browser live view url:', session.liveViewUrl);
 
+    const currentDate = new Date().toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+    const systemPrompt = `You are a helpful assistant operating a Chrome browser on a Kernel cloud VM through computer-use tools.
+The browser is already open and ready for use.
+When you need to navigate to a page, use the navigate action with a full URL.
+After each action, carefully evaluate the screenshot to determine your next step.
+The current date is ${currentDate}.`;
+
     try {
-      // Run the Gemini sampling loop
-      const result = await samplingLoop({
-        model: 'gemini-2.5-computer-use-preview-10-2025',
-        query: payload.query,
-        apiKey: GOOGLE_API_KEY,
-        kernel,
-        sessionId: session.sessionId,
+      const agent = new CuaAgent({
+        browser: session.browser,
+        client: kernel,
+        initialState: {
+          model: 'google:gemini-3-flash-preview',
+          systemPrompt,
+        },
       });
 
-      // Stop session and get replay URL if recording was enabled
+      await agent.prompt(payload.query);
+
+      const lastAssistant = [...agent.state.messages]
+        .reverse()
+        .find((message): message is AssistantMessage => message.role === 'assistant');
+      const result = lastAssistant?.content
+        .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+        .join('') ?? '';
+
       const sessionInfo = await session.stop();
 
       return {
-        result: result.finalResponse,
+        result,
         replay_url: sessionInfo.replayViewUrl,
-        error: result.error,
       };
     } catch (error) {
-      console.error('Error in sampling loop:', error);
+      console.error('Error running CUA task:', error);
       await session.stop();
       throw error;
     }
   },
 );
-
-// Run locally when not in Kernel invocation. Execute via: npx tsx index.ts
-if (!process.env.KERNEL_INVOCATION && import.meta.url === `file://${process.argv[1]}`) {
-  const testQuery = "Navigate to https://www.google.com and describe what you see";
-  
-  console.log('Running local test with query:', testQuery);
-  
-  const session = new KernelBrowserSession(kernel, {
-    stealth: true,
-    recordReplay: false,
-  });
-
-  session.start().then(async () => {
-    try {
-      const result = await samplingLoop({
-        model: 'gemini-2.5-computer-use-preview-10-2025',
-        query: testQuery,
-        apiKey: GOOGLE_API_KEY,
-        kernel,
-        sessionId: session.sessionId,
-      });
-      console.log('Result:', result.finalResponse);
-      if (result.error) {
-        console.error('Error:', result.error);
-      }
-    } finally {
-      await session.stop();
-    }
-    process.exit(0);
-  }).catch(error => {
-    console.error('Local execution failed:', error);
-    process.exit(1);
-  });
-}

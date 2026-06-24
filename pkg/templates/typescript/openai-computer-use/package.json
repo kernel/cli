@@ -2,17 +2,15 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "tsc",
-    "test:local": "npx tsx run_local.ts"
+    "build": "tsc"
   },
   "dependencies": {
-    "@onkernel/sdk": "^0.43.0",
-    "dotenv": "^17.2.3",
-    "openai": "^6.13.0"
+    "@onkernel/cua-agent": "^0.3.4",
+    "@onkernel/cua-ai": "^0.3.1",
+    "@onkernel/sdk": "0.49.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.17",
-    "tsx": "^4.19.0",
     "typescript": "^5.9.3"
   }
 }

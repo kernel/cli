@@ -1,8 +1,8 @@
 # Kernel TypeScript Sample App - Anthropic Computer Use
 
-This is a Kernel application that implements a prompt loop using Anthropic Computer Use with Kernel's Computer Controls API.
+This is a Kernel application that runs Anthropic Computer Use against a Kernel cloud browser.
 
-It generally follows the [Anthropic Reference Implementation](https://github.com/anthropics/anthropic-quickstarts/tree/main/computer-use-demo) but uses Kernel's Computer Controls API instead of `xdotool` and `gnome-screenshot`.
+It uses [`@onkernel/cua-agent`](https://www.npmjs.com/package/@onkernel/cua-agent) to run the computer-use loop: the `CuaAgent` class translates Claude's computer-use tool calls into Kernel browser controls and feeds a fresh screenshot back on every turn. The app entry point just provisions a browser, hands it to `CuaAgent`, and returns the final answer.
 
 ## Setup
 
@@ -35,13 +35,8 @@ kernel invoke ts-anthropic-cua cua-task --payload '{"query": "Navigate to https:
 
 When enabled, the response will include a `replay_url` field with a link to view the recorded session.
 
-## Known Limitations
-
-### Cursor Position
-
-The `cursor_position` action is not supported with Kernel's Computer Controls API. If the model attempts to use this action, an error will be returned. This is a known limitation that does not significantly impact most computer use workflows, as the model typically tracks cursor position through screenshots.
-
 ## Resources
 
+- [@onkernel/cua-agent](https://www.npmjs.com/package/@onkernel/cua-agent)
 - [Anthropic Computer Use Documentation](https://docs.anthropic.com/en/docs/build-with-claude/computer-use)
 - [Kernel Documentation](https://www.kernel.sh/docs/quickstart)
