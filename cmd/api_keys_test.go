@@ -29,7 +29,7 @@ func (f *FakeAPIKeysService) New(ctx context.Context, body kernel.APIKeyNewParam
 	return createdAPIKeyFromJSON(`{"id":"key_123","name":"default","key":"sk_test","masked_key":"sk_...test","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123","email":"dev@example.com","name":"Dev"},"expires_at":null,"project_id":null,"project_name":null}`), nil
 }
 
-func (f *FakeAPIKeysService) Get(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.APIKey, error) {
+func (f *FakeAPIKeysService) Get(ctx context.Context, id string, query kernel.APIKeyGetParams, opts ...option.RequestOption) (*kernel.APIKey, error) {
 	if f.GetFunc != nil {
 		return f.GetFunc(ctx, id, opts...)
 	}

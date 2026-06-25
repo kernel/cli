@@ -14,7 +14,7 @@ import (
 
 type APIKeysService interface {
 	New(ctx context.Context, body kernel.APIKeyNewParams, opts ...option.RequestOption) (*kernel.CreatedAPIKey, error)
-	Get(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.APIKey, error)
+	Get(ctx context.Context, id string, query kernel.APIKeyGetParams, opts ...option.RequestOption) (*kernel.APIKey, error)
 	Update(ctx context.Context, id string, body kernel.APIKeyUpdateParams, opts ...option.RequestOption) (*kernel.APIKey, error)
 	List(ctx context.Context, query kernel.APIKeyListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.APIKey], error)
 	Delete(ctx context.Context, id string, opts ...option.RequestOption) error
@@ -145,7 +145,7 @@ func (c APIKeysCmd) Get(ctx context.Context, in APIKeysGetInput) error {
 		return err
 	}
 
-	key, err := c.apiKeys.Get(ctx, in.ID)
+	key, err := c.apiKeys.Get(ctx, in.ID, kernel.APIKeyGetParams{})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
