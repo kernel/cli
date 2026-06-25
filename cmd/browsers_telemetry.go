@@ -25,6 +25,11 @@ type BrowserTelemetryService interface {
 	StreamStreaming(ctx context.Context, id string, query kernel.BrowserTelemetryStreamParams, opts ...option.RequestOption) (stream *ssestream.Stream[kernel.BrowserTelemetryStreamResponse])
 }
 
+// replayAllValue is the telemetry stream `replay` query value that starts the
+// stream from the oldest retained event. It must match the value the browser
+// image matches on; there is no generated enum tying the two together.
+const replayAllValue = "all"
+
 type BrowsersTelemetryStreamInput struct {
 	Identifier string
 	Categories []string
@@ -195,7 +200,7 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 	case in.Seq >= 0:
 		params.LastEventID = kernel.Opt(strconv.FormatInt(in.Seq, 10))
 	case in.ReplayAll:
-		params.Replay = kernel.Opt("all")
+		params.Replay = kernel.Opt(replayAllValue)
 	}
 	stream := b.telemetry.StreamStreaming(ctx, br.SessionID, params)
 	defer stream.Close()
