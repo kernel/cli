@@ -1,6 +1,8 @@
 # Kernel TypeScript Sample App - Gemini Computer Use
 
-This is a Kernel application that implements a prompt loop using Google's Gemini Computer Use model with Kernel's Computer Controls API.
+This is a Kernel application that runs Google's Gemini computer-use model against a Kernel cloud browser.
+
+It uses [`@onkernel/cua-agent`](https://www.npmjs.com/package/@onkernel/cua-agent) to run the computer-use loop: the `CuaAgent` class translates Gemini's computer-use function calls into Kernel browser controls and feeds a fresh screenshot back on every turn. The app runs the `gemini-3-flash-preview` model.
 
 ## Setup
 
@@ -33,35 +35,26 @@ kernel invoke ts-gemini-cua cua-task --payload '{"query": "Navigate to https://e
 
 When enabled, the response will include a `replay_url` field with a link to view the recorded session.
 
-## Gemini Computer Use Actions
+## Playwright escape hatch
 
-The Gemini model can execute the following browser actions:
+Some steps are awkward as raw clicks and keystrokes — precise DOM reads, form fills, data extraction, or waiting on a selector. Pass `playwright: true` when constructing the agent in `index.ts` to add a `playwright_execute` tool that runs Playwright/TypeScript directly against the live browser session:
 
-| Action | Description |
-|--------|-------------|
-| `open_web_browser` | Returns a screenshot (browser is already running) |
-| `click_at` | Click at coordinates (x, y) |
-| `hover_at` | Move mouse to coordinates (x, y) |
-| `type_text_at` | Click and type text at coordinates |
-| `scroll_document` | Scroll the page (up/down/left/right) |
-| `scroll_at` | Scroll at specific coordinates |
-| `search` | Focus the browser URL bar |
-| `navigate` | Navigate to a URL |
-| `go_back` | Go back in browser history |
-| `go_forward` | Go forward in browser history |
-| `key_combination` | Press key combination (e.g., "ctrl+c") |
-| `drag_and_drop` | Drag from one point to another |
-| `wait_5_seconds` | Wait for 5 seconds |
+```ts
+const agent = new CuaAgent({
+  browser: session.browser,
+  client: kernel,
+  playwright: true,
+  initialState: {
+    model: 'google:gemini-3-flash-preview',
+    systemPrompt,
+  },
+});
+```
 
-## Known Limitations
-
-### URL Reporting
-
-The Gemini Computer Use API requires a URL in all function responses. However, the Kernel Computer Controls API doesn't provide a method to retrieve the current page URL.
-
-As a workaround, this template reports `about:blank` as the URL in all responses. This works because Gemini primarily uses the screenshot to understand page state - the URL is a required field but not critical for functionality.
+Inside `playwright_execute`, `page`, `context`, and `browser` are in scope and the code may `return` a JSON-serializable value. Each call runs in a fresh context (locals don't persist across calls), and no screenshot is returned automatically — the model can request one on a follow-up turn. See [`@onkernel/cua-agent`](https://www.npmjs.com/package/@onkernel/cua-agent) for details and per-model support status.
 
 ## Resources
 
+- [@onkernel/cua-agent](https://www.npmjs.com/package/@onkernel/cua-agent)
 - [Google Gemini Computer Use Documentation](https://ai.google.dev/gemini-api/docs/computer-use)
-- [Kernel Computer Controls](https://www.kernel.sh/docs/browsers/computer-controls)
+- [Kernel Documentation](https://www.kernel.sh/docs/quickstart)

@@ -1,12 +1,9 @@
 import type { Kernel } from '@onkernel/sdk';
-import type { AgentEvent } from './log-events';
 
 const DEFAULT_REPLAY_GRACE_MS = 5000;
 const REPLAY_PROCESSING_DELAY_MS = 2000;
 const REPLAY_POLL_TIMEOUT_MS = 60000;
 const REPLAY_POLL_INTERVAL_MS = 1000;
-
-type EventLogger = (event: AgentEvent) => void;
 
 export interface ReplayState {
   enabled: boolean;
@@ -17,10 +14,7 @@ export interface ReplayState {
 export async function maybeStartReplay(
   kernel: Kernel,
   sessionId: string,
-  opts?: {
-    enabled?: boolean;
-    onEvent?: EventLogger;
-  },
+  opts?: { enabled?: boolean },
 ): Promise<ReplayState> {
   const enabled = opts?.enabled ?? false;
   const state: ReplayState = {
@@ -31,19 +25,9 @@ export async function maybeStartReplay(
 
   if (!enabled) return state;
 
-  const startedAtMs = Date.now();
-  opts?.onEvent?.({ event: 'backend', data: { op: 'browsers.replays.start' } });
   try {
     const replay = await kernel.browsers.replays.start(sessionId);
     state.replayId = replay.replay_id ?? null;
-    opts?.onEvent?.({
-      event: 'backend',
-      data: {
-        op: 'browsers.replays.start.done',
-        detail: state.replayId ?? '',
-        elapsed_ms: Date.now() - startedAtMs,
-      },
-    });
   } catch (error) {
     console.warn(`Warning: failed to start replay recording: ${String(error)}`);
     console.warn('Continuing without replay recording.');
@@ -57,10 +41,7 @@ export async function maybeStopReplay(
   kernel: Kernel,
   sessionId: string,
   replay: ReplayState,
-  opts?: {
-    onEvent?: EventLogger;
-    gracePeriodMs?: number;
-  },
+  opts?: { gracePeriodMs?: number },
 ): Promise<string | null> {
   if (!replay.enabled || !replay.replayId) return replay.replayViewUrl;
 
@@ -69,8 +50,6 @@ export async function maybeStopReplay(
     await sleep(gracePeriodMs);
   }
 
-  const startedAtMs = Date.now();
-  opts?.onEvent?.({ event: 'backend', data: { op: 'browsers.replays.stop' } });
   try {
     await kernel.browsers.replays.stop(replay.replayId, { id: sessionId });
     await sleep(REPLAY_PROCESSING_DELAY_MS);
@@ -89,15 +68,6 @@ export async function maybeStopReplay(
       }
       await sleep(REPLAY_POLL_INTERVAL_MS);
     }
-
-    opts?.onEvent?.({
-      event: 'backend',
-      data: {
-        op: 'browsers.replays.stop.done',
-        detail: replay.replayViewUrl ?? replay.replayId ?? '',
-        elapsed_ms: Date.now() - startedAtMs,
-      },
-    });
 
     if (!replay.replayViewUrl) {
       console.warn('Warning: replay may still be processing.');
