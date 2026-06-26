@@ -400,5 +400,27 @@ func TestTelemetryEvents_EmptyJSON(t *testing.T) {
 		err := b.TelemetryEvents(context.Background(), BrowsersTelemetryEventsInput{Identifier: "br-1", Output: "json"})
 		assert.NoError(t, err)
 	})
-	assert.Equal(t, "[]\n", out)
+	// JSON mode emits an envelope so scripted callers can read the pagination
+	// cursor; with no events and no next page it is just an empty events list.
+	assert.JSONEq(t, `{"events":[]}`, out)
+}
+
+func TestTelemetryEvents_OffsetIgnoresWindow(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return &kernel.BrowserGetResponse{SessionID: "sess-1"}, nil
+	}}
+	fakeTelemetry := &FakeBrowserTelemetryService{
+		EventsFunc: func(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse], error) {
+			// When paging by the opaque offset cursor, since/until must not be sent.
+			assert.True(t, query.Offset.Valid(), "offset should be forwarded")
+			assert.False(t, query.Since.Valid(), "since must be omitted when --offset is set")
+			assert.False(t, query.Until.Valid(), "until must be omitted when --offset is set")
+			return &pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse]{}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
+	err := b.TelemetryEvents(context.Background(), BrowsersTelemetryEventsInput{Identifier: "br-1", Offset: 5, Since: "5m", Until: "1m"})
+	assert.NoError(t, err)
+	_ = buf
 }

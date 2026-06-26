@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -272,13 +273,16 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 		params.Limit = kernel.Opt(in.Limit)
 	}
 	if in.Offset > 0 {
+		// Offset is an opaque cursor (X-Next-Offset) that already encodes the
+		// query window, so since/until are ignored when paging by offset.
 		params.Offset = kernel.Opt(in.Offset)
-	}
-	if in.Since != "" {
-		params.Since = kernel.Opt(in.Since)
-	}
-	if in.Until != "" {
-		params.Until = kernel.Opt(in.Until)
+	} else {
+		if in.Since != "" {
+			params.Since = kernel.Opt(in.Since)
+		}
+		if in.Until != "" {
+			params.Until = kernel.Opt(in.Until)
+		}
 	}
 
 	var raw *http.Response
@@ -293,11 +297,32 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 	}
 
 	if in.Output == "json" {
-		if len(items) == 0 {
-			fmt.Println("[]")
-			return nil
+		// Surface the X-Next-Offset cursor in JSON mode too, so scripted callers
+		// can paginate (table mode prints it as a hint below).
+		nextOffset := ""
+		if raw != nil {
+			if n := raw.Header.Get("X-Next-Offset"); n != "" && n != "0" {
+				nextOffset = n
+			}
 		}
-		return util.PrintPrettyJSONSlice(items)
+		events := make([]json.RawMessage, 0, len(items))
+		for _, it := range items {
+			r := it.RawJSON()
+			if r == "" {
+				r = "{}"
+			}
+			events = append(events, json.RawMessage(r))
+		}
+		payload := struct {
+			Events     []json.RawMessage `json:"events"`
+			NextOffset string            `json:"next_offset,omitempty"`
+		}{Events: events, NextOffset: nextOffset}
+		data, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
 	}
 
 	if len(items) == 0 {

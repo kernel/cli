@@ -317,8 +317,14 @@ Per-category updates are partial — only categories you name are changed; other
   - `--categories <list>` - Filter by event category (`console`, `network`, `page`, `interaction`, `control`, `connection`, `system`, `screenshot`, `captcha`, `monitor`)
   - `--types <list>` - Filter by event type (e.g. `network_response`, `console_error`)
   - `--seq <n>` - Resume after sequence number N (Last-Event-ID); replays events with `seq > N`. Omit to stream from now.
+  - `--replay all` - Replay buffered events on connect, starting from the oldest retained event (mutually exclusive with `--seq`)
   - `-o, --output json` - Output newline-delimited JSON envelopes
   - Default output: tab-separated `<time>\t[<category>]\t<type>`, e.g. `15:04:05  [network]  network_response`
+- `kernel browsers telemetry events <id>` - Read historical telemetry events (paged)
+  - `--limit <n>` - Maximum number of events per page (default 20)
+  - `--offset <cursor>` - Pagination cursor: pass the `X-Next-Offset` from a previous response
+  - `--since <ts|dur>` / `--until <ts|dur>` - Time window (RFC-3339 timestamp or duration like `5m`); ignored when `--offset` is set
+  - `-o, --output json` - Output `{ "events": [...], "next_offset": "..." }` (omit `next_offset` when there is no next page)
 
 ### Browser Process Control
 
@@ -444,6 +450,8 @@ Per-category updates are partial — only categories you name are changed; other
 
 - `kernel extensions list` - List all uploaded extensions
   - `--output json`, `-o json` - Output raw JSON array
+- `kernel extensions get <id-or-name>` - Show extension metadata (id, name, created, size, last used)
+  - `--output json`, `-o json` - Output raw JSON object
 - `kernel extensions upload <directory>` - Upload an unpacked browser extension directory
   - `--name <name>` - Optional unique extension name
   - `--output json`, `-o json` - Output raw JSON object
