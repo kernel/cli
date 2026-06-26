@@ -295,15 +295,15 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 		items = page.Items
 	}
 
+	// Pagination: the API sets X-Has-More=true while more pages remain;
+	// X-Next-Offset is the cursor to pass as --offset for the next page. Surface
+	// it (in JSON and as the table hint) only when there is actually a next page.
+	nextOffset := ""
+	if raw != nil && strings.EqualFold(raw.Header.Get("X-Has-More"), "true") {
+		nextOffset = raw.Header.Get("X-Next-Offset")
+	}
+
 	if in.Output == "json" {
-		// Surface the X-Next-Offset cursor in JSON mode too, so scripted callers
-		// can paginate (table mode prints it as a hint below).
-		nextOffset := ""
-		if raw != nil {
-			if n := raw.Header.Get("X-Next-Offset"); n != "" && n != "0" {
-				nextOffset = n
-			}
-		}
 		events := make([]json.RawMessage, 0, len(items))
 		for _, it := range items {
 			r := it.RawJSON()
@@ -340,12 +340,8 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 		})
 	}
 	PrintTableNoPad(rows, true)
-	// The next-page cursor is the opaque X-Next-Offset header; surface it so
-	// --offset is actually usable for paging.
-	if raw != nil {
-		if next := raw.Header.Get("X-Next-Offset"); next != "" && next != "0" {
-			pterm.Info.Printf("More events available — re-run with --offset %s\n", next)
-		}
+	if nextOffset != "" {
+		pterm.Info.Printf("More events available — re-run with --offset %s\n", nextOffset)
 	}
 	return nil
 }
