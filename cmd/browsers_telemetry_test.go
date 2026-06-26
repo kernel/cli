@@ -86,16 +86,21 @@ func TestTelemetryStream_NegativeSeqErrors(t *testing.T) {
 }
 
 func TestTelemetryStream_ReplayAllWithSeqErrors(t *testing.T) {
-	b := BrowsersCmd{browsers: &FakeBrowsersService{}, telemetry: &FakeBrowserTelemetryService{}}
+	// Mutual exclusion is based on whether --seq was provided, not its value, so an
+	// explicit --seq=-1 (the unset sentinel) is still rejected alongside --replay-all.
+	for _, seq := range []int64{5, -1} {
+		b := BrowsersCmd{browsers: &FakeBrowsersService{}, telemetry: &FakeBrowserTelemetryService{}}
 
-	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
-		Identifier: "session123",
-		Seq:        5,
-		ReplayAll:  true,
-	})
+		err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
+			Identifier:  "session123",
+			Seq:         seq,
+			SeqProvided: true,
+			ReplayAll:   true,
+		})
 
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot combine --replay-all with --seq")
+		assert.Error(t, err, "seq=%d", seq)
+		assert.Contains(t, err.Error(), "cannot combine --replay-all with --seq")
+	}
 }
 
 func TestTelemetryStream_ReplayAllSetsReplayParam(t *testing.T) {
@@ -124,8 +129,9 @@ func TestTelemetryStream_SeqSetsLastEventID(t *testing.T) {
 	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
 
 	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
-		Identifier: "session123",
-		Seq:        5,
+		Identifier:  "session123",
+		Seq:         5,
+		SeqProvided: true,
 	})
 
 	assert.NoError(t, err)

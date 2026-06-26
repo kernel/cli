@@ -31,12 +31,13 @@ type BrowserTelemetryService interface {
 const replayAllValue = "all"
 
 type BrowsersTelemetryStreamInput struct {
-	Identifier string
-	Categories []string
-	Types      []string
-	Seq        int64
-	ReplayAll  bool
-	Output     string
+	Identifier  string
+	Categories  []string
+	Types       []string
+	Seq         int64
+	SeqProvided bool
+	ReplayAll   bool
+	Output      string
 }
 
 // parseTelemetryCategories parses a comma-separated list of category names to
@@ -178,7 +179,7 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
 	}
-	if in.ReplayAll && in.Seq != -1 {
+	if in.ReplayAll && in.SeqProvided {
 		return fmt.Errorf("cannot combine --replay-all with --seq: --replay-all starts from the oldest retained event, --seq resumes after a specific sequence")
 	}
 	if in.Seq != -1 && in.Seq < 1 {
@@ -238,11 +239,12 @@ func runBrowsersTelemetryStream(cmd *cobra.Command, args []string) error {
 	replayAll, _ := cmd.Flags().GetBool("replay-all")
 	b := BrowsersCmd{browsers: &svc, telemetry: &svc.Telemetry}
 	return b.TelemetryStream(cmd.Context(), BrowsersTelemetryStreamInput{
-		Identifier: args[0],
-		Categories: categories,
-		Types:      types,
-		Seq:        seq,
-		ReplayAll:  replayAll,
-		Output:     out,
+		Identifier:  args[0],
+		Categories:  categories,
+		Types:       types,
+		Seq:         seq,
+		SeqProvided: cmd.Flags().Changed("seq"),
+		ReplayAll:   replayAll,
+		Output:      out,
 	})
 }
