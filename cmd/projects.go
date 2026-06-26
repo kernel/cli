@@ -110,12 +110,11 @@ func (c ProjectsCmd) Create(ctx context.Context, in ProjectsCreateInput) error {
 }
 
 func (c ProjectsCmd) Get(ctx context.Context, in ProjectsGetInput) error {
-	projectID, err := resolveProjectArg(ctx, c.projects, in.Identifier)
-	if err != nil {
-		return err
-	}
-
-	project, err := c.projects.Get(ctx, projectID)
+	// The API resolves the GET path parameter by ID or by name (names are unique
+	// within an organization), so pass the identifier straight through — no
+	// client-side list-and-match needed. Delete and limits endpoints do not
+	// resolve names, so those paths keep resolveProjectArg.
+	project, err := c.projects.Get(ctx, in.Identifier)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}

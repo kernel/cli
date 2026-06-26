@@ -263,7 +263,7 @@ Commands with JSON output support:
   - `--fill-rate <n>` - Percentage of the pool to fill per minute
   - `--timeout <seconds>` - Idle timeout for browsers acquired from the pool
   - `--stealth`, `--headless`, `--kiosk` - Default pool configuration
-  - `--profile-id`, `--profile-name`, `--save-changes`, `--proxy-id`, `--start-url`, `--extension`, `--viewport` - Same semantics as `kernel browsers create`
+  - `--profile-id`, `--profile-name`, `--proxy-id`, `--start-url`, `--extension`, `--viewport` - Same semantics as `kernel browsers create`
   - `--chrome-policy <json>` / `--chrome-policy-file <path>` - Custom Chrome enterprise policy applied to every browser in the pool, as a JSON object or from a file (`-` for stdin). Same semantics as `kernel browsers create`.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools get <id-or-name>` - Get pool details

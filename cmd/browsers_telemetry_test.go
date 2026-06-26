@@ -10,6 +10,7 @@ import (
 
 	kernel "github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/kernel/kernel-go-sdk/packages/ssestream"
 	"github.com/stretchr/testify/assert"
 )
@@ -34,6 +35,7 @@ func captureStdout(t *testing.T, fn func()) string {
 
 type FakeBrowserTelemetryService struct {
 	StreamFunc func() *ssestream.Stream[kernel.BrowserTelemetryStreamResponse]
+	EventsFunc func(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse], error)
 }
 
 func (f *FakeBrowserTelemetryService) StreamStreaming(ctx context.Context, id string, query kernel.BrowserTelemetryStreamParams, opts ...option.RequestOption) *ssestream.Stream[kernel.BrowserTelemetryStreamResponse] {
@@ -41,6 +43,13 @@ func (f *FakeBrowserTelemetryService) StreamStreaming(ctx context.Context, id st
 		return f.StreamFunc()
 	}
 	return makeStream([]kernel.BrowserTelemetryStreamResponse{})
+}
+
+func (f *FakeBrowserTelemetryService) Events(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse], error) {
+	if f.EventsFunc != nil {
+		return f.EventsFunc(ctx, id, query, opts...)
+	}
+	return &pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse]{}, nil
 }
 
 func TestTelemetryStream_NilTelemetryErrors(t *testing.T) {
@@ -349,4 +358,47 @@ func TestTelemetryEnabledCategories(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	assert.Equal(t, []string{"control", "system"}, telemetryEnabledCategories(cfg))
+}
+
+func TestTelemetryStream_RejectsInvalidReplay(t *testing.T) {
+	b := BrowsersCmd{browsers: &FakeBrowsersService{}, telemetry: &FakeBrowserTelemetryService{}}
+	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{Identifier: "br-1", Seq: -1, Replay: "oldest"})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid --replay")
+}
+
+func TestTelemetryEvents_Table(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return &kernel.BrowserGetResponse{SessionID: "sess-1"}, nil
+	}}
+	fakeTelemetry := &FakeBrowserTelemetryService{
+		EventsFunc: func(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse], error) {
+			assert.Equal(t, "sess-1", id, "events should query the resolved session id")
+			return &pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse]{
+				Items: []kernel.BrowserTelemetryEventsResponse{
+					{Seq: 7, Event: kernel.BrowserTelemetryEventUnion{Category: "network", Type: "network_response", Ts: 0}},
+				},
+			}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
+	err := b.TelemetryEvents(context.Background(), BrowsersTelemetryEventsInput{Identifier: "br-1"})
+	assert.NoError(t, err)
+	out := buf.String()
+	assert.Contains(t, out, "7")
+	assert.Contains(t, out, "network")
+	assert.Contains(t, out, "network_response")
+}
+
+func TestTelemetryEvents_EmptyJSON(t *testing.T) {
+	out := captureStdout(t, func() {
+		fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			return &kernel.BrowserGetResponse{SessionID: "sess-1"}, nil
+		}}
+		b := BrowsersCmd{browsers: fakeBrowsers, telemetry: &FakeBrowserTelemetryService{}}
+		err := b.TelemetryEvents(context.Background(), BrowsersTelemetryEventsInput{Identifier: "br-1", Output: "json"})
+		assert.NoError(t, err)
+	})
+	assert.Equal(t, "[]\n", out)
 }
