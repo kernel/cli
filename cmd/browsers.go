@@ -2756,7 +2756,7 @@ followed automatically by Chromium.`,
 	telemetryEvents.Flags().Int64("limit", 0, "Maximum number of events per page (default 20)")
 	telemetryEvents.Flags().Int64("offset", 0, "Pagination cursor: pass the X-Next-Offset from a previous response")
 	telemetryEvents.Flags().String("since", "", "Window start: RFC-3339 timestamp or a duration like 5m (default 5m). Ignored when --offset is set")
-	telemetryEvents.Flags().String("until", "", "Window end (exclusive): RFC-3339 timestamp or a duration like 5m. Ignored when --offset is set")
+	telemetryEvents.Flags().String("until", "", "Window end (exclusive): RFC-3339 timestamp or a duration like 5m")
 	addJSONOutputFlag(telemetryEvents)
 	telemetryRoot.AddCommand(telemetryEvents)
 	browsersCmd.AddCommand(telemetryRoot)

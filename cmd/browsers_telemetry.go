@@ -273,16 +273,15 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 		params.Limit = kernel.Opt(in.Limit)
 	}
 	if in.Offset > 0 {
-		// Offset is an opaque cursor (X-Next-Offset) that already encodes the
-		// query window, so since/until are ignored when paging by offset.
 		params.Offset = kernel.Opt(in.Offset)
-	} else {
-		if in.Since != "" {
-			params.Since = kernel.Opt(in.Since)
-		}
-		if in.Until != "" {
-			params.Until = kernel.Opt(in.Until)
-		}
+	} else if in.Since != "" {
+		// Offset is an opaque cursor that encodes the window start, so --since is
+		// ignored once paging by offset; only send it for the first page.
+		params.Since = kernel.Opt(in.Since)
+	}
+	// --until still bounds the page even when paging by offset.
+	if in.Until != "" {
+		params.Until = kernel.Opt(in.Until)
 	}
 
 	var raw *http.Response

@@ -405,17 +405,18 @@ func TestTelemetryEvents_EmptyJSON(t *testing.T) {
 	assert.JSONEq(t, `{"events":[]}`, out)
 }
 
-func TestTelemetryEvents_OffsetIgnoresWindow(t *testing.T) {
+func TestTelemetryEvents_OffsetIgnoresSinceKeepsUntil(t *testing.T) {
 	buf := capturePtermOutput(t)
 	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
 		return &kernel.BrowserGetResponse{SessionID: "sess-1"}, nil
 	}}
 	fakeTelemetry := &FakeBrowserTelemetryService{
 		EventsFunc: func(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse], error) {
-			// When paging by the opaque offset cursor, since/until must not be sent.
+			// Paging by the opaque offset cursor: since is ignored, but until still
+			// bounds the page (per the API contract).
 			assert.True(t, query.Offset.Valid(), "offset should be forwarded")
 			assert.False(t, query.Since.Valid(), "since must be omitted when --offset is set")
-			assert.False(t, query.Until.Valid(), "until must be omitted when --offset is set")
+			assert.True(t, query.Until.Valid(), "until still bounds the page when --offset is set")
 			return &pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse]{}, nil
 		},
 	}
