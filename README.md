@@ -323,7 +323,7 @@ Per-category updates are partial — only categories you name are changed; other
 - `kernel browsers telemetry events <id>` - Read historical telemetry events (paged)
   - `--limit <n>` - Maximum number of events per page (default 20)
   - `--offset <cursor>` - Pagination cursor: pass the `X-Next-Offset` from a previous response
-  - `--since <ts|dur>` / `--until <ts|dur>` - Time window (RFC-3339 timestamp or duration like `5m`); ignored when `--offset` is set
+  - `--since <ts|dur>` / `--until <ts|dur>` - Time window (RFC-3339 timestamp or duration like `5m`). `--since` is ignored when `--offset` is set; `--until` still bounds the page
   - `-o, --output json` - Output `{ "events": [...], "next_offset": "..." }` (omit `next_offset` when there is no next page)
 
 ### Browser Process Control
