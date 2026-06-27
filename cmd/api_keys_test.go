@@ -16,7 +16,7 @@ import (
 
 type FakeAPIKeysService struct {
 	NewFunc    func(ctx context.Context, body kernel.APIKeyNewParams, opts ...option.RequestOption) (*kernel.CreatedAPIKey, error)
-	GetFunc    func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.APIKey, error)
+	GetFunc    func(ctx context.Context, id string, query kernel.APIKeyGetParams, opts ...option.RequestOption) (*kernel.APIKey, error)
 	UpdateFunc func(ctx context.Context, id string, body kernel.APIKeyUpdateParams, opts ...option.RequestOption) (*kernel.APIKey, error)
 	ListFunc   func(ctx context.Context, query kernel.APIKeyListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.APIKey], error)
 	DeleteFunc func(ctx context.Context, id string, opts ...option.RequestOption) error
@@ -29,9 +29,9 @@ func (f *FakeAPIKeysService) New(ctx context.Context, body kernel.APIKeyNewParam
 	return createdAPIKeyFromJSON(`{"id":"key_123","name":"default","key":"sk_test","masked_key":"sk_...test","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123","email":"dev@example.com","name":"Dev"},"expires_at":null,"project_id":null,"project_name":null}`), nil
 }
 
-func (f *FakeAPIKeysService) Get(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.APIKey, error) {
+func (f *FakeAPIKeysService) Get(ctx context.Context, id string, query kernel.APIKeyGetParams, opts ...option.RequestOption) (*kernel.APIKey, error) {
 	if f.GetFunc != nil {
-		return f.GetFunc(ctx, id, opts...)
+		return f.GetFunc(ctx, id, query, opts...)
 	}
 	return apiKeyFromJSON(`{"id":"` + id + `","name":"default","masked_key":"sk_...test","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123","email":"dev@example.com","name":"Dev"},"expires_at":null,"project_id":null,"project_name":null}`), nil
 }
@@ -125,7 +125,7 @@ func TestAPIKeysRejectInvalidOutputBeforeCallingAPI(t *testing.T) {
 			t.Fatal("New should not be called")
 			return nil, nil
 		},
-		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.APIKey, error) {
+		GetFunc: func(ctx context.Context, id string, query kernel.APIKeyGetParams, opts ...option.RequestOption) (*kernel.APIKey, error) {
 			t.Fatal("Get should not be called")
 			return nil, nil
 		},

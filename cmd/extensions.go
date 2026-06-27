@@ -45,6 +45,7 @@ var defaultExtensionExclusions = util.ZipOptions{
 // ExtensionsService defines the subset of the Kernel SDK extension client that we use.
 type ExtensionsService interface {
 	List(ctx context.Context, query kernel.ExtensionListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.ExtensionListResponse], err error)
+	Get(ctx context.Context, idOrName string, opts ...option.RequestOption) (res *kernel.ExtensionGetResponse, err error)
 	Delete(ctx context.Context, idOrName string, opts ...option.RequestOption) (err error)
 	Download(ctx context.Context, idOrName string, opts ...option.RequestOption) (res *http.Response, err error)
 	DownloadFromChromeStore(ctx context.Context, query kernel.ExtensionDownloadFromChromeStoreParams, opts ...option.RequestOption) (res *http.Response, err error)
@@ -55,6 +56,11 @@ type ExtensionsListInput struct {
 	Limit  int
 	Offset int
 	Output string
+}
+
+type ExtensionsGetInput struct {
+	Identifier string
+	Output     string
 }
 
 type ExtensionsDeleteInput struct {
@@ -135,6 +141,38 @@ func (e ExtensionsCmd) List(ctx context.Context, in ExtensionsListInput) error {
 			util.FormatLocal(it.LastUsedAt),
 		})
 	}
+	PrintTableNoPad(rows, true)
+	return nil
+}
+
+func (e ExtensionsCmd) Get(ctx context.Context, in ExtensionsGetInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+	if in.Identifier == "" {
+		pterm.Error.Println("Missing identifier")
+		return nil
+	}
+
+	item, err := e.extensions.Get(ctx, in.Identifier)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(item)
+	}
+
+	name := item.Name
+	if name == "" {
+		name = "-"
+	}
+	rows := pterm.TableData{{"Property", "Value"}}
+	rows = append(rows, []string{"ID", item.ID})
+	rows = append(rows, []string{"Name", name})
+	rows = append(rows, []string{"Created At", util.FormatLocal(item.CreatedAt)})
+	rows = append(rows, []string{"Size (bytes)", fmt.Sprintf("%d", item.SizeBytes)})
+	rows = append(rows, []string{"Last Used At", util.FormatLocal(item.LastUsedAt)})
 	PrintTableNoPad(rows, true)
 	return nil
 }
@@ -425,6 +463,19 @@ var extensionsListCmd = &cobra.Command{
 	},
 }
 
+var extensionsGetCmd = &cobra.Command{
+	Use:   "get <id-or-name>",
+	Short: "Get extension metadata by ID or name",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client := getKernelClient(cmd)
+		output, _ := cmd.Flags().GetString("output")
+		svc := client.Extensions
+		e := ExtensionsCmd{extensions: &svc}
+		return e.Get(cmd.Context(), ExtensionsGetInput{Identifier: args[0], Output: output})
+	},
+}
+
 var extensionsDeleteCmd = &cobra.Command{
 	Use:   "delete <id-or-name>",
 	Short: "Delete an extension by ID or name",
@@ -529,6 +580,7 @@ var extensionsBuildWebBotAuthCmd = &cobra.Command{
 
 func init() {
 	extensionsCmd.AddCommand(extensionsListCmd)
+	extensionsCmd.AddCommand(extensionsGetCmd)
 	extensionsCmd.AddCommand(extensionsDeleteCmd)
 	extensionsCmd.AddCommand(extensionsDownloadCmd)
 	extensionsCmd.AddCommand(extensionsDownloadWebStoreCmd)
@@ -536,6 +588,7 @@ func init() {
 	extensionsCmd.AddCommand(extensionsBuildWebBotAuthCmd)
 
 	addJSONOutputFlag(extensionsListCmd)
+	addJSONOutputFlag(extensionsGetCmd)
 	extensionsListCmd.Flags().Int("limit", 0, "Maximum number of extensions to return")
 	extensionsListCmd.Flags().Int("offset", 0, "Number of extensions to skip (for pagination)")
 	extensionsDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")

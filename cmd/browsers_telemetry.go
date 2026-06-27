@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"slices"
@@ -15,6 +17,7 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	kernel "github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/kernel/kernel-go-sdk/packages/ssestream"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -23,6 +26,7 @@ import (
 // BrowserTelemetryService defines the subset we use for browser telemetry streaming.
 type BrowserTelemetryService interface {
 	StreamStreaming(ctx context.Context, id string, query kernel.BrowserTelemetryStreamParams, opts ...option.RequestOption) (stream *ssestream.Stream[kernel.BrowserTelemetryStreamResponse])
+	Events(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse], err error)
 }
 
 type BrowsersTelemetryStreamInput struct {
@@ -30,6 +34,16 @@ type BrowsersTelemetryStreamInput struct {
 	Categories []string
 	Types      []string
 	Seq        int64
+	Replay     string
+	Output     string
+}
+
+type BrowsersTelemetryEventsInput struct {
+	Identifier string
+	Limit      int64
+	Offset     int64
+	Since      string
+	Until      string
 	Output     string
 }
 
@@ -180,6 +194,9 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 			return fmt.Errorf("invalid --categories value %q: must be one of %s", c, strings.Join(streamFilterCategories, ", "))
 		}
 	}
+	if in.Replay != "" && in.Replay != "all" {
+		return fmt.Errorf("invalid --replay value %q: only \"all\" is supported (omit --replay to stream from now)", in.Replay)
+	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
@@ -189,6 +206,9 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 	params := kernel.BrowserTelemetryStreamParams{}
 	if in.Seq >= 0 {
 		params.LastEventID = kernel.Opt(strconv.FormatInt(in.Seq, 10))
+	}
+	if in.Replay != "" {
+		params.Replay = kernel.Opt(in.Replay)
 	}
 	stream := b.telemetry.StreamStreaming(ctx, br.SessionID, params)
 	defer stream.Close()
@@ -223,12 +243,124 @@ func runBrowsersTelemetryStream(cmd *cobra.Command, args []string) error {
 	categories, _ := cmd.Flags().GetStringSlice("categories")
 	types, _ := cmd.Flags().GetStringSlice("types")
 	seq, _ := cmd.Flags().GetInt64("seq")
+	replay, _ := cmd.Flags().GetString("replay")
 	b := BrowsersCmd{browsers: &svc, telemetry: &svc.Telemetry}
 	return b.TelemetryStream(cmd.Context(), BrowsersTelemetryStreamInput{
 		Identifier: args[0],
 		Categories: categories,
 		Types:      types,
 		Seq:        seq,
+		Replay:     replay,
+		Output:     out,
+	})
+}
+
+func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEventsInput) error {
+	if b.telemetry == nil {
+		return fmt.Errorf("telemetry service not available")
+	}
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+
+	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	params := kernel.BrowserTelemetryEventsParams{}
+	if in.Limit > 0 {
+		params.Limit = kernel.Opt(in.Limit)
+	}
+	if in.Offset > 0 {
+		params.Offset = kernel.Opt(in.Offset)
+	} else if in.Since != "" {
+		// Offset is an opaque cursor that encodes the window start, so --since is
+		// ignored once paging by offset; only send it for the first page.
+		params.Since = kernel.Opt(in.Since)
+	}
+	// --until still bounds the page even when paging by offset.
+	if in.Until != "" {
+		params.Until = kernel.Opt(in.Until)
+	}
+
+	var raw *http.Response
+	page, err := b.telemetry.Events(ctx, br.SessionID, params, option.WithResponseInto(&raw))
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	var items []kernel.BrowserTelemetryEventsResponse
+	if page != nil {
+		items = page.Items
+	}
+
+	// Pagination: the API sets X-Has-More=true while more pages remain;
+	// X-Next-Offset is the cursor to pass as --offset for the next page. Surface
+	// it (in JSON and as the table hint) only when there is actually a next page.
+	nextOffset := ""
+	if raw != nil && strings.EqualFold(raw.Header.Get("X-Has-More"), "true") {
+		nextOffset = raw.Header.Get("X-Next-Offset")
+	}
+
+	if in.Output == "json" {
+		events := make([]json.RawMessage, 0, len(items))
+		for _, it := range items {
+			r := it.RawJSON()
+			if r == "" {
+				r = "{}"
+			}
+			events = append(events, json.RawMessage(r))
+		}
+		payload := struct {
+			Events     []json.RawMessage `json:"events"`
+			NextOffset string            `json:"next_offset,omitempty"`
+		}{Events: events, NextOffset: nextOffset}
+		data, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
+	if len(items) == 0 {
+		pterm.Info.Println("No telemetry events found")
+		return nil
+	}
+
+	rows := pterm.TableData{{"Seq", "Time", "Category", "Type"}}
+	for _, it := range items {
+		ts := time.UnixMicro(it.Event.Ts).Local().Format("2006-01-02 15:04:05")
+		rows = append(rows, []string{
+			strconv.FormatInt(it.Seq, 10),
+			ts,
+			it.Event.Category,
+			it.Event.Type,
+		})
+	}
+	PrintTableNoPad(rows, true)
+	if nextOffset != "" {
+		pterm.Info.Printf("More events available — re-run with --offset %s\n", nextOffset)
+	}
+	return nil
+}
+
+func runBrowsersTelemetryEvents(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	out, _ := cmd.Flags().GetString("output")
+	limit, _ := cmd.Flags().GetInt64("limit")
+	offset, _ := cmd.Flags().GetInt64("offset")
+	since, _ := cmd.Flags().GetString("since")
+	until, _ := cmd.Flags().GetString("until")
+	b := BrowsersCmd{browsers: &svc, telemetry: &svc.Telemetry}
+	return b.TelemetryEvents(cmd.Context(), BrowsersTelemetryEventsInput{
+		Identifier: args[0],
+		Limit:      limit,
+		Offset:     offset,
+		Since:      since,
+		Until:      until,
 		Output:     out,
 	})
 }

@@ -2748,7 +2748,17 @@ followed automatically by Chromium.`,
 	telemetryStream.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error)")
 	telemetryStream.Flags().Int64("seq", -1, "Resume after sequence number N (Last-Event-ID); replays events with seq > N. Default -1 streams from now")
 	telemetryStream.Flags().StringP("output", "o", "", "Output format: json for newline-delimited JSON envelopes")
+	telemetryStream.Flags().String("replay", "", "Replay buffered events on connect: --replay=all starts from the oldest retained event")
+	telemetryStream.MarkFlagsMutuallyExclusive("seq", "replay")
 	telemetryRoot.AddCommand(telemetryStream)
+
+	telemetryEvents := &cobra.Command{Use: "events <id>", Short: "Read historical telemetry events (paged)", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryEvents}
+	telemetryEvents.Flags().Int64("limit", 0, "Maximum number of events per page (default 20)")
+	telemetryEvents.Flags().Int64("offset", 0, "Pagination cursor: pass the X-Next-Offset from a previous response")
+	telemetryEvents.Flags().String("since", "", "Window start: RFC-3339 timestamp or a duration like 5m (default 5m). Ignored when --offset is set")
+	telemetryEvents.Flags().String("until", "", "Window end (exclusive): RFC-3339 timestamp or a duration like 5m")
+	addJSONOutputFlag(telemetryEvents)
+	telemetryRoot.AddCommand(telemetryEvents)
 	browsersCmd.AddCommand(telemetryRoot)
 
 	// no flags for view; it takes a single positional argument

@@ -91,23 +91,22 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 }
 
 type BrowserPoolsCreateInput struct {
-	Name               string
-	Size               int64
-	FillRate           int64
-	TimeoutSeconds     int64
-	Stealth            BoolFlag
-	Headless           BoolFlag
-	Kiosk              BoolFlag
-	ProfileID          string
-	ProfileName        string
-	ProfileSaveChanges BoolFlag
-	ProxyID            string
-	StartURL           string
-	Extensions         []string
-	Viewport           string
-	ChromePolicy       string
-	ChromePolicyFile   string
-	Output             string
+	Name             string
+	Size             int64
+	FillRate         int64
+	TimeoutSeconds   int64
+	Stealth          BoolFlag
+	Headless         BoolFlag
+	Kiosk            BoolFlag
+	ProfileID        string
+	ProfileName      string
+	ProxyID          string
+	StartURL         string
+	Extensions       []string
+	Viewport         string
+	ChromePolicy     string
+	ChromePolicyFile string
+	Output           string
 }
 
 func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput) error {
@@ -141,13 +140,17 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 		params.KioskMode = kernel.Bool(in.Kiosk.Value)
 	}
 
-	profile, err := buildProfileParam(in.ProfileID, in.ProfileName, in.ProfileSaveChanges)
+	profileID, profileName, profileSet, err := resolvePoolProfile(in.ProfileID, in.ProfileName)
 	if err != nil {
 		pterm.Error.Println(err.Error())
 		return nil
 	}
-	if profile != nil {
-		params.Profile = *profile
+	if profileSet {
+		if profileID != "" {
+			params.Profile.ID = kernel.String(profileID)
+		} else {
+			params.Profile.Name = kernel.String(profileName)
+		}
 	}
 
 	if in.ProxyID != "" {
@@ -239,26 +242,25 @@ func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error
 }
 
 type BrowserPoolsUpdateInput struct {
-	IDOrName           string
-	Name               string
-	Size               int64
-	FillRate           int64
-	TimeoutSeconds     int64
-	Stealth            BoolFlag
-	Headless           BoolFlag
-	Kiosk              BoolFlag
-	ProfileID          string
-	ProfileName        string
-	ProfileSaveChanges BoolFlag
-	ProxyID            string
-	StartURL           string
-	ClearStartURL      bool
-	Extensions         []string
-	Viewport           string
-	ChromePolicy       string
-	ChromePolicyFile   string
-	DiscardAllIdle     BoolFlag
-	Output             string
+	IDOrName         string
+	Name             string
+	Size             int64
+	FillRate         int64
+	TimeoutSeconds   int64
+	Stealth          BoolFlag
+	Headless         BoolFlag
+	Kiosk            BoolFlag
+	ProfileID        string
+	ProfileName      string
+	ProxyID          string
+	StartURL         string
+	ClearStartURL    bool
+	Extensions       []string
+	Viewport         string
+	ChromePolicy     string
+	ChromePolicyFile string
+	DiscardAllIdle   BoolFlag
+	Output           string
 }
 
 func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput) error {
@@ -299,13 +301,17 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 		params.DiscardAllIdle = kernel.Bool(in.DiscardAllIdle.Value)
 	}
 
-	profile, err := buildProfileParam(in.ProfileID, in.ProfileName, in.ProfileSaveChanges)
+	profileID, profileName, profileSet, err := resolvePoolProfile(in.ProfileID, in.ProfileName)
 	if err != nil {
 		pterm.Error.Println(err.Error())
 		return nil
 	}
-	if profile != nil {
-		params.Profile = *profile
+	if profileSet {
+		if profileID != "" {
+			params.Profile.ID = kernel.String(profileID)
+		} else {
+			params.Profile.Name = kernel.String(profileName)
+		}
 	}
 
 	if in.ProxyID != "" {
@@ -561,7 +567,6 @@ func init() {
 	browserPoolsCreateCmd.Flags().Bool("kiosk", false, "Enable kiosk mode")
 	browserPoolsCreateCmd.Flags().String("profile-id", "", "Profile ID")
 	browserPoolsCreateCmd.Flags().String("profile-name", "", "Profile name")
-	browserPoolsCreateCmd.Flags().Bool("save-changes", false, "Save changes to profile")
 	browserPoolsCreateCmd.Flags().String("proxy-id", "", "Proxy ID")
 	browserPoolsCreateCmd.Flags().String("start-url", "", "Initial page to open for new browsers")
 	browserPoolsCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
@@ -581,7 +586,6 @@ func init() {
 	browserPoolsUpdateCmd.Flags().Bool("kiosk", false, "Enable kiosk mode")
 	browserPoolsUpdateCmd.Flags().String("profile-id", "", "Profile ID")
 	browserPoolsUpdateCmd.Flags().String("profile-name", "", "Profile name")
-	browserPoolsUpdateCmd.Flags().Bool("save-changes", false, "Save changes to profile")
 	browserPoolsUpdateCmd.Flags().String("proxy-id", "", "Proxy ID")
 	browserPoolsUpdateCmd.Flags().String("start-url", "", "Initial page to open for new browsers")
 	browserPoolsUpdateCmd.Flags().Bool("clear-start-url", false, "Clear the pool start URL")
@@ -641,7 +645,6 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	kiosk, _ := cmd.Flags().GetBool("kiosk")
 	profileID, _ := cmd.Flags().GetString("profile-id")
 	profileName, _ := cmd.Flags().GetString("profile-name")
-	saveChanges, _ := cmd.Flags().GetBool("save-changes")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
@@ -651,23 +654,22 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 
 	in := BrowserPoolsCreateInput{
-		Name:               name,
-		Size:               size,
-		FillRate:           fillRate,
-		TimeoutSeconds:     timeout,
-		Stealth:            BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealth},
-		Headless:           BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headless},
-		Kiosk:              BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kiosk},
-		ProfileID:          profileID,
-		ProfileName:        profileName,
-		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
-		ProxyID:            proxyID,
-		StartURL:           startURL,
-		Extensions:         extensions,
-		Viewport:           viewport,
-		ChromePolicy:       chromePolicy,
-		ChromePolicyFile:   chromePolicyFile,
-		Output:             output,
+		Name:             name,
+		Size:             size,
+		FillRate:         fillRate,
+		TimeoutSeconds:   timeout,
+		Stealth:          BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealth},
+		Headless:         BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headless},
+		Kiosk:            BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kiosk},
+		ProfileID:        profileID,
+		ProfileName:      profileName,
+		ProxyID:          proxyID,
+		StartURL:         startURL,
+		Extensions:       extensions,
+		Viewport:         viewport,
+		ChromePolicy:     chromePolicy,
+		ChromePolicyFile: chromePolicyFile,
+		Output:           output,
 	}
 
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
@@ -693,7 +695,6 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 	kiosk, _ := cmd.Flags().GetBool("kiosk")
 	profileID, _ := cmd.Flags().GetString("profile-id")
 	profileName, _ := cmd.Flags().GetString("profile-name")
-	saveChanges, _ := cmd.Flags().GetBool("save-changes")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	clearStartURL, _ := cmd.Flags().GetBool("clear-start-url")
@@ -705,26 +706,25 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 
 	in := BrowserPoolsUpdateInput{
-		IDOrName:           args[0],
-		Name:               name,
-		Size:               size,
-		FillRate:           fillRate,
-		TimeoutSeconds:     timeout,
-		Stealth:            BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealth},
-		Headless:           BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headless},
-		Kiosk:              BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kiosk},
-		ProfileID:          profileID,
-		ProfileName:        profileName,
-		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
-		ProxyID:            proxyID,
-		StartURL:           startURL,
-		ClearStartURL:      clearStartURL,
-		Extensions:         extensions,
-		Viewport:           viewport,
-		ChromePolicy:       chromePolicy,
-		ChromePolicyFile:   chromePolicyFile,
-		DiscardAllIdle:     BoolFlag{Set: cmd.Flags().Changed("discard-all-idle"), Value: discardIdle},
-		Output:             output,
+		IDOrName:         args[0],
+		Name:             name,
+		Size:             size,
+		FillRate:         fillRate,
+		TimeoutSeconds:   timeout,
+		Stealth:          BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealth},
+		Headless:         BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headless},
+		Kiosk:            BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kiosk},
+		ProfileID:        profileID,
+		ProfileName:      profileName,
+		ProxyID:          proxyID,
+		StartURL:         startURL,
+		ClearStartURL:    clearStartURL,
+		Extensions:       extensions,
+		Viewport:         viewport,
+		ChromePolicy:     chromePolicy,
+		ChromePolicyFile: chromePolicyFile,
+		DiscardAllIdle:   BoolFlag{Set: cmd.Flags().Changed("discard-all-idle"), Value: discardIdle},
+		Output:           output,
 	}
 
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
@@ -772,23 +772,18 @@ func runBrowserPoolsFlush(cmd *cobra.Command, args []string) error {
 	return c.Flush(cmd.Context(), BrowserPoolsFlushInput{IDOrName: args[0]})
 }
 
-func buildProfileParam(profileID, profileName string, saveChanges BoolFlag) (*kernel.BrowserProfileParam, error) {
+// resolvePoolProfile validates and resolves a pool profile selection. Browser
+// pools have their own profile type with no save_changes; this helper works for
+// both create and update param types by returning the resolved id/name plus
+// whether a profile was selected at all.
+func resolvePoolProfile(profileID, profileName string) (id, name string, set bool, err error) {
 	if profileID != "" && profileName != "" {
-		return nil, fmt.Errorf("must specify at most one of --profile-id or --profile-name")
+		return "", "", false, fmt.Errorf("must specify at most one of --profile-id or --profile-name")
 	}
 	if profileID == "" && profileName == "" {
-		return nil, nil
+		return "", "", false, nil
 	}
-
-	profile := kernel.BrowserProfileParam{
-		SaveChanges: kernel.Bool(saveChanges.Value),
-	}
-	if profileID != "" {
-		profile.ID = kernel.String(profileID)
-	} else if profileName != "" {
-		profile.Name = kernel.String(profileName)
-	}
-	return &profile, nil
+	return profileID, profileName, true, nil
 }
 
 func validateStartURLFlag(startURL string) error {
@@ -847,15 +842,8 @@ func formatFillRate(rate int64) string {
 	return "-"
 }
 
-func formatProfile(profile kernel.BrowserProfile) string {
-	name := util.FirstOrDash(profile.Name, profile.ID)
-	if name == "-" {
-		return "-"
-	}
-	if profile.SaveChanges {
-		return fmt.Sprintf("%s (save changes: true)", name)
-	}
-	return fmt.Sprintf("%s (save changes: false)", name)
+func formatProfile(profile kernel.BrowserPoolBrowserPoolConfigProfile) string {
+	return util.FirstOrDash(profile.Name, profile.ID)
 }
 
 func formatExtensions(extensions []kernel.BrowserExtension) string {

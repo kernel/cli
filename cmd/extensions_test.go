@@ -21,6 +21,7 @@ import (
 // FakeExtensionsService implements ExtensionsService
 type FakeExtensionsService struct {
 	ListFunc                  func(ctx context.Context, query kernel.ExtensionListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ExtensionListResponse], error)
+	GetFunc                   func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*kernel.ExtensionGetResponse, error)
 	DeleteFunc                func(ctx context.Context, idOrName string, opts ...option.RequestOption) error
 	DownloadFunc              func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*http.Response, error)
 	DownloadFromChromeStoreFn func(ctx context.Context, query kernel.ExtensionDownloadFromChromeStoreParams, opts ...option.RequestOption) (*http.Response, error)
@@ -32,6 +33,12 @@ func (f *FakeExtensionsService) List(ctx context.Context, query kernel.Extension
 		return f.ListFunc(ctx, query, opts...)
 	}
 	return &pagination.OffsetPagination[kernel.ExtensionListResponse]{Items: []kernel.ExtensionListResponse{}}, nil
+}
+func (f *FakeExtensionsService) Get(ctx context.Context, idOrName string, opts ...option.RequestOption) (*kernel.ExtensionGetResponse, error) {
+	if f.GetFunc != nil {
+		return f.GetFunc(ctx, idOrName, opts...)
+	}
+	return &kernel.ExtensionGetResponse{ID: idOrName, Name: "default", CreatedAt: time.Unix(0, 0), SizeBytes: 1}, nil
 }
 func (f *FakeExtensionsService) Delete(ctx context.Context, idOrName string, opts ...option.RequestOption) error {
 	if f.DeleteFunc != nil {
@@ -56,6 +63,23 @@ func (f *FakeExtensionsService) Upload(ctx context.Context, body kernel.Extensio
 		return f.UploadFunc(ctx, body, opts...)
 	}
 	return &kernel.ExtensionUploadResponse{ID: "e-new", Name: body.Name.Value, CreatedAt: time.Unix(0, 0), SizeBytes: 1}, nil
+}
+
+func TestExtensionsGet_Table(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fake := &FakeExtensionsService{
+		GetFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*kernel.ExtensionGetResponse, error) {
+			assert.Equal(t, "my-ext", idOrName)
+			return &kernel.ExtensionGetResponse{ID: "e-123", Name: "my-ext", CreatedAt: time.Unix(0, 0), SizeBytes: 42}, nil
+		},
+	}
+	e := ExtensionsCmd{extensions: fake}
+	err := e.Get(context.Background(), ExtensionsGetInput{Identifier: "my-ext"})
+	assert.NoError(t, err)
+	out := buf.String()
+	assert.Contains(t, out, "e-123")
+	assert.Contains(t, out, "my-ext")
+	assert.Contains(t, out, "42")
 }
 
 func TestExtensionsList_Empty(t *testing.T) {
