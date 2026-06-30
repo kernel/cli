@@ -37,7 +37,7 @@ func captureStdout(t *testing.T, fn func()) string {
 type FakeBrowserTelemetryService struct {
 	StreamFunc           func() *ssestream.Stream[kernel.BrowserTelemetryStreamResponse]
 	EventsFunc           func(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse], error)
-	EventsAutoPagingFunc func() *pagination.OffsetPaginationAutoPager[kernel.BrowserTelemetryEventsResponse]
+	EventsAutoPagingFunc func(id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) *pagination.OffsetPaginationAutoPager[kernel.BrowserTelemetryEventsResponse]
 }
 
 func (f *FakeBrowserTelemetryService) StreamStreaming(ctx context.Context, id string, query kernel.BrowserTelemetryStreamParams, opts ...option.RequestOption) *ssestream.Stream[kernel.BrowserTelemetryStreamResponse] {
@@ -56,7 +56,7 @@ func (f *FakeBrowserTelemetryService) Events(ctx context.Context, id string, que
 
 func (f *FakeBrowserTelemetryService) EventsAutoPaging(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) *pagination.OffsetPaginationAutoPager[kernel.BrowserTelemetryEventsResponse] {
 	if f.EventsAutoPagingFunc != nil {
-		return f.EventsAutoPagingFunc()
+		return f.EventsAutoPagingFunc(id, query, opts...)
 	}
 	return pagination.NewOffsetPaginationAutoPager(&pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse]{}, nil)
 }
@@ -518,7 +518,7 @@ func TestTelemetryEvents_TypesFilterWalksAllPages(t *testing.T) {
 			t.Fatalf("single-page Events must not be called when --types is set")
 			return nil, nil
 		},
-		EventsAutoPagingFunc: func() *pagination.OffsetPaginationAutoPager[kernel.BrowserTelemetryEventsResponse] {
+		EventsAutoPagingFunc: func(id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) *pagination.OffsetPaginationAutoPager[kernel.BrowserTelemetryEventsResponse] {
 			autoPaged = true
 			return pagination.NewOffsetPaginationAutoPager(&pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse]{}, nil)
 		},
@@ -529,5 +529,30 @@ func TestTelemetryEvents_TypesFilterWalksAllPages(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.True(t, autoPaged, "--types must walk every page so the client-side filter is complete")
+	_ = buf
+}
+
+// A full-window scan (--all/--types) must ignore the manual --offset cursor and
+// walk from --since; forwarding the offset would start mid-window and drop
+// earlier pages, contradicting the documented behavior.
+func TestTelemetryEvents_FullScanIgnoresOffsetUsesSince(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return &kernel.BrowserGetResponse{SessionID: "sess-1"}, nil
+	}}
+	var gotQuery kernel.BrowserTelemetryEventsParams
+	fakeTelemetry := &FakeBrowserTelemetryService{
+		EventsAutoPagingFunc: func(id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) *pagination.OffsetPaginationAutoPager[kernel.BrowserTelemetryEventsResponse] {
+			gotQuery = query
+			return pagination.NewOffsetPaginationAutoPager(&pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse]{}, nil)
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
+
+	err := b.TelemetryEvents(context.Background(), BrowsersTelemetryEventsInput{Identifier: "br-1", All: true, Offset: 100, Since: "5m"})
+
+	assert.NoError(t, err)
+	assert.False(t, gotQuery.Offset.Valid(), "--all must not forward --offset")
+	assert.Equal(t, "5m", gotQuery.Since.Value, "--all walks the window from --since")
 	_ = buf
 }

@@ -283,15 +283,22 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 		sessionID = br.SessionID
 	}
 
+	// A --types filter is client-side (the archive endpoint filters only by
+	// category), so it must see every page to be complete. Walk the whole window
+	// whenever --all or a --types filter is set; otherwise read a single page and
+	// surface the X-Next-Offset cursor for manual --offset paging.
+	fullScan := in.All || len(in.Types) > 0
+
 	params := kernel.BrowserTelemetryEventsParams{}
 	if in.Limit > 0 {
 		params.Limit = kernel.Opt(in.Limit)
 	}
-	if in.Offset > 0 {
+	if in.Offset > 0 && !fullScan {
 		params.Offset = kernel.Opt(in.Offset)
 	} else if in.Since != "" {
 		// Offset is an opaque cursor that encodes the window start, so --since is
-		// ignored once paging by offset; only send it for the first page.
+		// ignored once paging by offset; only send it for the first page. A full
+		// scan ignores --offset entirely and walks the window from --since.
 		params.Since = kernel.Opt(in.Since)
 	}
 	// --until still bounds the page even when paging by offset.
@@ -309,11 +316,7 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 	var items []kernel.BrowserTelemetryEventsResponse
 	nextOffset := ""
 
-	// A --types filter is client-side (the archive endpoint filters only by
-	// category), so it must see every page to be complete. Walk the whole window
-	// whenever --all or a --types filter is set; otherwise read a single page and
-	// surface the X-Next-Offset cursor for manual --offset paging.
-	if in.All || len(in.Types) > 0 {
+	if fullScan {
 		pager := b.telemetry.EventsAutoPaging(ctx, sessionID, params, opts...)
 		for pager.Next() {
 			it := pager.Current()
