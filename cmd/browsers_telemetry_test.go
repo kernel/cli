@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"testing"
 
@@ -483,10 +483,10 @@ func TestTelemetryEvents_CategoriesSentAsRepeatedQueryParams(t *testing.T) {
 
 // The events archive outlives the session, so a 404 from Get (e.g. an ended
 // session) must not stop the read: the command falls back to the raw identifier.
-func TestTelemetryEvents_FallsBackToIdentifierWhenGetFails(t *testing.T) {
+func TestTelemetryEvents_FallsBackToIdentifierOn404(t *testing.T) {
 	buf := capturePtermOutput(t)
 	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
-		return nil, fmt.Errorf("not found")
+		return nil, &kernel.Error{StatusCode: http.StatusNotFound}
 	}}
 	var gotID string
 	fakeTelemetry := &FakeBrowserTelemetryService{
@@ -502,6 +502,25 @@ func TestTelemetryEvents_FallsBackToIdentifierWhenGetFails(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "ended-session-id", gotID)
 	_ = buf
+}
+
+// A non-404 Get failure (auth, 5xx, transient) is a real error, not an ended
+// session — it must surface, not get swallowed by the fallback.
+func TestTelemetryEvents_SurfacesNonNotFoundGetError(t *testing.T) {
+	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return nil, &kernel.Error{StatusCode: http.StatusInternalServerError}
+	}}
+	fakeTelemetry := &FakeBrowserTelemetryService{
+		EventsFunc: func(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse], error) {
+			t.Fatalf("Events must not be called when Get fails with a non-404 error")
+			return nil, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
+
+	err := b.TelemetryEvents(context.Background(), BrowsersTelemetryEventsInput{Identifier: "br-1"})
+
+	assert.Error(t, err)
 }
 
 // A --types filter is client-side, so it must scan every page in the window to be

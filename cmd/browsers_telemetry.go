@@ -275,12 +275,14 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 		}
 	}
 
-	// Resolve a name to a session ID when possible, but fall back to the identifier
-	// as-is: the events archive outlives the session, so Get can 404 for an ended
-	// session whose telemetry is still readable.
+	// Resolve a name to a session ID. The events archive outlives the session, so
+	// a 404 (ended or unknown session) is not fatal: fall back to the identifier
+	// as-is, since its archive may still be readable. Surface any other error.
 	sessionID := in.Identifier
 	if br, gerr := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{}); gerr == nil {
 		sessionID = br.SessionID
+	} else if !util.IsNotFound(gerr) {
+		return util.CleanedUpSdkError{Err: gerr}
 	}
 
 	// A --types filter is client-side (the archive endpoint filters only by
