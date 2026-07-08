@@ -2753,10 +2753,13 @@ followed automatically by Chromium.`,
 	telemetryRoot.AddCommand(telemetryStream)
 
 	telemetryEvents := &cobra.Command{Use: "events <id>", Short: "Read historical telemetry events (paged)", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryEvents}
-	telemetryEvents.Flags().Int64("limit", 0, "Maximum number of events per page (default 20)")
+	telemetryEvents.Flags().Int64("limit", 0, "Maximum number of events per page (1-100, default 20)")
 	telemetryEvents.Flags().Int64("offset", 0, "Pagination cursor: pass the X-Next-Offset from a previous response")
 	telemetryEvents.Flags().String("since", "", "Window start: RFC-3339 timestamp or a duration like 5m (default 5m). Ignored when --offset is set")
 	telemetryEvents.Flags().String("until", "", "Window end (exclusive): RFC-3339 timestamp or a duration like 5m")
+	telemetryEvents.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,connection,system,screenshot,captcha,monitor)")
+	telemetryEvents.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error); walks every page in the window")
+	telemetryEvents.Flags().Bool("all", false, "Walk every page in the window instead of just the first (ignores --offset)")
 	addJSONOutputFlag(telemetryEvents)
 	telemetryRoot.AddCommand(telemetryEvents)
 	browsersCmd.AddCommand(telemetryRoot)
