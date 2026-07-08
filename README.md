@@ -321,9 +321,12 @@ Per-category updates are partial — only categories you name are changed; other
   - `-o, --output json` - Output newline-delimited JSON envelopes
   - Default output: tab-separated `<time>\t[<category>]\t<type>`, e.g. `15:04:05  [network]  network_response`
 - `kernel browsers telemetry events <id>` - Read historical telemetry events (paged)
-  - `--limit <n>` - Maximum number of events per page (default 20)
+  - `--limit <n>` - Maximum number of events per page (1-100, default 20)
   - `--offset <cursor>` - Pagination cursor: pass the `X-Next-Offset` from a previous response
   - `--since <ts|dur>` / `--until <ts|dur>` - Time window (RFC-3339 timestamp or duration like `5m`). `--since` is ignored when `--offset` is set; `--until` still bounds the page
+  - `--categories <list>` - Filter by event category (`console`, `network`, `page`, `interaction`, `control`, `connection`, `system`, `screenshot`, `captcha`, `monitor`); filtered server-side
+  - `--types <list>` - Filter by event type (e.g. `network_response`, `console_error`); filtered client-side, so this walks every page in the window for complete results
+  - `--all` - Walk every page in the window instead of just the first (ignores `--offset`; no `next_offset` is returned)
   - `-o, --output json` - Output `{ "events": [...], "next_offset": "..." }` (omit `next_offset` when there is no next page)
 
 ### Browser Process Control

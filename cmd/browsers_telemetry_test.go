@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
 	"os"
 	"testing"
 
@@ -34,8 +35,9 @@ func captureStdout(t *testing.T, fn func()) string {
 }
 
 type FakeBrowserTelemetryService struct {
-	StreamFunc func() *ssestream.Stream[kernel.BrowserTelemetryStreamResponse]
-	EventsFunc func(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse], error)
+	StreamFunc           func() *ssestream.Stream[kernel.BrowserTelemetryStreamResponse]
+	EventsFunc           func(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse], error)
+	EventsAutoPagingFunc func(id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) *pagination.OffsetPaginationAutoPager[kernel.BrowserTelemetryEventsResponse]
 }
 
 func (f *FakeBrowserTelemetryService) StreamStreaming(ctx context.Context, id string, query kernel.BrowserTelemetryStreamParams, opts ...option.RequestOption) *ssestream.Stream[kernel.BrowserTelemetryStreamResponse] {
@@ -50,6 +52,13 @@ func (f *FakeBrowserTelemetryService) Events(ctx context.Context, id string, que
 		return f.EventsFunc(ctx, id, query, opts...)
 	}
 	return &pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse]{}, nil
+}
+
+func (f *FakeBrowserTelemetryService) EventsAutoPaging(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) *pagination.OffsetPaginationAutoPager[kernel.BrowserTelemetryEventsResponse] {
+	if f.EventsAutoPagingFunc != nil {
+		return f.EventsAutoPagingFunc(id, query, opts...)
+	}
+	return pagination.NewOffsetPaginationAutoPager(&pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse]{}, nil)
 }
 
 func TestTelemetryStream_NilTelemetryErrors(t *testing.T) {
@@ -423,5 +432,146 @@ func TestTelemetryEvents_OffsetIgnoresSinceKeepsUntil(t *testing.T) {
 	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
 	err := b.TelemetryEvents(context.Background(), BrowsersTelemetryEventsInput{Identifier: "br-1", Offset: 5, Since: "5m", Until: "1m"})
 	assert.NoError(t, err)
+	_ = buf
+}
+
+func TestTelemetryEvents_UnknownCategoryErrors(t *testing.T) {
+	b := BrowsersCmd{browsers: &FakeBrowsersService{}, telemetry: &FakeBrowserTelemetryService{}}
+
+	err := b.TelemetryEvents(context.Background(), BrowsersTelemetryEventsInput{Identifier: "br-1", Categories: []string{"netowrk"}})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid --categories value")
+}
+
+func TestTelemetryEvents_InvalidLimitErrors(t *testing.T) {
+	b := BrowsersCmd{browsers: &FakeBrowsersService{}, telemetry: &FakeBrowserTelemetryService{}}
+
+	for _, lim := range []int64{-1, 101} {
+		err := b.TelemetryEvents(context.Background(), BrowsersTelemetryEventsInput{Identifier: "br-1", Limit: lim})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid --limit value")
+	}
+}
+
+// Categories are filtered server-side, but the SDK comma-joins a []string field
+// into one value the endpoint won't match, so they go out as repeated query
+// params instead of the typed Category field.
+func TestTelemetryEvents_CategoriesSentAsRepeatedQueryParams(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return &kernel.BrowserGetResponse{SessionID: "sess-1"}, nil
+	}}
+	var gotQuery kernel.BrowserTelemetryEventsParams
+	var gotOpts []option.RequestOption
+	fakeTelemetry := &FakeBrowserTelemetryService{
+		EventsFunc: func(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse], error) {
+			gotQuery, gotOpts = query, opts
+			return &pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse]{}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
+
+	err := b.TelemetryEvents(context.Background(), BrowsersTelemetryEventsInput{Identifier: "br-1", Categories: []string{"console", "network"}})
+
+	assert.NoError(t, err)
+	assert.Empty(t, gotQuery.Category, "categories must not use the comma-joined typed field")
+	// Two category query params plus the response-capture option for the cursor.
+	assert.Len(t, gotOpts, 3)
+	_ = buf
+}
+
+// The events archive outlives the session, so a 404 from Get (e.g. an ended
+// session) must not stop the read: the command falls back to the raw identifier.
+func TestTelemetryEvents_FallsBackToIdentifierOn404(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return nil, &kernel.Error{StatusCode: http.StatusNotFound}
+	}}
+	var gotID string
+	fakeTelemetry := &FakeBrowserTelemetryService{
+		EventsFunc: func(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse], error) {
+			gotID = id
+			return &pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse]{}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
+
+	err := b.TelemetryEvents(context.Background(), BrowsersTelemetryEventsInput{Identifier: "ended-session-id"})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "ended-session-id", gotID)
+	_ = buf
+}
+
+// A non-404 Get failure (auth, 5xx, transient) is a real error, not an ended
+// session — it must surface, not get swallowed by the fallback.
+func TestTelemetryEvents_SurfacesNonNotFoundGetError(t *testing.T) {
+	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return nil, &kernel.Error{StatusCode: http.StatusInternalServerError}
+	}}
+	fakeTelemetry := &FakeBrowserTelemetryService{
+		EventsFunc: func(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse], error) {
+			t.Fatalf("Events must not be called when Get fails with a non-404 error")
+			return nil, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
+
+	err := b.TelemetryEvents(context.Background(), BrowsersTelemetryEventsInput{Identifier: "br-1"})
+
+	assert.Error(t, err)
+}
+
+// A --types filter is client-side, so it must scan every page in the window to be
+// complete. Setting --types (without --all) must therefore route through the
+// auto-pager, not the single-page fetch that could drop matches on later pages.
+func TestTelemetryEvents_TypesFilterWalksAllPages(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return &kernel.BrowserGetResponse{SessionID: "sess-1"}, nil
+	}}
+	autoPaged := false
+	fakeTelemetry := &FakeBrowserTelemetryService{
+		EventsFunc: func(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse], error) {
+			t.Fatalf("single-page Events must not be called when --types is set")
+			return nil, nil
+		},
+		EventsAutoPagingFunc: func(id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) *pagination.OffsetPaginationAutoPager[kernel.BrowserTelemetryEventsResponse] {
+			autoPaged = true
+			return pagination.NewOffsetPaginationAutoPager(&pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse]{}, nil)
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
+
+	err := b.TelemetryEvents(context.Background(), BrowsersTelemetryEventsInput{Identifier: "br-1", Types: []string{"network_response"}})
+
+	assert.NoError(t, err)
+	assert.True(t, autoPaged, "--types must walk every page so the client-side filter is complete")
+	_ = buf
+}
+
+// A full-window scan (--all/--types) must ignore the manual --offset cursor and
+// walk from --since; forwarding the offset would start mid-window and drop
+// earlier pages, contradicting the documented behavior.
+func TestTelemetryEvents_FullScanIgnoresOffsetUsesSince(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return &kernel.BrowserGetResponse{SessionID: "sess-1"}, nil
+	}}
+	var gotQuery kernel.BrowserTelemetryEventsParams
+	fakeTelemetry := &FakeBrowserTelemetryService{
+		EventsAutoPagingFunc: func(id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) *pagination.OffsetPaginationAutoPager[kernel.BrowserTelemetryEventsResponse] {
+			gotQuery = query
+			return pagination.NewOffsetPaginationAutoPager(&pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse]{}, nil)
+		},
+	}
+	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
+
+	err := b.TelemetryEvents(context.Background(), BrowsersTelemetryEventsInput{Identifier: "br-1", All: true, Offset: 100, Since: "5m"})
+
+	assert.NoError(t, err)
+	assert.False(t, gotQuery.Offset.Valid(), "--all must not forward --offset")
+	assert.Equal(t, "5m", gotQuery.Since.Value, "--all walks the window from --since")
 	_ = buf
 }

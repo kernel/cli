@@ -27,6 +27,7 @@ import (
 type BrowserTelemetryService interface {
 	StreamStreaming(ctx context.Context, id string, query kernel.BrowserTelemetryStreamParams, opts ...option.RequestOption) (stream *ssestream.Stream[kernel.BrowserTelemetryStreamResponse])
 	Events(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse], err error)
+	EventsAutoPaging(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) *pagination.OffsetPaginationAutoPager[kernel.BrowserTelemetryEventsResponse]
 }
 
 type BrowsersTelemetryStreamInput struct {
@@ -44,6 +45,9 @@ type BrowsersTelemetryEventsInput struct {
 	Offset     int64
 	Since      string
 	Until      string
+	Categories []string
+	Types      []string
+	All        bool
 	Output     string
 }
 
@@ -262,45 +266,84 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
 	}
-
-	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
+	if in.Limit != 0 && (in.Limit < 1 || in.Limit > 100) {
+		return fmt.Errorf("invalid --limit value %d: must be between 1 and 100", in.Limit)
 	}
+	for _, c := range in.Categories {
+		if !slices.Contains(streamFilterCategories, c) {
+			return fmt.Errorf("invalid --categories value %q: must be one of %s", c, strings.Join(streamFilterCategories, ", "))
+		}
+	}
+
+	// Resolve a name to a session ID. The events archive outlives the session, so
+	// a 404 (ended or unknown session) is not fatal: fall back to the identifier
+	// as-is, since its archive may still be readable. Surface any other error.
+	sessionID := in.Identifier
+	if br, gerr := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{}); gerr == nil {
+		sessionID = br.SessionID
+	} else if !util.IsNotFound(gerr) {
+		return util.CleanedUpSdkError{Err: gerr}
+	}
+
+	// A --types filter is client-side (the archive endpoint filters only by
+	// category), so it must see every page to be complete. Walk the whole window
+	// whenever --all or a --types filter is set; otherwise read a single page and
+	// surface the X-Next-Offset cursor for manual --offset paging.
+	fullScan := in.All || len(in.Types) > 0
 
 	params := kernel.BrowserTelemetryEventsParams{}
 	if in.Limit > 0 {
 		params.Limit = kernel.Opt(in.Limit)
 	}
-	if in.Offset > 0 {
+	if in.Offset > 0 && !fullScan {
 		params.Offset = kernel.Opt(in.Offset)
 	} else if in.Since != "" {
 		// Offset is an opaque cursor that encodes the window start, so --since is
-		// ignored once paging by offset; only send it for the first page.
+		// ignored once paging by offset; only send it for the first page. A full
+		// scan ignores --offset entirely and walks the window from --since.
 		params.Since = kernel.Opt(in.Since)
 	}
 	// --until still bounds the page even when paging by offset.
 	if in.Until != "" {
 		params.Until = kernel.Opt(in.Until)
 	}
-
-	var raw *http.Response
-	page, err := b.telemetry.Events(ctx, br.SessionID, params, option.WithResponseInto(&raw))
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
+	// Send each category as a repeated query param. The SDK serializes a []string
+	// field as a single comma-joined value, but the endpoint expects the parameter
+	// repeated, so a comma-joined value matches no category.
+	opts := make([]option.RequestOption, 0, len(in.Categories)+1)
+	for _, c := range in.Categories {
+		opts = append(opts, option.WithQueryAdd("category", c))
 	}
 
 	var items []kernel.BrowserTelemetryEventsResponse
-	if page != nil {
-		items = page.Items
-	}
-
-	// Pagination: the API sets X-Has-More=true while more pages remain;
-	// X-Next-Offset is the cursor to pass as --offset for the next page. Surface
-	// it (in JSON and as the table hint) only when there is actually a next page.
 	nextOffset := ""
-	if raw != nil && strings.EqualFold(raw.Header.Get("X-Has-More"), "true") {
-		nextOffset = raw.Header.Get("X-Next-Offset")
+
+	if fullScan {
+		pager := b.telemetry.EventsAutoPaging(ctx, sessionID, params, opts...)
+		for pager.Next() {
+			it := pager.Current()
+			if shouldEmit(it.Event.Category, it.Event.Type, nil, in.Types) {
+				items = append(items, it)
+			}
+		}
+		if err := pager.Err(); err != nil {
+			return util.CleanedUpSdkError{Err: err}
+		}
+	} else {
+		var raw *http.Response
+		page, err := b.telemetry.Events(ctx, sessionID, params, append(opts, option.WithResponseInto(&raw))...)
+		if err != nil {
+			return util.CleanedUpSdkError{Err: err}
+		}
+		if page != nil {
+			items = page.Items
+		}
+		// The API sets X-Has-More=true while more pages remain; X-Next-Offset is
+		// the cursor to pass as --offset for the next page. Surface it (in JSON and
+		// as the table hint) only when there is actually a next page.
+		if raw != nil && strings.EqualFold(raw.Header.Get("X-Has-More"), "true") {
+			nextOffset = raw.Header.Get("X-Next-Offset")
+		}
 	}
 
 	if in.Output == "json" {
@@ -354,6 +397,9 @@ func runBrowsersTelemetryEvents(cmd *cobra.Command, args []string) error {
 	offset, _ := cmd.Flags().GetInt64("offset")
 	since, _ := cmd.Flags().GetString("since")
 	until, _ := cmd.Flags().GetString("until")
+	categories, _ := cmd.Flags().GetStringSlice("categories")
+	types, _ := cmd.Flags().GetStringSlice("types")
+	all, _ := cmd.Flags().GetBool("all")
 	b := BrowsersCmd{browsers: &svc, telemetry: &svc.Telemetry}
 	return b.TelemetryEvents(cmd.Context(), BrowsersTelemetryEventsInput{
 		Identifier: args[0],
@@ -361,6 +407,9 @@ func runBrowsersTelemetryEvents(cmd *cobra.Command, args []string) error {
 		Offset:     offset,
 		Since:      since,
 		Until:      until,
+		Categories: categories,
+		Types:      types,
+		All:        all,
 		Output:     out,
 	})
 }
