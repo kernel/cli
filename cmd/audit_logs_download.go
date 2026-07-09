@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kernel/cli/pkg/auth"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/pterm/pterm"
@@ -65,15 +66,15 @@ func (c AuditLogsCmd) Download(ctx context.Context, in AuditLogsDownloadInput) e
 	}
 	params.Format = kernel.AuditLogExportChunkParamsFormat(format)
 
-	outPath := in.To
-	if outPath == "" {
-		outPath = defaultAuditLogsDownloadPath(params.Start, params.End, format)
-	}
-	statePath := outPath + ".state.json"
-	fingerprint, err := auditLogsDownloadFingerprint(params)
+	fingerprint, err := auditLogsDownloadFingerprint(params, c.downloadIdentity)
 	if err != nil {
 		return err
 	}
+	outPath := in.To
+	if outPath == "" {
+		outPath = defaultAuditLogsDownloadPath(params.Start, params.End, format, fingerprint)
+	}
+	statePath := outPath + ".state.json"
 	state, exists, err := loadAuditLogsDownloadState(statePath, outPath, fingerprint, in.Force)
 	if err != nil {
 		return err
@@ -235,17 +236,29 @@ func buildAuditLogsDownloadParams(in AuditLogsDownloadInput) (kernel.AuditLogExp
 	return params, nil
 }
 
-func auditLogsDownloadFingerprint(params kernel.AuditLogExportChunkParams) (string, error) {
+func auditLogsDownloadFingerprint(params kernel.AuditLogExportChunkParams, identity string) (string, error) {
 	query, err := params.URLQuery()
 	if err != nil {
 		return "", fmt.Errorf("fingerprint params: %w", err)
 	}
-	return query.Encode(), nil
+	sum := sha256.Sum256([]byte(query.Encode() + "\n" + identity))
+	return hex.EncodeToString(sum[:]), nil
 }
 
-func defaultAuditLogsDownloadPath(start, end time.Time, format string) string {
+func defaultAuditLogsDownloadPath(start, end time.Time, format, fingerprint string) string {
 	const stamp = "20060102T150405Z"
-	return fmt.Sprintf("audit-logs-%s-%s.%s", start.UTC().Format(stamp), end.UTC().Format(stamp), format)
+	return fmt.Sprintf("audit-logs-%s-%s-%s.%s", start.UTC().Format(stamp), end.UTC().Format(stamp), fingerprint[:8], format)
+}
+
+func currentAuditLogsDownloadIdentity() string {
+	identity := strings.TrimRight(strings.TrimSpace(util.GetBaseURL()), "/")
+	if apiKey := os.Getenv("KERNEL_API_KEY"); apiKey != "" {
+		return identity + "\napi-key:" + apiKey
+	}
+	if tokens, err := auth.LoadTokens(); err == nil {
+		return identity + "\norg:" + tokens.OrgID
+	}
+	return identity
 }
 
 func loadAuditLogsDownloadState(statePath, outPath, fingerprint string, force bool) (auditLogsDownloadState, bool, error) {
@@ -355,6 +368,7 @@ func openAuditLogsDownloadOutput(outPath string, committed int64) (*os.File, err
 
 func runAuditLogsDownload(cmd *cobra.Command, args []string) error {
 	c := getAuditLogsHandler(cmd)
+	c.downloadIdentity = currentAuditLogsDownloadIdentity()
 	start, _ := cmd.Flags().GetString("start")
 	end, _ := cmd.Flags().GetString("end")
 	search, _ := cmd.Flags().GetString("search")

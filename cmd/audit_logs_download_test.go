@@ -153,6 +153,28 @@ func TestAuditLogsDownloadRejectsChangedParamsOnResume(t *testing.T) {
 	require.ErrorContains(t, err, "does not match this download")
 }
 
+func TestAuditLogsDownloadFingerprintIncludesIdentity(t *testing.T) {
+	params, err := buildAuditLogsDownloadParams(auditLogsDownloadInput(""))
+	require.NoError(t, err)
+	params.Format = kernel.AuditLogExportChunkParamsFormatJSONLGz
+
+	first, err := auditLogsDownloadFingerprint(params, "https://api.onkernel.com\norg:first")
+	require.NoError(t, err)
+	second, err := auditLogsDownloadFingerprint(params, "https://api.onkernel.com\norg:second")
+	require.NoError(t, err)
+
+	assert.NotEqual(t, first, second)
+	assert.Len(t, first, 64)
+}
+
+func TestDefaultAuditLogsDownloadPathIncludesFingerprint(t *testing.T) {
+	start := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 6, 28, 0, 0, 0, 0, time.UTC)
+	path := defaultAuditLogsDownloadPath(start, end, "jsonl.gz", "1234567890abcdef")
+
+	assert.Equal(t, "audit-logs-20260601T000000Z-20260628T000000Z-12345678.jsonl.gz", path)
+}
+
 func TestAuditLogsDownloadRejectsBadChunkBeforeWriting(t *testing.T) {
 	capturePtermOutput(t)
 	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
