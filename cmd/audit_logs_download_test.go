@@ -21,13 +21,15 @@ import (
 )
 
 type exportChunk struct {
-	body        []byte
-	rowCount    int
-	hasMore     bool
-	nextCursor  string
-	sha         string // overrides the computed body sha when set
-	omitSha     bool
-	omitHasMore bool
+	body         []byte
+	rowCount     int
+	rowCountRaw  string
+	hasMore      bool
+	nextCursor   string
+	sha          string // overrides the computed body sha when set
+	omitSha      bool
+	omitHasMore  bool
+	omitRowCount bool
 }
 
 func exportChunkResponse(c exportChunk) *http.Response {
@@ -40,7 +42,13 @@ func exportChunkResponse(c exportChunk) *http.Response {
 	if !c.omitHasMore {
 		header.Set("X-Has-More", strconv.FormatBool(c.hasMore))
 	}
-	header.Set("X-Row-Count", strconv.Itoa(c.rowCount))
+	if !c.omitRowCount {
+		rowCount := c.rowCountRaw
+		if rowCount == "" {
+			rowCount = strconv.Itoa(c.rowCount)
+		}
+		header.Set("X-Row-Count", rowCount)
+	}
 	if !c.omitSha {
 		header.Set("X-Content-Sha256", sha)
 	}
@@ -96,6 +104,12 @@ func downloadInput(outPath string) AuditLogsDownloadInput {
 	}
 }
 
+const auditLogsDownloadTestIdentity = "https://api.test|org:org-test"
+
+func auditLogsDownloadTestCmd(service AuditLogsService) AuditLogsCmd {
+	return AuditLogsCmd{auditLogs: service, identity: auditLogsDownloadTestIdentity}
+}
+
 func TestAuditLogsDownloadMultiChunk(t *testing.T) {
 	capturePtermOutput(t)
 	outPath := filepath.Join(t.TempDir(), "out.jsonl.gz")
@@ -115,7 +129,7 @@ func TestAuditLogsDownloadMultiChunk(t *testing.T) {
 		},
 	})
 
-	c := AuditLogsCmd{auditLogs: fake}
+	c := auditLogsDownloadTestCmd(fake)
 	require.NoError(t, c.Download(context.Background(), downloadInput(outPath)))
 
 	assert.Equal(t, []string{"", "c1", "c2"}, *cursors)
@@ -139,7 +153,7 @@ func TestAuditLogsDownloadChecksumMismatchRetriesThenSucceeds(t *testing.T) {
 		},
 	})
 
-	c := AuditLogsCmd{auditLogs: fake}
+	c := auditLogsDownloadTestCmd(fake)
 	require.NoError(t, c.Download(context.Background(), downloadInput(outPath)))
 
 	data, err := os.ReadFile(outPath)
@@ -156,7 +170,7 @@ func TestAuditLogsDownloadChecksumMismatchExhaustsRetries(t *testing.T) {
 	}
 	fake, _ := chunkServer(t, []func() (*http.Response, error){bad, bad, bad})
 
-	c := AuditLogsCmd{auditLogs: fake}
+	c := auditLogsDownloadTestCmd(fake)
 	err := c.Download(context.Background(), downloadInput(outPath))
 	require.ErrorContains(t, err, "checksum mismatch")
 
@@ -179,7 +193,7 @@ func TestAuditLogsDownloadResumesAfterFailure(t *testing.T) {
 		func() (*http.Response, error) { return nil, errors.New("boom") },
 		func() (*http.Response, error) { return nil, errors.New("boom") },
 	})
-	c := AuditLogsCmd{auditLogs: fake}
+	c := auditLogsDownloadTestCmd(fake)
 	require.Error(t, c.Download(context.Background(), downloadInput(outPath)))
 
 	fake2, cursors := chunkServer(t, []func() (*http.Response, error){
@@ -187,7 +201,7 @@ func TestAuditLogsDownloadResumesAfterFailure(t *testing.T) {
 			return exportChunkResponse(exportChunk{body: chunk2, rowCount: 1, hasMore: false}), nil
 		},
 	})
-	c2 := AuditLogsCmd{auditLogs: fake2}
+	c2 := auditLogsDownloadTestCmd(fake2)
 	require.NoError(t, c2.Download(context.Background(), downloadInput(outPath)))
 
 	assert.Equal(t, []string{"c1"}, *cursors, "resume must continue from the saved cursor")
@@ -212,7 +226,7 @@ func TestAuditLogsDownloadResumeTruncatesTornWrite(t *testing.T) {
 		func() (*http.Response, error) { return nil, errors.New("boom") },
 		func() (*http.Response, error) { return nil, errors.New("boom") },
 	})
-	c := AuditLogsCmd{auditLogs: fake}
+	c := auditLogsDownloadTestCmd(fake)
 	require.Error(t, c.Download(context.Background(), downloadInput(outPath)))
 
 	// Simulate a crash mid-append: garbage past the committed offset.
@@ -227,7 +241,7 @@ func TestAuditLogsDownloadResumeTruncatesTornWrite(t *testing.T) {
 			return exportChunkResponse(exportChunk{body: chunk2, rowCount: 1, hasMore: false}), nil
 		},
 	})
-	c2 := AuditLogsCmd{auditLogs: fake2}
+	c2 := auditLogsDownloadTestCmd(fake2)
 	require.NoError(t, c2.Download(context.Background(), downloadInput(outPath)))
 
 	data, err := os.ReadFile(outPath)
@@ -247,7 +261,7 @@ func TestAuditLogsDownloadRejectsMismatchedState(t *testing.T) {
 		func() (*http.Response, error) { return nil, errors.New("boom") },
 		func() (*http.Response, error) { return nil, errors.New("boom") },
 	})
-	c := AuditLogsCmd{auditLogs: fake}
+	c := auditLogsDownloadTestCmd(fake)
 	require.Error(t, c.Download(context.Background(), downloadInput(outPath)))
 
 	in := downloadInput(outPath)
@@ -268,7 +282,7 @@ func TestAuditLogsDownloadForceRestarts(t *testing.T) {
 		func() (*http.Response, error) { return nil, errors.New("boom") },
 		func() (*http.Response, error) { return nil, errors.New("boom") },
 	})
-	c := AuditLogsCmd{auditLogs: fake}
+	c := auditLogsDownloadTestCmd(fake)
 	require.Error(t, c.Download(context.Background(), downloadInput(outPath)))
 
 	chunk := gzipMember(t, "{\"n\":9}\n")
@@ -279,7 +293,7 @@ func TestAuditLogsDownloadForceRestarts(t *testing.T) {
 	})
 	in := downloadInput(outPath)
 	in.Force = true
-	c2 := AuditLogsCmd{auditLogs: fake2}
+	c2 := auditLogsDownloadTestCmd(fake2)
 	require.NoError(t, c2.Download(context.Background(), in))
 
 	assert.Equal(t, []string{""}, *cursors, "--force must restart from the beginning")
@@ -293,7 +307,7 @@ func TestAuditLogsDownloadRefusesExistingOutputWithoutState(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "out.jsonl.gz")
 	require.NoError(t, os.WriteFile(outPath, []byte("existing"), 0o644))
 
-	c := AuditLogsCmd{auditLogs: &FakeAuditLogsService{}}
+	c := auditLogsDownloadTestCmd(&FakeAuditLogsService{})
 	err := c.Download(context.Background(), downloadInput(outPath))
 	require.ErrorContains(t, err, "already exists")
 }
@@ -307,15 +321,24 @@ func TestAuditLogsDownloadFinishesCompletedLeftoverState(t *testing.T) {
 			return exportChunkResponse(exportChunk{body: chunk1, rowCount: 1, hasMore: false}), nil
 		},
 	})
-	c := AuditLogsCmd{auditLogs: fake}
+	c := auditLogsDownloadTestCmd(fake)
 	require.NoError(t, c.Download(context.Background(), downloadInput(outPath)))
 
 	// Simulate a crash after the final state save but before cleanup by
 	// re-creating the completed state file.
 	statePath := outPath + ".state.json"
-	require.NoError(t, os.WriteFile(statePath, []byte(`{"version":1,"params":"`+mustFingerprint(t)+`","cursor":"","bytes_written":`+strconv.Itoa(len(chunk1))+`,"chunks":1,"rows":1}`), 0o644))
+	sum := sha256.Sum256(chunk1)
+	require.NoError(t, saveAuditLogsDownloadState(statePath, auditLogsDownloadState{
+		Version:         auditLogsDownloadStateVersion,
+		Params:          mustFingerprint(t),
+		Identity:        auditLogsDownloadTestIdentity,
+		BytesWritten:    int64(len(chunk1)),
+		CommittedSHA256: hex.EncodeToString(sum[:]),
+		Chunks:          1,
+		Rows:            1,
+	}))
 
-	c2 := AuditLogsCmd{auditLogs: &FakeAuditLogsService{}}
+	c2 := auditLogsDownloadTestCmd(&FakeAuditLogsService{})
 	require.NoError(t, c2.Download(context.Background(), downloadInput(outPath)))
 	assert.Contains(t, buf.String(), "already complete")
 	_, err := os.Stat(statePath)
@@ -334,7 +357,7 @@ func mustFingerprint(t *testing.T) string {
 
 func TestAuditLogsDownloadRangeOver30DaysSuggestsWindows(t *testing.T) {
 	buf := capturePtermOutput(t)
-	c := AuditLogsCmd{auditLogs: &FakeAuditLogsService{}}
+	c := auditLogsDownloadTestCmd(&FakeAuditLogsService{})
 	err := c.Download(context.Background(), AuditLogsDownloadInput{Start: "2026-04-01", End: "2026-06-30"})
 	require.ErrorContains(t, err, "at most 30 days")
 	assert.Contains(t, buf.String(), "--start 2026-06-01T00:00:00Z --end 2026-07-01T00:00:00Z")
@@ -352,7 +375,7 @@ func TestAuditLogsDownloadServerCursorBugs(t *testing.T) {
 				return exportChunkResponse(exportChunk{body: chunk, rowCount: 1, hasMore: true}), nil
 			},
 		})
-		c := AuditLogsCmd{auditLogs: fake}
+		c := auditLogsDownloadTestCmd(fake)
 		err := c.Download(context.Background(), downloadInput(outPath))
 		require.ErrorContains(t, err, "no cursor")
 	})
@@ -363,7 +386,7 @@ func TestAuditLogsDownloadServerCursorBugs(t *testing.T) {
 			return exportChunkResponse(exportChunk{body: chunk, rowCount: 1, hasMore: true, nextCursor: "c1"}), nil
 		}
 		fake, _ := chunkServer(t, []func() (*http.Response, error){repeat, repeat})
-		c := AuditLogsCmd{auditLogs: fake}
+		c := auditLogsDownloadTestCmd(fake)
 		err := c.Download(context.Background(), downloadInput(outPath))
 		require.ErrorContains(t, err, "unchanged cursor")
 	})
@@ -381,7 +404,7 @@ func TestAuditLogsDownloadJSONLFormat(t *testing.T) {
 	}
 	in := downloadInput(outPath)
 	in.Format = "jsonl"
-	c := AuditLogsCmd{auditLogs: fake}
+	c := auditLogsDownloadTestCmd(fake)
 	require.NoError(t, c.Download(context.Background(), in))
 
 	assert.Equal(t, kernel.AuditLogExportChunkParamsFormatJSONL, gotFormat)
@@ -440,7 +463,7 @@ func TestAuditLogsDownloadRejectsDifferentCredentials(t *testing.T) {
 
 	c2 := AuditLogsCmd{auditLogs: &FakeAuditLogsService{}, identity: "org:org-b"}
 	err := c2.Download(context.Background(), downloadInput(outPath))
-	require.ErrorContains(t, err, "different credentials")
+	require.ErrorContains(t, err, "different API origin or credential")
 }
 
 func TestAuditLogsDownloadRejectsMissingOrShortenedOutput(t *testing.T) {
@@ -457,16 +480,16 @@ func TestAuditLogsDownloadRejectsMissingOrShortenedOutput(t *testing.T) {
 			func() (*http.Response, error) { return nil, errors.New("boom") },
 			func() (*http.Response, error) { return nil, errors.New("boom") },
 		})
-		c := AuditLogsCmd{auditLogs: fake}
+		c := auditLogsDownloadTestCmd(fake)
 		require.Error(t, c.Download(context.Background(), downloadInput(outPath)))
-		return outPath, AuditLogsCmd{auditLogs: &FakeAuditLogsService{}}
+		return outPath, auditLogsDownloadTestCmd(&FakeAuditLogsService{})
 	}
 
 	t.Run("missing output", func(t *testing.T) {
 		outPath, c := interrupted(t)
 		require.NoError(t, os.Remove(outPath))
 		err := c.Download(context.Background(), downloadInput(outPath))
-		require.ErrorContains(t, err, "missing or unreadable")
+		require.ErrorContains(t, err, "is missing")
 	})
 
 	t.Run("shortened output", func(t *testing.T) {
@@ -485,7 +508,7 @@ func TestAuditLogsDownloadFirstChunkFailureRetriesWithoutForce(t *testing.T) {
 		func() (*http.Response, error) { return nil, errors.New("boom") },
 		func() (*http.Response, error) { return nil, errors.New("boom") },
 	})
-	c := AuditLogsCmd{auditLogs: failing}
+	c := auditLogsDownloadTestCmd(failing)
 	require.Error(t, c.Download(context.Background(), downloadInput(outPath)))
 
 	chunk := gzipMember(t, "{\"n\":1}\n")
@@ -494,7 +517,7 @@ func TestAuditLogsDownloadFirstChunkFailureRetriesWithoutForce(t *testing.T) {
 			return exportChunkResponse(exportChunk{body: chunk, rowCount: 1, hasMore: false}), nil
 		},
 	})
-	c2 := AuditLogsCmd{auditLogs: fake}
+	c2 := auditLogsDownloadTestCmd(fake)
 	require.NoError(t, c2.Download(context.Background(), downloadInput(outPath)), "a failed first chunk must not require --force to retry")
 
 	assert.Equal(t, []string{""}, *cursors)
@@ -515,7 +538,7 @@ func TestAuditLogsDownloadFailedForceLeavesNoStaleProgress(t *testing.T) {
 		func() (*http.Response, error) { return nil, errors.New("boom") },
 		func() (*http.Response, error) { return nil, errors.New("boom") },
 	})
-	c := AuditLogsCmd{auditLogs: fake}
+	c := auditLogsDownloadTestCmd(fake)
 	require.Error(t, c.Download(context.Background(), downloadInput(outPath)))
 
 	// --force run that dies before its first chunk.
@@ -526,7 +549,7 @@ func TestAuditLogsDownloadFailedForceLeavesNoStaleProgress(t *testing.T) {
 	})
 	in := downloadInput(outPath)
 	in.Force = true
-	c2 := AuditLogsCmd{auditLogs: failing}
+	c2 := auditLogsDownloadTestCmd(failing)
 	require.Error(t, c2.Download(context.Background(), in))
 
 	// The plain rerun must start from scratch, not resume chunk 1's stale cursor.
@@ -536,7 +559,7 @@ func TestAuditLogsDownloadFailedForceLeavesNoStaleProgress(t *testing.T) {
 			return exportChunkResponse(exportChunk{body: chunk, rowCount: 1, hasMore: false}), nil
 		},
 	})
-	c3 := AuditLogsCmd{auditLogs: fake3}
+	c3 := auditLogsDownloadTestCmd(fake3)
 	require.NoError(t, c3.Download(context.Background(), downloadInput(outPath)))
 
 	assert.Equal(t, []string{""}, *cursors)
@@ -556,7 +579,7 @@ func TestAuditLogsDownloadFailsClosedOnMissingHeaders(t *testing.T) {
 				return exportChunkResponse(exportChunk{body: chunk, rowCount: 1, omitHasMore: true}), nil
 			},
 		})
-		c := AuditLogsCmd{auditLogs: fake}
+		c := auditLogsDownloadTestCmd(fake)
 		err := c.Download(context.Background(), downloadInput(outPath))
 		require.ErrorContains(t, err, "X-Has-More")
 		data, readErr := os.ReadFile(outPath)
@@ -571,7 +594,7 @@ func TestAuditLogsDownloadFailsClosedOnMissingHeaders(t *testing.T) {
 				return exportChunkResponse(exportChunk{body: chunk, rowCount: 1, omitSha: true}), nil
 			},
 		})
-		c := AuditLogsCmd{auditLogs: fake}
+		c := auditLogsDownloadTestCmd(fake)
 		err := c.Download(context.Background(), downloadInput(outPath))
 		require.ErrorContains(t, err, "X-Content-Sha256")
 	})
@@ -589,7 +612,7 @@ func TestAuditLogsDownloadRejectsOversizedChunk(t *testing.T) {
 			return exportChunkResponse(exportChunk{body: []byte("well over eight bytes"), rowCount: 1}), nil
 		},
 	})
-	c := AuditLogsCmd{auditLogs: fake}
+	c := auditLogsDownloadTestCmd(fake)
 	err := c.Download(context.Background(), downloadInput(outPath))
 	require.ErrorContains(t, err, "refusing to buffer")
 }
@@ -606,7 +629,7 @@ func TestAuditLogsDownloadFilePermissions(t *testing.T) {
 		func() (*http.Response, error) { return nil, errors.New("boom") },
 		func() (*http.Response, error) { return nil, errors.New("boom") },
 	})
-	c := AuditLogsCmd{auditLogs: fake}
+	c := auditLogsDownloadTestCmd(fake)
 	require.Error(t, c.Download(context.Background(), downloadInput(outPath)))
 
 	outInfo, err := os.Stat(outPath)
@@ -617,8 +640,170 @@ func TestAuditLogsDownloadFilePermissions(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o600), stateInfo.Mode().Perm())
 }
 
-func TestAuditLogsDownloadRejectsInvalidFormat(t *testing.T) {
+func TestAuditLogsDownloadRequiresStableTimeBounds(t *testing.T) {
+	c := auditLogsDownloadTestCmd(&FakeAuditLogsService{})
+	for _, in := range []AuditLogsDownloadInput{
+		{End: "2026-06-28"},
+		{Start: "2026-06-01"},
+		{},
+	} {
+		err := c.Download(context.Background(), in)
+		require.ErrorContains(t, err, "--start and --end are required")
+	}
+}
+
+func TestAuditLogsCredentialIdentityIncludesAPIOrigin(t *testing.T) {
+	t.Setenv("KERNEL_API_KEY", "test-key")
+	t.Setenv("KERNEL_BASE_URL", "HTTPS://API.EXAMPLE.COM/")
+	first, err := auditLogsCredentialIdentity()
+	require.NoError(t, err)
+	assert.Contains(t, first, "https://api.example.com|key:")
+
+	t.Setenv("KERNEL_BASE_URL", "https://api.other.example.com")
+	second, err := auditLogsCredentialIdentity()
+	require.NoError(t, err)
+	assert.NotEqual(t, first, second)
+}
+
+func TestAuditLogsDownloadRejectsEmptyIdentity(t *testing.T) {
 	c := AuditLogsCmd{auditLogs: &FakeAuditLogsService{}}
+	err := c.Download(context.Background(), downloadInput(filepath.Join(t.TempDir(), "out.jsonl.gz")))
+	require.ErrorContains(t, err, "without an API origin and credential identity")
+}
+
+func TestAuditLogsDownloadRejectsModifiedCommittedOutput(t *testing.T) {
+	capturePtermOutput(t)
+	outPath := filepath.Join(t.TempDir(), "out.jsonl.gz")
+	chunk := gzipMember(t, "{\"n\":1}\n")
+	fake, _ := chunkServer(t, []func() (*http.Response, error){
+		func() (*http.Response, error) {
+			return exportChunkResponse(exportChunk{body: chunk, rowCount: 1, hasMore: true, nextCursor: "c1"}), nil
+		},
+		func() (*http.Response, error) { return nil, errors.New("boom") },
+	})
+	require.Error(t, auditLogsDownloadTestCmd(fake).Download(context.Background(), downloadInput(outPath)))
+
+	require.NoError(t, os.WriteFile(outPath, bytes.Repeat([]byte{'x'}, len(chunk)), 0o600))
+	called := false
+	resume := &FakeAuditLogsService{ExportChunkFunc: func(ctx context.Context, query kernel.AuditLogExportChunkParams, opts ...option.RequestOption) (*http.Response, error) {
+		called = true
+		return nil, errors.New("should not fetch")
+	}}
+	err := auditLogsDownloadTestCmd(resume).Download(context.Background(), downloadInput(outPath))
+	require.ErrorContains(t, err, "does not match the recorded checksum")
+	assert.False(t, called)
+}
+
+func TestAuditLogsDownloadOutputLock(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "out.jsonl.gz")
+	first, _, err := openAndLockAuditLogsDownloadOutput(outPath)
+	require.NoError(t, err)
+
+	_, _, err = openAndLockAuditLogsDownloadOutput(outPath)
+	require.ErrorContains(t, err, "already using")
+	require.NoError(t, first.Close())
+
+	third, _, err := openAndLockAuditLogsDownloadOutput(outPath)
+	require.NoError(t, err)
+	require.NoError(t, third.Close())
+}
+
+func TestAuditLogsDownloadRejectsSymlinkOutput(t *testing.T) {
+	capturePtermOutput(t)
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	outPath := filepath.Join(dir, "out.jsonl.gz")
+	require.NoError(t, os.WriteFile(target, []byte("keep"), 0o600))
+	if err := os.Symlink(target, outPath); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	in := downloadInput(outPath)
+	in.Force = true
+	err := auditLogsDownloadTestCmd(&FakeAuditLogsService{}).Download(context.Background(), in)
+	require.ErrorContains(t, err, "must be a regular file")
+	data, readErr := os.ReadFile(target)
+	require.NoError(t, readErr)
+	assert.Equal(t, "keep", string(data))
+}
+
+func TestAuditLogsDownloadStateReadIsBoundedAndForceBypassesIt(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "out.state.json")
+	require.NoError(t, os.WriteFile(statePath, make([]byte, auditLogsDownloadMaxStateBytes+1), 0o600))
+
+	_, _, err := loadAuditLogsDownloadState(statePath, "params", auditLogsDownloadTestIdentity, false)
+	require.ErrorContains(t, err, "is too large")
+	state, exists, err := loadAuditLogsDownloadState(statePath, "params", auditLogsDownloadTestIdentity, true)
+	require.NoError(t, err)
+	assert.False(t, exists)
+	assert.Equal(t, auditLogsDownloadEmptySHA256, state.CommittedSHA256)
+	_, err = os.Lstat(statePath)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestAuditLogsDownloadRejectsInconsistentState(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "out.state.json")
+	require.NoError(t, saveAuditLogsDownloadState(statePath, auditLogsDownloadState{
+		Version:         auditLogsDownloadStateVersion,
+		Params:          "params",
+		Identity:        auditLogsDownloadTestIdentity,
+		BytesWritten:    1,
+		CommittedSHA256: auditLogsDownloadEmptySHA256,
+	}))
+
+	_, _, err := loadAuditLogsDownloadState(statePath, "params", auditLogsDownloadTestIdentity, false)
+	require.ErrorContains(t, err, "zero-chunk state contains committed progress")
+}
+
+func TestAuditLogsDownloadForceSecuresExistingOutput(t *testing.T) {
+	capturePtermOutput(t)
+	outPath := filepath.Join(t.TempDir(), "out.jsonl.gz")
+	require.NoError(t, os.WriteFile(outPath, []byte("old"), 0o644))
+	require.NoError(t, os.Chmod(outPath, 0o644))
+	chunk := gzipMember(t, "{\"n\":1}\n")
+	fake, _ := chunkServer(t, []func() (*http.Response, error){
+		func() (*http.Response, error) {
+			return exportChunkResponse(exportChunk{body: chunk, rowCount: 1}), nil
+		},
+	})
+	in := downloadInput(outPath)
+	in.Force = true
+	require.NoError(t, auditLogsDownloadTestCmd(fake).Download(context.Background(), in))
+
+	info, err := os.Stat(outPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
+func TestAuditLogsDownloadRejectsInvalidRowCount(t *testing.T) {
+	capturePtermOutput(t)
+	chunk := gzipMember(t, "{\"n\":1}\n")
+	tests := []struct {
+		name  string
+		chunk exportChunk
+	}{
+		{name: "missing", chunk: exportChunk{body: chunk, omitRowCount: true}},
+		{name: "malformed", chunk: exportChunk{body: chunk, rowCountRaw: "nope"}},
+		{name: "negative", chunk: exportChunk{body: chunk, rowCountRaw: "-1"}},
+		{name: "above server limit", chunk: exportChunk{body: chunk, rowCountRaw: "50001"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			outPath := filepath.Join(t.TempDir(), "out.jsonl.gz")
+			fake, _ := chunkServer(t, []func() (*http.Response, error){
+				func() (*http.Response, error) { return exportChunkResponse(tc.chunk), nil },
+			})
+			err := auditLogsDownloadTestCmd(fake).Download(context.Background(), downloadInput(outPath))
+			require.ErrorContains(t, err, "X-Row-Count")
+			data, readErr := os.ReadFile(outPath)
+			require.NoError(t, readErr)
+			assert.Empty(t, data)
+		})
+	}
+}
+
+func TestAuditLogsDownloadRejectsInvalidFormat(t *testing.T) {
+	c := auditLogsDownloadTestCmd(&FakeAuditLogsService{})
 	in := downloadInput("out.csv")
 	in.Format = "csv"
 	err := c.Download(context.Background(), in)
