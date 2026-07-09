@@ -64,8 +64,8 @@ github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/joho/godotenv v1.5.1 h1:7eLL/+HRGLY0ldzfGMeQkb7vMd0as4CfYvUVzLqw0N0=
 github.com/joho/godotenv v1.5.1/go.mod h1:f4LDr5Voq0i2e/R5DDNOoa2zzDfwtkZa6DnEwAbqwq4=
-github.com/kernel/kernel-go-sdk v0.72.0 h1:QyT5v2PMJjp9GQCGV4fi1IWcCF/fcsFcz1MTXPA/WZU=
-github.com/kernel/kernel-go-sdk v0.72.0/go.mod h1:EeZzSuHZVeHKxKCPUzxou2bovNGhXaz0RXrSqKNf1AQ=
+github.com/kernel/kernel-go-sdk v0.75.0 h1:UTlBLOVGQIFa0Vcn9DrTbhR44IQRrcZuhaKcMTwHvms=
+github.com/kernel/kernel-go-sdk v0.75.0/go.mod h1:EeZzSuHZVeHKxKCPUzxou2bovNGhXaz0RXrSqKNf1AQ=
 github.com/klauspost/compress v1.18.5 h1:/h1gH5Ce+VWNLSWqPzOVn6XBO+vJbCNGvjoaGBFW2IE=
 github.com/klauspost/compress v1.18.5/go.mod h1:cwPg85FWrGar70rWktvGQj8/hthj3wpl0PGDogxkrSQ=
 github.com/klauspost/cpuid/v2 v2.0.9/go.mod h1:FInQzS24/EEf25PyTYn52gqo7WaD8xa0213Md/qVLRg=
