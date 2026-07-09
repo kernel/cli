@@ -11,6 +11,10 @@ func tryLockAuditLogsDownloadFile(file *os.File) (bool, error) {
 	return false, fmt.Errorf("audit-log download locking is unsupported on this platform")
 }
 
-func unlockAuditLogsDownloadFile(file *os.File) error {
+func commitAuditLogsDownloadStateFile(oldPath, newPath string) error {
+	return os.Rename(oldPath, newPath)
+}
+
+func syncAuditLogsDownloadDir(dir string) error {
 	return nil
 }

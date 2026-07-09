@@ -5,6 +5,7 @@ package cmd
 import (
 	"errors"
 	"os"
+	"path/filepath"
 
 	"golang.org/x/sys/unix"
 )
@@ -20,6 +21,17 @@ func tryLockAuditLogsDownloadFile(file *os.File) (bool, error) {
 	return true, nil
 }
 
-func unlockAuditLogsDownloadFile(file *os.File) error {
-	return unix.Flock(int(file.Fd()), unix.LOCK_UN)
+func commitAuditLogsDownloadStateFile(oldPath, newPath string) error {
+	if err := os.Rename(oldPath, newPath); err != nil {
+		return err
+	}
+	return syncAuditLogsDownloadDir(filepath.Dir(newPath))
+}
+
+func syncAuditLogsDownloadDir(dir string) error {
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	return errors.Join(f.Sync(), f.Close())
 }

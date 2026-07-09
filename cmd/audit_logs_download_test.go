@@ -11,8 +11,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
@@ -360,8 +362,16 @@ func TestAuditLogsDownloadRangeOver30DaysSuggestsWindows(t *testing.T) {
 	c := auditLogsDownloadTestCmd(&FakeAuditLogsService{})
 	err := c.Download(context.Background(), AuditLogsDownloadInput{Start: "2026-04-01", End: "2026-06-30"})
 	require.ErrorContains(t, err, "at most 30 days")
-	assert.Contains(t, buf.String(), "--start 2026-06-01T00:00:00Z --end 2026-07-01T00:00:00Z")
-	assert.Contains(t, buf.String(), "--start 2026-04-01T00:00:00Z --end 2026-04-02T00:00:00Z")
+	assert.Contains(t, buf.String(), "--start 2026-05-31T00:00:00Z --end 2026-06-30T00:00:00Z")
+	assert.Contains(t, buf.String(), "--start 2026-04-01T00:00:00Z --end 2026-05-01T00:00:00Z")
+}
+
+func TestAuditLogsDownloadDateEndIsExclusive(t *testing.T) {
+	in := downloadInput("")
+	params, err := buildAuditLogsDownloadParams(in)
+	require.NoError(t, err)
+
+	assert.Equal(t, time.Date(2026, 6, 28, 0, 0, 0, 0, time.UTC), params.End)
 }
 
 func TestAuditLogsDownloadServerCursorBugs(t *testing.T) {
@@ -638,6 +648,9 @@ func TestAuditLogsDownloadFilePermissions(t *testing.T) {
 	stateInfo, err := os.Stat(outPath + ".state.json")
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), stateInfo.Mode().Perm())
+	lockInfo, err := os.Stat(outPath + ".lock")
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), lockInfo.Mode().Perm())
 }
 
 func TestAuditLogsDownloadRequiresStableTimeBounds(t *testing.T) {
@@ -706,6 +719,47 @@ func TestAuditLogsDownloadOutputLock(t *testing.T) {
 	third, _, err := openAndLockAuditLogsDownloadOutput(outPath)
 	require.NoError(t, err)
 	require.NoError(t, third.Close())
+}
+
+func TestAuditLogsDownloadPathLockSurvivesOutputRename(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows prevents renaming an open output file")
+	}
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "out.jsonl.gz")
+	movedPath := filepath.Join(dir, "moved.jsonl.gz")
+	first, _, err := openAndLockAuditLogsDownloadOutput(outPath)
+	require.NoError(t, err)
+	require.NoError(t, os.Rename(outPath, movedPath))
+
+	_, _, err = openAndLockAuditLogsDownloadOutput(outPath)
+	require.ErrorContains(t, err, "already using")
+	require.NoError(t, first.Close())
+
+	third, created, err := openAndLockAuditLogsDownloadOutput(outPath)
+	require.NoError(t, err)
+	assert.True(t, created)
+	require.NoError(t, third.Close())
+}
+
+func TestAuditLogsDownloadDetectsOutputRename(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows prevents renaming an open output file")
+	}
+	capturePtermOutput(t)
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "out.jsonl.gz")
+	movedPath := filepath.Join(dir, "moved.jsonl.gz")
+	chunk := gzipMember(t, "{\"n\":1}\n")
+	fake := &FakeAuditLogsService{
+		ExportChunkFunc: func(ctx context.Context, query kernel.AuditLogExportChunkParams, opts ...option.RequestOption) (*http.Response, error) {
+			require.NoError(t, os.Rename(outPath, movedPath))
+			return exportChunkResponse(exportChunk{body: chunk, rowCount: 1}), nil
+		},
+	}
+
+	err := auditLogsDownloadTestCmd(fake).Download(context.Background(), downloadInput(outPath))
+	require.ErrorContains(t, err, "changed while the download was running")
 }
 
 func TestAuditLogsDownloadRejectsSymlinkOutput(t *testing.T) {

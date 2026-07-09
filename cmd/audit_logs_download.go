@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -114,10 +115,7 @@ func (c AuditLogsCmd) Download(ctx context.Context, in AuditLogsDownloadInput) e
 	// Keep a newly created output only after it has a valid matching state.
 	removeCreatedOutput := created
 	defer func() {
-		_ = out.Close()
-		if removeCreatedOutput {
-			_ = os.Remove(outPath)
-		}
+		_ = out.close(removeCreatedOutput)
 	}()
 
 	state, stateExists, err := loadAuditLogsDownloadState(statePath, fingerprint, c.identity, in.Force)
@@ -146,6 +144,9 @@ func (c AuditLogsCmd) Download(ctx context.Context, in AuditLogsDownloadInput) e
 	// A state file with chunks but no cursor means the download finished and
 	// only the cleanup was interrupted.
 	if completed {
+		if err := validateAuditLogsDownloadOutputPath(out.file, outPath); err != nil {
+			return err
+		}
 		if err := removeAuditLogsDownloadState(statePath); err != nil {
 			return err
 		}
@@ -204,11 +205,17 @@ func (c AuditLogsCmd) Download(ctx context.Context, in AuditLogsDownloadInput) e
 			return fmt.Errorf("chunk count exceeds the supported range")
 		}
 
+		if err := validateAuditLogsDownloadOutputPath(out.file, outPath); err != nil {
+			return err
+		}
 		if _, err := out.file.Write(body); err != nil {
 			return fmt.Errorf("write %s: %w", outPath, err)
 		}
 		if err := out.file.Sync(); err != nil {
 			return fmt.Errorf("sync %s: %w", outPath, err)
+		}
+		if err := validateAuditLogsDownloadOutputPath(out.file, outPath); err != nil {
+			return err
 		}
 		_, _ = committedHash.Write(body)
 
@@ -227,6 +234,9 @@ func (c AuditLogsCmd) Download(ctx context.Context, in AuditLogsDownloadInput) e
 		}
 	}
 
+	if err := validateAuditLogsDownloadOutputPath(out.file, outPath); err != nil {
+		return err
+	}
 	if err := removeAuditLogsDownloadState(statePath); err != nil {
 		return err
 	}
@@ -278,12 +288,9 @@ func buildAuditLogsDownloadParams(in AuditLogsDownloadInput) (kernel.AuditLogExp
 	if err != nil {
 		return params, fmt.Errorf("--start: %w", err)
 	}
-	end, dateOnly, err := parseAuditLogTime(in.End)
+	end, _, err := parseAuditLogTime(in.End)
 	if err != nil {
 		return params, fmt.Errorf("--end: %w", err)
-	}
-	if dateOnly {
-		end = end.Add(24 * time.Hour)
 	}
 	if !start.Before(end) {
 		return params, fmt.Errorf("--start must be before --end")
@@ -502,7 +509,7 @@ func saveAuditLogsDownloadState(statePath string, state auditLogsDownloadState) 
 		os.Remove(tmp.Name())
 		return fmt.Errorf("write state file: %w", err)
 	}
-	if err := os.Rename(tmp.Name(), statePath); err != nil {
+	if err := commitAuditLogsDownloadStateFile(tmp.Name(), statePath); err != nil {
 		os.Remove(tmp.Name())
 		return fmt.Errorf("commit state file: %w", err)
 	}
@@ -510,20 +517,30 @@ func saveAuditLogsDownloadState(statePath string, state auditLogsDownloadState) 
 }
 
 type lockedAuditLogsDownloadOutput struct {
-	file *os.File
+	file     *os.File
+	pathLock *os.File
+	outPath  string
 }
 
 func (o *lockedAuditLogsDownloadOutput) Close() error {
-	unlockErr := unlockAuditLogsDownloadFile(o.file)
-	closeErr := o.file.Close()
-	if unlockErr != nil {
-		return unlockErr
+	return o.close(false)
+}
+
+func (o *lockedAuditLogsDownloadOutput) close(removeOutput bool) error {
+	outputErr := o.file.Close()
+	var removeErr error
+	if removeOutput {
+		removeErr = os.Remove(o.outPath)
+		if removeErr == nil {
+			removeErr = syncAuditLogsDownloadDir(filepath.Dir(o.outPath))
+		}
 	}
-	return closeErr
+	lockErr := o.pathLock.Close()
+	return errors.Join(outputErr, removeErr, lockErr)
 }
 
 // openAndLockAuditLogsDownloadOutput securely opens a regular output file and
-// locks it before any state is read or output is modified.
+// holds a stable path lock before any state is read or output is modified.
 func openAndLockAuditLogsDownloadOutput(outPath string) (*lockedAuditLogsDownloadOutput, bool, error) {
 	if dir := filepath.Dir(outPath); dir != "." {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -531,60 +548,131 @@ func openAndLockAuditLogsDownloadOutput(outPath string) (*lockedAuditLogsDownloa
 		}
 	}
 
+	pathLock, err := openAndLockAuditLogsDownloadPath(outPath + ".lock")
+	if err != nil {
+		return nil, false, err
+	}
+	closePathLock := true
+	defer func() {
+		if closePathLock {
+			_ = pathLock.Close()
+		}
+	}()
+
+	out, created, err := openAuditLogsDownloadRegularFile(outPath)
+	if err != nil {
+		return nil, false, err
+	}
+	locked, err := tryLockAuditLogsDownloadFile(out)
+	if err != nil {
+		out.Close()
+		return nil, false, fmt.Errorf("lock %s: %w", outPath, err)
+	}
+	if !locked {
+		out.Close()
+		return nil, false, fmt.Errorf("another audit-log download is already using %s", outPath)
+	}
+	if created {
+		if err := out.Sync(); err != nil {
+			out.Close()
+			_ = os.Remove(outPath)
+			return nil, false, fmt.Errorf("sync %s: %w", outPath, err)
+		}
+		if err := syncAuditLogsDownloadDir(filepath.Dir(outPath)); err != nil {
+			out.Close()
+			_ = os.Remove(outPath)
+			return nil, false, fmt.Errorf("sync output directory: %w", err)
+		}
+	}
+	closePathLock = false
+	return &lockedAuditLogsDownloadOutput{file: out, pathLock: pathLock, outPath: outPath}, created, nil
+}
+
+func openAndLockAuditLogsDownloadPath(lockPath string) (*os.File, error) {
+	lock, _, err := openAuditLogsDownloadRegularFile(lockPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := lock.Chmod(0o600); err != nil {
+		lock.Close()
+		return nil, fmt.Errorf("secure lock file permissions: %w", err)
+	}
+	locked, err := tryLockAuditLogsDownloadFile(lock)
+	if err != nil {
+		lock.Close()
+		return nil, fmt.Errorf("lock %s: %w", lockPath, err)
+	}
+	if !locked {
+		lock.Close()
+		return nil, fmt.Errorf("another audit-log download is already using %s", strings.TrimSuffix(lockPath, ".lock"))
+	}
+	currentInfo, err := os.Lstat(lockPath)
+	if err != nil {
+		lock.Close()
+		return nil, fmt.Errorf("inspect lock file: %w", err)
+	}
+	openedInfo, err := lock.Stat()
+	if err != nil {
+		lock.Close()
+		return nil, fmt.Errorf("inspect lock file: %w", err)
+	}
+	if !currentInfo.Mode().IsRegular() || !os.SameFile(currentInfo, openedInfo) {
+		lock.Close()
+		return nil, fmt.Errorf("lock file %s changed while it was being locked; retry", lockPath)
+	}
+	return lock, nil
+}
+
+func openAuditLogsDownloadRegularFile(path string) (*os.File, bool, error) {
 	for attempt := 0; attempt < 2; attempt++ {
-		info, err := os.Lstat(outPath)
-		created := false
-		var out *os.File
-		switch {
-		case os.IsNotExist(err):
-			out, err = os.OpenFile(outPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
-			if os.IsExist(err) {
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			f, createErr := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+			if os.IsExist(createErr) {
 				continue
 			}
-			created = err == nil
-		case err != nil:
-			return nil, false, fmt.Errorf("inspect %s: %w", outPath, err)
-		case !info.Mode().IsRegular():
-			return nil, false, fmt.Errorf("%s must be a regular file; refusing to follow a symlink or special file", outPath)
-		default:
-			out, err = os.OpenFile(outPath, os.O_RDWR, 0)
-			if err == nil {
-				openedInfo, statErr := out.Stat()
-				if statErr != nil {
-					out.Close()
-					return nil, false, fmt.Errorf("inspect %s: %w", outPath, statErr)
-				}
-				if !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
-					out.Close()
-					return nil, false, fmt.Errorf("%s changed while it was being opened; retry", outPath)
-				}
+			if createErr != nil {
+				return nil, false, fmt.Errorf("open %s: %w", path, createErr)
 			}
+			return f, true, nil
 		}
 		if err != nil {
-			return nil, false, fmt.Errorf("open %s: %w", outPath, err)
+			return nil, false, fmt.Errorf("inspect %s: %w", path, err)
 		}
-		locked, err := tryLockAuditLogsDownloadFile(out)
-		// A second process can open and briefly lock a just-created file before
-		// its creator reaches the lock call. The creator retries long enough for
-		// that process to observe the missing state and release its lock.
-		for retries := 0; created && !locked && err == nil && retries < 25; retries++ {
-			time.Sleep(10 * time.Millisecond)
-			locked, err = tryLockAuditLogsDownloadFile(out)
+		if !info.Mode().IsRegular() {
+			return nil, false, fmt.Errorf("%s must be a regular file; refusing to follow a symlink or special file", path)
 		}
+		f, err := os.OpenFile(path, os.O_RDWR, 0)
 		if err != nil {
-			out.Close()
-			if created {
-				_ = os.Remove(outPath)
-			}
-			return nil, false, fmt.Errorf("lock %s: %w", outPath, err)
+			return nil, false, fmt.Errorf("open %s: %w", path, err)
 		}
-		if !locked {
-			out.Close()
-			return nil, false, fmt.Errorf("another audit-log download is already using %s", outPath)
+		openedInfo, err := f.Stat()
+		if err != nil {
+			f.Close()
+			return nil, false, fmt.Errorf("inspect %s: %w", path, err)
 		}
-		return &lockedAuditLogsDownloadOutput{file: out}, created, nil
+		if !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
+			f.Close()
+			return nil, false, fmt.Errorf("%s changed while it was being opened; retry", path)
+		}
+		return f, false, nil
 	}
-	return nil, false, fmt.Errorf("%s changed while it was being opened; retry", outPath)
+	return nil, false, fmt.Errorf("%s changed while it was being opened; retry", path)
+}
+
+func validateAuditLogsDownloadOutputPath(out *os.File, outPath string) error {
+	pathInfo, err := os.Lstat(outPath)
+	if err != nil {
+		return fmt.Errorf("%s changed while the download was running: %w", outPath, err)
+	}
+	openedInfo, err := out.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", outPath, err)
+	}
+	if !pathInfo.Mode().IsRegular() || !openedInfo.Mode().IsRegular() || !os.SameFile(pathInfo, openedInfo) {
+		return fmt.Errorf("%s changed while the download was running; restore it before resuming", outPath)
+	}
+	return nil
 }
 
 // prepareAuditLogsDownloadOutput verifies the committed prefix before
@@ -707,7 +795,7 @@ var auditLogsDownloadCmd = &cobra.Command{
 	Use:   "download",
 	Short: "Download audit logs for a time range to a file",
 	Long: "Download an organization's audit log records for a time range as a file, for archival, compliance, or offline analysis.\n\n" +
-		"Records are fetched in chunks and appended after each chunk is verified, newest first. If a download is interrupted, rerunning the same command resumes where it left off.\n\n" +
+		"Records in the half-open [start, end) window are fetched in chunks and appended after each chunk is verified, newest first. If a download is interrupted, rerunning the same command resumes where it left off.\n\n" +
 		"GET requests are excluded by default; pass --include-get to include them, or --method GET to see only them.\n\n" +
 		"The API allows at most 30 days per download; for longer ranges run one download per window.",
 	Args: cobra.NoArgs,
@@ -716,7 +804,7 @@ var auditLogsDownloadCmd = &cobra.Command{
 
 func init() {
 	auditLogsDownloadCmd.Flags().String("start", "", "Start of the export window, RFC3339 or YYYY-MM-DD (required)")
-	auditLogsDownloadCmd.Flags().String("end", "", "End of the export window, RFC3339 or YYYY-MM-DD inclusive (required)")
+	auditLogsDownloadCmd.Flags().String("end", "", "Exclusive end of the export window, RFC3339 or YYYY-MM-DD (required)")
 	auditLogsDownloadCmd.Flags().String("search", "", "Free-text search")
 	auditLogsDownloadCmd.Flags().String("method", "", "Filter by HTTP method (e.g. GET)")
 	auditLogsDownloadCmd.Flags().String("exclude-method", "", "Exclude an HTTP method")

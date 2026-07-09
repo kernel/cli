@@ -27,6 +27,18 @@ func tryLockAuditLogsDownloadFile(file *os.File) (bool, error) {
 	return true, nil
 }
 
-func unlockAuditLogsDownloadFile(file *os.File) error {
-	return windows.UnlockFileEx(windows.Handle(file.Fd()), 0, 1, 0, &windows.Overlapped{})
+func commitAuditLogsDownloadStateFile(oldPath, newPath string) error {
+	oldPathPtr, err := windows.UTF16PtrFromString(oldPath)
+	if err != nil {
+		return err
+	}
+	newPathPtr, err := windows.UTF16PtrFromString(newPath)
+	if err != nil {
+		return err
+	}
+	return windows.MoveFileEx(oldPathPtr, newPathPtr, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH)
+}
+
+func syncAuditLogsDownloadDir(dir string) error {
+	return nil
 }
