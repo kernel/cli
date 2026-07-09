@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kernel/cli/pkg/util"
@@ -25,6 +26,7 @@ type AuditLogsDownloadInput struct {
 	Search        string
 	Method        string
 	ExcludeMethod string
+	IncludeGet    bool
 	Service       string
 	AuthStrategy  string
 	UserIDs       []string
@@ -227,8 +229,20 @@ func buildAuditLogsDownloadParams(in AuditLogsDownloadInput) (kernel.AuditLogExp
 	if in.Method != "" {
 		params.Method = kernel.String(in.Method)
 	}
-	if in.ExcludeMethod != "" {
-		params.ExcludeMethod = kernel.String(in.ExcludeMethod)
+	// GETs are excluded by default, like search. The API accepts a single
+	// exclude_method, and chunks are appended verbatim, so a second exclusion
+	// can't be filtered client-side the way search does; require --include-get
+	// so the default is never dropped silently.
+	excludeMethod := in.ExcludeMethod
+	if in.Method == "" && !in.IncludeGet {
+		if excludeMethod == "" {
+			excludeMethod = "GET"
+		} else if !strings.EqualFold(excludeMethod, "GET") {
+			return params, fmt.Errorf("--exclude-method %s would replace the default GET exclusion; add --include-get to confirm GET requests should be included", in.ExcludeMethod)
+		}
+	}
+	if excludeMethod != "" {
+		params.ExcludeMethod = kernel.String(excludeMethod)
 	}
 	if in.Service != "" {
 		params.Service = kernel.String(in.Service)
@@ -352,6 +366,7 @@ func runAuditLogsDownload(cmd *cobra.Command, args []string) error {
 	search, _ := cmd.Flags().GetString("search")
 	method, _ := cmd.Flags().GetString("method")
 	excludeMethod, _ := cmd.Flags().GetString("exclude-method")
+	includeGet, _ := cmd.Flags().GetBool("include-get")
 	service, _ := cmd.Flags().GetString("service")
 	authStrategy, _ := cmd.Flags().GetString("auth-strategy")
 	userIDs, _ := cmd.Flags().GetStringArray("user-id")
@@ -365,6 +380,7 @@ func runAuditLogsDownload(cmd *cobra.Command, args []string) error {
 		Search:        search,
 		Method:        method,
 		ExcludeMethod: excludeMethod,
+		IncludeGet:    includeGet,
 		Service:       service,
 		AuthStrategy:  authStrategy,
 		UserIDs:       userIDs,
@@ -379,7 +395,8 @@ var auditLogsDownloadCmd = &cobra.Command{
 	Short: "Download audit logs for a time range to a file",
 	Long: "Download an organization's audit log records for a time range as a file, for archival, compliance, or offline analysis.\n\n" +
 		"Records are fetched in chunks and appended after each chunk is verified, newest first. If a download is interrupted, rerunning the same command resumes where it left off.\n\n" +
-		"The API allows at most 30 days per download; for longer ranges run one download per window. Unlike search, no records are excluded by default.",
+		"GET requests are excluded by default; pass --include-get to include them, or --method GET to see only them.\n\n" +
+		"The API allows at most 30 days per download; for longer ranges run one download per window.",
 	Args: cobra.NoArgs,
 	RunE: runAuditLogsDownload,
 }
@@ -390,6 +407,7 @@ func init() {
 	auditLogsDownloadCmd.Flags().String("search", "", "Free-text search")
 	auditLogsDownloadCmd.Flags().String("method", "", "Filter by HTTP method (e.g. GET)")
 	auditLogsDownloadCmd.Flags().String("exclude-method", "", "Exclude an HTTP method")
+	auditLogsDownloadCmd.Flags().Bool("include-get", false, "Include GET requests, which are excluded by default")
 	auditLogsDownloadCmd.Flags().String("service", "", "Filter by service")
 	auditLogsDownloadCmd.Flags().String("auth-strategy", "", "Filter by authentication strategy")
 	auditLogsDownloadCmd.Flags().StringArray("user-id", nil, "Filter by user ID (repeatable)")

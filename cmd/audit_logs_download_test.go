@@ -384,6 +384,39 @@ func TestAuditLogsDownloadJSONLFormat(t *testing.T) {
 	assert.Equal(t, "{\"n\":1}\n", string(data))
 }
 
+func TestAuditLogsDownloadExcludesGetByDefault(t *testing.T) {
+	cases := []struct {
+		name        string
+		mutate      func(*AuditLogsDownloadInput)
+		wantExclude string
+		wantErr     string
+	}{
+		{name: "default excludes GET", mutate: func(in *AuditLogsDownloadInput) {}, wantExclude: "GET"},
+		{name: "include-get lifts the default", mutate: func(in *AuditLogsDownloadInput) { in.IncludeGet = true }, wantExclude: ""},
+		{name: "method filter lifts the default", mutate: func(in *AuditLogsDownloadInput) { in.Method = "POST" }, wantExclude: ""},
+		{name: "explicit GET exclusion", mutate: func(in *AuditLogsDownloadInput) { in.ExcludeMethod = "get" }, wantExclude: "get"},
+		{name: "other exclusion with include-get", mutate: func(in *AuditLogsDownloadInput) {
+			in.ExcludeMethod = "OPTIONS"
+			in.IncludeGet = true
+		}, wantExclude: "OPTIONS"},
+		{name: "other exclusion without include-get is rejected", mutate: func(in *AuditLogsDownloadInput) { in.ExcludeMethod = "OPTIONS" },
+			wantErr: "add --include-get"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := downloadInput("")
+			tc.mutate(&in)
+			params, err := buildAuditLogsDownloadParams(in)
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantExclude, params.ExcludeMethod.Value)
+		})
+	}
+}
+
 func TestAuditLogsDownloadRejectsInvalidFormat(t *testing.T) {
 	c := AuditLogsCmd{auditLogs: &FakeAuditLogsService{}}
 	in := downloadInput("out.csv")
