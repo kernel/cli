@@ -23,8 +23,6 @@ type AuditLogsService interface {
 
 type AuditLogsCmd struct {
 	auditLogs AuditLogsService
-	// identity binds download resume state to an API origin and credential.
-	identity string
 }
 
 type AuditLogsSearchInput struct {
