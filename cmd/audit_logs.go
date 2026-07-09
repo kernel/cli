@@ -23,6 +23,9 @@ type AuditLogsService interface {
 
 type AuditLogsCmd struct {
 	auditLogs AuditLogsService
+	// identity distinguishes the credential in use; download resume state is
+	// bound to it so archives never mix organizations.
+	identity string
 }
 
 type AuditLogsSearchInput struct {
@@ -188,7 +191,7 @@ func formatAuditLogUser(entry kernel.AuditLogEntry) string {
 
 func getAuditLogsHandler(cmd *cobra.Command) AuditLogsCmd {
 	client := getKernelClient(cmd)
-	return AuditLogsCmd{auditLogs: &client.AuditLogs}
+	return AuditLogsCmd{auditLogs: &client.AuditLogs, identity: auditLogsCredentialIdentity()}
 }
 
 func runAuditLogsSearch(cmd *cobra.Command, args []string) error {
