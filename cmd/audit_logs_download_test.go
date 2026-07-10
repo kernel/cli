@@ -165,7 +165,7 @@ func TestAuditLogsDownloadRecoversCompletedState(t *testing.T) {
 			fingerprint, err := auditLogsDownloadFingerprint(params, "")
 			require.NoError(t, err)
 			require.NoError(t, saveAuditLogsDownloadState(statePath, auditLogsDownloadState{
-				Version: auditLogsDownloadStateVersion, Params: fingerprint,
+				Params:       fingerprint,
 				BytesWritten: int64(len(body)), Chunks: 1, Rows: 1,
 			}))
 

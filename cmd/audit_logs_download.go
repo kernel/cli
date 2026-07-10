@@ -35,13 +35,9 @@ type AuditLogsDownloadInput struct {
 	Force         bool
 }
 
-const (
-	auditLogsDownloadMaxRange     = 30 * 24 * time.Hour
-	auditLogsDownloadStateVersion = 1
-)
+const auditLogsDownloadMaxRange = 30 * 24 * time.Hour
 
 type auditLogsDownloadState struct {
-	Version      int    `json:"version"`
 	Params       string `json:"params"`
 	Cursor       string `json:"cursor"`
 	BytesWritten int64  `json:"bytes_written"`
@@ -266,7 +262,7 @@ func currentAuditLogsDownloadIdentity() string {
 }
 
 func loadAuditLogsDownloadState(statePath, partialPath, outPath, fingerprint string, force bool) (auditLogsDownloadState, bool, error) {
-	fresh := auditLogsDownloadState{Version: auditLogsDownloadStateVersion, Params: fingerprint}
+	fresh := auditLogsDownloadState{Params: fingerprint}
 	if force {
 		info, err := os.Lstat(outPath)
 		outExists := err == nil
@@ -305,7 +301,7 @@ func loadAuditLogsDownloadState(statePath, partialPath, outPath, fingerprint str
 	if err := json.Unmarshal(raw, &state); err != nil {
 		return fresh, false, fmt.Errorf("state file %s is corrupt; pass --force to start over", statePath)
 	}
-	if state.Version != auditLogsDownloadStateVersion || state.Params != fingerprint || state.BytesWritten < 0 {
+	if state.Params != fingerprint || state.BytesWritten < 0 {
 		return fresh, false, fmt.Errorf("state file %s does not match this download; pass --force to start over", statePath)
 	}
 	return state, true, nil
