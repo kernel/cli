@@ -22,8 +22,7 @@ type AuditLogsService interface {
 }
 
 type AuditLogsCmd struct {
-	auditLogs        AuditLogsService
-	downloadIdentity string
+	auditLogs AuditLogsService
 }
 
 type AuditLogsSearchInput struct {

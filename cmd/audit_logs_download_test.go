@@ -104,13 +104,11 @@ func TestAuditLogsDownloadWritesAllChunks(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"", "next"}, *cursors)
 	assert.Equal(t, "{\"n\":1}\n{\"n\":2}\n", readAuditLogGzip(t, outPath))
-	_, err = os.Stat(outPath + ".state.json")
-	assert.True(t, os.IsNotExist(err))
 	_, err = os.Stat(outPath + ".partial")
 	assert.True(t, os.IsNotExist(err))
 }
 
-func TestAuditLogsDownloadResumesFromCommittedChunk(t *testing.T) {
+func TestAuditLogsDownloadRestartsAfterFailure(t *testing.T) {
 	capturePtermOutput(t)
 	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
 	first := auditLogGzip(t, "{\"n\":1}\n")
@@ -123,107 +121,33 @@ func TestAuditLogsDownloadResumesFromCommittedChunk(t *testing.T) {
 	require.Error(t, (AuditLogsCmd{auditLogs: service}).Download(context.Background(), auditLogsDownloadInput(outPath)))
 	_, err := os.Stat(outPath)
 	assert.True(t, os.IsNotExist(err))
-
 	partialPath := outPath + ".partial"
-	file, err := os.OpenFile(partialPath, os.O_APPEND|os.O_WRONLY, 0)
-	require.NoError(t, err)
-	_, err = file.WriteString("partial")
-	require.NoError(t, err)
-	require.NoError(t, file.Close())
+	_, err = os.Stat(partialPath)
+	assert.True(t, os.IsNotExist(err))
+	require.NoError(t, os.WriteFile(partialPath, []byte("stale"), 0o600))
 
 	second := auditLogGzip(t, "{\"n\":2}\n")
-	resumed, cursors := auditLogChunkService(t, func() (*http.Response, error) {
-		return auditLogChunkResponse(auditLogTestChunk{body: second, rows: 1}), nil
-	})
-	require.NoError(t, (AuditLogsCmd{auditLogs: resumed}).Download(context.Background(), auditLogsDownloadInput(outPath)))
-	assert.Equal(t, []string{"next"}, *cursors)
+	restarted, cursors := auditLogChunkService(t,
+		func() (*http.Response, error) {
+			return auditLogChunkResponse(auditLogTestChunk{body: first, rows: 1, hasMore: true, nextCursor: "next"}), nil
+		},
+		func() (*http.Response, error) {
+			return auditLogChunkResponse(auditLogTestChunk{body: second, rows: 1}), nil
+		},
+	)
+	require.NoError(t, (AuditLogsCmd{auditLogs: restarted}).Download(context.Background(), auditLogsDownloadInput(outPath)))
+	assert.Equal(t, []string{"", "next"}, *cursors)
 	assert.Equal(t, "{\"n\":1}\n{\"n\":2}\n", readAuditLogGzip(t, outPath))
 	_, err = os.Stat(partialPath)
 	assert.True(t, os.IsNotExist(err))
 }
 
-func TestAuditLogsDownloadRecoversCompletedState(t *testing.T) {
-	for _, test := range []struct {
-		name    string
-		renamed bool
-	}{
-		{name: "before final rename"},
-		{name: "after final rename", renamed: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			capturePtermOutput(t)
-			outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
-			partialPath := outPath + ".partial"
-			statePath := outPath + ".state.json"
-			body := auditLogGzip(t, "{\"n\":1}\n")
-			require.NoError(t, os.WriteFile(partialPath, body, 0o600))
-			if test.renamed {
-				require.NoError(t, os.Rename(partialPath, outPath))
-			}
-			params, err := buildAuditLogsDownloadParams(auditLogsDownloadInput(outPath))
-			require.NoError(t, err)
-			fingerprint, err := auditLogsDownloadFingerprint(params, "")
-			require.NoError(t, err)
-			require.NoError(t, saveAuditLogsDownloadState(statePath, auditLogsDownloadState{
-				Params:       fingerprint,
-				BytesWritten: int64(len(body)), Chunks: 1, Rows: 1,
-			}))
-
-			require.NoError(t, (AuditLogsCmd{auditLogs: &FakeAuditLogsService{}}).Download(context.Background(), auditLogsDownloadInput(outPath)))
-			assert.Equal(t, "{\"n\":1}\n", readAuditLogGzip(t, outPath))
-			_, err = os.Stat(partialPath)
-			assert.True(t, os.IsNotExist(err))
-			_, err = os.Stat(statePath)
-			assert.True(t, os.IsNotExist(err))
-		})
-	}
-}
-
-func TestAuditLogsDownloadRejectsCorruptState(t *testing.T) {
-	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
-	require.NoError(t, os.WriteFile(outPath+".state.json", []byte("{"), 0o600))
-
-	err := (AuditLogsCmd{auditLogs: &FakeAuditLogsService{}}).Download(context.Background(), auditLogsDownloadInput(outPath))
-	require.ErrorContains(t, err, "is corrupt")
-}
-
-func TestAuditLogsDownloadRejectsChangedParamsOnResume(t *testing.T) {
-	capturePtermOutput(t)
-	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
-	chunk := auditLogGzip(t, "{\"n\":1}\n")
-	service, _ := auditLogChunkService(t,
-		func() (*http.Response, error) {
-			return auditLogChunkResponse(auditLogTestChunk{body: chunk, rows: 1, hasMore: true, nextCursor: "next"}), nil
-		},
-		func() (*http.Response, error) { return nil, errors.New("network error") },
-	)
-	in := auditLogsDownloadInput(outPath)
-	require.Error(t, (AuditLogsCmd{auditLogs: service}).Download(context.Background(), in))
-
-	in.Service = "api"
-	err := (AuditLogsCmd{auditLogs: service}).Download(context.Background(), in)
-	require.ErrorContains(t, err, "does not match this download")
-}
-
-func TestAuditLogsDownloadFingerprintIncludesIdentity(t *testing.T) {
-	params, err := buildAuditLogsDownloadParams(auditLogsDownloadInput(""))
-	require.NoError(t, err)
-
-	first, err := auditLogsDownloadFingerprint(params, "https://api.onkernel.com\norg:first")
-	require.NoError(t, err)
-	second, err := auditLogsDownloadFingerprint(params, "https://api.onkernel.com\norg:second")
-	require.NoError(t, err)
-
-	assert.NotEqual(t, first, second)
-	assert.Len(t, first, 64)
-}
-
-func TestDefaultAuditLogsDownloadPathIncludesFingerprint(t *testing.T) {
+func TestDefaultAuditLogsDownloadPath(t *testing.T) {
 	start := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 6, 28, 0, 0, 0, 0, time.UTC)
-	path := defaultAuditLogsDownloadPath(start, end, "1234567890abcdef")
+	path := defaultAuditLogsDownloadPath(start, end)
 
-	assert.Equal(t, "audit-logs-20260601-20260628-12345678.jsonl.gz", path)
+	assert.Equal(t, "audit-logs-20260601-20260628.jsonl.gz", path)
 }
 
 func TestAuditLogsDownloadRejectsBadChunkBeforeWriting(t *testing.T) {
@@ -237,12 +161,11 @@ func TestAuditLogsDownloadRejectsBadChunkBeforeWriting(t *testing.T) {
 	require.ErrorContains(t, err, "checksum mismatch")
 	_, statErr := os.Stat(outPath)
 	assert.True(t, os.IsNotExist(statErr))
-	data, readErr := os.ReadFile(outPath + ".partial")
-	require.NoError(t, readErr)
-	assert.Empty(t, data)
+	_, statErr = os.Stat(outPath + ".partial")
+	assert.True(t, os.IsNotExist(statErr))
 }
 
-func TestAuditLogsDownloadForceRestarts(t *testing.T) {
+func TestAuditLogsDownloadForceOverwrites(t *testing.T) {
 	capturePtermOutput(t)
 	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
 	require.NoError(t, os.WriteFile(outPath, []byte("old"), 0o600))
