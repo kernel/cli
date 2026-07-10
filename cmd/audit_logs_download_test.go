@@ -108,6 +108,23 @@ func TestAuditLogsDownloadWritesAllChunks(t *testing.T) {
 	assert.True(t, os.IsNotExist(err))
 }
 
+func TestAuditLogsDownloadExcludeMethodStacksWithDefaultGetExclusion(t *testing.T) {
+	capturePtermOutput(t)
+	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
+	body := auditLogGzip(t, "{\"method\":\"POST\",\"n\":1}\n{\"method\":\"DELETE\",\"n\":2}\n")
+	service := &FakeAuditLogsService{
+		ExportChunkFunc: func(ctx context.Context, query kernel.AuditLogExportChunkParams, opts ...option.RequestOption) (*http.Response, error) {
+			assert.Equal(t, "GET", query.ExcludeMethod.Value)
+			return auditLogChunkResponse(auditLogTestChunk{body: body, rows: 2}), nil
+		},
+	}
+	in := auditLogsDownloadInput(outPath)
+	in.ExcludeMethod = "post"
+
+	require.NoError(t, (AuditLogsCmd{auditLogs: service}).Download(context.Background(), in))
+	assert.Equal(t, "{\"method\":\"DELETE\",\"n\":2}\n", readAuditLogGzip(t, outPath))
+}
+
 func TestAuditLogsDownloadRestartsAfterFailure(t *testing.T) {
 	capturePtermOutput(t)
 	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
@@ -231,7 +248,6 @@ func TestBuildAuditLogsDownloadParamsRejectsInvalidInput(t *testing.T) {
 		{name: "missing bounds", in: AuditLogsDownloadInput{}, want: "--start and --end are required"},
 		{name: "reversed bounds", in: AuditLogsDownloadInput{Start: "2026-06-02", End: "2026-06-01"}, want: "--start must be before --end"},
 		{name: "range too large", in: AuditLogsDownloadInput{Start: "2026-05-01", End: "2026-06-01"}, want: "at most 30 days"},
-		{name: "conflicting exclusion", in: AuditLogsDownloadInput{Start: "2026-06-01", End: "2026-06-02", ExcludeMethod: "POST"}, want: "--include-get"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

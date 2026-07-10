@@ -74,16 +74,7 @@ func (c AuditLogsCmd) Search(ctx context.Context, in AuditLogsSearchInput) error
 	if in.Method != "" {
 		params.Method = kernel.String(in.Method)
 	}
-	// The API accepts a single exclude_method. When the default GET exclusion
-	// stacks with a user-provided one, GET goes server-side (it drops the most
-	// rows) and the user's method is filtered client-side.
-	excludeGetByDefault := in.Method == "" && !in.IncludeGet
-	var clientExclude string
-	serverExclude := in.ExcludeMethod
-	if excludeGetByDefault && !strings.EqualFold(in.ExcludeMethod, "GET") {
-		clientExclude = in.ExcludeMethod
-		serverExclude = "GET"
-	}
+	serverExclude, clientExclude := auditLogExcludeMethods(in.Method, in.ExcludeMethod, in.IncludeGet)
 	if serverExclude != "" {
 		params.ExcludeMethod = kernel.String(serverExclude)
 	}
@@ -143,6 +134,17 @@ func (c AuditLogsCmd) Search(ctx context.Context, in AuditLogsSearchInput) error
 		pterm.Info.Printf("Showing first %d results; increase --limit or narrow the search window\n", in.Limit)
 	}
 	return nil
+}
+
+// The API accepts one exclude_method. When the default GET exclusion stacks
+// with another method, GET is filtered server-side and the other method is
+// filtered by the caller.
+func auditLogExcludeMethods(method, excludeMethod string, includeGet bool) (server, client string) {
+	server = excludeMethod
+	if method == "" && !includeGet && !strings.EqualFold(excludeMethod, "GET") {
+		return "GET", excludeMethod
+	}
+	return server, ""
 }
 
 // peekForMore reports whether entries matching the client-side exclusion
