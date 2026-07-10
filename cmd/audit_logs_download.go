@@ -64,8 +64,9 @@ func (c AuditLogsCmd) Download(ctx context.Context, in AuditLogsDownloadInput) e
 	if outPath == "" {
 		outPath = defaultAuditLogsDownloadPath(params.Start, params.End, fingerprint)
 	}
+	partialPath := outPath + ".partial"
 	statePath := outPath + ".state.json"
-	state, exists, err := loadAuditLogsDownloadState(statePath, outPath, fingerprint, in.Force)
+	state, exists, err := loadAuditLogsDownloadState(statePath, partialPath, outPath, fingerprint, in.Force)
 	if err != nil {
 		return err
 	}
@@ -75,19 +76,27 @@ func (c AuditLogsCmd) Download(ctx context.Context, in AuditLogsDownloadInput) e
 		}
 	}
 
-	out, err := openAuditLogsDownloadOutput(outPath, state.BytesWritten)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
 	if state.Chunks > 0 && state.Cursor == "" {
+		if err := commitAuditLogsDownloadOutput(partialPath, outPath, state.BytesWritten); err != nil {
+			return err
+		}
 		if err := removeAuditLogsDownloadState(statePath); err != nil {
 			return err
 		}
 		pterm.Success.Printf("Download already complete: %d rows (%s) in %s\n", state.Rows, util.FormatBytes(state.BytesWritten), outPath)
 		return nil
 	}
+
+	out, err := openAuditLogsDownloadOutput(partialPath, state.BytesWritten)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if out != nil {
+			out.Close()
+		}
+	}()
+
 	if state.Chunks > 0 {
 		pterm.Info.Printf("Resuming download at chunk %d (%d rows so far)\n", state.Chunks+1, state.Rows)
 	}
@@ -106,10 +115,10 @@ func (c AuditLogsCmd) Download(ctx context.Context, in AuditLogsDownloadInput) e
 		}
 
 		if _, err := out.Write(body); err != nil {
-			return fmt.Errorf("write %s: %w", outPath, err)
+			return fmt.Errorf("write %s: %w", partialPath, err)
 		}
 		if err := out.Sync(); err != nil {
-			return fmt.Errorf("sync %s: %w", outPath, err)
+			return fmt.Errorf("sync %s: %w", partialPath, err)
 		}
 
 		state.Cursor = nextCursor
@@ -125,6 +134,14 @@ func (c AuditLogsCmd) Download(ctx context.Context, in AuditLogsDownloadInput) e
 		}
 	}
 
+	closeErr := out.Close()
+	out = nil
+	if closeErr != nil {
+		return fmt.Errorf("close %s: %w", partialPath, closeErr)
+	}
+	if err := commitAuditLogsDownloadOutput(partialPath, outPath, state.BytesWritten); err != nil {
+		return err
+	}
 	if err := removeAuditLogsDownloadState(statePath); err != nil {
 		return err
 	}
@@ -252,20 +269,36 @@ func currentAuditLogsDownloadIdentity() string {
 	return identity
 }
 
-func loadAuditLogsDownloadState(statePath, outPath, fingerprint string, force bool) (auditLogsDownloadState, bool, error) {
+func loadAuditLogsDownloadState(statePath, partialPath, outPath, fingerprint string, force bool) (auditLogsDownloadState, bool, error) {
 	fresh := auditLogsDownloadState{Version: auditLogsDownloadStateVersion, Params: fingerprint}
 	if force {
-		if err := removeAuditLogsDownloadState(statePath); err != nil {
+		info, err := os.Lstat(outPath)
+		outExists := err == nil
+		if outExists {
+			if !info.Mode().IsRegular() {
+				return fresh, false, fmt.Errorf("%s is not a regular file", outPath)
+			}
+		} else if !os.IsNotExist(err) {
+			return fresh, false, fmt.Errorf("inspect %s: %w", outPath, err)
+		}
+		if err := resetAuditLogsDownload(partialPath, statePath); err != nil {
 			return fresh, false, err
+		}
+		if outExists {
+			if err := os.Rename(outPath, partialPath); err != nil {
+				return fresh, false, fmt.Errorf("prepare %s for overwrite: %w", outPath, err)
+			}
 		}
 		return fresh, false, nil
 	}
 	raw, err := os.ReadFile(statePath)
 	if os.IsNotExist(err) {
-		if _, statErr := os.Stat(outPath); statErr == nil {
-			return fresh, false, fmt.Errorf("%s already exists; pass --force to overwrite", outPath)
-		} else if !os.IsNotExist(statErr) {
-			return fresh, false, fmt.Errorf("inspect %s: %w", outPath, statErr)
+		for _, path := range []string{outPath, partialPath} {
+			if _, statErr := os.Stat(path); statErr == nil {
+				return fresh, false, fmt.Errorf("%s already exists; pass --force to overwrite", path)
+			} else if !os.IsNotExist(statErr) {
+				return fresh, false, fmt.Errorf("inspect %s: %w", path, statErr)
+			}
 		}
 		return fresh, false, nil
 	}
@@ -320,6 +353,27 @@ func removeAuditLogsDownloadState(statePath string) error {
 	return nil
 }
 
+func resetAuditLogsDownload(paths ...string) error {
+	for _, path := range paths {
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect %s: %w", path, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%s is not a regular file", path)
+		}
+	}
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
 func openAuditLogsDownloadOutput(outPath string, committed int64) (*os.File, error) {
 	if committed > 0 {
 		if _, err := os.Stat(outPath); err != nil {
@@ -357,6 +411,35 @@ func openAuditLogsDownloadOutput(outPath string, committed int64) (*os.File, err
 	return out, nil
 }
 
+func commitAuditLogsDownloadOutput(partialPath, outPath string, expected int64) error {
+	info, err := os.Stat(partialPath)
+	if os.IsNotExist(err) {
+		info, err = os.Stat(outPath)
+		if err != nil {
+			return fmt.Errorf("completed download is missing: %w", err)
+		}
+		if !info.Mode().IsRegular() || info.Size() != expected {
+			return fmt.Errorf("%s does not match completed download", outPath)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", partialPath, err)
+	}
+	if !info.Mode().IsRegular() || info.Size() != expected {
+		return fmt.Errorf("%s does not match completed download", partialPath)
+	}
+	if _, err := os.Stat(outPath); err == nil {
+		return fmt.Errorf("%s already exists; move it or pass --force to start over", outPath)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect %s: %w", outPath, err)
+	}
+	if err := os.Rename(partialPath, outPath); err != nil {
+		return fmt.Errorf("finalize %s: %w", outPath, err)
+	}
+	return nil
+}
+
 func runAuditLogsDownload(cmd *cobra.Command, args []string) error {
 	c := getAuditLogsHandler(cmd)
 	c.downloadIdentity = currentAuditLogsDownloadIdentity()
@@ -383,7 +466,8 @@ var auditLogsDownloadCmd = &cobra.Command{
 	Use:   "download",
 	Short: "Download audit logs as gzip-compressed JSONL",
 	Long: "Download audit logs as gzip-compressed JSONL in verified, resumable chunks. The time range is [start, end).\n\n" +
-		"GET requests are excluded by default; pass --include-get to include them.",
+		"GET requests are excluded by default; pass --include-get to include them.\n\n" +
+		"Incomplete downloads use an adjacent .partial file until finalization.",
 	Args: cobra.NoArgs,
 	RunE: runAuditLogsDownload,
 }

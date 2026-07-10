@@ -106,6 +106,8 @@ func TestAuditLogsDownloadWritesAllChunks(t *testing.T) {
 	assert.Equal(t, "{\"n\":1}\n{\"n\":2}\n", readAuditLogGzip(t, outPath))
 	_, err = os.Stat(outPath + ".state.json")
 	assert.True(t, os.IsNotExist(err))
+	_, err = os.Stat(outPath + ".partial")
+	assert.True(t, os.IsNotExist(err))
 }
 
 func TestAuditLogsDownloadResumesFromCommittedChunk(t *testing.T) {
@@ -119,8 +121,11 @@ func TestAuditLogsDownloadResumesFromCommittedChunk(t *testing.T) {
 		func() (*http.Response, error) { return nil, errors.New("network error") },
 	)
 	require.Error(t, (AuditLogsCmd{auditLogs: service}).Download(context.Background(), auditLogsDownloadInput(outPath)))
+	_, err := os.Stat(outPath)
+	assert.True(t, os.IsNotExist(err))
 
-	file, err := os.OpenFile(outPath, os.O_APPEND|os.O_WRONLY, 0)
+	partialPath := outPath + ".partial"
+	file, err := os.OpenFile(partialPath, os.O_APPEND|os.O_WRONLY, 0)
 	require.NoError(t, err)
 	_, err = file.WriteString("partial")
 	require.NoError(t, err)
@@ -133,6 +138,53 @@ func TestAuditLogsDownloadResumesFromCommittedChunk(t *testing.T) {
 	require.NoError(t, (AuditLogsCmd{auditLogs: resumed}).Download(context.Background(), auditLogsDownloadInput(outPath)))
 	assert.Equal(t, []string{"next"}, *cursors)
 	assert.Equal(t, "{\"n\":1}\n{\"n\":2}\n", readAuditLogGzip(t, outPath))
+	_, err = os.Stat(partialPath)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestAuditLogsDownloadRecoversCompletedState(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		renamed bool
+	}{
+		{name: "before final rename"},
+		{name: "after final rename", renamed: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			capturePtermOutput(t)
+			outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
+			partialPath := outPath + ".partial"
+			statePath := outPath + ".state.json"
+			body := auditLogGzip(t, "{\"n\":1}\n")
+			require.NoError(t, os.WriteFile(partialPath, body, 0o600))
+			if test.renamed {
+				require.NoError(t, os.Rename(partialPath, outPath))
+			}
+			params, err := buildAuditLogsDownloadParams(auditLogsDownloadInput(outPath))
+			require.NoError(t, err)
+			fingerprint, err := auditLogsDownloadFingerprint(params, "")
+			require.NoError(t, err)
+			require.NoError(t, saveAuditLogsDownloadState(statePath, auditLogsDownloadState{
+				Version: auditLogsDownloadStateVersion, Params: fingerprint,
+				BytesWritten: int64(len(body)), Chunks: 1, Rows: 1,
+			}))
+
+			require.NoError(t, (AuditLogsCmd{auditLogs: &FakeAuditLogsService{}}).Download(context.Background(), auditLogsDownloadInput(outPath)))
+			assert.Equal(t, "{\"n\":1}\n", readAuditLogGzip(t, outPath))
+			_, err = os.Stat(partialPath)
+			assert.True(t, os.IsNotExist(err))
+			_, err = os.Stat(statePath)
+			assert.True(t, os.IsNotExist(err))
+		})
+	}
+}
+
+func TestAuditLogsDownloadRejectsCorruptState(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
+	require.NoError(t, os.WriteFile(outPath+".state.json", []byte("{"), 0o600))
+
+	err := (AuditLogsCmd{auditLogs: &FakeAuditLogsService{}}).Download(context.Background(), auditLogsDownloadInput(outPath))
+	require.ErrorContains(t, err, "is corrupt")
 }
 
 func TestAuditLogsDownloadRejectsChangedParamsOnResume(t *testing.T) {
@@ -183,7 +235,9 @@ func TestAuditLogsDownloadRejectsBadChunkBeforeWriting(t *testing.T) {
 
 	err := (AuditLogsCmd{auditLogs: service}).Download(context.Background(), auditLogsDownloadInput(outPath))
 	require.ErrorContains(t, err, "checksum mismatch")
-	data, readErr := os.ReadFile(outPath)
+	_, statErr := os.Stat(outPath)
+	assert.True(t, os.IsNotExist(statErr))
+	data, readErr := os.ReadFile(outPath + ".partial")
 	require.NoError(t, readErr)
 	assert.Empty(t, data)
 }
