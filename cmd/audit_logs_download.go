@@ -237,7 +237,7 @@ func auditLogsDownloadFingerprint(params kernel.AuditLogExportChunkParams, ident
 }
 
 func defaultAuditLogsDownloadPath(start, end time.Time, fingerprint string) string {
-	const stamp = "20060102T150405Z"
+	const stamp = "20060102"
 	return fmt.Sprintf("audit-logs-%s-%s-%s.jsonl.gz", start.UTC().Format(stamp), end.UTC().Format(stamp), fingerprint[:8])
 }
 

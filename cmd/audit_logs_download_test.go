@@ -171,7 +171,7 @@ func TestDefaultAuditLogsDownloadPathIncludesFingerprint(t *testing.T) {
 	end := time.Date(2026, 6, 28, 0, 0, 0, 0, time.UTC)
 	path := defaultAuditLogsDownloadPath(start, end, "1234567890abcdef")
 
-	assert.Equal(t, "audit-logs-20260601T000000Z-20260628T000000Z-12345678.jsonl.gz", path)
+	assert.Equal(t, "audit-logs-20260601-20260628-12345678.jsonl.gz", path)
 }
 
 func TestAuditLogsDownloadRejectsBadChunkBeforeWriting(t *testing.T) {
