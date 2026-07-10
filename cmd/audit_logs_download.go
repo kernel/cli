@@ -151,11 +151,11 @@ func buildAuditLogsDownloadParams(in AuditLogsDownloadInput) (kernel.AuditLogExp
 	if in.Start == "" || in.End == "" {
 		return params, fmt.Errorf("--start and --end are required")
 	}
-	start, _, err := parseAuditLogTime(in.Start)
+	start, err := parseAuditLogTime(in.Start)
 	if err != nil {
 		return params, fmt.Errorf("--start: %w", err)
 	}
-	end, _, err := parseAuditLogTime(in.End)
+	end, err := parseAuditLogTime(in.End)
 	if err != nil {
 		return params, fmt.Errorf("--end: %w", err)
 	}
