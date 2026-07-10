@@ -124,18 +124,18 @@ func TestAuditLogsSearchDefaultsWindowToLast24Hours(t *testing.T) {
 	assert.WithinDuration(t, time.Now().UTC(), gotEnd, time.Minute)
 }
 
-func TestAuditLogsSearchDateOnlyEndCoversWholeDay(t *testing.T) {
+func TestAuditLogsSearchDateOnlyEndIsExclusive(t *testing.T) {
 	capturePtermOutput(t)
 	fake := &FakeAuditLogsService{
 		ListAutoPagingFunc: func(ctx context.Context, query kernel.AuditLogListParams, opts ...option.RequestOption) *pagination.PageTokenPaginationAutoPager[kernel.AuditLogEntry] {
-			assert.Equal(t, time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), query.Start)
-			assert.Equal(t, time.Date(2026, 7, 2, 0, 0, 0, 0, time.UTC), query.End)
+			assert.Equal(t, time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC), query.Start)
+			assert.Equal(t, time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), query.End)
 			return auditLogPager()
 		},
 	}
 	c := AuditLogsCmd{auditLogs: fake}
 
-	err := c.Search(context.Background(), AuditLogsSearchInput{Start: "2026-07-01", End: "2026-07-01", Limit: 100})
+	err := c.Search(context.Background(), AuditLogsSearchInput{Start: "2026-06-30", End: "2026-07-01", Limit: 100})
 	require.NoError(t, err)
 }
 
