@@ -181,6 +181,32 @@ func TestAuditLogsDownloadForceOverwrites(t *testing.T) {
 	assert.Equal(t, "{\"n\":1}\n", readAuditLogGzip(t, outPath))
 }
 
+func TestAuditLogsDownloadPreservesCompletedPartialOnFinalizeFailure(t *testing.T) {
+	capturePtermOutput(t)
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "audit.jsonl.gz")
+	chunk := auditLogGzip(t, "{\"n\":1}\n")
+	service, _ := auditLogChunkService(t, func() (*http.Response, error) {
+		require.NoError(t, os.Mkdir(outPath, 0o700))
+		return auditLogChunkResponse(auditLogTestChunk{body: chunk, rows: 1}), nil
+	})
+
+	err := (AuditLogsCmd{auditLogs: service}).Download(context.Background(), auditLogsDownloadInput(outPath))
+	require.ErrorContains(t, err, "completed download remains")
+	assert.Equal(t, "{\"n\":1}\n", readAuditLogGzip(t, outPath+".partial"))
+}
+
+func TestCommitAuditLogsDownloadOutputPreservesExistingFileOnFailure(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
+	require.NoError(t, os.WriteFile(outPath, []byte("existing"), 0o600))
+
+	err := commitAuditLogsDownloadOutput(outPath+".partial", outPath, true)
+	require.Error(t, err)
+	data, readErr := os.ReadFile(outPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, "existing", string(data))
+}
+
 func TestBuildAuditLogsDownloadParams(t *testing.T) {
 	in := auditLogsDownloadInput("")
 	in.Search = "browser"

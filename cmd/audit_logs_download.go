@@ -50,12 +50,12 @@ func (c AuditLogsCmd) Download(ctx context.Context, in AuditLogsDownloadInput) e
 	if err != nil {
 		return err
 	}
-	complete := false
+	cleanupPartial := true
 	defer func() {
 		if out != nil {
 			out.Close()
 		}
-		if !complete {
+		if cleanupPartial {
 			os.Remove(partialPath)
 		}
 	}()
@@ -97,10 +97,10 @@ func (c AuditLogsCmd) Download(ctx context.Context, in AuditLogsDownloadInput) e
 	if closeErr != nil {
 		return fmt.Errorf("close %s: %w", partialPath, closeErr)
 	}
+	cleanupPartial = false
 	if err := commitAuditLogsDownloadOutput(partialPath, outPath, in.Force); err != nil {
-		return err
+		return fmt.Errorf("%w; completed download remains at %s", err, partialPath)
 	}
-	complete = true
 	pterm.Success.Printf("Downloaded %d rows (%s) to %s\n", rows, util.FormatBytes(bytesWritten), outPath)
 	return nil
 }
@@ -239,9 +239,6 @@ func commitAuditLogsDownloadOutput(partialPath, outPath string, force bool) erro
 		}
 		if !force {
 			return fmt.Errorf("%s already exists; pass --force to overwrite", outPath)
-		}
-		if err := os.Remove(outPath); err != nil {
-			return fmt.Errorf("remove %s: %w", outPath, err)
 		}
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("inspect %s: %w", outPath, err)
