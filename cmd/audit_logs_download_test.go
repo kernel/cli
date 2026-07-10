@@ -83,7 +83,7 @@ func readAuditLogGzip(t *testing.T, path string) string {
 }
 
 func auditLogsDownloadInput(path string) AuditLogsDownloadInput {
-	return AuditLogsDownloadInput{Start: "2026-06-01", End: "2026-06-28", To: path, Format: "jsonl.gz"}
+	return AuditLogsDownloadInput{Start: "2026-06-01", End: "2026-06-28", To: path}
 }
 
 func TestAuditLogsDownloadWritesAllChunks(t *testing.T) {
@@ -156,7 +156,6 @@ func TestAuditLogsDownloadRejectsChangedParamsOnResume(t *testing.T) {
 func TestAuditLogsDownloadFingerprintIncludesIdentity(t *testing.T) {
 	params, err := buildAuditLogsDownloadParams(auditLogsDownloadInput(""))
 	require.NoError(t, err)
-	params.Format = kernel.AuditLogExportChunkParamsFormatJSONLGz
 
 	first, err := auditLogsDownloadFingerprint(params, "https://api.onkernel.com\norg:first")
 	require.NoError(t, err)
@@ -170,7 +169,7 @@ func TestAuditLogsDownloadFingerprintIncludesIdentity(t *testing.T) {
 func TestDefaultAuditLogsDownloadPathIncludesFingerprint(t *testing.T) {
 	start := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 6, 28, 0, 0, 0, 0, time.UTC)
-	path := defaultAuditLogsDownloadPath(start, end, "jsonl.gz", "1234567890abcdef")
+	path := defaultAuditLogsDownloadPath(start, end, "1234567890abcdef")
 
 	assert.Equal(t, "audit-logs-20260601T000000Z-20260628T000000Z-12345678.jsonl.gz", path)
 }
@@ -264,11 +263,4 @@ func TestAuditLogsDownloadRejectsExistingOutput(t *testing.T) {
 	require.NoError(t, os.WriteFile(outPath, []byte("keep"), 0o600))
 	err := (AuditLogsCmd{auditLogs: &FakeAuditLogsService{}}).Download(context.Background(), auditLogsDownloadInput(outPath))
 	require.ErrorContains(t, err, "already exists")
-}
-
-func TestAuditLogsDownloadRejectsInvalidFormat(t *testing.T) {
-	in := auditLogsDownloadInput(filepath.Join(t.TempDir(), "audit"))
-	in.Format = "csv"
-	err := (AuditLogsCmd{auditLogs: &FakeAuditLogsService{}}).Download(context.Background(), in)
-	require.ErrorContains(t, err, "--format")
 }
