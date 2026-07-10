@@ -91,14 +91,15 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 }
 
 type BrowserPoolsCreateInput struct {
-	Name             string
-	Size             int64
-	FillRate         int64
-	TimeoutSeconds   int64
-	Stealth          BoolFlag
-	Headless         BoolFlag
-	Kiosk            BoolFlag
-	ProfileID        string
+	Name                   string
+	Size                   int64
+	FillRate               int64
+	TimeoutSeconds         int64
+	Stealth                BoolFlag
+	Headless               BoolFlag
+	Kiosk                  BoolFlag
+	RefreshOnProfileUpdate BoolFlag
+	ProfileID              string
 	ProfileName      string
 	ProxyID          string
 	StartURL         string
@@ -138,6 +139,9 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 	}
 	if in.Kiosk.Set {
 		params.KioskMode = kernel.Bool(in.Kiosk.Value)
+	}
+	if in.RefreshOnProfileUpdate.Set {
+		params.RefreshOnProfileUpdate = kernel.Bool(in.RefreshOnProfileUpdate.Value)
 	}
 
 	profileID, profileName, profileSet, err := resolvePoolProfile(in.ProfileID, in.ProfileName)
@@ -230,6 +234,7 @@ func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error
 		{"Headless", fmt.Sprintf("%t", cfg.Headless)},
 		{"Stealth", fmt.Sprintf("%t", cfg.Stealth)},
 		{"Kiosk Mode", fmt.Sprintf("%t", cfg.KioskMode)},
+		{"Refresh On Profile Update", fmt.Sprintf("%t", cfg.RefreshOnProfileUpdate)},
 		{"Profile", formatProfile(cfg.Profile)},
 		{"Proxy ID", util.OrDash(cfg.ProxyID)},
 		{"Start URL", util.OrDash(cfg.StartURL)},
@@ -242,15 +247,16 @@ func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error
 }
 
 type BrowserPoolsUpdateInput struct {
-	IDOrName         string
-	Name             string
-	Size             int64
-	FillRate         int64
-	TimeoutSeconds   int64
-	Stealth          BoolFlag
-	Headless         BoolFlag
-	Kiosk            BoolFlag
-	ProfileID        string
+	IDOrName               string
+	Name                   string
+	Size                   int64
+	FillRate               int64
+	TimeoutSeconds         int64
+	Stealth                BoolFlag
+	Headless               BoolFlag
+	Kiosk                  BoolFlag
+	RefreshOnProfileUpdate BoolFlag
+	ProfileID              string
 	ProfileName      string
 	ProxyID          string
 	StartURL         string
@@ -299,6 +305,9 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 	}
 	if in.DiscardAllIdle.Set {
 		params.DiscardAllIdle = kernel.Bool(in.DiscardAllIdle.Value)
+	}
+	if in.RefreshOnProfileUpdate.Set {
+		params.RefreshOnProfileUpdate = kernel.Bool(in.RefreshOnProfileUpdate.Value)
 	}
 
 	profileID, profileName, profileSet, err := resolvePoolProfile(in.ProfileID, in.ProfileName)
@@ -565,6 +574,7 @@ func init() {
 	browserPoolsCreateCmd.Flags().Bool("stealth", false, "Enable stealth mode")
 	browserPoolsCreateCmd.Flags().Bool("headless", false, "Enable headless mode")
 	browserPoolsCreateCmd.Flags().Bool("kiosk", false, "Enable kiosk mode")
+	browserPoolsCreateCmd.Flags().Bool("refresh-on-profile-update", false, "Flush idle browsers when the pool's profile is updated")
 	browserPoolsCreateCmd.Flags().String("profile-id", "", "Profile ID")
 	browserPoolsCreateCmd.Flags().String("profile-name", "", "Profile name")
 	browserPoolsCreateCmd.Flags().String("proxy-id", "", "Proxy ID")
@@ -584,6 +594,7 @@ func init() {
 	browserPoolsUpdateCmd.Flags().Bool("stealth", false, "Enable stealth mode")
 	browserPoolsUpdateCmd.Flags().Bool("headless", false, "Enable headless mode")
 	browserPoolsUpdateCmd.Flags().Bool("kiosk", false, "Enable kiosk mode")
+	browserPoolsUpdateCmd.Flags().Bool("refresh-on-profile-update", false, "Flush idle browsers when the pool's profile is updated")
 	browserPoolsUpdateCmd.Flags().String("profile-id", "", "Profile ID")
 	browserPoolsUpdateCmd.Flags().String("profile-name", "", "Profile name")
 	browserPoolsUpdateCmd.Flags().String("proxy-id", "", "Proxy ID")
@@ -643,6 +654,7 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	stealth, _ := cmd.Flags().GetBool("stealth")
 	headless, _ := cmd.Flags().GetBool("headless")
 	kiosk, _ := cmd.Flags().GetBool("kiosk")
+	refreshOnProfileUpdate, _ := cmd.Flags().GetBool("refresh-on-profile-update")
 	profileID, _ := cmd.Flags().GetString("profile-id")
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
@@ -660,8 +672,9 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 		TimeoutSeconds:   timeout,
 		Stealth:          BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealth},
 		Headless:         BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headless},
-		Kiosk:            BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kiosk},
-		ProfileID:        profileID,
+		Kiosk:                  BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kiosk},
+		RefreshOnProfileUpdate: BoolFlag{Set: cmd.Flags().Changed("refresh-on-profile-update"), Value: refreshOnProfileUpdate},
+		ProfileID:              profileID,
 		ProfileName:      profileName,
 		ProxyID:          proxyID,
 		StartURL:         startURL,
@@ -693,6 +706,7 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 	stealth, _ := cmd.Flags().GetBool("stealth")
 	headless, _ := cmd.Flags().GetBool("headless")
 	kiosk, _ := cmd.Flags().GetBool("kiosk")
+	refreshOnProfileUpdate, _ := cmd.Flags().GetBool("refresh-on-profile-update")
 	profileID, _ := cmd.Flags().GetString("profile-id")
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
@@ -713,8 +727,9 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 		TimeoutSeconds:   timeout,
 		Stealth:          BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealth},
 		Headless:         BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headless},
-		Kiosk:            BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kiosk},
-		ProfileID:        profileID,
+		Kiosk:                  BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kiosk},
+		RefreshOnProfileUpdate: BoolFlag{Set: cmd.Flags().Changed("refresh-on-profile-update"), Value: refreshOnProfileUpdate},
+		ProfileID:              profileID,
 		ProfileName:      profileName,
 		ProxyID:          proxyID,
 		StartURL:         startURL,

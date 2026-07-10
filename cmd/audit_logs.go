@@ -51,21 +51,16 @@ func (c AuditLogsCmd) Search(ctx context.Context, in AuditLogsSearchInput) error
 	var err error
 	start := time.Now().UTC().Add(-24 * time.Hour)
 	if in.Start != "" {
-		start, _, err = parseAuditLogTime(in.Start)
+		start, err = parseAuditLogTime(in.Start)
 		if err != nil {
 			return fmt.Errorf("--start: %w", err)
 		}
 	}
 	end := time.Now().UTC()
 	if in.End != "" {
-		var dateOnly bool
-		end, dateOnly, err = parseAuditLogTime(in.End)
+		end, err = parseAuditLogTime(in.End)
 		if err != nil {
 			return fmt.Errorf("--end: %w", err)
-		}
-		// End is exclusive; a date-only end means the whole of that day.
-		if dateOnly {
-			end = end.Add(24 * time.Hour)
 		}
 	}
 	if !start.Before(end) {
@@ -166,14 +161,14 @@ func peekForMore(pager *pagination.PageTokenPaginationAutoPager[kernel.AuditLogE
 	return true
 }
 
-func parseAuditLogTime(value string) (t time.Time, dateOnly bool, err error) {
+func parseAuditLogTime(value string) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339, value); err == nil {
-		return t, false, nil
+		return t, nil
 	}
 	if t, err := time.Parse("2006-01-02", value); err == nil {
-		return t, true, nil
+		return t, nil
 	}
-	return time.Time{}, false, fmt.Errorf("invalid time %q (expected RFC3339 like 2026-07-01T15:04:05Z or a date like 2026-07-01)", value)
+	return time.Time{}, fmt.Errorf("invalid time %q (expected RFC3339 like 2026-07-01T15:04:05Z or a date like 2026-07-01)", value)
 }
 
 func formatAuditLogUser(entry kernel.AuditLogEntry) string {
@@ -240,7 +235,7 @@ var auditLogsSearchCmd = &cobra.Command{
 func init() {
 	addJSONOutputFlag(auditLogsSearchCmd)
 	auditLogsSearchCmd.Flags().String("start", "", "Start of the search window, RFC3339 or YYYY-MM-DD (default: 24 hours ago)")
-	auditLogsSearchCmd.Flags().String("end", "", "End of the search window, RFC3339 or YYYY-MM-DD inclusive (default: now)")
+	auditLogsSearchCmd.Flags().String("end", "", "Exclusive end of the search window, RFC3339 or YYYY-MM-DD (default: now)")
 	auditLogsSearchCmd.Flags().String("search", "", "Free-text search")
 	auditLogsSearchCmd.Flags().String("method", "", "Filter by HTTP method (e.g. GET)")
 	auditLogsSearchCmd.Flags().String("exclude-method", "", "Exclude an HTTP method")

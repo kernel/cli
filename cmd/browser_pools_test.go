@@ -137,6 +137,48 @@ func TestBuildAcquireParams(t *testing.T) {
 	assert.False(t, empty.AcquireTimeoutSeconds.Valid())
 }
 
+func TestBrowserPoolsCreate_WithRefreshOnProfileUpdate(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolNewParams
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: "pool-ropu"}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Create(context.Background(), BrowserPoolsCreateInput{
+		Size:                   1,
+		RefreshOnProfileUpdate: BoolFlag{Set: true, Value: true},
+	})
+	assert.NoError(t, err)
+	assert.True(t, captured.RefreshOnProfileUpdate.Valid())
+	assert.True(t, captured.RefreshOnProfileUpdate.Value)
+}
+
+func TestBrowserPoolsUpdate_WithRefreshOnProfileUpdate(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolUpdateParams
+	fake := &FakeBrowserPoolsService{
+		UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: id}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Update(context.Background(), BrowserPoolsUpdateInput{
+		IDOrName:               "pool-1",
+		RefreshOnProfileUpdate: BoolFlag{Set: true, Value: false},
+	})
+	assert.NoError(t, err)
+	assert.True(t, captured.RefreshOnProfileUpdate.Valid())
+	assert.False(t, captured.RefreshOnProfileUpdate.Value)
+}
+
 func TestBrowserPoolsCreate_WithChromePolicy(t *testing.T) {
 	setupStdoutCapture(t)
 
