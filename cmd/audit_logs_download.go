@@ -36,9 +36,8 @@ type AuditLogsDownloadInput struct {
 }
 
 const (
-	auditLogsDownloadMaxRange      = 30 * 24 * time.Hour
-	auditLogsDownloadMaxChunkBytes = 256 << 20
-	auditLogsDownloadStateVersion  = 1
+	auditLogsDownloadMaxRange     = 30 * 24 * time.Hour
+	auditLogsDownloadStateVersion = 1
 )
 
 type auditLogsDownloadState struct {
@@ -156,12 +155,9 @@ func (c AuditLogsCmd) fetchAuditLogsChunk(ctx context.Context, params kernel.Aud
 	}
 	defer res.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(res.Body, auditLogsDownloadMaxChunkBytes+1))
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, nil, fmt.Errorf("read chunk body: %w", err)
-	}
-	if len(body) > auditLogsDownloadMaxChunkBytes {
-		return nil, nil, fmt.Errorf("chunk response exceeds %s", util.FormatBytes(auditLogsDownloadMaxChunkBytes))
 	}
 	want := res.Header.Get("X-Content-Sha256")
 	if want == "" {
