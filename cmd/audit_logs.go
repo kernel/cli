@@ -72,18 +72,9 @@ func (c AuditLogsCmd) Search(ctx context.Context, in AuditLogsSearchInput) error
 	if in.Method != "" {
 		params.Method = kernel.String(in.Method)
 	}
-	// The API accepts a single exclude_method. When the default GET exclusion
-	// stacks with a user-provided one, GET goes server-side (it drops the most
-	// rows) and the user's method is filtered client-side.
-	excludeGetByDefault := in.Method == "" && !in.IncludeGet
-	var clientExclude string
-	serverExclude := in.ExcludeMethod
-	if excludeGetByDefault && !strings.EqualFold(in.ExcludeMethod, "GET") {
-		clientExclude = in.ExcludeMethod
-		serverExclude = "GET"
-	}
-	if serverExclude != "" {
-		params.ExcludeMethod = kernel.String(serverExclude)
+	excludeMethods := auditLogExcludeMethods(in.Method, in.ExcludeMethod, in.IncludeGet)
+	if len(excludeMethods) > 0 {
+		params.ExcludeMethod = excludeMethods
 	}
 	if in.Service != "" {
 		params.Service = kernel.String(in.Service)
@@ -100,13 +91,9 @@ func (c AuditLogsCmd) Search(ctx context.Context, in AuditLogsSearchInput) error
 	hasMore := false
 	pager := c.auditLogs.ListAutoPaging(ctx, params)
 	for pager.Next() {
-		entry := pager.Current()
-		if clientExclude != "" && strings.EqualFold(entry.Method, clientExclude) {
-			continue
-		}
-		entries = append(entries, entry)
+		entries = append(entries, pager.Current())
 		if len(entries) >= in.Limit {
-			hasMore = peekForMore(pager, clientExclude)
+			hasMore = pager.Next()
 			break
 		}
 	}
@@ -143,20 +130,17 @@ func (c AuditLogsCmd) Search(ctx context.Context, in AuditLogsSearchInput) error
 	return nil
 }
 
-// peekForMore reports whether entries matching the client-side exclusion
-// remain past the limit. The scan is capped at one page so a long run of
-// excluded entries can't trigger unbounded fetching; hitting the cap assumes
-// more may match.
-func peekForMore(pager *pagination.PageTokenPaginationAutoPager[kernel.AuditLogEntry], clientExclude string) bool {
-	for peeked := 0; peeked < auditLogsMaxPageSize; peeked++ {
-		if !pager.Next() {
-			return false
+func auditLogExcludeMethods(method, excludeMethod string, includeGet bool) []string {
+	if method != "" || includeGet {
+		if excludeMethod == "" {
+			return nil
 		}
-		if clientExclude == "" || !strings.EqualFold(pager.Current().Method, clientExclude) {
-			return true
-		}
+		return []string{excludeMethod}
 	}
-	return true
+	if excludeMethod == "" || strings.EqualFold(excludeMethod, "GET") {
+		return []string{"GET"}
+	}
+	return []string{"GET", excludeMethod}
 }
 
 func parseAuditLogTime(value string) (time.Time, error) {
