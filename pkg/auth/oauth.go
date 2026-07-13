@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
@@ -45,6 +46,8 @@ const (
 
 	// OAuth scopes - openid for the MCP server flow
 	DefaultScope = "openid email"
+
+	oauthTokenRequestTimeout = 30 * time.Second
 )
 
 // OAuthConfig represents the OAuth2 configuration
@@ -311,7 +314,11 @@ func (oc *OAuthConfig) exchangeCodeForTokens(ctx context.Context, code, orgID st
 		opts = append(opts, oauth2.SetAuthURLParam("org_id", orgID))
 	}
 
-	token, err := oc.Config.Exchange(ctx, code, opts...)
+	exchangeCtx, cancel := context.WithTimeout(ctx, oauthTokenRequestTimeout)
+	defer cancel()
+	exchangeCtx = context.WithValue(exchangeCtx, oauth2.HTTPClient, newOAuthHTTPClient())
+
+	token, err := oc.Config.Exchange(exchangeCtx, code, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to exchange code for token: %w", err)
 	}
@@ -324,6 +331,17 @@ func (oc *OAuthConfig) exchangeCodeForTokens(ctx context.Context, code, orgID st
 		AuthBaseURL:   oc.AuthBaseURL,
 		OAuthClientID: oc.OAuthClientID,
 	}, nil
+}
+
+func newOAuthHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Keep token requests on HTTP/1.1; the auth endpoint can leave HTTP/2 requests pending.
+	transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   oauthTokenRequestTimeout,
+	}
 }
 
 // RefreshTokens refreshes the access token using the refresh token
@@ -349,7 +367,7 @@ func RefreshTokens(ctx context.Context, tokens *TokenStorage) (*TokenStorage, er
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	client := &http.Client{}
+	client := newOAuthHTTPClient()
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send refresh request: %w", err)

@@ -1,6 +1,9 @@
 package auth
 
-import "testing"
+import (
+	"net/http"
+	"testing"
+)
 
 func TestNewOAuthConfigUsesAuthOverrides(t *testing.T) {
 	t.Setenv("KERNEL_AUTH_BASE_URL", "https://auth.dev.onkernel.com/")
@@ -53,5 +56,23 @@ func TestLegacyTokenRefreshConfigUsesProdDefaults(t *testing.T) {
 	}
 	if got, want := tokenOAuthClientID(tokens), DefaultClientID; got != want {
 		t.Fatalf("tokenOAuthClientID = %q, want %q", got, want)
+	}
+}
+
+func TestOAuthHTTPClientUsesHTTP11WithTimeout(t *testing.T) {
+	client := newOAuthHTTPClient()
+	if got, want := client.Timeout, oauthTokenRequestTimeout; got != want {
+		t.Fatalf("client timeout = %s, want %s", got, want)
+	}
+
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("client transport type = %T, want *http.Transport", client.Transport)
+	}
+	if transport.TLSNextProto == nil {
+		t.Fatal("TLSNextProto is nil, want HTTP/2 disabled explicitly")
+	}
+	if _, ok := transport.TLSNextProto["h2"]; ok {
+		t.Fatal("TLSNextProto enables HTTP/2")
 	}
 }
