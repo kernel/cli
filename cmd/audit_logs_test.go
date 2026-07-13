@@ -170,6 +170,10 @@ func TestAuditLogsSearchExcludesGetByDefault(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestAuditLogExcludeMethodsDeduplicatesDefaultGetCaseInsensitively(t *testing.T) {
+	assert.Equal(t, []string{"GET"}, auditLogExcludeMethods("", "get", false))
+}
+
 func TestAuditLogsSearchIncludeGetDisablesDefaultExclusion(t *testing.T) {
 	capturePtermOutput(t)
 	fake := &FakeAuditLogsService{
