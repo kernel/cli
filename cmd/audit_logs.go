@@ -74,7 +74,10 @@ func (c AuditLogsCmd) Search(ctx context.Context, in AuditLogsSearchInput) error
 	if in.Method != "" {
 		params.Method = kernel.String(in.Method)
 	}
-	params.ExcludeMethod = auditLogExcludeMethods(in.Method, in.ExcludeMethod, in.IncludeGet)
+	excludeMethods := auditLogExcludeMethods(in.Method, in.ExcludeMethod, in.IncludeGet)
+	if len(excludeMethods) > 0 {
+		params.ExcludeMethod = excludeMethods
+	}
 	if in.Service != "" {
 		params.Service = kernel.String(in.Service)
 	}
@@ -130,14 +133,16 @@ func (c AuditLogsCmd) Search(ctx context.Context, in AuditLogsSearchInput) error
 }
 
 func auditLogExcludeMethods(method, excludeMethod string, includeGet bool) []string {
-	var methods []string
-	if method == "" && !includeGet {
-		methods = append(methods, "GET")
+	if method != "" || includeGet {
+		if excludeMethod == "" {
+			return nil
+		}
+		return []string{excludeMethod}
 	}
-	if excludeMethod != "" && (len(methods) == 0 || !strings.EqualFold(excludeMethod, "GET")) {
-		methods = append(methods, excludeMethod)
+	if excludeMethod == "" || strings.EqualFold(excludeMethod, "GET") {
+		return []string{"GET"}
 	}
-	return methods
+	return []string{"GET", excludeMethod}
 }
 
 func parseAuditLogTime(value string) (time.Time, error) {

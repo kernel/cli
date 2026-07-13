@@ -178,6 +178,10 @@ func TestAuditLogsSearchExcludesGetByDefault(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestAuditLogExcludeMethodsDeduplicatesDefaultGetCaseInsensitively(t *testing.T) {
+	assert.Equal(t, []string{"GET"}, auditLogExcludeMethods("", "get", false))
+}
+
 func TestAuditLogsSearchIncludeGetDisablesDefaultExclusion(t *testing.T) {
 	capturePtermOutput(t)
 	fake := &FakeAuditLogsService{
@@ -212,6 +216,9 @@ func TestAuditLogsSearchExcludeMethodStacksWithDefaultGetExclusion(t *testing.T)
 	fake := &FakeAuditLogsService{
 		ListAutoPagingFunc: func(ctx context.Context, query kernel.AuditLogListParams, opts ...option.RequestOption) *pagination.PageTokenPaginationAutoPager[kernel.AuditLogEntry] {
 			assert.Equal(t, []string{"GET", "post"}, query.ExcludeMethod)
+			values, err := query.URLQuery()
+			require.NoError(t, err)
+			assert.Equal(t, "GET,post", values.Get("exclude_method"))
 			return auditLogPager(sampleAuditLogEntry("DELETE", "/deleted"))
 		},
 	}
@@ -219,7 +226,9 @@ func TestAuditLogsSearchExcludeMethodStacksWithDefaultGetExclusion(t *testing.T)
 
 	err := c.Search(context.Background(), AuditLogsSearchInput{ExcludeMethod: "post", Limit: 100})
 	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "/deleted")
+
+	out := buf.String()
+	assert.Contains(t, out, "/deleted")
 }
 
 func TestAuditLogsSearchIncludeGetWithExcludeMethodSendsUserExclusion(t *testing.T) {
