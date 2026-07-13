@@ -60,7 +60,7 @@ func TestAuditLogsSearchBuildsParamsAndPrintsTable(t *testing.T) {
 			assert.Equal(t, time.Date(2026, 7, 2, 15, 0, 0, 0, time.UTC), query.End)
 			assert.Equal(t, "browsers", query.Search.Value)
 			assert.Equal(t, "POST", query.Method.Value)
-			assert.Equal(t, "OPTIONS", query.ExcludeMethod.Value)
+			assert.Equal(t, []string{"OPTIONS"}, query.ExcludeMethod)
 			assert.Equal(t, "api", query.Service.Value)
 			assert.Equal(t, "api_key", query.AuthStrategy.Value)
 			assert.Equal(t, []string{"user_123", "user_456"}, query.SearchUserID)
@@ -168,7 +168,7 @@ func TestAuditLogsSearchExcludesGetByDefault(t *testing.T) {
 	capturePtermOutput(t)
 	fake := &FakeAuditLogsService{
 		ListAutoPagingFunc: func(ctx context.Context, query kernel.AuditLogListParams, opts ...option.RequestOption) *pagination.PageTokenPaginationAutoPager[kernel.AuditLogEntry] {
-			assert.Equal(t, "GET", query.ExcludeMethod.Value)
+			assert.Equal(t, []string{"GET"}, query.ExcludeMethod)
 			return auditLogPager()
 		},
 	}
@@ -182,7 +182,7 @@ func TestAuditLogsSearchIncludeGetDisablesDefaultExclusion(t *testing.T) {
 	capturePtermOutput(t)
 	fake := &FakeAuditLogsService{
 		ListAutoPagingFunc: func(ctx context.Context, query kernel.AuditLogListParams, opts ...option.RequestOption) *pagination.PageTokenPaginationAutoPager[kernel.AuditLogEntry] {
-			assert.False(t, query.ExcludeMethod.Valid())
+			assert.Empty(t, query.ExcludeMethod)
 			return auditLogPager()
 		},
 	}
@@ -197,7 +197,7 @@ func TestAuditLogsSearchMethodDisablesDefaultExclusion(t *testing.T) {
 	fake := &FakeAuditLogsService{
 		ListAutoPagingFunc: func(ctx context.Context, query kernel.AuditLogListParams, opts ...option.RequestOption) *pagination.PageTokenPaginationAutoPager[kernel.AuditLogEntry] {
 			assert.Equal(t, "GET", query.Method.Value)
-			assert.False(t, query.ExcludeMethod.Valid())
+			assert.Empty(t, query.ExcludeMethod)
 			return auditLogPager()
 		},
 	}
@@ -211,25 +211,22 @@ func TestAuditLogsSearchExcludeMethodStacksWithDefaultGetExclusion(t *testing.T)
 	buf := capturePtermOutput(t)
 	fake := &FakeAuditLogsService{
 		ListAutoPagingFunc: func(ctx context.Context, query kernel.AuditLogListParams, opts ...option.RequestOption) *pagination.PageTokenPaginationAutoPager[kernel.AuditLogEntry] {
-			assert.Equal(t, "GET", query.ExcludeMethod.Value)
-			return auditLogPager(sampleAuditLogEntry("POST", "/posted"), sampleAuditLogEntry("DELETE", "/deleted"))
+			assert.Equal(t, []string{"GET", "post"}, query.ExcludeMethod)
+			return auditLogPager(sampleAuditLogEntry("DELETE", "/deleted"))
 		},
 	}
 	c := AuditLogsCmd{auditLogs: fake}
 
 	err := c.Search(context.Background(), AuditLogsSearchInput{ExcludeMethod: "post", Limit: 100})
 	require.NoError(t, err)
-
-	out := buf.String()
-	assert.Contains(t, out, "/deleted")
-	assert.NotContains(t, out, "/posted")
+	assert.Contains(t, buf.String(), "/deleted")
 }
 
 func TestAuditLogsSearchIncludeGetWithExcludeMethodSendsUserExclusion(t *testing.T) {
 	capturePtermOutput(t)
 	fake := &FakeAuditLogsService{
 		ListAutoPagingFunc: func(ctx context.Context, query kernel.AuditLogListParams, opts ...option.RequestOption) *pagination.PageTokenPaginationAutoPager[kernel.AuditLogEntry] {
-			assert.Equal(t, "POST", query.ExcludeMethod.Value)
+			assert.Equal(t, []string{"POST"}, query.ExcludeMethod)
 			return auditLogPager()
 		},
 	}
@@ -261,37 +258,6 @@ func TestAuditLogsSearchLimitTruncatesResults(t *testing.T) {
 	assert.Contains(t, out, "/second")
 	assert.NotContains(t, out, "/third")
 	assert.Contains(t, out, "Showing first 2 results")
-}
-
-func TestAuditLogsSearchNoTruncationNoticeWhenOnlyExcludedEntriesRemain(t *testing.T) {
-	buf := capturePtermOutput(t)
-	fake := &FakeAuditLogsService{
-		ListAutoPagingFunc: func(ctx context.Context, query kernel.AuditLogListParams, opts ...option.RequestOption) *pagination.PageTokenPaginationAutoPager[kernel.AuditLogEntry] {
-			return auditLogPager(sampleAuditLogEntry("DELETE", "/deleted"), sampleAuditLogEntry("POST", "/posted"), sampleAuditLogEntry("POST", "/posted-too"))
-		},
-	}
-	c := AuditLogsCmd{auditLogs: fake}
-
-	err := c.Search(context.Background(), AuditLogsSearchInput{ExcludeMethod: "POST", Limit: 1})
-	require.NoError(t, err)
-
-	out := buf.String()
-	assert.Contains(t, out, "/deleted")
-	assert.NotContains(t, out, "Showing first")
-}
-
-func TestAuditLogsSearchTruncationNoticeWhenMatchRemainsPastExcludedEntries(t *testing.T) {
-	buf := capturePtermOutput(t)
-	fake := &FakeAuditLogsService{
-		ListAutoPagingFunc: func(ctx context.Context, query kernel.AuditLogListParams, opts ...option.RequestOption) *pagination.PageTokenPaginationAutoPager[kernel.AuditLogEntry] {
-			return auditLogPager(sampleAuditLogEntry("DELETE", "/first"), sampleAuditLogEntry("POST", "/posted"), sampleAuditLogEntry("DELETE", "/second"))
-		},
-	}
-	c := AuditLogsCmd{auditLogs: fake}
-
-	err := c.Search(context.Background(), AuditLogsSearchInput{ExcludeMethod: "POST", Limit: 1})
-	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "Showing first 1 results")
 }
 
 func TestAuditLogsSearchPrintsEmptyMessage(t *testing.T) {

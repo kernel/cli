@@ -1,20 +1,15 @@
 package cmd
 
 import (
-	"bufio"
-	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/kernel/cli/pkg/util"
@@ -50,7 +45,6 @@ func (c AuditLogsCmd) Download(ctx context.Context, in AuditLogsDownloadInput) e
 		outPath = defaultAuditLogsDownloadPath(params.Start, params.End)
 	}
 	partialPath := outPath + ".partial"
-	_, clientExclude := auditLogExcludeMethods(in.Method, in.ExcludeMethod, in.IncludeGet)
 	out, err := openAuditLogsDownloadOutput(partialPath, outPath, in.Force)
 	if err != nil {
 		return err
@@ -80,13 +74,6 @@ func (c AuditLogsCmd) Download(ctx context.Context, in AuditLogsDownloadInput) e
 		if err != nil {
 			return err
 		}
-		if clientExclude != "" {
-			body, chunkRows, err = filterAuditLogsChunk(body, clientExclude)
-			if err != nil {
-				return err
-			}
-		}
-
 		if _, err := out.Write(body); err != nil {
 			return fmt.Errorf("write %s: %w", partialPath, err)
 		}
@@ -114,50 +101,6 @@ func (c AuditLogsCmd) Download(ctx context.Context, in AuditLogsDownloadInput) e
 	}
 	pterm.Success.Printf("Downloaded %d rows (%s) to %s\n", rows, util.FormatBytes(bytesWritten), outPath)
 	return nil
-}
-
-func filterAuditLogsChunk(body []byte, excludeMethod string) ([]byte, int64, error) {
-	compressed, err := gzip.NewReader(bytes.NewReader(body))
-	if err != nil {
-		return nil, 0, fmt.Errorf("decompress chunk: %w", err)
-	}
-	defer compressed.Close()
-
-	var filtered bytes.Buffer
-	writer, err := gzip.NewWriterLevel(&filtered, gzip.BestSpeed)
-	if err != nil {
-		return nil, 0, fmt.Errorf("compress filtered chunk: %w", err)
-	}
-
-	var rows int64
-	reader := bufio.NewReader(compressed)
-	for {
-		line, readErr := reader.ReadBytes('\n')
-		if len(line) > 0 {
-			var entry struct {
-				Method string `json:"method"`
-			}
-			if err := json.Unmarshal(bytes.TrimSpace(line), &entry); err != nil {
-				return nil, 0, fmt.Errorf("decode audit log entry: %w", err)
-			}
-			if !strings.EqualFold(entry.Method, excludeMethod) {
-				if _, err := writer.Write(line); err != nil {
-					return nil, 0, fmt.Errorf("compress filtered chunk: %w", err)
-				}
-				rows++
-			}
-		}
-		if readErr == io.EOF {
-			break
-		}
-		if readErr != nil {
-			return nil, 0, fmt.Errorf("decompress chunk: %w", readErr)
-		}
-	}
-	if err := writer.Close(); err != nil {
-		return nil, 0, fmt.Errorf("compress filtered chunk: %w", err)
-	}
-	return filtered.Bytes(), rows, nil
 }
 
 func (c AuditLogsCmd) fetchAuditLogsChunk(ctx context.Context, params kernel.AuditLogExportChunkParams) ([]byte, http.Header, error) {
@@ -230,10 +173,7 @@ func buildAuditLogsDownloadParams(in AuditLogsDownloadInput) (kernel.AuditLogExp
 	if in.Method != "" {
 		params.Method = kernel.String(in.Method)
 	}
-	serverExclude, _ := auditLogExcludeMethods(in.Method, in.ExcludeMethod, in.IncludeGet)
-	if serverExclude != "" {
-		params.ExcludeMethod = kernel.String(serverExclude)
-	}
+	params.ExcludeMethod = auditLogExcludeMethods(in.Method, in.ExcludeMethod, in.IncludeGet)
 	if in.Service != "" {
 		params.Service = kernel.String(in.Service)
 	}

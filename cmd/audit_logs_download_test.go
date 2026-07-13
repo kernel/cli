@@ -111,11 +111,11 @@ func TestAuditLogsDownloadWritesAllChunks(t *testing.T) {
 func TestAuditLogsDownloadExcludeMethodStacksWithDefaultGetExclusion(t *testing.T) {
 	capturePtermOutput(t)
 	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
-	body := auditLogGzip(t, "{\"method\":\"POST\",\"n\":1}\n{\"method\":\"DELETE\",\"n\":2}\n")
+	body := auditLogGzip(t, "{\"method\":\"DELETE\",\"n\":2}\n")
 	service := &FakeAuditLogsService{
 		ExportChunkFunc: func(ctx context.Context, query kernel.AuditLogExportChunkParams, opts ...option.RequestOption) (*http.Response, error) {
-			assert.Equal(t, "GET", query.ExcludeMethod.Value)
-			return auditLogChunkResponse(auditLogTestChunk{body: body, rows: 2}), nil
+			assert.Equal(t, []string{"GET", "post"}, query.ExcludeMethod)
+			return auditLogChunkResponse(auditLogTestChunk{body: body, rows: 1}), nil
 		},
 	}
 	in := auditLogsDownloadInput(outPath)
@@ -234,7 +234,7 @@ func TestBuildAuditLogsDownloadParams(t *testing.T) {
 
 	assert.Equal(t, time.Date(2026, 6, 28, 0, 0, 0, 0, time.UTC), params.End)
 	assert.Equal(t, "browser", params.Search.Value)
-	assert.Equal(t, "GET", params.ExcludeMethod.Value)
+	assert.Equal(t, []string{"GET"}, params.ExcludeMethod)
 	assert.Equal(t, "api", params.Service.Value)
 	assert.Equal(t, []string{"user_1"}, params.SearchUserID)
 }
