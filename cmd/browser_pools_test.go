@@ -8,6 +8,7 @@ import (
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // FakeBrowserPoolsService is a configurable fake implementing BrowserPoolsService.
@@ -156,6 +157,24 @@ func TestBrowserPoolsCreate_WithRefreshOnProfileUpdate(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, captured.RefreshOnProfileUpdate.Valid())
 	assert.True(t, captured.RefreshOnProfileUpdate.Value)
+}
+
+func TestBrowserPoolsCreate_DefaultFillRate(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolNewParams
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: "pool-default-fill-rate"}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, FillRate: 25})
+	require.NoError(t, err)
+	assert.True(t, captured.FillRatePerMinute.Valid())
+	assert.Equal(t, int64(25), captured.FillRatePerMinute.Value)
 }
 
 func TestBrowserPoolsUpdate_WithRefreshOnProfileUpdate(t *testing.T) {

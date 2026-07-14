@@ -569,7 +569,7 @@ func init() {
 	browserPoolsCreateCmd.Flags().String("name", "", "Optional unique name for the pool")
 	browserPoolsCreateCmd.Flags().Int64("size", 0, "Number of browsers in the pool")
 	_ = browserPoolsCreateCmd.MarkFlagRequired("size")
-	browserPoolsCreateCmd.Flags().Int64("fill-rate", 0, "Fill rate per minute")
+	browserPoolsCreateCmd.Flags().Int64("fill-rate", 25, "Fill rate per minute")
 	browserPoolsCreateCmd.Flags().Int64("timeout", 0, "Idle timeout in seconds")
 	browserPoolsCreateCmd.Flags().Bool("stealth", false, "Enable stealth mode")
 	browserPoolsCreateCmd.Flags().Bool("headless", false, "Enable headless mode")
