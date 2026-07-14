@@ -64,7 +64,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		// Handle common error cases with helpful messages
 		if ctx.Err() == context.Canceled {
 			pterm.Info.Println("Authentication cancelled by user")
-			return nil
+			return ctx.Err()
 		}
 
 		return fmt.Errorf("authentication failed: %w", err)

@@ -1,6 +1,58 @@
 package auth
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestCallbackPageDoesNotClaimAuthenticationComplete(t *testing.T) {
+	t.Parallel()
+
+	if strings.Contains(authorizationReceivedHTML, "authentication successful") {
+		t.Fatal("callback page must not claim authentication succeeded before token exchange completes")
+	}
+	if !strings.Contains(authorizationReceivedHTML, "authorization received") {
+		t.Fatal("callback page should tell the user browser authorization was received")
+	}
+}
+
+func TestTokenExchangeTimesOut(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer server.Close()
+	defer close(release)
+
+	cfg, err := NewOAuthConfig()
+	if err != nil {
+		t.Fatalf("NewOAuthConfig() error = %v", err)
+	}
+	cfg.Config.Endpoint.TokenURL = server.URL
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := cfg.exchangeCodeForTokens(context.Background(), "code", "org", 25*time.Millisecond)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "token exchange timed out") || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("exchange error = %v, want token exchange timeout", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("token exchange did not honor its timeout")
+	}
+}
 
 func TestNewOAuthConfigUsesAuthOverrides(t *testing.T) {
 	t.Setenv("KERNEL_AUTH_BASE_URL", "https://auth.dev.onkernel.com/")
