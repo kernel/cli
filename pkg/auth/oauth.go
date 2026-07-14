@@ -22,14 +22,14 @@ import (
 )
 
 //go:embed success.html
-var successHTMLTemplate string
+var authorizationReceivedHTMLTemplate string
 
 //go:embed favicon.svg
 var faviconSVG string
 
 // Inlined as a data URI because the callback server shuts down before the browser could fetch a served icon.
-var successHTML = strings.Replace(
-	successHTMLTemplate,
+var authorizationReceivedHTML = strings.Replace(
+	authorizationReceivedHTMLTemplate,
 	"__KERNEL_FAVICON__",
 	"data:image/svg+xml;base64,"+base64.StdEncoding.EncodeToString([]byte(faviconSVG)),
 	1,
@@ -45,6 +45,8 @@ const (
 
 	// OAuth scopes - openid for the MCP server flow
 	DefaultScope = "openid email"
+
+	defaultTokenExchangeTimeout = 30 * time.Second
 )
 
 // OAuthConfig represents the OAuth2 configuration
@@ -250,7 +252,7 @@ func (oc *OAuthConfig) StartOAuthFlow(ctx context.Context) (*TokenStorage, error
 		// Success page
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(successHTML))
+		w.Write([]byte(authorizationReceivedHTML))
 
 		// Pass both code and org_id to the channel using JSON encoding
 		result := AuthResult{
@@ -298,12 +300,14 @@ func (oc *OAuthConfig) StartOAuthFlow(ctx context.Context) (*TokenStorage, error
 		return nil, ctx.Err()
 	}
 
+	pterm.Info.Println("Browser authorization received; completing authentication...")
+
 	// Exchange authorization code for tokens
-	return oc.exchangeCodeForTokens(ctx, authCode, orgID)
+	return oc.exchangeCodeForTokens(ctx, authCode, orgID, defaultTokenExchangeTimeout)
 }
 
 // exchangeCodeForTokens exchanges the authorization code for access and refresh tokens
-func (oc *OAuthConfig) exchangeCodeForTokens(ctx context.Context, code, orgID string) (*TokenStorage, error) {
+func (oc *OAuthConfig) exchangeCodeForTokens(ctx context.Context, code, orgID string, timeout time.Duration) (*TokenStorage, error) {
 	// Use PKCE verifier in token exchange, and include org_id if available
 	var opts []oauth2.AuthCodeOption
 	opts = append(opts, oauth2.SetAuthURLParam("code_verifier", oc.Verifier))
@@ -311,8 +315,14 @@ func (oc *OAuthConfig) exchangeCodeForTokens(ctx context.Context, code, orgID st
 		opts = append(opts, oauth2.SetAuthURLParam("org_id", orgID))
 	}
 
-	token, err := oc.Config.Exchange(ctx, code, opts...)
+	exchangeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	token, err := oc.Config.Exchange(exchangeCtx, code, opts...)
 	if err != nil {
+		if exchangeCtx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("token exchange timed out after %s: %w", timeout, context.DeadlineExceeded)
+		}
 		return nil, fmt.Errorf("failed to exchange code for token: %w", err)
 	}
 
