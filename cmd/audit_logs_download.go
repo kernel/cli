@@ -34,8 +34,9 @@ type AuditLogsDownloadInput struct {
 }
 
 const (
-	auditLogsDownloadMaxRange = 30 * 24 * time.Hour
-	auditLogsChunkAttempts    = 3
+	auditLogsDownloadMaxRange   = 30 * 24 * time.Hour
+	auditLogsChunkAttempts      = 6
+	auditLogsChunkMaxRetryDelay = 8 * time.Second
 )
 
 var auditLogsChunkRetryBaseDelay = time.Second
@@ -115,7 +116,7 @@ func (c AuditLogsCmd) fetchAuditLogsChunk(ctx context.Context, params kernel.Aud
 		if err == nil || attempt == auditLogsChunkAttempts || !retryableAuditLogsChunkError(err) {
 			return body, header, err
 		}
-		delay := auditLogsChunkRetryBaseDelay << (attempt - 1)
+		delay := min(auditLogsChunkRetryBaseDelay<<(attempt-1), auditLogsChunkMaxRetryDelay)
 		pterm.Warning.Printf("Chunk download failed (%s); retrying in %s\n", err, delay)
 		select {
 		case <-ctx.Done():
