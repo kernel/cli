@@ -2801,6 +2801,7 @@ func poolLeaseAllowedFlags() map[string]bool {
 		"timeout":   true,
 		"name":      true,
 		"tag":       true,
+		"telemetry": true,
 		"output":    true,
 		// Global persistent flags that don't configure browsers
 		"no-color":  true,
@@ -2842,7 +2843,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 
 	if poolID != "" || poolName != "" {
 		// When using a pool, configuration comes from the pool itself, but
-		// name and tags apply per-lease to the acquired session.
+		// name, tags, and telemetry apply per-lease to the acquired session.
 		allowedFlags := poolLeaseAllowedFlags()
 
 		// Check if any browser configuration flags were set (which would conflict).
@@ -2884,7 +2885,10 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("timeout") && timeout > 0 {
 			acquireTimeout = int64(timeout)
 		}
-		acquireParams := buildAcquireParams(name, tags, acquireTimeout)
+		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry)
+		if err != nil {
+			return err
+		}
 
 		resp, err := (&poolSvc).Acquire(cmd.Context(), pool, acquireParams)
 		if err != nil {

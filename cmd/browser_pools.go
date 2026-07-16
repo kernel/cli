@@ -90,6 +90,63 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 	return nil
 }
 
+// buildPoolNewTelemetryParam converts a --telemetry flag value to the pool create param.
+func buildPoolNewTelemetryParam(s string) (kernel.BrowserPoolNewParamsTelemetry, error) {
+	switch s {
+	case "all":
+		return kernel.BrowserPoolNewParamsTelemetry{Enabled: kernel.Opt(true)}, nil
+	case "off":
+		return kernel.BrowserPoolNewParamsTelemetry{Enabled: kernel.Opt(false)}, nil
+	default:
+		p, err := parseTelemetryCategories(s)
+		if err != nil {
+			return kernel.BrowserPoolNewParamsTelemetry{}, err
+		}
+		return kernel.BrowserPoolNewParamsTelemetry{Browser: p}, nil
+	}
+}
+
+// buildPoolUpdateTelemetryParam converts a --telemetry flag value to the pool update param.
+func buildPoolUpdateTelemetryParam(s string) (kernel.BrowserPoolUpdateParamsTelemetry, error) {
+	switch s {
+	case "all":
+		return kernel.BrowserPoolUpdateParamsTelemetry{Enabled: kernel.Opt(true)}, nil
+	case "off":
+		return kernel.BrowserPoolUpdateParamsTelemetry{Enabled: kernel.Opt(false)}, nil
+	default:
+		p, err := parseTelemetryCategories(s)
+		if err != nil {
+			return kernel.BrowserPoolUpdateParamsTelemetry{}, err
+		}
+		return kernel.BrowserPoolUpdateParamsTelemetry{Browser: p}, nil
+	}
+}
+
+// buildPoolAcquireTelemetryParam converts a --telemetry flag value to the acquire override param.
+func buildPoolAcquireTelemetryParam(s string) (kernel.BrowserPoolAcquireParamsTelemetry, error) {
+	switch s {
+	case "all":
+		return kernel.BrowserPoolAcquireParamsTelemetry{Enabled: kernel.Opt(true)}, nil
+	case "off":
+		return kernel.BrowserPoolAcquireParamsTelemetry{Enabled: kernel.Opt(false)}, nil
+	default:
+		p, err := parseTelemetryCategories(s)
+		if err != nil {
+			return kernel.BrowserPoolAcquireParamsTelemetry{}, err
+		}
+		return kernel.BrowserPoolAcquireParamsTelemetry{Browser: p}, nil
+	}
+}
+
+// formatPoolTelemetry renders a pool's active telemetry config for the details table.
+func formatPoolTelemetry(cfg kernel.BrowserTelemetryConfig) string {
+	on := telemetryEnabledCategories(cfg)
+	if len(on) == 0 {
+		return "disabled"
+	}
+	return strings.Join(on, ", ")
+}
+
 type BrowserPoolsCreateInput struct {
 	Name                   string
 	Size                   int64
@@ -107,6 +164,7 @@ type BrowserPoolsCreateInput struct {
 	Viewport         string
 	ChromePolicy     string
 	ChromePolicyFile string
+	Telemetry        string
 	Output           string
 }
 
@@ -183,6 +241,14 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 		params.ChromePolicy = chromePolicy
 	}
 
+	if in.Telemetry != "" {
+		t, err := buildPoolNewTelemetryParam(in.Telemetry)
+		if err != nil {
+			return err
+		}
+		params.Telemetry = t
+	}
+
 	pool, err := c.client.New(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -196,6 +262,9 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 		pterm.Success.Printf("Created browser pool %s (%s)\n", pool.Name, pool.ID)
 	} else {
 		pterm.Success.Printf("Created browser pool %s\n", pool.ID)
+	}
+	if in.Telemetry != "" {
+		printTelemetrySummary(pool.BrowserPoolConfig.Telemetry)
 	}
 	return nil
 }
@@ -240,6 +309,7 @@ func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error
 		{"Start URL", util.OrDash(cfg.StartURL)},
 		{"Extensions", formatExtensions(cfg.Extensions)},
 		{"Viewport", formatViewport(cfg.Viewport)},
+		{"Telemetry", formatPoolTelemetry(cfg.Telemetry)},
 	}
 
 	PrintTableNoPad(rows, true)
@@ -265,6 +335,7 @@ type BrowserPoolsUpdateInput struct {
 	Viewport         string
 	ChromePolicy     string
 	ChromePolicyFile string
+	Telemetry        string
 	DiscardAllIdle   BoolFlag
 	Output           string
 }
@@ -356,6 +427,14 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 		pterm.Warning.Println("An empty chrome policy is ignored and does not clear the pool's existing policy; recreate the pool to remove a policy.")
 	}
 
+	if in.Telemetry != "" {
+		t, err := buildPoolUpdateTelemetryParam(in.Telemetry)
+		if err != nil {
+			return err
+		}
+		params.Telemetry = t
+	}
+
 	pool, err := c.client.Update(ctx, in.IDOrName, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -369,6 +448,9 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 		pterm.Success.Printf("Updated browser pool %s (%s)\n", pool.Name, pool.ID)
 	} else {
 		pterm.Success.Printf("Updated browser pool %s\n", pool.ID)
+	}
+	if in.Telemetry != "" {
+		printTelemetrySummary(pool.BrowserPoolConfig.Telemetry)
 	}
 	return nil
 }
@@ -396,13 +478,15 @@ type BrowserPoolsAcquireInput struct {
 	TimeoutSeconds int64
 	Name           string
 	Tags           map[string]string
+	Telemetry      string
 	Output         string
 }
 
 // buildAcquireParams builds the SDK params for acquiring a browser from a pool.
 // Shared by `browser-pools acquire` and the `browsers create --pool-id/--pool-name`
-// path so the per-lease name/tags forwarding cannot silently diverge between them.
-func buildAcquireParams(name string, tags map[string]string, timeoutSeconds int64) kernel.BrowserPoolAcquireParams {
+// path so the per-lease name/tags/telemetry forwarding cannot silently diverge
+// between them. The telemetry override merges onto the pool's config for this lease.
+func buildAcquireParams(name string, tags map[string]string, timeoutSeconds int64, telemetry string) (kernel.BrowserPoolAcquireParams, error) {
 	params := kernel.BrowserPoolAcquireParams{}
 	if timeoutSeconds > 0 {
 		params.AcquireTimeoutSeconds = kernel.Int(timeoutSeconds)
@@ -413,7 +497,14 @@ func buildAcquireParams(name string, tags map[string]string, timeoutSeconds int6
 	if len(tags) > 0 {
 		params.Tags = kernel.Tags(tags)
 	}
-	return params
+	if telemetry != "" {
+		t, err := buildPoolAcquireTelemetryParam(telemetry)
+		if err != nil {
+			return kernel.BrowserPoolAcquireParams{}, err
+		}
+		params.Telemetry = t
+	}
+	return params, nil
 }
 
 func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInput) error {
@@ -421,7 +512,10 @@ func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInpu
 		return err
 	}
 
-	params := buildAcquireParams(in.Name, in.Tags, in.TimeoutSeconds)
+	params, err := buildAcquireParams(in.Name, in.Tags, in.TimeoutSeconds, in.Telemetry)
+	if err != nil {
+		return err
+	}
 	resp, err := c.client.Acquire(ctx, in.IDOrName, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -583,6 +677,7 @@ func init() {
 	browserPoolsCreateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
 	browserPoolsCreateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
 	browserPoolsCreateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
+	browserPoolsCreateCmd.Flags().String("telemetry", "", "Configure telemetry for browsers warmed into the pool (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
 	browserPoolsCreateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
 
 	addJSONOutputFlag(browserPoolsGetCmd)
@@ -605,6 +700,7 @@ func init() {
 	browserPoolsUpdateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
 	browserPoolsUpdateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
 	browserPoolsUpdateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
+	browserPoolsUpdateCmd.Flags().String("telemetry", "", "Update pool telemetry: --telemetry=all (reset to default set), --telemetry=off (disable), or --telemetry=console,network (merge those categories into the current selection). Applies only to browsers warmed after the update.")
 	browserPoolsUpdateCmd.Flags().Bool("discard-all-idle", false, "Discard all idle browsers")
 	addJSONOutputFlag(browserPoolsUpdateCmd)
 
@@ -613,6 +709,7 @@ func init() {
 	browserPoolsAcquireCmd.Flags().Int64("timeout", 0, "Acquire timeout in seconds")
 	browserPoolsAcquireCmd.Flags().String("name", "", "Optional name for the acquired session (applies to this lease; cleared on release)")
 	browserPoolsAcquireCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the acquired session (repeatable; applies to this lease)")
+	browserPoolsAcquireCmd.Flags().String("telemetry", "", "Telemetry override for this lease only, merged onto the pool's config: --telemetry=all, --telemetry=off, or --telemetry=console,network")
 	addJSONOutputFlag(browserPoolsAcquireCmd)
 
 	browserPoolsReleaseCmd.Flags().String("session-id", "", "Browser session ID to release")
@@ -663,6 +760,7 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	viewport, _ := cmd.Flags().GetString("viewport")
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
 	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
+	telemetry, _ := cmd.Flags().GetString("telemetry")
 	output, _ := cmd.Flags().GetString("output")
 
 	in := BrowserPoolsCreateInput{
@@ -682,6 +780,7 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 		Viewport:         viewport,
 		ChromePolicy:     chromePolicy,
 		ChromePolicyFile: chromePolicyFile,
+		Telemetry:        telemetry,
 		Output:           output,
 	}
 
@@ -716,6 +815,7 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 	viewport, _ := cmd.Flags().GetString("viewport")
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
 	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
+	telemetry, _ := cmd.Flags().GetString("telemetry")
 	discardIdle, _ := cmd.Flags().GetBool("discard-all-idle")
 	output, _ := cmd.Flags().GetString("output")
 
@@ -738,6 +838,7 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 		Viewport:         viewport,
 		ChromePolicy:     chromePolicy,
 		ChromePolicyFile: chromePolicyFile,
+		Telemetry:        telemetry,
 		DiscardAllIdle:   BoolFlag{Set: cmd.Flags().Changed("discard-all-idle"), Value: discardIdle},
 		Output:           output,
 	}
@@ -758,6 +859,7 @@ func runBrowserPoolsAcquire(cmd *cobra.Command, args []string) error {
 	timeout, _ := cmd.Flags().GetInt64("timeout")
 	name, _ := cmd.Flags().GetString("name")
 	tags, _ := tagsFromFlag(cmd, "tag")
+	telemetry, _ := cmd.Flags().GetString("telemetry")
 	output, _ := cmd.Flags().GetString("output")
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
 	return c.Acquire(cmd.Context(), BrowserPoolsAcquireInput{
@@ -765,6 +867,7 @@ func runBrowserPoolsAcquire(cmd *cobra.Command, args []string) error {
 		TimeoutSeconds: timeout,
 		Name:           name,
 		Tags:           tags,
+		Telemetry:      telemetry,
 		Output:         output,
 	})
 }
