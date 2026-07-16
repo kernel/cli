@@ -232,10 +232,10 @@ func defaultAuditLogsDownloadPath(start, end time.Time) string {
 func checkAuditLogsDownloadTarget(path string, force bool) error {
 	if info, err := os.Lstat(path); err == nil {
 		if !info.Mode().IsRegular() {
-			return fmt.Errorf("%s is not a regular file", path)
+			return fmt.Errorf("output %s is not a regular file", path)
 		}
 		if !force {
-			return fmt.Errorf("%s already exists; pass --force to overwrite", path)
+			return fmt.Errorf("output %s already exists; pass --force to overwrite", path)
 		}
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("inspect %s: %w", path, err)
@@ -248,7 +248,7 @@ func openAuditLogsDownloadOutput(partialPath, outPath string, force bool) (*os.F
 		return nil, err
 	}
 	if info, err := os.Lstat(partialPath); err == nil && !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", partialPath)
+		return nil, fmt.Errorf("partial file %s is not a regular file", partialPath)
 	} else if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("inspect %s: %w", partialPath, err)
 	}
