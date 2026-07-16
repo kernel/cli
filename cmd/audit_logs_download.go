@@ -259,6 +259,12 @@ func openAuditLogsDownloadOutput(partialPath, outPath string, force bool) (*os.F
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", partialPath, err)
 	}
+	// OpenFile's mode only applies on creation; a reused partial keeps its
+	// previous permissions unless tightened explicitly.
+	if err := out.Chmod(0o600); err != nil {
+		out.Close()
+		return nil, fmt.Errorf("secure %s: %w", partialPath, err)
+	}
 	return out, nil
 }
 

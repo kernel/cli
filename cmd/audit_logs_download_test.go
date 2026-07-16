@@ -157,7 +157,7 @@ func TestAuditLogsDownloadOverwritesStalePartial(t *testing.T) {
 	capturePtermOutput(t)
 	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
 	partialPath := outPath + ".partial"
-	require.NoError(t, os.WriteFile(partialPath, []byte("stale"), 0o600))
+	require.NoError(t, os.WriteFile(partialPath, []byte("stale"), 0o644))
 
 	chunk := auditLogGzip(t, "{\"n\":1}\n")
 	service, cursors := auditLogChunkService(t, func() (*http.Response, error) {
@@ -167,7 +167,10 @@ func TestAuditLogsDownloadOverwritesStalePartial(t *testing.T) {
 	require.NoError(t, (AuditLogsCmd{auditLogs: service}).Download(context.Background(), auditLogsDownloadInput(outPath)))
 	assert.Equal(t, []string{""}, *cursors)
 	assert.Equal(t, "{\"n\":1}\n", readAuditLogGzip(t, outPath))
-	_, err := os.Stat(partialPath)
+	info, err := os.Stat(outPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	_, err = os.Stat(partialPath)
 	assert.True(t, os.IsNotExist(err))
 }
 
