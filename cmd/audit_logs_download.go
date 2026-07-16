@@ -36,7 +36,7 @@ type AuditLogsDownloadInput struct {
 
 const (
 	auditLogsDownloadMaxRange   = 30 * 24 * time.Hour
-	auditLogsChunkAttempts      = 6
+	auditLogsChunkAttempts      = 7
 	auditLogsChunkMaxRetryDelay = 8 * time.Second
 )
 

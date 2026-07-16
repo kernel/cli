@@ -144,7 +144,7 @@ func TestAuditLogsDownloadRemovesPartialAfterTransferFailure(t *testing.T) {
 		func() (*http.Response, error) {
 			return auditLogChunkResponse(auditLogTestChunk{body: first, rows: 1, hasMore: true, nextCursor: "next"}), nil
 		},
-		fail, fail, fail, fail, fail, fail,
+		fail, fail, fail, fail, fail, fail, fail,
 	)
 	require.Error(t, (AuditLogsCmd{auditLogs: service}).Download(context.Background(), auditLogsDownloadInput(outPath)))
 	_, err := os.Stat(outPath)
@@ -269,7 +269,7 @@ func TestAuditLogsDownloadRejectsBadChunkBeforeWriting(t *testing.T) {
 	badChunk := func() (*http.Response, error) {
 		return auditLogChunkResponse(auditLogTestChunk{body: []byte("bad"), rows: 1, checksum: "wrong"}), nil
 	}
-	service, _ := auditLogChunkService(t, badChunk, badChunk, badChunk, badChunk, badChunk, badChunk)
+	service, _ := auditLogChunkService(t, badChunk, badChunk, badChunk, badChunk, badChunk, badChunk, badChunk)
 
 	err := (AuditLogsCmd{auditLogs: service}).Download(context.Background(), auditLogsDownloadInput(outPath))
 	require.ErrorContains(t, err, "checksum mismatch")
