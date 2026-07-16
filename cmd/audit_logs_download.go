@@ -15,6 +15,7 @@ import (
 
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -139,7 +140,7 @@ func retryableAuditLogsChunkError(err error) bool {
 }
 
 func (c AuditLogsCmd) fetchAuditLogsChunkOnce(ctx context.Context, params kernel.AuditLogExportChunkParams) ([]byte, http.Header, error) {
-	res, err := c.auditLogs.ExportChunk(ctx, params)
+	res, err := c.auditLogs.ExportChunk(ctx, params, option.WithMaxRetries(0))
 	if err != nil {
 		return nil, nil, util.CleanedUpSdkError{Err: err}
 	}
@@ -226,21 +227,28 @@ func defaultAuditLogsDownloadPath(start, end time.Time) string {
 	return fmt.Sprintf("audit-logs-%s-%s.jsonl.gz", start.UTC().Format(stamp), end.UTC().Format(stamp))
 }
 
-func openAuditLogsDownloadOutput(partialPath, outPath string, force bool) (*os.File, error) {
-	if info, err := os.Lstat(outPath); err == nil {
+// checkAuditLogsDownloadTarget rejects paths that are not replaceable
+// regular files, and existing files unless --force was passed.
+func checkAuditLogsDownloadTarget(path string, force bool) error {
+	if info, err := os.Lstat(path); err == nil {
 		if !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("%s is not a regular file", outPath)
+			return fmt.Errorf("%s is not a regular file", path)
 		}
 		if !force {
-			return nil, fmt.Errorf("%s already exists; pass --force to overwrite", outPath)
+			return fmt.Errorf("%s already exists; pass --force to overwrite", path)
 		}
 	} else if !os.IsNotExist(err) {
-		return nil, fmt.Errorf("inspect %s: %w", outPath, err)
+		return fmt.Errorf("inspect %s: %w", path, err)
 	}
-	if info, err := os.Lstat(partialPath); err == nil && !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", partialPath)
-	} else if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("inspect %s: %w", partialPath, err)
+	return nil
+}
+
+func openAuditLogsDownloadOutput(partialPath, outPath string, force bool) (*os.File, error) {
+	if err := checkAuditLogsDownloadTarget(outPath, force); err != nil {
+		return nil, err
+	}
+	if err := checkAuditLogsDownloadTarget(partialPath, force); err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(filepath.Dir(partialPath), 0o700); err != nil {
 		return nil, fmt.Errorf("create output directory: %w", err)
@@ -249,23 +257,12 @@ func openAuditLogsDownloadOutput(partialPath, outPath string, force bool) (*os.F
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", partialPath, err)
 	}
-	if err := out.Chmod(0o600); err != nil {
-		out.Close()
-		return nil, fmt.Errorf("secure %s: %w", partialPath, err)
-	}
 	return out, nil
 }
 
 func commitAuditLogsDownloadOutput(partialPath, outPath string, force bool) error {
-	if info, err := os.Lstat(outPath); err == nil {
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("%s is not a regular file", outPath)
-		}
-		if !force {
-			return fmt.Errorf("%s already exists; pass --force to overwrite", outPath)
-		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("inspect %s: %w", outPath, err)
+	if err := checkAuditLogsDownloadTarget(outPath, force); err != nil {
+		return err
 	}
 	if err := os.Rename(partialPath, outPath); err != nil {
 		return fmt.Errorf("finalize %s: %w", outPath, err)
@@ -298,10 +295,12 @@ var auditLogsDownloadCmd = &cobra.Command{
 	Use:   "download",
 	Short: "Download audit logs as gzip-compressed JSONL",
 	Long: "Download audit logs as gzip-compressed JSONL in verified chunks. The time range is [start, end).\n\n" +
+		"The API allows at most 30 days per download.\n\n" +
 		"GET requests are excluded by default; pass --include-get to include them.\n\n" +
 		"The output file is published only after every chunk is downloaded.",
-	Args: cobra.NoArgs,
-	RunE: runAuditLogsDownload,
+	Example: "download --start 2026-06-01 --end 2026-07-01 --to audit-june.jsonl.gz",
+	Args:    cobra.NoArgs,
+	RunE:    runAuditLogsDownload,
 }
 
 func init() {
@@ -315,7 +314,7 @@ func init() {
 	auditLogsDownloadCmd.Flags().String("auth-strategy", "", "Filter by authentication strategy")
 	auditLogsDownloadCmd.Flags().StringArray("user-id", nil, "Filter by user ID (repeatable)")
 	auditLogsDownloadCmd.Flags().String("to", "", "Output .jsonl.gz file path")
-	auditLogsDownloadCmd.Flags().Bool("force", false, "Overwrite the output file")
+	auditLogsDownloadCmd.Flags().Bool("force", false, "Overwrite the output file and any existing partial file")
 	_ = auditLogsDownloadCmd.MarkFlagRequired("start")
 	_ = auditLogsDownloadCmd.MarkFlagRequired("end")
 	auditLogsCmd.AddCommand(auditLogsDownloadCmd)

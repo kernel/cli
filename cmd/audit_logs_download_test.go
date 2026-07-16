@@ -9,9 +9,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -132,7 +134,7 @@ func TestAuditLogsDownloadExcludeMethodStacksWithDefaultGetExclusion(t *testing.
 	assert.Equal(t, "{\"method\":\"DELETE\",\"n\":2}\n", readAuditLogGzip(t, outPath))
 }
 
-func TestAuditLogsDownloadRestartsAfterFailure(t *testing.T) {
+func TestAuditLogsDownloadRemovesPartialAfterTransferFailure(t *testing.T) {
 	capturePtermOutput(t)
 	disableAuditLogsRetryDelay(t)
 	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
@@ -147,24 +149,39 @@ func TestAuditLogsDownloadRestartsAfterFailure(t *testing.T) {
 	require.Error(t, (AuditLogsCmd{auditLogs: service}).Download(context.Background(), auditLogsDownloadInput(outPath)))
 	_, err := os.Stat(outPath)
 	assert.True(t, os.IsNotExist(err))
-	partialPath := outPath + ".partial"
-	_, err = os.Stat(partialPath)
+	_, err = os.Stat(outPath + ".partial")
 	assert.True(t, os.IsNotExist(err))
+}
+
+func TestAuditLogsDownloadRejectsExistingPartial(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
+	partialPath := outPath + ".partial"
+	require.NoError(t, os.WriteFile(partialPath, []byte("completed"), 0o600))
+
+	err := (AuditLogsCmd{auditLogs: &FakeAuditLogsService{}}).Download(context.Background(), auditLogsDownloadInput(outPath))
+	require.ErrorContains(t, err, partialPath+" already exists")
+	data, readErr := os.ReadFile(partialPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, "completed", string(data))
+}
+
+func TestAuditLogsDownloadForceOverwritesStalePartial(t *testing.T) {
+	capturePtermOutput(t)
+	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
+	partialPath := outPath + ".partial"
 	require.NoError(t, os.WriteFile(partialPath, []byte("stale"), 0o600))
 
-	second := auditLogGzip(t, "{\"n\":2}\n")
-	restarted, cursors := auditLogChunkService(t,
-		func() (*http.Response, error) {
-			return auditLogChunkResponse(auditLogTestChunk{body: first, rows: 1, hasMore: true, nextCursor: "next"}), nil
-		},
-		func() (*http.Response, error) {
-			return auditLogChunkResponse(auditLogTestChunk{body: second, rows: 1}), nil
-		},
-	)
-	require.NoError(t, (AuditLogsCmd{auditLogs: restarted}).Download(context.Background(), auditLogsDownloadInput(outPath)))
-	assert.Equal(t, []string{"", "next"}, *cursors)
-	assert.Equal(t, "{\"n\":1}\n{\"n\":2}\n", readAuditLogGzip(t, outPath))
-	_, err = os.Stat(partialPath)
+	chunk := auditLogGzip(t, "{\"n\":1}\n")
+	service, cursors := auditLogChunkService(t, func() (*http.Response, error) {
+		return auditLogChunkResponse(auditLogTestChunk{body: chunk, rows: 1}), nil
+	})
+	in := auditLogsDownloadInput(outPath)
+	in.Force = true
+
+	require.NoError(t, (AuditLogsCmd{auditLogs: service}).Download(context.Background(), in))
+	assert.Equal(t, []string{""}, *cursors)
+	assert.Equal(t, "{\"n\":1}\n", readAuditLogGzip(t, outPath))
+	_, err := os.Stat(partialPath)
 	assert.True(t, os.IsNotExist(err))
 }
 
@@ -187,6 +204,42 @@ func TestAuditLogsDownloadRetriesFailedChunk(t *testing.T) {
 	require.NoError(t, (AuditLogsCmd{auditLogs: service}).Download(context.Background(), auditLogsDownloadInput(outPath)))
 	assert.Equal(t, []string{"", "next", "next"}, *cursors)
 	assert.Equal(t, "{\"n\":1}\n{\"n\":2}\n", readAuditLogGzip(t, outPath))
+}
+
+func TestAuditLogsDownloadRecoversFromChecksumMismatch(t *testing.T) {
+	capturePtermOutput(t)
+	disableAuditLogsRetryDelay(t)
+	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
+	chunk := auditLogGzip(t, "{\"n\":1}\n")
+	service, cursors := auditLogChunkService(t,
+		func() (*http.Response, error) {
+			return auditLogChunkResponse(auditLogTestChunk{body: []byte("bad"), rows: 1, checksum: "wrong"}), nil
+		},
+		func() (*http.Response, error) {
+			return auditLogChunkResponse(auditLogTestChunk{body: chunk, rows: 1}), nil
+		},
+	)
+
+	require.NoError(t, (AuditLogsCmd{auditLogs: service}).Download(context.Background(), auditLogsDownloadInput(outPath)))
+	assert.Equal(t, []string{"", ""}, *cursors)
+	assert.Equal(t, "{\"n\":1}\n", readAuditLogGzip(t, outPath))
+}
+
+func TestAuditLogsDownloadDisablesSDKRetries(t *testing.T) {
+	capturePtermOutput(t)
+	disableAuditLogsRetryDelay(t)
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	client := kernel.NewClient(option.WithBaseURL(server.URL), option.WithAPIKey("test"))
+	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
+
+	err := (AuditLogsCmd{auditLogs: &client.AuditLogs}).Download(context.Background(), auditLogsDownloadInput(outPath))
+	require.Error(t, err)
+	assert.Equal(t, int64(auditLogsChunkAttempts), requests.Load())
 }
 
 func TestAuditLogsDownloadDoesNotRetryClientErrors(t *testing.T) {
@@ -255,6 +308,12 @@ func TestAuditLogsDownloadPreservesCompletedPartialOnFinalizeFailure(t *testing.
 	err := (AuditLogsCmd{auditLogs: service}).Download(context.Background(), auditLogsDownloadInput(outPath))
 	require.ErrorContains(t, err, "completed download remains")
 	assert.Equal(t, "{\"n\":1}\n", readAuditLogGzip(t, outPath+".partial"))
+
+	// A rerun must not destroy the preserved completed partial.
+	require.NoError(t, os.Remove(outPath))
+	err = (AuditLogsCmd{auditLogs: &FakeAuditLogsService{}}).Download(context.Background(), auditLogsDownloadInput(outPath))
+	require.ErrorContains(t, err, "already exists")
+	assert.Equal(t, "{\"n\":1}\n", readAuditLogGzip(t, outPath+".partial"))
 }
 
 func TestCommitAuditLogsDownloadOutputPreservesExistingFileOnFailure(t *testing.T) {
@@ -312,6 +371,8 @@ func TestParseAuditLogsChunkHeaders(t *testing.T) {
 		{name: "missing row count", header: http.Header{"X-Has-More": []string{"false"}}, want: "X-Row-Count"},
 		{name: "missing cursor", header: http.Header{"X-Has-More": []string{"true"}, "X-Row-Count": []string{"1"}}, want: "X-Next-Cursor"},
 		{name: "unchanged cursor", current: "next", header: http.Header{"X-Has-More": []string{"true"}, "X-Row-Count": []string{"1"}, "X-Next-Cursor": []string{"next"}}, want: "X-Next-Cursor"},
+		{name: "cursor after final chunk", header: http.Header{"X-Has-More": []string{"false"}, "X-Row-Count": []string{"1"}, "X-Next-Cursor": []string{"next"}}, want: "cursor after the final chunk"},
+		{name: "negative row count", header: http.Header{"X-Has-More": []string{"false"}, "X-Row-Count": []string{"-1"}}, want: "X-Row-Count"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
