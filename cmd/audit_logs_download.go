@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,7 +33,12 @@ type AuditLogsDownloadInput struct {
 	Force         bool
 }
 
-const auditLogsDownloadMaxRange = 30 * 24 * time.Hour
+const (
+	auditLogsDownloadMaxRange = 30 * 24 * time.Hour
+	auditLogsChunkAttempts    = 3
+)
+
+var auditLogsChunkRetryBaseDelay = time.Second
 
 func (c AuditLogsCmd) Download(ctx context.Context, in AuditLogsDownloadInput) error {
 	params, err := buildAuditLogsDownloadParams(in)
@@ -104,6 +110,34 @@ func (c AuditLogsCmd) Download(ctx context.Context, in AuditLogsDownloadInput) e
 }
 
 func (c AuditLogsCmd) fetchAuditLogsChunk(ctx context.Context, params kernel.AuditLogExportChunkParams) ([]byte, http.Header, error) {
+	for attempt := 1; ; attempt++ {
+		body, header, err := c.fetchAuditLogsChunkOnce(ctx, params)
+		if err == nil || attempt == auditLogsChunkAttempts || !retryableAuditLogsChunkError(err) {
+			return body, header, err
+		}
+		delay := auditLogsChunkRetryBaseDelay << (attempt - 1)
+		pterm.Warning.Printf("Chunk download failed (%s); retrying in %s\n", err, delay)
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+}
+
+// retryableAuditLogsChunkError reports whether a chunk fetch failure is
+// transient. API errors are retried only for 429s and 5xx; everything else
+// (network errors, truncated bodies, checksum mismatches) is retried unless
+// the context was cancelled.
+func retryableAuditLogsChunkError(err error) bool {
+	var apiErr *kernel.Error
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == http.StatusTooManyRequests || apiErr.StatusCode >= 500
+	}
+	return !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+}
+
+func (c AuditLogsCmd) fetchAuditLogsChunkOnce(ctx context.Context, params kernel.AuditLogExportChunkParams) ([]byte, http.Header, error) {
 	res, err := c.auditLogs.ExportChunk(ctx, params)
 	if err != nil {
 		return nil, nil, util.CleanedUpSdkError{Err: err}

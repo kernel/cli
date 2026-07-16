@@ -86,6 +86,13 @@ func auditLogsDownloadInput(path string) AuditLogsDownloadInput {
 	return AuditLogsDownloadInput{Start: "2026-06-01", End: "2026-06-28", To: path}
 }
 
+func disableAuditLogsRetryDelay(t *testing.T) {
+	t.Helper()
+	saved := auditLogsChunkRetryBaseDelay
+	auditLogsChunkRetryBaseDelay = 0
+	t.Cleanup(func() { auditLogsChunkRetryBaseDelay = saved })
+}
+
 func TestAuditLogsDownloadWritesAllChunks(t *testing.T) {
 	capturePtermOutput(t)
 	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
@@ -127,13 +134,15 @@ func TestAuditLogsDownloadExcludeMethodStacksWithDefaultGetExclusion(t *testing.
 
 func TestAuditLogsDownloadRestartsAfterFailure(t *testing.T) {
 	capturePtermOutput(t)
+	disableAuditLogsRetryDelay(t)
 	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
 	first := auditLogGzip(t, "{\"n\":1}\n")
+	fail := func() (*http.Response, error) { return nil, errors.New("network error") }
 	service, _ := auditLogChunkService(t,
 		func() (*http.Response, error) {
 			return auditLogChunkResponse(auditLogTestChunk{body: first, rows: 1, hasMore: true, nextCursor: "next"}), nil
 		},
-		func() (*http.Response, error) { return nil, errors.New("network error") },
+		fail, fail, fail,
 	)
 	require.Error(t, (AuditLogsCmd{auditLogs: service}).Download(context.Background(), auditLogsDownloadInput(outPath)))
 	_, err := os.Stat(outPath)
@@ -159,6 +168,39 @@ func TestAuditLogsDownloadRestartsAfterFailure(t *testing.T) {
 	assert.True(t, os.IsNotExist(err))
 }
 
+func TestAuditLogsDownloadRetriesFailedChunk(t *testing.T) {
+	capturePtermOutput(t)
+	disableAuditLogsRetryDelay(t)
+	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
+	first := auditLogGzip(t, "{\"n\":1}\n")
+	second := auditLogGzip(t, "{\"n\":2}\n")
+	service, cursors := auditLogChunkService(t,
+		func() (*http.Response, error) {
+			return auditLogChunkResponse(auditLogTestChunk{body: first, rows: 1, hasMore: true, nextCursor: "next"}), nil
+		},
+		func() (*http.Response, error) { return nil, errors.New("network error") },
+		func() (*http.Response, error) {
+			return auditLogChunkResponse(auditLogTestChunk{body: second, rows: 1}), nil
+		},
+	)
+
+	require.NoError(t, (AuditLogsCmd{auditLogs: service}).Download(context.Background(), auditLogsDownloadInput(outPath)))
+	assert.Equal(t, []string{"", "next", "next"}, *cursors)
+	assert.Equal(t, "{\"n\":1}\n{\"n\":2}\n", readAuditLogGzip(t, outPath))
+}
+
+func TestAuditLogsDownloadDoesNotRetryClientErrors(t *testing.T) {
+	capturePtermOutput(t)
+	disableAuditLogsRetryDelay(t)
+	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
+	service, _ := auditLogChunkService(t, func() (*http.Response, error) {
+		return nil, &kernel.Error{StatusCode: http.StatusBadRequest}
+	})
+
+	err := (AuditLogsCmd{auditLogs: service}).Download(context.Background(), auditLogsDownloadInput(outPath))
+	require.Error(t, err)
+}
+
 func TestDefaultAuditLogsDownloadPath(t *testing.T) {
 	start := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 6, 28, 0, 0, 0, 0, time.UTC)
@@ -169,10 +211,12 @@ func TestDefaultAuditLogsDownloadPath(t *testing.T) {
 
 func TestAuditLogsDownloadRejectsBadChunkBeforeWriting(t *testing.T) {
 	capturePtermOutput(t)
+	disableAuditLogsRetryDelay(t)
 	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
-	service, _ := auditLogChunkService(t, func() (*http.Response, error) {
+	badChunk := func() (*http.Response, error) {
 		return auditLogChunkResponse(auditLogTestChunk{body: []byte("bad"), rows: 1, checksum: "wrong"}), nil
-	})
+	}
+	service, _ := auditLogChunkService(t, badChunk, badChunk, badChunk)
 
 	err := (AuditLogsCmd{auditLogs: service}).Download(context.Background(), auditLogsDownloadInput(outPath))
 	require.ErrorContains(t, err, "checksum mismatch")
