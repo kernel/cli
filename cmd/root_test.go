@@ -94,3 +94,18 @@ func TestResolveProjectSelection(t *testing.T) {
 		assert.Equal(t, "", resolveProjectSelection(""))
 	})
 }
+
+func TestUpperFirst(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"unknown flag: --foo", "Unknown flag: --foo"},
+		{"/tmp/out.jsonl.gz already exists", "/tmp/out.jsonl.gz already exists"},
+		{"--start must be before --end", "--start must be before --end"},
+		{"", ""},
+	}
+	for _, test := range tests {
+		assert.Equal(t, test.want, upperFirst(test.in))
+	}
+}

@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/fang"
 	"github.com/charmbracelet/lipgloss/v2"
@@ -229,7 +231,12 @@ func Execute(m Metadata) {
 
 			// remove margins so that it matches other pterm.error "style"
 			// we should add them back later as it looks cleaner
-			errorTextStyle := styles.ErrorText.UnsetMargins()
+			//
+			// fang's default transform title-cases the first word, which
+			// mangles messages that start with a path or identifier
+			// ("/tmp/out.gz" becomes "/Tmp/Out.gz"); uppercase only the
+			// first rune instead.
+			errorTextStyle := styles.ErrorText.UnsetMargins().Transform(upperFirst)
 
 			// Keep command errors on fang's error stream, normally stderr. This
 			// gives curl-like commands a quiet stdout for response bodies and
@@ -259,6 +266,15 @@ func Execute(m Metadata) {
 // isUsageError is a hack to detect usage errors.
 // See: https://github.com/spf13/cobra/pull/2266
 // from github.com/charmbracelet/fang/help.go
+// upperFirst uppercases the first rune of s, leaving the rest untouched.
+func upperFirst(s string) string {
+	r, size := utf8.DecodeRuneInString(s)
+	if r == utf8.RuneError {
+		return s
+	}
+	return string(unicode.ToUpper(r)) + s[size:]
+}
+
 func isUsageError(err error) bool {
 	s := err.Error()
 	for _, prefix := range []string{
