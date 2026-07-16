@@ -92,50 +92,20 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 
 // buildPoolNewTelemetryParam converts a --telemetry flag value to the pool create param.
 func buildPoolNewTelemetryParam(s string) (kernel.BrowserPoolNewParamsTelemetry, error) {
-	switch s {
-	case "all":
-		return kernel.BrowserPoolNewParamsTelemetry{Enabled: kernel.Opt(true)}, nil
-	case "off":
-		return kernel.BrowserPoolNewParamsTelemetry{Enabled: kernel.Opt(false)}, nil
-	default:
-		p, err := parseTelemetryCategories(s)
-		if err != nil {
-			return kernel.BrowserPoolNewParamsTelemetry{}, err
-		}
-		return kernel.BrowserPoolNewParamsTelemetry{Browser: p}, nil
-	}
+	enabled, browser, err := resolveTelemetryFlag(s)
+	return kernel.BrowserPoolNewParamsTelemetry{Enabled: enabled, Browser: browser}, err
 }
 
 // buildPoolUpdateTelemetryParam converts a --telemetry flag value to the pool update param.
 func buildPoolUpdateTelemetryParam(s string) (kernel.BrowserPoolUpdateParamsTelemetry, error) {
-	switch s {
-	case "all":
-		return kernel.BrowserPoolUpdateParamsTelemetry{Enabled: kernel.Opt(true)}, nil
-	case "off":
-		return kernel.BrowserPoolUpdateParamsTelemetry{Enabled: kernel.Opt(false)}, nil
-	default:
-		p, err := parseTelemetryCategories(s)
-		if err != nil {
-			return kernel.BrowserPoolUpdateParamsTelemetry{}, err
-		}
-		return kernel.BrowserPoolUpdateParamsTelemetry{Browser: p}, nil
-	}
+	enabled, browser, err := resolveTelemetryFlag(s)
+	return kernel.BrowserPoolUpdateParamsTelemetry{Enabled: enabled, Browser: browser}, err
 }
 
 // buildPoolAcquireTelemetryParam converts a --telemetry flag value to the acquire override param.
 func buildPoolAcquireTelemetryParam(s string) (kernel.BrowserPoolAcquireParamsTelemetry, error) {
-	switch s {
-	case "all":
-		return kernel.BrowserPoolAcquireParamsTelemetry{Enabled: kernel.Opt(true)}, nil
-	case "off":
-		return kernel.BrowserPoolAcquireParamsTelemetry{Enabled: kernel.Opt(false)}, nil
-	default:
-		p, err := parseTelemetryCategories(s)
-		if err != nil {
-			return kernel.BrowserPoolAcquireParamsTelemetry{}, err
-		}
-		return kernel.BrowserPoolAcquireParamsTelemetry{Browser: p}, nil
-	}
+	enabled, browser, err := resolveTelemetryFlag(s)
+	return kernel.BrowserPoolAcquireParamsTelemetry{Enabled: enabled, Browser: browser}, err
 }
 
 // formatPoolTelemetry renders a pool's active telemetry config for the details table.
