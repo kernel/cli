@@ -153,19 +153,7 @@ func TestAuditLogsDownloadRemovesPartialAfterTransferFailure(t *testing.T) {
 	assert.True(t, os.IsNotExist(err))
 }
 
-func TestAuditLogsDownloadRejectsExistingPartial(t *testing.T) {
-	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
-	partialPath := outPath + ".partial"
-	require.NoError(t, os.WriteFile(partialPath, []byte("completed"), 0o600))
-
-	err := (AuditLogsCmd{auditLogs: &FakeAuditLogsService{}}).Download(context.Background(), auditLogsDownloadInput(outPath))
-	require.ErrorContains(t, err, partialPath+" already exists")
-	data, readErr := os.ReadFile(partialPath)
-	require.NoError(t, readErr)
-	assert.Equal(t, "completed", string(data))
-}
-
-func TestAuditLogsDownloadForceOverwritesStalePartial(t *testing.T) {
+func TestAuditLogsDownloadOverwritesStalePartial(t *testing.T) {
 	capturePtermOutput(t)
 	outPath := filepath.Join(t.TempDir(), "audit.jsonl.gz")
 	partialPath := outPath + ".partial"
@@ -175,10 +163,8 @@ func TestAuditLogsDownloadForceOverwritesStalePartial(t *testing.T) {
 	service, cursors := auditLogChunkService(t, func() (*http.Response, error) {
 		return auditLogChunkResponse(auditLogTestChunk{body: chunk, rows: 1}), nil
 	})
-	in := auditLogsDownloadInput(outPath)
-	in.Force = true
 
-	require.NoError(t, (AuditLogsCmd{auditLogs: service}).Download(context.Background(), in))
+	require.NoError(t, (AuditLogsCmd{auditLogs: service}).Download(context.Background(), auditLogsDownloadInput(outPath)))
 	assert.Equal(t, []string{""}, *cursors)
 	assert.Equal(t, "{\"n\":1}\n", readAuditLogGzip(t, outPath))
 	_, err := os.Stat(partialPath)
@@ -307,12 +293,6 @@ func TestAuditLogsDownloadPreservesCompletedPartialOnFinalizeFailure(t *testing.
 
 	err := (AuditLogsCmd{auditLogs: service}).Download(context.Background(), auditLogsDownloadInput(outPath))
 	require.ErrorContains(t, err, "completed download remains")
-	assert.Equal(t, "{\"n\":1}\n", readAuditLogGzip(t, outPath+".partial"))
-
-	// A rerun must not destroy the preserved completed partial.
-	require.NoError(t, os.Remove(outPath))
-	err = (AuditLogsCmd{auditLogs: &FakeAuditLogsService{}}).Download(context.Background(), auditLogsDownloadInput(outPath))
-	require.ErrorContains(t, err, "already exists")
 	assert.Equal(t, "{\"n\":1}\n", readAuditLogGzip(t, outPath+".partial"))
 }
 

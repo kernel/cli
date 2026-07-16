@@ -247,8 +247,10 @@ func openAuditLogsDownloadOutput(partialPath, outPath string, force bool) (*os.F
 	if err := checkAuditLogsDownloadTarget(outPath, force); err != nil {
 		return nil, err
 	}
-	if err := checkAuditLogsDownloadTarget(partialPath, force); err != nil {
-		return nil, err
+	if info, err := os.Lstat(partialPath); err == nil && !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", partialPath)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("inspect %s: %w", partialPath, err)
 	}
 	if err := os.MkdirAll(filepath.Dir(partialPath), 0o700); err != nil {
 		return nil, fmt.Errorf("create output directory: %w", err)
@@ -314,7 +316,7 @@ func init() {
 	auditLogsDownloadCmd.Flags().String("auth-strategy", "", "Filter by authentication strategy")
 	auditLogsDownloadCmd.Flags().StringArray("user-id", nil, "Filter by user ID (repeatable)")
 	auditLogsDownloadCmd.Flags().String("to", "", "Output .jsonl.gz file path")
-	auditLogsDownloadCmd.Flags().Bool("force", false, "Overwrite the output file and any existing partial file")
+	auditLogsDownloadCmd.Flags().Bool("force", false, "Overwrite the output file")
 	_ = auditLogsDownloadCmd.MarkFlagRequired("start")
 	_ = auditLogsDownloadCmd.MarkFlagRequired("end")
 	auditLogsCmd.AddCommand(auditLogsDownloadCmd)
