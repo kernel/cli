@@ -112,7 +112,7 @@ func (c AuditLogsCmd) Search(ctx context.Context, in AuditLogsSearchInput) error
 		return nil
 	}
 
-	table := pterm.TableData{{"Timestamp", "Method", "Status", "Path", "User", "Duration (ms)", "Client IP"}}
+	table := pterm.TableData{{"Timestamp", "Method", "Status", "Path", "User", "User ID", "Duration (ms)", "Client IP"}}
 	for _, entry := range entries {
 		table = append(table, []string{
 			util.FormatLocal(entry.Timestamp),
@@ -120,6 +120,7 @@ func (c AuditLogsCmd) Search(ctx context.Context, in AuditLogsSearchInput) error
 			strconv.FormatInt(entry.Status, 10),
 			entry.Path,
 			formatAuditLogUser(entry),
+			entry.UserID,
 			strconv.FormatInt(entry.DurationMs, 10),
 			entry.ClientIP,
 		})

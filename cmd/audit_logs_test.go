@@ -88,6 +88,7 @@ func TestAuditLogsSearchBuildsParamsAndPrintsTable(t *testing.T) {
 	assert.Contains(t, out, "POST")
 	assert.Contains(t, out, "201")
 	assert.Contains(t, out, "dev@example.com")
+	assert.Contains(t, out, "user_123")
 	assert.Contains(t, out, "203.0.113.7")
 }
 
