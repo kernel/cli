@@ -92,6 +92,13 @@ func TestAuditLogsSearchBuildsParamsAndPrintsTable(t *testing.T) {
 	assert.Contains(t, out, "203.0.113.7")
 }
 
+func TestFormatAuditLogUserDoesNotRepeatUserIDWhenEmailMissing(t *testing.T) {
+	entry := sampleAuditLogEntry("POST", "/browsers")
+	entry.Email = ""
+
+	assert.Equal(t, "-", formatAuditLogUser(entry))
+}
+
 func TestAuditLogsSearchRejectsInvalidStart(t *testing.T) {
 	c := AuditLogsCmd{auditLogs: &FakeAuditLogsService{}}
 

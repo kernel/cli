@@ -157,13 +157,10 @@ func parseAuditLogTime(value string) (time.Time, error) {
 }
 
 func formatAuditLogUser(entry kernel.AuditLogEntry) string {
-	if entry.Email != "" {
-		return entry.Email
+	if entry.Email == "" {
+		return "-"
 	}
-	if entry.UserID != "" {
-		return entry.UserID
-	}
-	return "-"
+	return entry.Email
 }
 
 func getAuditLogsHandler(cmd *cobra.Command) AuditLogsCmd {
