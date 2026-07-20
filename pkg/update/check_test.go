@@ -11,11 +11,11 @@ func TestSuggestUpgradeCommandForMethod(t *testing.T) {
 		method   InstallMethod
 		expected string
 	}{
-		{InstallMethodBrew, "brew upgrade kernel/tap/kernel"},
+		{InstallMethodBrew, "brew update && brew upgrade kernel/tap/kernel"},
 		{InstallMethodNPM, "npm i -g @onkernel/cli@latest"},
 		{InstallMethodPNPM, "pnpm add -g @onkernel/cli@latest"},
 		{InstallMethodBun, "bun add -g @onkernel/cli@latest"},
-		{InstallMethodUnknown, "brew upgrade kernel/tap/kernel"},
+		{InstallMethodUnknown, "brew update && brew upgrade kernel/tap/kernel"},
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.method), func(t *testing.T) {

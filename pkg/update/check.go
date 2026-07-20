@@ -434,7 +434,8 @@ func SuggestUpgradeCommand() string {
 func suggestUpgradeCommandForMethod(method InstallMethod) string {
 	switch method {
 	case InstallMethodBrew:
-		return "brew upgrade kernel/tap/kernel"
+		// brew upgrade alone can no-op on a stale tap, so refresh it first.
+		return "brew update && brew upgrade kernel/tap/kernel"
 	case InstallMethodPNPM:
 		return "pnpm add -g @onkernel/cli@latest"
 	case InstallMethodNPM:
@@ -442,7 +443,7 @@ func suggestUpgradeCommandForMethod(method InstallMethod) string {
 	case InstallMethodBun:
 		return "bun add -g @onkernel/cli@latest"
 	default:
-		return "brew upgrade kernel/tap/kernel"
+		return "brew update && brew upgrade kernel/tap/kernel"
 	}
 }
 
