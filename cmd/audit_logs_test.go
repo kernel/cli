@@ -17,6 +17,7 @@ import (
 
 type FakeAuditLogsService struct {
 	ListAutoPagingFunc func(ctx context.Context, query kernel.AuditLogListParams, opts ...option.RequestOption) *pagination.PageTokenPaginationAutoPager[kernel.AuditLogEntry]
+	ExportChunkFunc    func(ctx context.Context, query kernel.AuditLogExportChunkParams, opts ...option.RequestOption) (*http.Response, error)
 }
 
 func (f *FakeAuditLogsService) ListAutoPaging(ctx context.Context, query kernel.AuditLogListParams, opts ...option.RequestOption) *pagination.PageTokenPaginationAutoPager[kernel.AuditLogEntry] {
@@ -24,6 +25,13 @@ func (f *FakeAuditLogsService) ListAutoPaging(ctx context.Context, query kernel.
 		return f.ListAutoPagingFunc(ctx, query, opts...)
 	}
 	return auditLogPager()
+}
+
+func (f *FakeAuditLogsService) ExportChunk(ctx context.Context, query kernel.AuditLogExportChunkParams, opts ...option.RequestOption) (*http.Response, error) {
+	if f.ExportChunkFunc != nil {
+		return f.ExportChunkFunc(ctx, query, opts...)
+	}
+	return nil, errors.New("ExportChunk not implemented")
 }
 
 func auditLogPager(entries ...kernel.AuditLogEntry) *pagination.PageTokenPaginationAutoPager[kernel.AuditLogEntry] {
@@ -80,7 +88,15 @@ func TestAuditLogsSearchBuildsParamsAndPrintsTable(t *testing.T) {
 	assert.Contains(t, out, "POST")
 	assert.Contains(t, out, "201")
 	assert.Contains(t, out, "dev@example.com")
+	assert.Contains(t, out, "user_123")
 	assert.Contains(t, out, "203.0.113.7")
+}
+
+func TestFormatAuditLogUserDoesNotRepeatUserIDWhenEmailMissing(t *testing.T) {
+	entry := sampleAuditLogEntry("POST", "/browsers")
+	entry.Email = ""
+
+	assert.Equal(t, "-", formatAuditLogUser(entry))
 }
 
 func TestAuditLogsSearchRejectsInvalidStart(t *testing.T) {
