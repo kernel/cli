@@ -18,6 +18,7 @@ import (
 	kernel "github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
+	"github.com/kernel/kernel-go-sdk/packages/param"
 	"github.com/kernel/kernel-go-sdk/packages/ssestream"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -90,36 +91,32 @@ func parseTelemetryCategories(s string) (kernel.BrowserTelemetryCategoriesConfig
 	return p, nil
 }
 
-// buildNewTelemetryParam converts a --telemetry flag value to the create API param.
-func buildNewTelemetryParam(s string) (kernel.BrowserNewParamsTelemetry, error) {
+// resolveTelemetryFlag interprets a --telemetry flag value shared by every browser
+// and browser-pool command: "all" enables the default set, "off" disables capture,
+// and a comma-separated list opts into exactly those categories. It returns the
+// resolved (enabled, browser) pair so each endpoint can assemble its own param type.
+func resolveTelemetryFlag(s string) (param.Opt[bool], kernel.BrowserTelemetryCategoriesConfigParam, error) {
 	switch s {
 	case "all":
-		return kernel.BrowserNewParamsTelemetry{Enabled: kernel.Opt(true)}, nil
+		return kernel.Opt(true), kernel.BrowserTelemetryCategoriesConfigParam{}, nil
 	case "off":
-		return kernel.BrowserNewParamsTelemetry{Enabled: kernel.Opt(false)}, nil
+		return kernel.Opt(false), kernel.BrowserTelemetryCategoriesConfigParam{}, nil
 	default:
 		p, err := parseTelemetryCategories(s)
-		if err != nil {
-			return kernel.BrowserNewParamsTelemetry{}, err
-		}
-		return kernel.BrowserNewParamsTelemetry{Browser: p}, nil
+		return param.Opt[bool]{}, p, err
 	}
+}
+
+// buildNewTelemetryParam converts a --telemetry flag value to the create API param.
+func buildNewTelemetryParam(s string) (kernel.BrowserNewParamsTelemetry, error) {
+	enabled, browser, err := resolveTelemetryFlag(s)
+	return kernel.BrowserNewParamsTelemetry{Enabled: enabled, Browser: browser}, err
 }
 
 // buildUpdateTelemetryParam converts a --telemetry flag value to the update API param.
 func buildUpdateTelemetryParam(s string) (kernel.BrowserUpdateParamsTelemetry, error) {
-	switch s {
-	case "all":
-		return kernel.BrowserUpdateParamsTelemetry{Enabled: kernel.Opt(true)}, nil
-	case "off":
-		return kernel.BrowserUpdateParamsTelemetry{Enabled: kernel.Opt(false)}, nil
-	default:
-		p, err := parseTelemetryCategories(s)
-		if err != nil {
-			return kernel.BrowserUpdateParamsTelemetry{}, err
-		}
-		return kernel.BrowserUpdateParamsTelemetry{Browser: p}, nil
-	}
+	enabled, browser, err := resolveTelemetryFlag(s)
+	return kernel.BrowserUpdateParamsTelemetry{Enabled: enabled, Browser: browser}, err
 }
 
 // settableCategories are the categories accepted by --telemetry=<categories>.

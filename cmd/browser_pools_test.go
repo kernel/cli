@@ -120,21 +120,29 @@ func TestBrowserPoolsList_ForwardsLimitOffset(t *testing.T) {
 	assert.Equal(t, int64(8), captured.Offset.Value)
 }
 
-// TestBuildAcquireParams covers the shared name/tags/timeout forwarding used by
-// both `browser-pools acquire` and the `browsers create --pool-id` lease path.
+// TestBuildAcquireParams covers the shared name/tags/timeout/telemetry forwarding
+// used by both `browser-pools acquire` and the `browsers create --pool-id` lease path.
 func TestBuildAcquireParams(t *testing.T) {
-	p := buildAcquireParams("lease", map[string]string{"env": "prod"}, 30)
+	p, err := buildAcquireParams("lease", map[string]string{"env": "prod"}, 30, "console,network")
+	assert.NoError(t, err)
 	assert.True(t, p.Name.Valid())
 	assert.Equal(t, "lease", p.Name.Value)
 	assert.Equal(t, "prod", p.Tags["env"])
 	assert.True(t, p.AcquireTimeoutSeconds.Valid())
 	assert.Equal(t, int64(30), p.AcquireTimeoutSeconds.Value)
+	assert.True(t, p.Telemetry.Browser.Console.Enabled.Value)
+	assert.True(t, p.Telemetry.Browser.Network.Enabled.Value)
 
 	// Unset inputs produce an empty params struct (nothing forwarded).
-	empty := buildAcquireParams("", nil, 0)
+	empty, err := buildAcquireParams("", nil, 0, "")
+	assert.NoError(t, err)
 	assert.False(t, empty.Name.Valid())
 	assert.Len(t, empty.Tags, 0)
 	assert.False(t, empty.AcquireTimeoutSeconds.Valid())
+
+	// An invalid category surfaces an error rather than a partial param.
+	_, err = buildAcquireParams("", nil, 0, "bogus")
+	assert.Error(t, err)
 }
 
 func TestBrowserPoolsCreate_WithRefreshOnProfileUpdate(t *testing.T) {
@@ -275,4 +283,101 @@ func TestBrowserPoolsUpdate_EmptyChromePolicyQuietInJSONMode(t *testing.T) {
 	assert.NoError(t, err)
 	// The warning must not leak onto stdout in json mode, where it would corrupt the payload.
 	assert.NotContains(t, outBuf.String(), "does not clear")
+}
+
+func TestBrowserPoolsCreate_WithTelemetry(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolNewParams
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: "pool-tel"}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Create(context.Background(), BrowserPoolsCreateInput{
+		Size:      1,
+		Telemetry: "console,network",
+	})
+	assert.NoError(t, err)
+	assert.True(t, captured.Telemetry.Browser.Console.Enabled.Value)
+	assert.True(t, captured.Telemetry.Browser.Network.Enabled.Value)
+	assert.False(t, captured.Telemetry.Enabled.Valid())
+}
+
+func TestBrowserPoolsCreate_TelemetryAllAndOff(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolNewParams
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: "pool-tel"}, nil
+		},
+	}
+	c := BrowserPoolsCmd{client: fake}
+
+	assert.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Telemetry: "all"}))
+	assert.True(t, captured.Telemetry.Enabled.Value)
+
+	assert.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Telemetry: "off"}))
+	assert.True(t, captured.Telemetry.Enabled.Valid())
+	assert.False(t, captured.Telemetry.Enabled.Value)
+}
+
+func TestBrowserPoolsCreate_TelemetryInvalidCategory(t *testing.T) {
+	setupStdoutCapture(t)
+
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			t.Fatal("New should not be called when telemetry parsing fails")
+			return nil, nil
+		},
+	}
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Telemetry: "bogus"})
+	assert.Error(t, err)
+}
+
+func TestBrowserPoolsUpdate_WithTelemetry(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolUpdateParams
+	fake := &FakeBrowserPoolsService{
+		UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: id}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Update(context.Background(), BrowserPoolsUpdateInput{
+		IDOrName:  "pool-1",
+		Telemetry: "off",
+	})
+	assert.NoError(t, err)
+	assert.True(t, captured.Telemetry.Enabled.Valid())
+	assert.False(t, captured.Telemetry.Enabled.Value)
+}
+
+func TestBrowserPoolsAcquire_WithTelemetryOverride(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolAcquireParams
+	fake := &FakeBrowserPoolsService{
+		AcquireFunc: func(ctx context.Context, id string, body kernel.BrowserPoolAcquireParams, opts ...option.RequestOption) (*kernel.BrowserPoolAcquireResponse, error) {
+			captured = body
+			return &kernel.BrowserPoolAcquireResponse{SessionID: "sess-1"}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Acquire(context.Background(), BrowserPoolsAcquireInput{
+		IDOrName:  "pool-1",
+		Telemetry: "page",
+	})
+	assert.NoError(t, err)
+	assert.True(t, captured.Telemetry.Browser.Page.Enabled.Value)
 }

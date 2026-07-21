@@ -266,11 +266,12 @@ Commands with JSON output support:
   - `--refresh-on-profile-update` - Flush idle browsers when the pool's profile is updated (requires a profile)
   - `--profile-id`, `--profile-name`, `--proxy-id`, `--start-url`, `--extension`, `--viewport` - Same semantics as `kernel browsers create`
   - `--chrome-policy <json>` / `--chrome-policy-file <path>` - Custom Chrome enterprise policy applied to every browser in the pool, as a JSON object or from a file (`-` for stdin). Same semantics as `kernel browsers create`.
+  - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Telemetry applied to browsers warmed into the pool. Same semantics as `kernel browsers create`.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools get <id-or-name>` - Get pool details
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools update <id-or-name>` - Update pool configuration
-  - Same flags as create plus `--clear-start-url` (remove the pool's start URL) and `--discard-all-idle` (discard all idle browsers and refill). An empty `--chrome-policy '{}'` is ignored and does not clear an existing policy; recreate the pool to remove one.
+  - Same flags as create plus `--clear-start-url` (remove the pool's start URL) and `--discard-all-idle` (discard all idle browsers and refill). An empty `--chrome-policy '{}'` is ignored and does not clear an existing policy; recreate the pool to remove one. `--telemetry` updates only apply to browsers warmed after the update.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools delete <id-or-name>` - Delete a pool
   - `--force` - Force delete even if browsers are leased
@@ -278,6 +279,7 @@ Commands with JSON output support:
   - `--timeout <seconds>` - Acquire timeout before returning 204
   - `--name <name>` - Optional name for the acquired session (applies to this lease; cleared on release)
   - `--tag <KEY=VALUE>` - Set a tag on the acquired session, repeatable; applies to this lease
+  - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Telemetry override for this lease only, merged onto the pool's config
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools release <id-or-name>` - Release a browser back to the pool
   - `--session-id <id>` - Browser session ID to release (required)
