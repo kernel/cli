@@ -45,6 +45,10 @@ const (
 
 	// OAuth scopes - openid for the MCP server flow
 	DefaultScope = "openid email"
+
+	// tokenExchangeTimeout bounds the token/refresh HTTP calls so a stalled auth
+	// server surfaces as an error instead of hanging the CLI indefinitely.
+	tokenExchangeTimeout = 30 * time.Second
 )
 
 // OAuthConfig represents the OAuth2 configuration
@@ -311,6 +315,9 @@ func (oc *OAuthConfig) exchangeCodeForTokens(ctx context.Context, code, orgID st
 		opts = append(opts, oauth2.SetAuthURLParam("org_id", orgID))
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, tokenExchangeTimeout)
+	defer cancel()
+
 	token, err := oc.Config.Exchange(ctx, code, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to exchange code for token: %w", err)
@@ -349,7 +356,7 @@ func RefreshTokens(ctx context.Context, tokens *TokenStorage) (*TokenStorage, er
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: tokenExchangeTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send refresh request: %w", err)

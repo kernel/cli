@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 
 type AuditLogsService interface {
 	ListAutoPaging(ctx context.Context, query kernel.AuditLogListParams, opts ...option.RequestOption) *pagination.PageTokenPaginationAutoPager[kernel.AuditLogEntry]
+	ExportChunk(ctx context.Context, query kernel.AuditLogExportChunkParams, opts ...option.RequestOption) (*http.Response, error)
 }
 
 type AuditLogsCmd struct {
@@ -110,7 +112,7 @@ func (c AuditLogsCmd) Search(ctx context.Context, in AuditLogsSearchInput) error
 		return nil
 	}
 
-	table := pterm.TableData{{"Timestamp", "Method", "Status", "Path", "User", "Duration (ms)", "Client IP"}}
+	table := pterm.TableData{{"Timestamp", "Method", "Status", "Path", "User", "User ID", "Duration (ms)", "Client IP"}}
 	for _, entry := range entries {
 		table = append(table, []string{
 			util.FormatLocal(entry.Timestamp),
@@ -118,6 +120,7 @@ func (c AuditLogsCmd) Search(ctx context.Context, in AuditLogsSearchInput) error
 			strconv.FormatInt(entry.Status, 10),
 			entry.Path,
 			formatAuditLogUser(entry),
+			entry.UserID,
 			strconv.FormatInt(entry.DurationMs, 10),
 			entry.ClientIP,
 		})
@@ -154,13 +157,10 @@ func parseAuditLogTime(value string) (time.Time, error) {
 }
 
 func formatAuditLogUser(entry kernel.AuditLogEntry) string {
-	if entry.Email != "" {
-		return entry.Email
+	if entry.Email == "" {
+		return "-"
 	}
-	if entry.UserID != "" {
-		return entry.UserID
-	}
-	return "-"
+	return entry.Email
 }
 
 func getAuditLogsHandler(cmd *cobra.Command) AuditLogsCmd {
