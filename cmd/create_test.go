@@ -10,6 +10,7 @@ import (
 
 	"github.com/kernel/cli/pkg/create"
 	"github.com/pterm/pterm"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -89,6 +90,61 @@ func TestCreateCommand(t *testing.T) {
 			if tt.validate != nil {
 				tt.validate(t, appPath)
 			}
+		})
+	}
+}
+
+func TestRunCreateApp_DoesNotWrapPromptErrors(t *testing.T) {
+	tests := []struct {
+		name             string
+		flagValues       map[string]string
+		expectedContains string
+		unexpectedWrap   string
+	}{
+		{
+			name:             "missing app name returns direct prompt error",
+			flagValues:       map[string]string{},
+			expectedContains: "cannot prompt for app name",
+			unexpectedWrap:   "failed to get app name:",
+		},
+		{
+			name: "invalid language returns direct validation error",
+			flagValues: map[string]string{
+				"name": "my-app",
+				// template is intentionally omitted because language validation fails first.
+				"language": "ruby",
+			},
+			expectedContains: "invalid --language 'ruby'",
+			unexpectedWrap:   "failed to get language:",
+		},
+		{
+			name: "invalid template returns direct validation error",
+			flagValues: map[string]string{
+				"name":     "my-app",
+				"language": "typescript",
+				"template": "nonexistent-template",
+			},
+			expectedContains: "invalid --template 'nonexistent-template'",
+			unexpectedWrap:   "failed to get template:",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &cobra.Command{}
+			cmd.Flags().String("name", "", "")
+			cmd.Flags().String("language", "", "")
+			cmd.Flags().String("template", "", "")
+			cmd.Flags().Bool("yes", false, "")
+
+			for flag, value := range tt.flagValues {
+				require.NoError(t, cmd.Flags().Set(flag, value))
+			}
+
+			err := runCreateApp(cmd, nil)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.expectedContains)
+			assert.NotContains(t, err.Error(), tt.unexpectedWrap)
 		})
 	}
 }
