@@ -28,19 +28,13 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// forceNonInteractive arranges the condition under test explicitly instead of
-// relying on the harness's ambient stdin (which may be a PTY).
-func forceNonInteractive(t *testing.T) {
-	t.Helper()
-	t.Cleanup(interactive.ForceTerminal(false))
-}
-
 // Any command path that would show an interactive confirmation must fail fast
 // with a --yes hint instead of prompting (which would otherwise hang forever
-// in agent/CI shells).
+// in agent/CI shells). The terminal capability is carried by the injected
+// Prompter, so these tests do not depend on the harness's ambient stdin and
+// mutate no package state.
 
 func TestAPIKeysDeleteFailsFastWhenNonInteractive(t *testing.T) {
-	forceNonInteractive(t)
 	_ = capturePtermOutput(t)
 	fake := &FakeAPIKeysService{
 		DeleteFunc: func(ctx context.Context, id string, opts ...option.RequestOption) error {
@@ -48,7 +42,7 @@ func TestAPIKeysDeleteFailsFastWhenNonInteractive(t *testing.T) {
 			return nil
 		},
 	}
-	c := APIKeysCmd{apiKeys: fake}
+	c := APIKeysCmd{apiKeys: fake, prompter: interactive.NewPrompterWithTerminal(false)}
 
 	err := c.Delete(context.Background(), APIKeysDeleteInput{ID: "key_123"})
 	require.Error(t, err)
@@ -58,7 +52,6 @@ func TestAPIKeysDeleteFailsFastWhenNonInteractive(t *testing.T) {
 }
 
 func TestExtensionsDeleteFailsFastWhenNonInteractive(t *testing.T) {
-	forceNonInteractive(t)
 	_ = capturePtermOutput(t)
 	fake := &FakeExtensionsService{
 		DeleteFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) error {
@@ -66,7 +59,7 @@ func TestExtensionsDeleteFailsFastWhenNonInteractive(t *testing.T) {
 			return nil
 		},
 	}
-	e := ExtensionsCmd{extensions: fake}
+	e := ExtensionsCmd{extensions: fake, prompter: interactive.NewPrompterWithTerminal(false)}
 
 	err := e.Delete(context.Background(), ExtensionsDeleteInput{Identifier: "e1"})
 	require.Error(t, err)
@@ -77,7 +70,7 @@ func TestExtensionsDeleteFailsFastWhenNonInteractive(t *testing.T) {
 // In a non-interactive shell, `kernel create` must report every missing or
 // invalid input in a single error so one retry can fix everything.
 func TestCreateFailsFastAggregatedWhenNonInteractive(t *testing.T) {
-	forceNonInteractive(t)
+	nonInteractive := interactive.NewPrompterWithTerminal(false)
 
 	newCreateCmd := func(flags map[string]string) *cobra.Command {
 		cmd := &cobra.Command{}
@@ -92,7 +85,7 @@ func TestCreateFailsFastAggregatedWhenNonInteractive(t *testing.T) {
 	}
 
 	t.Run("no flags reports all three inputs in one error", func(t *testing.T) {
-		err := runCreateApp(newCreateCmd(nil), nil)
+		err := createApp(newCreateCmd(nil), nonInteractive)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "--name is required")
 		assert.Contains(t, err.Error(), "--language is required")
@@ -101,7 +94,7 @@ func TestCreateFailsFastAggregatedWhenNonInteractive(t *testing.T) {
 	})
 
 	t.Run("mixed missing and invalid flags aggregated", func(t *testing.T) {
-		err := runCreateApp(newCreateCmd(map[string]string{"language": "ruby", "template": "nope"}), nil)
+		err := createApp(newCreateCmd(map[string]string{"language": "ruby", "template": "nope"}), nonInteractive)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "--name is required")
 		assert.Contains(t, err.Error(), "--language 'ruby' is invalid")
@@ -109,7 +102,7 @@ func TestCreateFailsFastAggregatedWhenNonInteractive(t *testing.T) {
 	})
 
 	t.Run("single problem stays a single-line error", func(t *testing.T) {
-		err := runCreateApp(newCreateCmd(map[string]string{"name": "my-app", "language": "typescript", "template": "nope"}), nil)
+		err := createApp(newCreateCmd(map[string]string{"name": "my-app", "language": "typescript", "template": "nope"}), nonInteractive)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "--template 'nope' is invalid for language 'typescript'")
 		assert.NotContains(t, err.Error(), "\n")

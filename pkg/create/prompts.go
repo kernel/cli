@@ -13,8 +13,8 @@ import (
 
 // PromptName prompts for the app name. An empty entry falls back to
 // DefaultAppName.
-func PromptName() (string, error) {
-	name, err := interactive.TextInput(
+func PromptName(p interactive.Prompter) (string, error) {
+	name, err := p.TextInput(
 		"app name",
 		"pass --name to set the app name (e.g. --name "+DefaultAppName+")",
 		fmt.Sprintf("%s (%s)", AppNamePrompt, DefaultAppName),
@@ -29,8 +29,8 @@ func PromptName() (string, error) {
 }
 
 // PromptLanguage prompts for the application language.
-func PromptLanguage() (string, error) {
-	return interactive.Select(
+func PromptLanguage(p interactive.Prompter) (string, error) {
+	return p.Select(
 		"language selection",
 		"pass --language with one of: "+languageOptionsHint(),
 		LanguagePrompt,
@@ -40,9 +40,9 @@ func PromptLanguage() (string, error) {
 
 // PromptTemplate prompts for a template supported by the given (normalized)
 // language.
-func PromptTemplate(language string) (string, error) {
+func PromptTemplate(p interactive.Prompter, language string) (string, error) {
 	templateKVs := GetSupportedTemplatesForLanguage(language)
-	display, err := interactive.Select(
+	display, err := p.Select(
 		"template selection",
 		"pass --template with one of: "+templateOptionsHint(templateKVs),
 		TemplatePrompt,
@@ -56,8 +56,8 @@ func PromptTemplate(language string) (string, error) {
 
 // PromptOverwrite asks for confirmation before overwriting an existing
 // directory.
-func PromptOverwrite(dirName string) (bool, error) {
-	return interactive.Confirm(
+func PromptOverwrite(p interactive.Prompter, dirName string) (bool, error) {
+	return p.Confirm(
 		fmt.Sprintf("overwrite existing directory '%s'", dirName),
 		fmt.Sprintf("Directory %s already exists. Overwrite?", dirName),
 	)

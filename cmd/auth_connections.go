@@ -30,7 +30,8 @@ type AuthConnectionService interface {
 
 // AuthConnectionCmd handles auth connection operations independent of cobra.
 type AuthConnectionCmd struct {
-	svc AuthConnectionService
+	svc      AuthConnectionService
+	prompter interactive.Prompter
 }
 
 type AuthConnectionCreateInput struct {
@@ -492,7 +493,7 @@ func (c AuthConnectionCmd) List(ctx context.Context, in AuthConnectionListInput)
 
 func (c AuthConnectionCmd) Delete(ctx context.Context, in AuthConnectionDeleteInput) error {
 	if !in.SkipConfirm {
-		ok, err := interactive.Confirm(
+		ok, err := c.prompter.Confirm(
 			fmt.Sprintf("delete managed auth '%s'", in.ID),
 			fmt.Sprintf("Are you sure you want to delete managed auth '%s'?", in.ID),
 		)

@@ -15,7 +15,9 @@ import (
 )
 
 // CreateCmd is a cobra-independent command handler for create operations
-type CreateCmd struct{}
+type CreateCmd struct {
+	prompter interactive.Prompter
+}
 
 // Create executes the creating a new Kernel app logic
 func (c CreateCmd) Create(ctx context.Context, ci create.CreateInput) error {
@@ -29,7 +31,7 @@ func (c CreateCmd) Create(ctx context.Context, ci create.CreateInput) error {
 	// confirmation before calling Create.
 	if _, err := os.Stat(appPath); err == nil {
 		if !ci.SkipConfirm {
-			overwrite, err := create.PromptOverwrite(ci.Name)
+			overwrite, err := create.PromptOverwrite(c.prompter, ci.Name)
 			if err != nil {
 				return err
 			}
@@ -148,66 +150,47 @@ func buildCreateLongHelp() string {
 }
 
 func runCreateApp(cmd *cobra.Command, args []string) error {
-	appName, _ := cmd.Flags().GetString("name")
-	language, _ := cmd.Flags().GetString("language")
-	template, _ := cmd.Flags().GetString("template")
-	skipConfirm, _ := cmd.Flags().GetBool("yes")
+	return createApp(cmd, interactive.NewPrompter())
+}
 
-	c := CreateCmd{}
+// createApp resolves the create inputs and scaffolds the app. The prompter
+// carries the terminal capability, so tests can drive the non-interactive
+// path deterministically without mutating any package state.
+func createApp(cmd *cobra.Command, prompter interactive.Prompter) error {
+	raw := create.RawInput{}
+	raw.Name, _ = cmd.Flags().GetString("name")
+	raw.Language, _ = cmd.Flags().GetString("language")
+	raw.Template, _ = cmd.Flags().GetString("template")
+	raw.SkipOverwriteConfirm, _ = cmd.Flags().GetBool("yes")
+
+	c := CreateCmd{prompter: prompter}
 
 	// create.ResolveInput is the single resolver from raw flags to a
 	// normalized CreateInput for both modes. Interactively, each remaining
-	// problem is resolved by prompting for that field and re-resolving (so
-	// e.g. the template list reflects the chosen language). Non-interactively,
-	// every problem is reported at once in a single fail-fast error.
+	// problem carries its own resolution step: prompt for that field, apply
+	// the answer, re-resolve (so e.g. the template list reflects the chosen
+	// language). Non-interactively, every problem is reported at once in a
+	// single fail-fast error.
 	for {
-		in, problems := create.ResolveInput(appName, language, template, skipConfirm)
+		in, problems := create.ResolveInput(raw)
 		if len(problems) == 0 {
 			return c.Create(cmd.Context(), in)
 		}
-		if !interactive.IsInteractive() {
+		if !prompter.CanPrompt() {
 			return interactive.ErrInputsRequired(create.ProblemMessages(problems))
 		}
 
 		p := problems[0]
-		switch p.Field {
-		case create.FieldName:
-			if appName != "" {
-				pterm.Warning.Println(p.Message)
-			}
-			v, err := create.PromptName()
-			if err != nil {
-				return err
-			}
-			appName = v
-		case create.FieldLanguage:
-			if language != "" {
-				pterm.Warning.Println(p.Message)
-			}
-			v, err := create.PromptLanguage()
-			if err != nil {
-				return err
-			}
-			language = v
-		case create.FieldTemplate:
-			if template != "" {
-				pterm.Warning.Println(p.Message)
-			}
-			v, err := create.PromptTemplate(in.Language)
-			if err != nil {
-				return err
-			}
-			template = v
-		case create.FieldOverwrite:
-			ok, err := create.PromptOverwrite(appName)
-			if err != nil {
-				return err
-			}
-			if !ok {
-				pterm.Warning.Println("Operation cancelled.")
-				return nil
-			}
-			skipConfirm = true
+		if p.Invalid {
+			pterm.Warning.Println(p.Message)
+		}
+		cancelled, err := p.Resolve(prompter, &raw)
+		if err != nil {
+			return err
+		}
+		if cancelled {
+			pterm.Warning.Println("Operation cancelled.")
+			return nil
 		}
 	}
 }

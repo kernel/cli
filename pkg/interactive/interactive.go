@@ -5,9 +5,10 @@
 // Interactive prompts read keystrokes from the terminal. In a non-interactive
 // shell — an AI agent's bash tool, CI, or any piped stdin — they never return
 // (the underlying keyboard listener spins forever), so prompt execution is
-// centralized here behind the TTY gate. Command code must call Confirm,
-// Select, and TextInput instead of pterm's interactive printers; no direct
-// pterm interactive calls should exist outside this package.
+// centralized here behind the TTY gate. Command code must prompt through a
+// Prompter (or the package-level helpers backed by the default Prompter)
+// instead of pterm's interactive printers; no direct pterm interactive calls
+// should exist outside this package.
 package interactive
 
 import (
@@ -19,26 +20,49 @@ import (
 	"golang.org/x/term"
 )
 
-// terminalCheck reports whether the given file is attached to a terminal. It
-// is a package variable so tests can inject a fake terminal capability
-// instead of relying on the ambient stdin of the test harness.
-var terminalCheck = func(f *os.File) bool {
+// isTerminal reports whether the given file is attached to a terminal.
+func isTerminal(f *os.File) bool {
 	return term.IsTerminal(int(f.Fd()))
 }
 
-// IsInteractive reports whether stdin is attached to a terminal, i.e. whether
-// interactive prompts can be shown.
-func IsInteractive() bool {
-	return terminalCheck(os.Stdin)
+// Prompter executes interactive prompts against a terminal capability. Each
+// value owns its capability — there is no package-level mutable state — so
+// tests can construct a Prompter with a fixed capability without affecting
+// other goroutines or invocations.
+//
+// The zero value is equivalent to NewPrompter(): it detects the terminal
+// from stdin at prompt time.
+type Prompter struct {
+	// isTerminal overrides terminal detection when non-nil.
+	isTerminal func() bool
 }
 
-// ForceTerminal overrides terminal detection for tests, making IsInteractive
-// report isTTY regardless of the ambient stdin. It returns a function that
-// restores the previous behavior; callers should register it with t.Cleanup.
-func ForceTerminal(isTTY bool) (restore func()) {
-	prev := terminalCheck
-	terminalCheck = func(*os.File) bool { return isTTY }
-	return func() { terminalCheck = prev }
+// NewPrompter returns a Prompter that detects terminal capability from
+// stdin at prompt time.
+func NewPrompter() Prompter {
+	return Prompter{}
+}
+
+// NewPrompterWithTerminal returns a Prompter with a fixed terminal
+// capability. Tests use NewPrompterWithTerminal(false) to exercise the
+// fail-fast paths deterministically, regardless of the harness's stdin.
+func NewPrompterWithTerminal(isTTY bool) Prompter {
+	return Prompter{isTerminal: func() bool { return isTTY }}
+}
+
+// CanPrompt reports whether this Prompter can show interactive prompts.
+func (p Prompter) CanPrompt() bool {
+	if p.isTerminal != nil {
+		return p.isTerminal()
+	}
+	return isTerminal(os.Stdin)
+}
+
+// IsInteractive reports whether stdin is attached to a terminal, i.e.
+// whether interactive prompts can be shown. Equivalent to
+// NewPrompter().CanPrompt().
+func IsInteractive() bool {
+	return NewPrompter().CanPrompt()
 }
 
 // PromptError is returned instead of showing an interactive prompt when
@@ -122,10 +146,10 @@ func ErrInputsRequired(problems []string) error {
 }
 
 // Confirm shows a yes/no confirmation prompt with the given prompt text and
-// reports the choice. In a non-interactive shell it fails fast with
-// ErrConfirmationRequired(action) instead of prompting.
-func Confirm(action, promptText string) (bool, error) {
-	if !IsInteractive() {
+// reports the choice. When the Prompter cannot prompt it fails fast with
+// ErrConfirmationRequired(action) instead.
+func (p Prompter) Confirm(action, promptText string) (bool, error) {
+	if !p.CanPrompt() {
 		return false, ErrConfirmationRequired(action)
 	}
 	return pterm.DefaultInteractiveConfirm.
@@ -135,10 +159,10 @@ func Confirm(action, promptText string) (bool, error) {
 }
 
 // Select shows a select prompt over options and returns the chosen option.
-// In a non-interactive shell it fails fast with ErrInputRequired(what, hint)
-// instead of prompting.
-func Select(what, hint, promptText string, options []string) (string, error) {
-	if !IsInteractive() {
+// When the Prompter cannot prompt it fails fast with
+// ErrInputRequired(what, hint) instead.
+func (p Prompter) Select(what, hint, promptText string, options []string) (string, error) {
+	if !p.CanPrompt() {
 		return "", ErrInputRequired(what, hint)
 	}
 	return pterm.DefaultInteractiveSelect.
@@ -148,14 +172,32 @@ func Select(what, hint, promptText string, options []string) (string, error) {
 		Show()
 }
 
-// TextInput shows a free-text prompt and returns the entered text. In a
-// non-interactive shell it fails fast with ErrInputRequired(what, hint)
-// instead of prompting.
-func TextInput(what, hint, promptText string) (string, error) {
-	if !IsInteractive() {
+// TextInput shows a free-text prompt and returns the entered text. When the
+// Prompter cannot prompt it fails fast with ErrInputRequired(what, hint)
+// instead.
+func (p Prompter) TextInput(what, hint, promptText string) (string, error) {
+	if !p.CanPrompt() {
 		return "", ErrInputRequired(what, hint)
 	}
 	return pterm.DefaultInteractiveTextInput.
 		WithDefaultText(promptText).
 		Show()
+}
+
+// Confirm is Prompter.Confirm on the default (ambient-stdin) Prompter, for
+// command code without an injected Prompter.
+func Confirm(action, promptText string) (bool, error) {
+	return NewPrompter().Confirm(action, promptText)
+}
+
+// Select is Prompter.Select on the default (ambient-stdin) Prompter, for
+// command code without an injected Prompter.
+func Select(what, hint, promptText string, options []string) (string, error) {
+	return NewPrompter().Select(what, hint, promptText, options)
+}
+
+// TextInput is Prompter.TextInput on the default (ambient-stdin) Prompter,
+// for command code without an injected Prompter.
+func TextInput(what, hint, promptText string) (string, error) {
+	return NewPrompter().TextInput(what, hint, promptText)
 }

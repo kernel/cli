@@ -22,7 +22,8 @@ type APIKeysService interface {
 }
 
 type APIKeysCmd struct {
-	apiKeys APIKeysService
+	apiKeys  APIKeysService
+	prompter interactive.Prompter
 }
 
 type APIKeysCreateInput struct {
@@ -182,7 +183,7 @@ func (c APIKeysCmd) Update(ctx context.Context, in APIKeysUpdateInput) error {
 
 func (c APIKeysCmd) Delete(ctx context.Context, in APIKeysDeleteInput) error {
 	if !in.SkipConfirm {
-		ok, err := interactive.Confirm(
+		ok, err := c.prompter.Confirm(
 			fmt.Sprintf("delete API key '%s'", in.ID),
 			fmt.Sprintf("Are you sure you want to delete API key '%s'?", in.ID),
 		)

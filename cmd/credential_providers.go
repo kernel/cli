@@ -28,6 +28,7 @@ type CredentialProvidersService interface {
 // CredentialProvidersCmd handles credential provider operations independent of cobra.
 type CredentialProvidersCmd struct {
 	providers CredentialProvidersService
+	prompter  interactive.Prompter
 }
 
 type CredentialProvidersListInput struct {
@@ -255,7 +256,7 @@ func (c CredentialProvidersCmd) Update(ctx context.Context, in CredentialProvide
 
 func (c CredentialProvidersCmd) Delete(ctx context.Context, in CredentialProvidersDeleteInput) error {
 	if !in.SkipConfirm {
-		ok, err := interactive.Confirm(
+		ok, err := c.prompter.Confirm(
 			fmt.Sprintf("delete credential provider '%s'", in.ID),
 			fmt.Sprintf("Are you sure you want to delete credential provider '%s'?", in.ID),
 		)

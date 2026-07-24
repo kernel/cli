@@ -27,6 +27,7 @@ type CredentialsService interface {
 // CredentialsCmd handles credential operations independent of cobra.
 type CredentialsCmd struct {
 	credentials CredentialsService
+	prompter    interactive.Prompter
 }
 
 type CredentialsListInput struct {
@@ -282,7 +283,7 @@ func (c CredentialsCmd) Update(ctx context.Context, in CredentialsUpdateInput) e
 
 func (c CredentialsCmd) Delete(ctx context.Context, in CredentialsDeleteInput) error {
 	if !in.SkipConfirm {
-		ok, err := interactive.Confirm(
+		ok, err := c.prompter.Confirm(
 			fmt.Sprintf("delete credential '%s'", in.Identifier),
 			fmt.Sprintf("Are you sure you want to delete credential '%s'?", in.Identifier),
 		)

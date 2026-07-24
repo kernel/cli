@@ -61,6 +61,7 @@ type ProfilesDownloadInput struct {
 // ProfilesCmd handles profile operations independent of cobra.
 type ProfilesCmd struct {
 	profiles ProfilesService
+	prompter interactive.Prompter
 }
 
 func (p ProfilesCmd) List(ctx context.Context, in ProfilesListInput) error {
@@ -228,7 +229,7 @@ func (p ProfilesCmd) Delete(ctx context.Context, in ProfilesDeleteInput) error {
 	}
 
 	if !in.SkipConfirm {
-		ok, err := interactive.Confirm(
+		ok, err := p.prompter.Confirm(
 			fmt.Sprintf("delete profile '%s'", in.Identifier),
 			fmt.Sprintf("Are you sure you want to delete profile '%s'?", in.Identifier),
 		)

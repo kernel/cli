@@ -89,6 +89,7 @@ type ExtensionsUploadInput struct {
 // ExtensionsCmd handles extension operations independent of cobra.
 type ExtensionsCmd struct {
 	extensions ExtensionsService
+	prompter   interactive.Prompter
 }
 
 func (e ExtensionsCmd) List(ctx context.Context, in ExtensionsListInput) error {
@@ -185,7 +186,7 @@ func (e ExtensionsCmd) Delete(ctx context.Context, in ExtensionsDeleteInput) err
 	}
 
 	if !in.SkipConfirm {
-		ok, err := interactive.Confirm(
+		ok, err := e.prompter.Confirm(
 			fmt.Sprintf("delete extension '%s'", in.Identifier),
 			fmt.Sprintf("Are you sure you want to delete extension '%s'?", in.Identifier),
 		)
