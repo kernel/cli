@@ -150,19 +150,21 @@ func runCreateApp(cmd *cobra.Command, args []string) error {
 	template, _ := cmd.Flags().GetString("template")
 	skipConfirm, _ := cmd.Flags().GetBool("yes")
 
+	// Return prompt errors unwrapped: in non-interactive shells they are
+	// crafted fail-fast messages that name the exact flags to pass.
 	appName, err := create.PromptForAppName(appName)
 	if err != nil {
-		return fmt.Errorf("failed to get app name: %w", err)
+		return err
 	}
 
 	language, err = create.PromptForLanguage(language)
 	if err != nil {
-		return fmt.Errorf("failed to get language: %w", err)
+		return err
 	}
 
 	template, err = create.PromptForTemplate(template, language)
 	if err != nil {
-		return fmt.Errorf("failed to get template: %w", err)
+		return err
 	}
 
 	c := CreateCmd{}

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,6 +29,44 @@ func TestAPIKeysDeleteFailsFastWhenNonInteractive(t *testing.T) {
 	assert.Contains(t, err.Error(), "delete API key 'key_123'")
 	assert.Contains(t, err.Error(), "--yes")
 	assert.Contains(t, err.Error(), "not an interactive terminal")
+}
+
+// runCreateApp must return prompt errors unwrapped so the CLI output matches
+// the documented fail-fast messages ("cannot prompt for ...", "invalid --...")
+// without "failed to get ..." prefixes.
+func TestCreateFailsFastUnwrappedWhenNonInteractive(t *testing.T) {
+	newCreateCmd := func(flags map[string]string) *cobra.Command {
+		cmd := &cobra.Command{}
+		cmd.Flags().String("name", "", "")
+		cmd.Flags().String("language", "", "")
+		cmd.Flags().String("template", "", "")
+		cmd.Flags().Bool("yes", false, "")
+		for flag, value := range flags {
+			require.NoError(t, cmd.Flags().Set(flag, value))
+		}
+		return cmd
+	}
+
+	t.Run("missing app name", func(t *testing.T) {
+		err := runCreateApp(newCreateCmd(nil), nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot prompt for app name")
+		assert.NotContains(t, err.Error(), "failed to get")
+	})
+
+	t.Run("invalid language", func(t *testing.T) {
+		err := runCreateApp(newCreateCmd(map[string]string{"name": "my-app", "language": "ruby"}), nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid --language 'ruby'")
+		assert.NotContains(t, err.Error(), "failed to get")
+	})
+
+	t.Run("invalid template", func(t *testing.T) {
+		err := runCreateApp(newCreateCmd(map[string]string{"name": "my-app", "language": "typescript", "template": "nope"}), nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid --template 'nope'")
+		assert.NotContains(t, err.Error(), "failed to get")
+	})
 }
 
 func TestExtensionsDeleteFailsFastWhenNonInteractive(t *testing.T) {
