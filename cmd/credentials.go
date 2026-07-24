@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
@@ -26,6 +27,7 @@ type CredentialsService interface {
 // CredentialsCmd handles credential operations independent of cobra.
 type CredentialsCmd struct {
 	credentials CredentialsService
+	prompter    interactive.Prompter
 }
 
 type CredentialsListInput struct {
@@ -281,9 +283,13 @@ func (c CredentialsCmd) Update(ctx context.Context, in CredentialsUpdateInput) e
 
 func (c CredentialsCmd) Delete(ctx context.Context, in CredentialsDeleteInput) error {
 	if !in.SkipConfirm {
-		msg := fmt.Sprintf("Are you sure you want to delete credential '%s'?", in.Identifier)
-		pterm.DefaultInteractiveConfirm.DefaultText = msg
-		ok, _ := pterm.DefaultInteractiveConfirm.Show()
+		ok, err := c.prompter.Confirm(
+			fmt.Sprintf("delete credential '%s'", in.Identifier),
+			fmt.Sprintf("Are you sure you want to delete credential '%s'?", in.Identifier),
+		)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			pterm.Info.Println("Deletion cancelled")
 			return nil

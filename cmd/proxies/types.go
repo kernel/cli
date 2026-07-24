@@ -3,6 +3,7 @@ package proxies
 import (
 	"context"
 
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
@@ -19,7 +20,8 @@ type ProxyService interface {
 
 // ProxyCmd handles proxy operations independent of cobra.
 type ProxyCmd struct {
-	proxies ProxyService
+	proxies  ProxyService
+	prompter interactive.Prompter
 }
 
 // Input types for proxy operations

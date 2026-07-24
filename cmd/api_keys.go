@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
@@ -21,7 +22,8 @@ type APIKeysService interface {
 }
 
 type APIKeysCmd struct {
-	apiKeys APIKeysService
+	apiKeys  APIKeysService
+	prompter interactive.Prompter
 }
 
 type APIKeysCreateInput struct {
@@ -181,9 +183,13 @@ func (c APIKeysCmd) Update(ctx context.Context, in APIKeysUpdateInput) error {
 
 func (c APIKeysCmd) Delete(ctx context.Context, in APIKeysDeleteInput) error {
 	if !in.SkipConfirm {
-		msg := fmt.Sprintf("Are you sure you want to delete API key '%s'?", in.ID)
-		pterm.DefaultInteractiveConfirm.DefaultText = msg
-		ok, _ := pterm.DefaultInteractiveConfirm.Show()
+		ok, err := c.prompter.Confirm(
+			fmt.Sprintf("delete API key '%s'", in.ID),
+			fmt.Sprintf("Are you sure you want to delete API key '%s'?", in.ID),
+		)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			pterm.Info.Println("Deletion cancelled")
 			return nil

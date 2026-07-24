@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kernel/cli/pkg/extensions"
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
@@ -88,6 +89,7 @@ type ExtensionsUploadInput struct {
 // ExtensionsCmd handles extension operations independent of cobra.
 type ExtensionsCmd struct {
 	extensions ExtensionsService
+	prompter   interactive.Prompter
 }
 
 func (e ExtensionsCmd) List(ctx context.Context, in ExtensionsListInput) error {
@@ -184,9 +186,13 @@ func (e ExtensionsCmd) Delete(ctx context.Context, in ExtensionsDeleteInput) err
 	}
 
 	if !in.SkipConfirm {
-		msg := fmt.Sprintf("Are you sure you want to delete extension '%s'?", in.Identifier)
-		pterm.DefaultInteractiveConfirm.DefaultText = msg
-		ok, _ := pterm.DefaultInteractiveConfirm.Show()
+		ok, err := e.prompter.Confirm(
+			fmt.Sprintf("delete extension '%s'", in.Identifier),
+			fmt.Sprintf("Are you sure you want to delete extension '%s'?", in.Identifier),
+		)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			pterm.Info.Println("Deletion cancelled")
 			return nil

@@ -6,6 +6,9 @@ type CreateInput struct {
 	Name     string
 	Language string
 	Template string
+	// SkipConfirm skips confirmation prompts (e.g. overwriting an existing
+	// directory). Set via the --yes flag.
+	SkipConfirm bool
 }
 
 const (

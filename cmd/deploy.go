@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
 	kernel "github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
@@ -388,9 +389,13 @@ func runDeployDelete(cmd *cobra.Command, args []string) error {
 	skipConfirm, _ := cmd.Flags().GetBool("yes")
 
 	if !skipConfirm {
-		msg := fmt.Sprintf("Are you sure you want to delete deployment '%s'? This cannot be undone.", deploymentID)
-		pterm.DefaultInteractiveConfirm.DefaultText = msg
-		ok, _ := pterm.DefaultInteractiveConfirm.Show()
+		ok, err := interactive.Confirm(
+			fmt.Sprintf("delete deployment '%s'", deploymentID),
+			fmt.Sprintf("Are you sure you want to delete deployment '%s'? This cannot be undone.", deploymentID),
+		)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			pterm.Info.Println("Deletion cancelled")
 			return nil

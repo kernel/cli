@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
@@ -60,6 +61,7 @@ type ProfilesDownloadInput struct {
 // ProfilesCmd handles profile operations independent of cobra.
 type ProfilesCmd struct {
 	profiles ProfilesService
+	prompter interactive.Prompter
 }
 
 func (p ProfilesCmd) List(ctx context.Context, in ProfilesListInput) error {
@@ -227,9 +229,13 @@ func (p ProfilesCmd) Delete(ctx context.Context, in ProfilesDeleteInput) error {
 	}
 
 	if !in.SkipConfirm {
-		msg := fmt.Sprintf("Are you sure you want to delete profile '%s'?", in.Identifier)
-		pterm.DefaultInteractiveConfirm.DefaultText = msg
-		ok, _ := pterm.DefaultInteractiveConfirm.Show()
+		ok, err := p.prompter.Confirm(
+			fmt.Sprintf("delete profile '%s'", in.Identifier),
+			fmt.Sprintf("Are you sure you want to delete profile '%s'?", in.Identifier),
+		)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			pterm.Info.Println("Deletion cancelled")
 			return nil

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/pterm/pterm"
@@ -256,9 +257,13 @@ func runAppDelete(cmd *cobra.Command, args []string) error {
 		if version != "" {
 			scope = fmt.Sprintf("version '%s'", version)
 		}
-		msg := fmt.Sprintf("Delete all deployments for app '%s' (%s)? This cannot be undone.", appName, scope)
-		pterm.DefaultInteractiveConfirm.DefaultText = msg
-		ok, _ := pterm.DefaultInteractiveConfirm.Show()
+		ok, err := interactive.Confirm(
+			fmt.Sprintf("delete all deployments for app '%s' (%s)", appName, scope),
+			fmt.Sprintf("Delete all deployments for app '%s' (%s)? This cannot be undone.", appName, scope),
+		)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			pterm.Info.Println("Deletion cancelled")
 			return nil

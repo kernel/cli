@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
@@ -29,7 +30,8 @@ type AuthConnectionService interface {
 
 // AuthConnectionCmd handles auth connection operations independent of cobra.
 type AuthConnectionCmd struct {
-	svc AuthConnectionService
+	svc      AuthConnectionService
+	prompter interactive.Prompter
 }
 
 type AuthConnectionCreateInput struct {
@@ -491,9 +493,13 @@ func (c AuthConnectionCmd) List(ctx context.Context, in AuthConnectionListInput)
 
 func (c AuthConnectionCmd) Delete(ctx context.Context, in AuthConnectionDeleteInput) error {
 	if !in.SkipConfirm {
-		msg := fmt.Sprintf("Are you sure you want to delete managed auth '%s'?", in.ID)
-		pterm.DefaultInteractiveConfirm.DefaultText = msg
-		ok, _ := pterm.DefaultInteractiveConfirm.Show()
+		ok, err := c.prompter.Confirm(
+			fmt.Sprintf("delete managed auth '%s'", in.ID),
+			fmt.Sprintf("Are you sure you want to delete managed auth '%s'?", in.ID),
+		)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			pterm.Info.Println("Deletion cancelled")
 			return nil
