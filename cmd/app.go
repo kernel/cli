@@ -257,12 +257,13 @@ func runAppDelete(cmd *cobra.Command, args []string) error {
 		if version != "" {
 			scope = fmt.Sprintf("version '%s'", version)
 		}
-		if !interactive.IsInteractive() {
-			return interactive.ErrConfirmationRequired(fmt.Sprintf("delete all deployments for app '%s' (%s)", appName, scope))
+		ok, err := interactive.Confirm(
+			fmt.Sprintf("delete all deployments for app '%s' (%s)", appName, scope),
+			fmt.Sprintf("Delete all deployments for app '%s' (%s)? This cannot be undone.", appName, scope),
+		)
+		if err != nil {
+			return err
 		}
-		msg := fmt.Sprintf("Delete all deployments for app '%s' (%s)? This cannot be undone.", appName, scope)
-		pterm.DefaultInteractiveConfirm.DefaultText = msg
-		ok, _ := pterm.DefaultInteractiveConfirm.Show()
 		if !ok {
 			pterm.Info.Println("Deletion cancelled")
 			return nil

@@ -282,12 +282,13 @@ func (c CredentialsCmd) Update(ctx context.Context, in CredentialsUpdateInput) e
 
 func (c CredentialsCmd) Delete(ctx context.Context, in CredentialsDeleteInput) error {
 	if !in.SkipConfirm {
-		if !interactive.IsInteractive() {
-			return interactive.ErrConfirmationRequired(fmt.Sprintf("delete credential '%s'", in.Identifier))
+		ok, err := interactive.Confirm(
+			fmt.Sprintf("delete credential '%s'", in.Identifier),
+			fmt.Sprintf("Are you sure you want to delete credential '%s'?", in.Identifier),
+		)
+		if err != nil {
+			return err
 		}
-		msg := fmt.Sprintf("Are you sure you want to delete credential '%s'?", in.Identifier)
-		pterm.DefaultInteractiveConfirm.DefaultText = msg
-		ok, _ := pterm.DefaultInteractiveConfirm.Show()
 		if !ok {
 			pterm.Info.Println("Deletion cancelled")
 			return nil

@@ -228,12 +228,13 @@ func (p ProfilesCmd) Delete(ctx context.Context, in ProfilesDeleteInput) error {
 	}
 
 	if !in.SkipConfirm {
-		if !interactive.IsInteractive() {
-			return interactive.ErrConfirmationRequired(fmt.Sprintf("delete profile '%s'", in.Identifier))
+		ok, err := interactive.Confirm(
+			fmt.Sprintf("delete profile '%s'", in.Identifier),
+			fmt.Sprintf("Are you sure you want to delete profile '%s'?", in.Identifier),
+		)
+		if err != nil {
+			return err
 		}
-		msg := fmt.Sprintf("Are you sure you want to delete profile '%s'?", in.Identifier)
-		pterm.DefaultInteractiveConfirm.DefaultText = msg
-		ok, _ := pterm.DefaultInteractiveConfirm.Show()
 		if !ok {
 			pterm.Info.Println("Deletion cancelled")
 			return nil

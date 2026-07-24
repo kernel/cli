@@ -492,12 +492,13 @@ func (c AuthConnectionCmd) List(ctx context.Context, in AuthConnectionListInput)
 
 func (c AuthConnectionCmd) Delete(ctx context.Context, in AuthConnectionDeleteInput) error {
 	if !in.SkipConfirm {
-		if !interactive.IsInteractive() {
-			return interactive.ErrConfirmationRequired(fmt.Sprintf("delete managed auth '%s'", in.ID))
+		ok, err := interactive.Confirm(
+			fmt.Sprintf("delete managed auth '%s'", in.ID),
+			fmt.Sprintf("Are you sure you want to delete managed auth '%s'?", in.ID),
+		)
+		if err != nil {
+			return err
 		}
-		msg := fmt.Sprintf("Are you sure you want to delete managed auth '%s'?", in.ID)
-		pterm.DefaultInteractiveConfirm.DefaultText = msg
-		ok, _ := pterm.DefaultInteractiveConfirm.Show()
 		if !ok {
 			pterm.Info.Println("Deletion cancelled")
 			return nil

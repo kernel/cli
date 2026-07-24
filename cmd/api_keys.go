@@ -182,12 +182,13 @@ func (c APIKeysCmd) Update(ctx context.Context, in APIKeysUpdateInput) error {
 
 func (c APIKeysCmd) Delete(ctx context.Context, in APIKeysDeleteInput) error {
 	if !in.SkipConfirm {
-		if !interactive.IsInteractive() {
-			return interactive.ErrConfirmationRequired(fmt.Sprintf("delete API key '%s'", in.ID))
+		ok, err := interactive.Confirm(
+			fmt.Sprintf("delete API key '%s'", in.ID),
+			fmt.Sprintf("Are you sure you want to delete API key '%s'?", in.ID),
+		)
+		if err != nil {
+			return err
 		}
-		msg := fmt.Sprintf("Are you sure you want to delete API key '%s'?", in.ID)
-		pterm.DefaultInteractiveConfirm.DefaultText = msg
-		ok, _ := pterm.DefaultInteractiveConfirm.Show()
 		if !ok {
 			pterm.Info.Println("Deletion cancelled")
 			return nil

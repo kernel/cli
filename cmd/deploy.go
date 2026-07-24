@@ -389,12 +389,13 @@ func runDeployDelete(cmd *cobra.Command, args []string) error {
 	skipConfirm, _ := cmd.Flags().GetBool("yes")
 
 	if !skipConfirm {
-		if !interactive.IsInteractive() {
-			return interactive.ErrConfirmationRequired(fmt.Sprintf("delete deployment '%s'", deploymentID))
+		ok, err := interactive.Confirm(
+			fmt.Sprintf("delete deployment '%s'", deploymentID),
+			fmt.Sprintf("Are you sure you want to delete deployment '%s'? This cannot be undone.", deploymentID),
+		)
+		if err != nil {
+			return err
 		}
-		msg := fmt.Sprintf("Are you sure you want to delete deployment '%s'? This cannot be undone.", deploymentID)
-		pterm.DefaultInteractiveConfirm.DefaultText = msg
-		ok, _ := pterm.DefaultInteractiveConfirm.Show()
 		if !ok {
 			pterm.Info.Println("Deletion cancelled")
 			return nil

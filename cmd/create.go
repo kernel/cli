@@ -24,10 +24,12 @@ func (c CreateCmd) Create(ctx context.Context, ci create.CreateInput) error {
 		return fmt.Errorf("failed to resolve app path: %w", err)
 	}
 
-	// Check if directory already exists and prompt for overwrite
+	// Check if directory already exists and prompt for overwrite. This is a
+	// backstop for direct callers; runCreateApp resolves the overwrite
+	// confirmation before calling Create.
 	if _, err := os.Stat(appPath); err == nil {
 		if !ci.SkipConfirm {
-			overwrite, err := create.PromptForOverwrite(ci.Name)
+			overwrite, err := create.PromptOverwrite(ci.Name)
 			if err != nil {
 				return err
 			}
@@ -153,36 +155,59 @@ func runCreateApp(cmd *cobra.Command, args []string) error {
 
 	c := CreateCmd{}
 
-	// In a non-interactive shell, validate every input up front so a single
-	// error reports everything the caller must fix, instead of failing on one
-	// missing input per invocation.
-	if !interactive.IsInteractive() {
-		in, err := create.ValidateNonInteractive(appName, language, template, skipConfirm)
-		if err != nil {
-			return err
+	// create.ResolveInput is the single resolver from raw flags to a
+	// normalized CreateInput for both modes. Interactively, each remaining
+	// problem is resolved by prompting for that field and re-resolving (so
+	// e.g. the template list reflects the chosen language). Non-interactively,
+	// every problem is reported at once in a single fail-fast error.
+	for {
+		in, problems := create.ResolveInput(appName, language, template, skipConfirm)
+		if len(problems) == 0 {
+			return c.Create(cmd.Context(), in)
 		}
-		return c.Create(cmd.Context(), in)
-	}
+		if !interactive.IsInteractive() {
+			return interactive.ErrInputsRequired(create.ProblemMessages(problems))
+		}
 
-	appName, err := create.PromptForAppName(appName)
-	if err != nil {
-		return err
+		p := problems[0]
+		switch p.Field {
+		case create.FieldName:
+			if appName != "" {
+				pterm.Warning.Println(p.Message)
+			}
+			v, err := create.PromptName()
+			if err != nil {
+				return err
+			}
+			appName = v
+		case create.FieldLanguage:
+			if language != "" {
+				pterm.Warning.Println(p.Message)
+			}
+			v, err := create.PromptLanguage()
+			if err != nil {
+				return err
+			}
+			language = v
+		case create.FieldTemplate:
+			if template != "" {
+				pterm.Warning.Println(p.Message)
+			}
+			v, err := create.PromptTemplate(in.Language)
+			if err != nil {
+				return err
+			}
+			template = v
+		case create.FieldOverwrite:
+			ok, err := create.PromptOverwrite(appName)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				pterm.Warning.Println("Operation cancelled.")
+				return nil
+			}
+			skipConfirm = true
+		}
 	}
-
-	language, err = create.PromptForLanguage(language)
-	if err != nil {
-		return err
-	}
-
-	template, err = create.PromptForTemplate(template, language)
-	if err != nil {
-		return err
-	}
-
-	return c.Create(cmd.Context(), create.CreateInput{
-		Name:        appName,
-		Language:    language,
-		Template:    template,
-		SkipConfirm: skipConfirm,
-	})
 }

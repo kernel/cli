@@ -9,12 +9,14 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/fang"
 	"github.com/charmbracelet/lipgloss/v2"
 	"github.com/kernel/cli/cmd/mcp"
 	"github.com/kernel/cli/cmd/proxies"
 	"github.com/kernel/cli/pkg/auth"
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/table"
 	"github.com/kernel/cli/pkg/update"
 	"github.com/kernel/cli/pkg/util"
@@ -239,7 +241,19 @@ func Execute(m Metadata) {
 			defer func() {
 				pterm.Error.Writer = oldErrorWriter
 			}()
-			pterm.Error.Println(errorTextStyle.Render(strings.TrimSpace(err.Error())))
+			// Fail-fast interactivity errors render one problem per line.
+			// The default ErrorText style must not apply: its width-based
+			// word-wrap splits flag tokens like --template across lines, and
+			// its transform (strings.Fields + Join) collapses the newlines
+			// between problems.
+			msg := strings.TrimSpace(err.Error())
+			style := errorTextStyle
+			var promptErr *interactive.PromptError
+			if errors.As(err, &promptErr) {
+				msg = capitalizeFirst(promptErr.Display())
+				style = style.UnsetWidth().UnsetTransform()
+			}
+			pterm.Error.Println(style.Render(msg))
 			if isUsageError(err) {
 				fmt.Fprintln(w)
 				fmt.Fprintln(w, lipgloss.JoinHorizontal(
@@ -259,6 +273,18 @@ func Execute(m Metadata) {
 // isUsageError is a hack to detect usage errors.
 // See: https://github.com/spf13/cobra/pull/2266
 // from github.com/charmbracelet/fang/help.go
+// capitalizeFirst uppercases the first letter of s, matching the visual
+// convention of fang's default error transform (which we bypass for
+// interactive.PromptError to preserve newlines and flag tokens).
+func capitalizeFirst(s string) string {
+	r := []rune(s)
+	if len(r) == 0 {
+		return s
+	}
+	r[0] = unicode.ToUpper(r[0])
+	return string(r)
+}
+
 func isUsageError(err error) bool {
 	s := err.Error()
 	for _, prefix := range []string{

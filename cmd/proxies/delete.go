@@ -13,6 +13,8 @@ import (
 func (p ProxyCmd) Delete(ctx context.Context, in ProxyDeleteInput) error {
 	if !in.SkipConfirm {
 		if !interactive.IsInteractive() {
+			// Fail fast before the proxy lookup below; the lookup only
+			// improves the prompt text.
 			return interactive.ErrConfirmationRequired(fmt.Sprintf("delete proxy '%s'", in.ID))
 		}
 		// Try to get the proxy details for better confirmation message
@@ -32,8 +34,10 @@ func (p ProxyCmd) Delete(ctx context.Context, in ProxyDeleteInput) error {
 			confirmMsg = fmt.Sprintf("Are you sure you want to delete proxy '%s'?", in.ID)
 		}
 
-		pterm.DefaultInteractiveConfirm.DefaultText = confirmMsg
-		result, _ := pterm.DefaultInteractiveConfirm.Show()
+		result, err := interactive.Confirm(fmt.Sprintf("delete proxy '%s'", in.ID), confirmMsg)
+		if err != nil {
+			return err
+		}
 		if !result {
 			pterm.Info.Println("Deletion cancelled")
 			return nil

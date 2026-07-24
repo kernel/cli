@@ -1,11 +1,13 @@
-// Package interactive reports whether the CLI can show interactive prompts
-// and builds the fail-fast errors used when it cannot.
+// Package interactive owns every interactive prompt in the CLI: it detects
+// whether stdin is attached to a terminal, executes pterm confirm/select/text
+// prompts when it is, and fails fast with actionable errors when it is not.
 //
-// Interactive prompts (pterm confirm/select/text input) read keystrokes from
-// the terminal. In a non-interactive shell — an AI agent's bash tool, CI, or
-// any piped stdin — they never return (the underlying keyboard listener spins
-// forever), so every prompt call site must gate on IsInteractive first and
-// fail fast with instructions for avoiding the prompt.
+// Interactive prompts read keystrokes from the terminal. In a non-interactive
+// shell — an AI agent's bash tool, CI, or any piped stdin — they never return
+// (the underlying keyboard listener spins forever), so prompt execution is
+// centralized here behind the TTY gate. Command code must call Confirm,
+// Select, and TextInput instead of pterm's interactive printers; no direct
+// pterm interactive calls should exist outside this package.
 package interactive
 
 import (
@@ -13,13 +15,79 @@ import (
 	"os"
 	"strings"
 
+	"github.com/pterm/pterm"
 	"golang.org/x/term"
 )
+
+// terminalCheck reports whether the given file is attached to a terminal. It
+// is a package variable so tests can inject a fake terminal capability
+// instead of relying on the ambient stdin of the test harness.
+var terminalCheck = func(f *os.File) bool {
+	return term.IsTerminal(int(f.Fd()))
+}
 
 // IsInteractive reports whether stdin is attached to a terminal, i.e. whether
 // interactive prompts can be shown.
 func IsInteractive() bool {
-	return term.IsTerminal(int(os.Stdin.Fd()))
+	return terminalCheck(os.Stdin)
+}
+
+// ForceTerminal overrides terminal detection for tests, making IsInteractive
+// report isTTY regardless of the ambient stdin. It returns a function that
+// restores the previous behavior; callers should register it with t.Cleanup.
+func ForceTerminal(isTTY bool) (restore func()) {
+	prev := terminalCheck
+	terminalCheck = func(*os.File) bool { return isTTY }
+	return func() { terminalCheck = prev }
+}
+
+// PromptError is returned instead of showing an interactive prompt when
+// stdin is not a terminal. It carries every problem the caller must fix so a
+// single retry can succeed. The CLI's top-level error handler renders it via
+// Display without width-based re-wrapping, so flag tokens such as --yes or
+// --template are never split across lines.
+type PromptError struct {
+	// What names what would have been prompted for, e.g. "input" or
+	// "confirmation to delete profile 'foo'".
+	What string
+	// Problems lists the fixes, e.g. "--name is required" or "re-run with
+	// --yes to skip the confirmation prompt". Always at least one entry.
+	Problems []string
+}
+
+// Error renders the problems inline on a single line, following the Go
+// convention that error strings do not contain newlines.
+func (e *PromptError) Error() string {
+	header := fmt.Sprintf("cannot prompt for %s: stdin is not an interactive terminal", e.What)
+	if len(e.Problems) == 1 {
+		return header + "; " + e.Problems[0]
+	}
+	var b strings.Builder
+	b.WriteString(header)
+	b.WriteString("; fix all of the following and re-run:")
+	for i, p := range e.Problems {
+		if i > 0 {
+			b.WriteString(";")
+		}
+		fmt.Fprintf(&b, " (%d) %s", i+1, p)
+	}
+	return b.String()
+}
+
+// Display renders the problems for terminal output, one per line, so each
+// fix instruction stays an intact, greppable token sequence regardless of
+// terminal width.
+func (e *PromptError) Display() string {
+	if len(e.Problems) == 1 {
+		return e.Error()
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "cannot prompt for %s: stdin is not an interactive terminal; fix all of the following and re-run:", e.What)
+	for _, p := range e.Problems {
+		b.WriteString("\n  - ")
+		b.WriteString(p)
+	}
+	return b.String()
 }
 
 // ErrConfirmationRequired builds the fail-fast error for confirmation
@@ -27,15 +95,18 @@ func IsInteractive() bool {
 // "delete profile 'foo'". The resulting error tells the caller (often an AI
 // agent) to re-run with --yes.
 func ErrConfirmationRequired(action string) error {
-	return fmt.Errorf("cannot prompt for confirmation to %s: stdin is not an interactive terminal; re-run with --yes to skip the confirmation prompt", action)
+	return &PromptError{
+		What:     "confirmation to " + action,
+		Problems: []string{"re-run with --yes to skip the confirmation prompt"},
+	}
 }
 
-// ErrInputRequired builds the fail-fast error for text/select prompts. what
-// describes the input that would have been prompted for, e.g. "app name";
-// hint names the flag(s) to pass instead, e.g. "pass --name to set the app
-// name".
+// ErrInputRequired builds the fail-fast error for a single text/select
+// prompt. what describes the input that would have been prompted for, e.g.
+// "app name"; hint names the flag(s) to pass instead, e.g. "pass --name to
+// set the app name".
 func ErrInputRequired(what, hint string) error {
-	return fmt.Errorf("cannot prompt for %s: stdin is not an interactive terminal; %s", what, hint)
+	return &PromptError{What: what, Problems: []string{hint}}
 }
 
 // ErrInputsRequired builds the fail-fast error for one or more missing or
@@ -43,24 +114,48 @@ func ErrInputRequired(what, hint string) error {
 // them all up front and report every problem in a single error, so a
 // non-interactive caller can fix everything in one retry instead of
 // discovering problems one invocation at a time.
-//
-// Problems are numbered inline — "(1) ...; (2) ..." — rather than
-// newline-separated because the CLI error renderer reflows text and would
-// collapse line breaks anyway.
 func ErrInputsRequired(problems []string) error {
-	switch len(problems) {
-	case 0:
+	if len(problems) == 0 {
 		return nil
-	case 1:
-		return fmt.Errorf("cannot prompt for input: stdin is not an interactive terminal; %s", problems[0])
-	default:
-		var b strings.Builder
-		for i, p := range problems {
-			if i > 0 {
-				b.WriteString("; ")
-			}
-			fmt.Fprintf(&b, "(%d) %s", i+1, p)
-		}
-		return fmt.Errorf("cannot prompt for input: stdin is not an interactive terminal; fix all of the following and re-run: %s", b.String())
 	}
+	return &PromptError{What: "input", Problems: problems}
+}
+
+// Confirm shows a yes/no confirmation prompt with the given prompt text and
+// reports the choice. In a non-interactive shell it fails fast with
+// ErrConfirmationRequired(action) instead of prompting.
+func Confirm(action, promptText string) (bool, error) {
+	if !IsInteractive() {
+		return false, ErrConfirmationRequired(action)
+	}
+	return pterm.DefaultInteractiveConfirm.
+		WithDefaultText(promptText).
+		WithDefaultValue(false).
+		Show()
+}
+
+// Select shows a select prompt over options and returns the chosen option.
+// In a non-interactive shell it fails fast with ErrInputRequired(what, hint)
+// instead of prompting.
+func Select(what, hint, promptText string, options []string) (string, error) {
+	if !IsInteractive() {
+		return "", ErrInputRequired(what, hint)
+	}
+	return pterm.DefaultInteractiveSelect.
+		WithOptions(options).
+		WithDefaultText(promptText).
+		WithMaxHeight(len(options)).
+		Show()
+}
+
+// TextInput shows a free-text prompt and returns the entered text. In a
+// non-interactive shell it fails fast with ErrInputRequired(what, hint)
+// instead of prompting.
+func TextInput(what, hint, promptText string) (string, error) {
+	if !IsInteractive() {
+		return "", ErrInputRequired(what, hint)
+	}
+	return pterm.DefaultInteractiveTextInput.
+		WithDefaultText(promptText).
+		Show()
 }

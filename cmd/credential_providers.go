@@ -255,12 +255,13 @@ func (c CredentialProvidersCmd) Update(ctx context.Context, in CredentialProvide
 
 func (c CredentialProvidersCmd) Delete(ctx context.Context, in CredentialProvidersDeleteInput) error {
 	if !in.SkipConfirm {
-		if !interactive.IsInteractive() {
-			return interactive.ErrConfirmationRequired(fmt.Sprintf("delete credential provider '%s'", in.ID))
+		ok, err := interactive.Confirm(
+			fmt.Sprintf("delete credential provider '%s'", in.ID),
+			fmt.Sprintf("Are you sure you want to delete credential provider '%s'?", in.ID),
+		)
+		if err != nil {
+			return err
 		}
-		msg := fmt.Sprintf("Are you sure you want to delete credential provider '%s'?", in.ID)
-		pterm.DefaultInteractiveConfirm.DefaultText = msg
-		ok, _ := pterm.DefaultInteractiveConfirm.Show()
 		if !ok {
 			pterm.Info.Println("Deletion cancelled")
 			return nil

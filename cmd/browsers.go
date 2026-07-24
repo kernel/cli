@@ -2868,10 +2868,13 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 			pterm.Info.Println("The conflicting flags will be ignored.")
 
 			if !skipConfirm {
-				if !interactive.IsInteractive() {
-					return interactive.ErrConfirmationRequired(fmt.Sprintf("ignore conflicting browser configuration flags (%s) and continue with %s", strings.Join(conflicts, ", "), flagLabel))
+				result, err := interactive.Confirm(
+					fmt.Sprintf("ignore conflicting browser configuration flags (%s) and continue with %s", strings.Join(conflicts, ", "), flagLabel),
+					"Continue with pool configuration?",
+				)
+				if err != nil {
+					return err
 				}
-				result, _ := pterm.DefaultInteractiveConfirm.Show("Continue with pool configuration?")
 				if !result {
 					pterm.Info.Println("Cancelled. Remove conflicting flags or omit the pool flag.")
 					return nil
@@ -2920,20 +2923,17 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 
 	// Handle interactive viewport selection
 	if viewportInteractive {
-		if !interactive.IsInteractive() {
-			return interactive.ErrInputRequired("viewport selection", "pass --viewport instead of --viewport-interactive (e.g. --viewport 1920x1080@25)")
-		}
-		if viewport != "" {
+		if viewport != "" && interactive.IsInteractive() {
 			pterm.Warning.Println("Both --viewport and --viewport-interactive specified; using interactive mode")
 		}
-		options := getAvailableViewports()
-		selectedViewport, err := pterm.DefaultInteractiveSelect.
-			WithOptions(options).
-			WithDefaultText("Select a viewport size:").
-			Show()
+		selectedViewport, err := interactive.Select(
+			"viewport selection",
+			"pass --viewport instead of --viewport-interactive (e.g. --viewport 1920x1080@25)",
+			"Select a viewport size:",
+			getAvailableViewports(),
+		)
 		if err != nil {
-			pterm.Error.Printf("Failed to select viewport: %v\n", err)
-			return nil
+			return err
 		}
 		viewport = selectedViewport
 	}

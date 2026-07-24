@@ -185,12 +185,13 @@ func (e ExtensionsCmd) Delete(ctx context.Context, in ExtensionsDeleteInput) err
 	}
 
 	if !in.SkipConfirm {
-		if !interactive.IsInteractive() {
-			return interactive.ErrConfirmationRequired(fmt.Sprintf("delete extension '%s'", in.Identifier))
+		ok, err := interactive.Confirm(
+			fmt.Sprintf("delete extension '%s'", in.Identifier),
+			fmt.Sprintf("Are you sure you want to delete extension '%s'?", in.Identifier),
+		)
+		if err != nil {
+			return err
 		}
-		msg := fmt.Sprintf("Are you sure you want to delete extension '%s'?", in.Identifier)
-		pterm.DefaultInteractiveConfirm.DefaultText = msg
-		ok, _ := pterm.DefaultInteractiveConfirm.Show()
 		if !ok {
 			pterm.Info.Println("Deletion cancelled")
 			return nil
