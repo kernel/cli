@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/table"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
@@ -2713,6 +2714,7 @@ func init() {
 	browsersCreateCmd.Flags().String("telemetry", "", "Configure telemetry (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
 	browsersCreateCmd.Flags().String("name", "", "Optional unique name for the browser session (used to find it later; can be changed with 'browsers update --name')")
 	browsersCreateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the session (repeatable; up to 50 pairs)")
+	browsersCreateCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts")
 	browsersCreateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
 	browsersCreateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
 	browsersCreateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
@@ -2803,6 +2805,7 @@ func poolLeaseAllowedFlags() map[string]bool {
 		"tag":       true,
 		"telemetry": true,
 		"output":    true,
+		"yes":       true,
 		// Global persistent flags that don't configure browsers
 		"no-color":  true,
 		"log-level": true,
@@ -2835,6 +2838,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
 	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
 	output, _ := cmd.Flags().GetString("output")
+	skipConfirm, _ := cmd.Flags().GetBool("yes")
 
 	if poolID != "" && poolName != "" {
 		pterm.Error.Println("must specify at most one of --pool-id or --pool-name")
@@ -2863,10 +2867,15 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 			pterm.Info.Println("When using a pool, all browser configuration comes from the pool itself.")
 			pterm.Info.Println("The conflicting flags will be ignored.")
 
-			result, _ := pterm.DefaultInteractiveConfirm.Show("Continue with pool configuration?")
-			if !result {
-				pterm.Info.Println("Cancelled. Remove conflicting flags or omit the pool flag.")
-				return nil
+			if !skipConfirm {
+				if !interactive.IsInteractive() {
+					return interactive.ErrConfirmationRequired(fmt.Sprintf("ignore conflicting browser configuration flags (%s) and continue with %s", strings.Join(conflicts, ", "), flagLabel))
+				}
+				result, _ := pterm.DefaultInteractiveConfirm.Show("Continue with pool configuration?")
+				if !result {
+					pterm.Info.Println("Cancelled. Remove conflicting flags or omit the pool flag.")
+					return nil
+				}
 			}
 			pterm.Success.Println("Proceeding with pool configuration...")
 		}
@@ -2911,6 +2920,9 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 
 	// Handle interactive viewport selection
 	if viewportInteractive {
+		if !interactive.IsInteractive() {
+			return interactive.ErrInputRequired("viewport selection", "pass --viewport instead of --viewport-interactive (e.g. --viewport 1920x1080@25)")
+		}
 		if viewport != "" {
 			pterm.Warning.Println("Both --viewport and --viewport-interactive specified; using interactive mode")
 		}
