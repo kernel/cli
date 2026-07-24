@@ -763,3 +763,38 @@ func TestGet_ShowsCanonicalFieldsAndChoices(t *testing.T) {
 	assert.Contains(t, out, "ref=email")
 	assert.Contains(t, out, "choice_sms")
 }
+
+func TestAuthConnectionsGet_TelemetryEnabledWithoutCategories(t *testing.T) {
+	setupStdoutCapture(t)
+	// The API preserves the create-browser config verbatim, so an enabled
+	// connection can come back as {"enabled": true} with no category object.
+	// Rendering that as "disabled" would invert the connection's real state.
+	fake := &FakeAuthConnectionService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			var auth kernel.ManagedAuth
+			require.NoError(t, json.Unmarshal([]byte(`{"id":"conn-1","browser_telemetry":{"enabled":true}}`), &auth))
+			return &auth, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+
+	require.NoError(t, c.Get(context.Background(), AuthConnectionGetInput{ID: "conn-1"}))
+	assert.Contains(t, outBuf.String(), "enabled (default categories)")
+}
+
+func TestAuthConnectionsGet_TelemetryRowOmittedWhenOff(t *testing.T) {
+	setupStdoutCapture(t)
+	// Telemetry that is off is not reported at all, rather than shown as a
+	// "disabled" row alongside the connection's real settings.
+	fake := &FakeAuthConnectionService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			var auth kernel.ManagedAuth
+			require.NoError(t, json.Unmarshal([]byte(`{"id":"conn-1","browser_telemetry":{"enabled":false}}`), &auth))
+			return &auth, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+
+	require.NoError(t, c.Get(context.Background(), AuthConnectionGetInput{ID: "conn-1"}))
+	assert.NotContains(t, outBuf.String(), "Browser Telemetry")
+}

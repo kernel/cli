@@ -1688,7 +1688,9 @@ func (b BrowsersCmd) ProcessSpawn(ctx context.Context, in BrowsersProcessSpawnIn
 	}
 	if in.Cols > 0 || in.Rows > 0 {
 		if !in.AllocateTTY.Set || !in.AllocateTTY.Value {
-			return fmt.Errorf("--cols and --rows require --allocate-tty")
+			// Phrased to lead with a word, not a flag: the error renderer
+			// uppercases the first letter, which would print "--Cols".
+			return fmt.Errorf("setting --cols or --rows requires --allocate-tty")
 		}
 		if in.Cols > 0 {
 			params.Cols = kernel.Opt(in.Cols)
@@ -2550,6 +2552,7 @@ func init() {
 	procExec.Flags().Int("timeout", 0, "Timeout in seconds")
 	procExec.Flags().String("as-user", "", "Run as user")
 	procExec.Flags().Bool("as-root", false, "Run as root")
+	procExec.Flags().StringArray("env", []string{}, "Environment variable to set for the process as KEY=VALUE (repeatable)")
 	addJSONOutputFlag(procExec)
 	procSpawn := &cobra.Command{Use: "spawn <id> [--] [command...]", Short: "Execute a command asynchronously", Args: cobra.MinimumNArgs(1), RunE: runBrowsersProcessSpawn}
 	procSpawn.Flags().String("command", "", "Command to execute (optional; if omitted, trailing args are executed via /bin/bash -c)")
@@ -2558,6 +2561,10 @@ func init() {
 	procSpawn.Flags().Int("timeout", 0, "Timeout in seconds")
 	procSpawn.Flags().String("as-user", "", "Run as user")
 	procSpawn.Flags().Bool("as-root", false, "Run as root")
+	procSpawn.Flags().Bool("allocate-tty", false, "Allocate a pseudo-terminal (PTY) for interactive shells")
+	procSpawn.Flags().Int64("cols", 0, "Initial terminal columns (requires --allocate-tty)")
+	procSpawn.Flags().Int64("rows", 0, "Initial terminal rows (requires --allocate-tty)")
+	procSpawn.Flags().StringArray("env", []string{}, "Environment variable to set for the process as KEY=VALUE (repeatable)")
 	addJSONOutputFlag(procSpawn)
 	procKill := &cobra.Command{Use: "kill <id> <process-id>", Short: "Send a signal to a process", Args: cobra.ExactArgs(2), RunE: runBrowsersProcessKill}
 	procKill.Flags().String("signal", "TERM", "Signal to send (TERM, KILL, INT, HUP)")

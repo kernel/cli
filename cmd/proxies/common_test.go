@@ -42,6 +42,7 @@ type FakeProxyService struct {
 	GetFunc    func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ProxyGetResponse, error)
 	NewFunc    func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error)
 	DeleteFunc func(ctx context.Context, id string, opts ...option.RequestOption) error
+	UpdateFunc func(ctx context.Context, id string, body kernel.ProxyUpdateParams, opts ...option.RequestOption) (*kernel.ProxyUpdateResponse, error)
 	CheckFunc  func(ctx context.Context, id string, body kernel.ProxyCheckParams, opts ...option.RequestOption) (*kernel.ProxyCheckResponse, error)
 }
 
@@ -64,6 +65,13 @@ func (f *FakeProxyService) New(ctx context.Context, body kernel.ProxyNewParams, 
 		return f.NewFunc(ctx, body, opts...)
 	}
 	return &kernel.ProxyNewResponse{ID: "new-proxy", Type: kernel.ProxyNewResponseTypeDatacenter}, nil
+}
+
+func (f *FakeProxyService) Update(ctx context.Context, id string, body kernel.ProxyUpdateParams, opts ...option.RequestOption) (*kernel.ProxyUpdateResponse, error) {
+	if f.UpdateFunc != nil {
+		return f.UpdateFunc(ctx, id, body, opts...)
+	}
+	return &kernel.ProxyUpdateResponse{ID: id, Name: body.Name, Type: kernel.ProxyUpdateResponseTypeDatacenter}, nil
 }
 
 func (f *FakeProxyService) Delete(ctx context.Context, id string, opts ...option.RequestOption) error {

@@ -56,6 +56,14 @@ Examples:
 	RunE: runProxiesCreate,
 }
 
+var proxiesUpdateCmd = &cobra.Command{
+	Use:   "update <id>",
+	Short: "Rename a proxy configuration",
+	Long:  "Rename a proxy configuration. Only the name can be changed; recreate the proxy to change its type or config.",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runProxiesUpdate,
+}
+
 var proxiesDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete a proxy configuration",
@@ -76,6 +84,7 @@ func init() {
 	ProxiesCmd.AddCommand(proxiesListCmd)
 	ProxiesCmd.AddCommand(proxiesGetCmd)
 	ProxiesCmd.AddCommand(proxiesCreateCmd)
+	ProxiesCmd.AddCommand(proxiesUpdateCmd)
 	ProxiesCmd.AddCommand(proxiesDeleteCmd)
 	ProxiesCmd.AddCommand(proxiesCheckCmd)
 
@@ -108,6 +117,11 @@ func init() {
 	proxiesCreateCmd.Flags().String("username", "", "Username for proxy authentication")
 	proxiesCreateCmd.Flags().String("password", "", "Password for proxy authentication")
 	proxiesCreateCmd.Flags().StringSlice("bypass-host", nil, "Hostname(s) to bypass proxy and connect directly (repeat or comma-separated)")
+
+	// Update flags
+	addJSONOutputFlag(proxiesUpdateCmd)
+	proxiesUpdateCmd.Flags().String("name", "", "New proxy name (required)")
+	_ = proxiesUpdateCmd.MarkFlagRequired("name")
 
 	// Delete flags
 	proxiesDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")

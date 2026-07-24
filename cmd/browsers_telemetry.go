@@ -143,11 +143,16 @@ func buildAuthConnectionLoginTelemetryParam(s string) (kernel.AuthConnectionLogi
 // formatManagedAuthTelemetry renders an auth connection's default browser telemetry
 // config for the details table.
 func formatManagedAuthTelemetry(cfg kernel.ManagedAuthBrowserTelemetry) string {
-	on := telemetryEnabledCategories(kernel.BrowserTelemetryConfig{Browser: cfg.Browser})
-	if len(on) == 0 {
-		return "disabled"
+	if on := telemetryEnabledCategories(kernel.BrowserTelemetryConfig{Browser: cfg.Browser}); len(on) > 0 {
+		return strings.Join(on, ", ")
 	}
-	return strings.Join(on, ", ")
+	// The API preserves the create-browser config verbatim rather than resolving
+	// it, so `{"enabled": true}` with no per-category settings means the default
+	// set. Reporting that as "disabled" would invert the connection's state.
+	if cfg.Enabled {
+		return "enabled (default categories)"
+	}
+	return "disabled"
 }
 
 // settableCategories are the categories accepted by --telemetry=<categories>.
