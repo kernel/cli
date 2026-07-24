@@ -162,6 +162,26 @@ func parseViewport(viewport string) (width, height, refreshRate int64, err error
 	return w, h, refreshRate, nil
 }
 
+// parseStringMapFlag parses repeated KEY=value flag values into a map. It returns a nil
+// map when no values were given, so callers can distinguish "flag absent" from "flag set
+// to an empty map".
+func parseStringMapFlag(values []string, flagName string) (map[string]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+
+	parsed := make(map[string]string, len(values))
+	for _, pair := range values {
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid %s value: %s (expected KEY=value)", flagName, pair)
+		}
+		parsed[parts[0]] = parts[1]
+	}
+
+	return parsed, nil
+}
+
 // parseChromePolicy resolves the --chrome-policy / --chrome-policy-file inputs into a
 // custom Chrome enterprise policy object. The two inputs are mutually exclusive (enforced
 // by cobra); a file path of "-" reads stdin. It returns a nil map when neither input is
@@ -293,22 +313,23 @@ type BrowsersGetInput struct {
 }
 
 type BrowsersUpdateInput struct {
-	Identifier         string
-	ProxyID            string
-	ClearProxy         bool
-	ProfileID          string
-	ProfileName        string
-	ProfileSaveChanges BoolFlag
-	Viewport           string
-	Force              bool
-	Telemetry          string
-	Name               string
-	SetName            bool
-	ClearName          bool
-	Tags               map[string]string
-	TagsProvided       bool
-	ClearTags          bool
-	Output             string
+	Identifier          string
+	ProxyID             string
+	ClearProxy          bool
+	DisableDefaultProxy BoolFlag
+	ProfileID           string
+	ProfileName         string
+	ProfileSaveChanges  BoolFlag
+	Viewport            string
+	Force               bool
+	Telemetry           string
+	Name                string
+	SetName             bool
+	ClearName           bool
+	Tags                map[string]string
+	TagsProvided        bool
+	ClearTags           bool
+	Output              string
 }
 
 // BrowsersCmd is a cobra-independent command handler for browsers operations.
@@ -732,7 +753,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("--name requires a non-empty value; use --clear-name to clear the name")
 	}
 
-	hasProxyChange := in.ProxyID != "" || in.ClearProxy
+	hasProxyChange := in.ProxyID != "" || in.ClearProxy || in.DisableDefaultProxy.Set
 	hasProfileChange := in.ProfileID != "" || in.ProfileName != ""
 	hasViewportChange := in.Viewport != ""
 	// By this point a set name is guaranteed non-empty (the guard above rejects --name "").
@@ -751,7 +772,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 
 	// Validate that at least one update option is provided
 	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && !hasNameChange && !hasTagsChange {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --profile-id, --profile-name, --viewport, --telemetry, --name, --clear-name, --tag, or --clear-tags")
+		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --name, --clear-name, --tag, or --clear-tags")
 	}
 
 	params := kernel.BrowserUpdateParams{}
@@ -3063,22 +3084,23 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
 	return b.Update(cmd.Context(), BrowsersUpdateInput{
-		Identifier:         args[0],
-		ProxyID:            proxyID,
-		ClearProxy:         clearProxy,
-		ProfileID:          profileID,
-		ProfileName:        profileName,
-		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
-		Viewport:           viewport,
-		Force:              force,
-		Telemetry:          telemetry,
-		Name:               name,
-		SetName:            cmd.Flags().Changed("name"),
-		ClearName:          clearName,
-		Tags:               tags,
-		TagsProvided:       tagsProvided,
-		ClearTags:          clearTags,
-		Output:             out,
+		Identifier:          args[0],
+		ProxyID:             proxyID,
+		ClearProxy:          clearProxy,
+		DisableDefaultProxy: BoolFlag{Set: cmd.Flags().Changed("disable-default-proxy"), Value: disableDefaultProxy},
+		ProfileID:           profileID,
+		ProfileName:         profileName,
+		ProfileSaveChanges:  BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
+		Viewport:            viewport,
+		Force:               force,
+		Telemetry:           telemetry,
+		Name:                name,
+		SetName:             cmd.Flags().Changed("name"),
+		ClearName:           clearName,
+		Tags:                tags,
+		TagsProvided:        tagsProvided,
+		ClearTags:           clearTags,
+		Output:              out,
 	})
 }
 

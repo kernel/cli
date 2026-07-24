@@ -119,6 +119,37 @@ func buildUpdateTelemetryParam(s string) (kernel.BrowserUpdateParamsTelemetry, e
 	return kernel.BrowserUpdateParamsTelemetry{Enabled: enabled, Browser: browser}, err
 }
 
+// buildAuthConnectionCreateTelemetryParam converts a --telemetry flag value to the
+// browser telemetry default stored on a new auth connection.
+func buildAuthConnectionCreateTelemetryParam(s string) (kernel.ManagedAuthCreateRequestBrowserTelemetryParam, error) {
+	enabled, browser, err := resolveTelemetryFlag(s)
+	return kernel.ManagedAuthCreateRequestBrowserTelemetryParam{Enabled: enabled, Browser: browser}, err
+}
+
+// buildAuthConnectionUpdateTelemetryParam converts a --telemetry flag value to the
+// browser telemetry default for future sessions of an existing auth connection.
+func buildAuthConnectionUpdateTelemetryParam(s string) (kernel.ManagedAuthUpdateRequestBrowserTelemetryParam, error) {
+	enabled, browser, err := resolveTelemetryFlag(s)
+	return kernel.ManagedAuthUpdateRequestBrowserTelemetryParam{Enabled: enabled, Browser: browser}, err
+}
+
+// buildAuthConnectionLoginTelemetryParam converts a --telemetry flag value to the
+// per-login browser telemetry override.
+func buildAuthConnectionLoginTelemetryParam(s string) (kernel.AuthConnectionLoginParamsBrowserTelemetry, error) {
+	enabled, browser, err := resolveTelemetryFlag(s)
+	return kernel.AuthConnectionLoginParamsBrowserTelemetry{Enabled: enabled, Browser: browser}, err
+}
+
+// formatManagedAuthTelemetry renders an auth connection's default browser telemetry
+// config for the details table.
+func formatManagedAuthTelemetry(cfg kernel.ManagedAuthBrowserTelemetry) string {
+	on := telemetryEnabledCategories(kernel.BrowserTelemetryConfig{Browser: cfg.Browser})
+	if len(on) == 0 {
+		return "disabled"
+	}
+	return strings.Join(on, ", ")
+}
+
 // settableCategories are the categories accepted by --telemetry=<categories>.
 // The monitor category is not settable: it is collector-health metadata that
 // flows automatically whenever a CDP category is captured.

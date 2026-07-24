@@ -25,7 +25,15 @@ type FakeAuthConnectionService struct {
 	DeleteFunc          func(ctx context.Context, id string, opts ...option.RequestOption) error
 	LoginFunc           func(ctx context.Context, id string, body kernel.AuthConnectionLoginParams, opts ...option.RequestOption) (*kernel.LoginResponse, error)
 	SubmitFunc          func(ctx context.Context, id string, body kernel.AuthConnectionSubmitParams, opts ...option.RequestOption) (*kernel.SubmitFieldsResponse, error)
+	TimelineFunc        func(ctx context.Context, id string, query kernel.AuthConnectionTimelineParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ManagedAuthTimelineEvent], error)
 	FollowStreamingFunc func(ctx context.Context, id string, opts ...option.RequestOption) *ssestream.Stream[kernel.AuthConnectionFollowResponseUnion]
+}
+
+func (f *FakeAuthConnectionService) Timeline(ctx context.Context, id string, query kernel.AuthConnectionTimelineParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ManagedAuthTimelineEvent], error) {
+	if f.TimelineFunc != nil {
+		return f.TimelineFunc(ctx, id, query, opts...)
+	}
+	return &pagination.OffsetPagination[kernel.ManagedAuthTimelineEvent]{}, nil
 }
 
 func (f *FakeAuthConnectionService) New(ctx context.Context, body kernel.AuthConnectionNewParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
@@ -542,4 +550,216 @@ func TestSubmit_MfaOptionRejectsUnknown(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown MFA option")
 	assert.Contains(t, err.Error(), "carrier pigeon")
 	assert.Contains(t, err.Error(), "Get a text (sms)")
+}
+
+func TestCreate_TelemetryCategoriesOptIn(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.AuthConnectionNewParams
+	fake := &FakeAuthConnectionService{
+		NewFunc: func(ctx context.Context, body kernel.AuthConnectionNewParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			captured = body
+			return &kernel.ManagedAuth{ID: "auth_1"}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+	err := c.Create(context.Background(), AuthConnectionCreateInput{
+		Domain:      "example.com",
+		ProfileName: "prof",
+		Telemetry:   "console,network",
+	})
+	require.NoError(t, err)
+
+	tel := captured.ManagedAuthCreateRequest.BrowserTelemetry
+	assert.False(t, tel.Enabled.Valid())
+	assert.True(t, tel.Browser.Console.Enabled.Value)
+	assert.True(t, tel.Browser.Network.Enabled.Value)
+	assert.False(t, tel.Browser.Page.Enabled.Valid())
+}
+
+func TestCreate_TelemetryOff(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.AuthConnectionNewParams
+	fake := &FakeAuthConnectionService{
+		NewFunc: func(ctx context.Context, body kernel.AuthConnectionNewParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			captured = body
+			return &kernel.ManagedAuth{ID: "auth_1"}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+	require.NoError(t, c.Create(context.Background(), AuthConnectionCreateInput{
+		Domain: "example.com", ProfileName: "prof", Telemetry: "off",
+	}))
+
+	tel := captured.ManagedAuthCreateRequest.BrowserTelemetry
+	require.True(t, tel.Enabled.Valid())
+	assert.False(t, tel.Enabled.Value)
+}
+
+func TestCreate_TelemetryUnknownCategoryErrors(t *testing.T) {
+	capturePtermOutput(t)
+	c := AuthConnectionCmd{svc: &FakeAuthConnectionService{}}
+	err := c.Create(context.Background(), AuthConnectionCreateInput{
+		Domain: "example.com", ProfileName: "prof", Telemetry: "bogus",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown category")
+}
+
+func TestUpdate_TelemetryCountsAsChange(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.AuthConnectionUpdateParams
+	fake := &FakeAuthConnectionService{
+		UpdateFunc: func(ctx context.Context, id string, body kernel.AuthConnectionUpdateParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			captured = body
+			return &kernel.ManagedAuth{ID: id}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+	// --telemetry alone must satisfy the "at least one field" guard.
+	require.NoError(t, c.Update(context.Background(), AuthConnectionUpdateInput{ID: "auth_1", Telemetry: "all"}))
+
+	tel := captured.ManagedAuthUpdateRequest.BrowserTelemetry
+	require.True(t, tel.Enabled.Valid())
+	assert.True(t, tel.Enabled.Value)
+}
+
+func TestLogin_TelemetryOverride(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.AuthConnectionLoginParams
+	fake := &FakeAuthConnectionService{
+		LoginFunc: func(ctx context.Context, id string, body kernel.AuthConnectionLoginParams, opts ...option.RequestOption) (*kernel.LoginResponse, error) {
+			captured = body
+			return &kernel.LoginResponse{ID: id}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+	require.NoError(t, c.Login(context.Background(), AuthConnectionLoginInput{ID: "auth_1", Telemetry: "screenshot"}))
+	assert.True(t, captured.BrowserTelemetry.Browser.Screenshot.Enabled.Value)
+}
+
+func TestSubmit_CanonicalChoiceID(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.AuthConnectionSubmitParams
+	fake := &FakeAuthConnectionService{
+		SubmitFunc: func(ctx context.Context, id string, body kernel.AuthConnectionSubmitParams, opts ...option.RequestOption) (*kernel.SubmitFieldsResponse, error) {
+			captured = body
+			return &kernel.SubmitFieldsResponse{Accepted: true}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+	require.NoError(t, c.Submit(context.Background(), AuthConnectionSubmitInput{
+		ID:               "auth_1",
+		SelectedChoiceID: "choice_sms",
+	}))
+	require.True(t, captured.SubmitFieldsRequest.SelectedChoiceID.Valid())
+	assert.Equal(t, "choice_sms", captured.SubmitFieldsRequest.SelectedChoiceID.Value)
+	// Legacy fields must stay absent so the API sees exactly one submit mode.
+	assert.Nil(t, captured.SubmitFieldsRequest.Fields)
+}
+
+func TestSubmit_CanonicalFieldValues(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.AuthConnectionSubmitParams
+	fake := &FakeAuthConnectionService{
+		SubmitFunc: func(ctx context.Context, id string, body kernel.AuthConnectionSubmitParams, opts ...option.RequestOption) (*kernel.SubmitFieldsResponse, error) {
+			captured = body
+			return &kernel.SubmitFieldsResponse{Accepted: true}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+	require.NoError(t, c.Submit(context.Background(), AuthConnectionSubmitInput{
+		ID:                   "auth_1",
+		CanonicalFieldValues: map[string]string{"field_email": "me@example.com"},
+	}))
+	assert.Equal(t, map[string]string{"field_email": "me@example.com"}, captured.SubmitFieldsRequest.FieldValues)
+	assert.Nil(t, captured.SubmitFieldsRequest.Fields)
+}
+
+func TestSubmit_CanonicalAndLegacyAreMutuallyExclusive(t *testing.T) {
+	capturePtermOutput(t)
+	c := AuthConnectionCmd{svc: &FakeAuthConnectionService{}}
+	err := c.Submit(context.Background(), AuthConnectionSubmitInput{
+		ID:                   "auth_1",
+		FieldValues:          map[string]string{"email": "a@b.com"},
+		CanonicalFieldValues: map[string]string{"field_email": "a@b.com"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "provide exactly one of")
+}
+
+func TestTimeline_RendersEventsAndPagination(t *testing.T) {
+	buf := capturePtermOutput(t)
+	var captured kernel.AuthConnectionTimelineParams
+	fake := &FakeAuthConnectionService{
+		TimelineFunc: func(ctx context.Context, id string, query kernel.AuthConnectionTimelineParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ManagedAuthTimelineEvent], error) {
+			captured = query
+			// Return perPage+1 events so the CLI reports another page exists.
+			return &pagination.OffsetPagination[kernel.ManagedAuthTimelineEvent]{
+				Items: []kernel.ManagedAuthTimelineEvent{
+					{ID: "e1", Type: "login", Status: "SUCCESS", BrowserSessionID: "browser_1"},
+					{ID: "e2", Type: "reauth", Status: "FAILED", ErrorMessage: "boom"},
+					{ID: "e3", Type: "health_check", Status: "SUCCESS"},
+				},
+			}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+	require.NoError(t, c.Timeline(context.Background(), AuthConnectionTimelineInput{ID: "auth_1", Page: 1, PerPage: 2}))
+
+	// The +1 trick: request one more than a page to detect hasMore.
+	require.True(t, captured.Limit.Valid())
+	assert.Equal(t, int64(3), captured.Limit.Value)
+	assert.Equal(t, int64(0), captured.Offset.Value)
+
+	out := buf.String()
+	assert.Contains(t, out, "browser_1")
+	assert.Contains(t, out, "boom")
+	// The third event is truncated off the page.
+	assert.NotContains(t, out, "health_check")
+	assert.Contains(t, out, "Has more: yes")
+	assert.Contains(t, out, "kernel auth connections timeline auth_1 --page 2 --per-page 2")
+}
+
+func TestTimeline_TypeFilterValidated(t *testing.T) {
+	capturePtermOutput(t)
+	c := AuthConnectionCmd{svc: &FakeAuthConnectionService{}}
+	err := c.Timeline(context.Background(), AuthConnectionTimelineInput{ID: "auth_1", Type: "bogus"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid --type")
+
+	var captured kernel.AuthConnectionTimelineParams
+	fake := &FakeAuthConnectionService{
+		TimelineFunc: func(ctx context.Context, id string, query kernel.AuthConnectionTimelineParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ManagedAuthTimelineEvent], error) {
+			captured = query
+			return &pagination.OffsetPagination[kernel.ManagedAuthTimelineEvent]{}, nil
+		},
+	}
+	c = AuthConnectionCmd{svc: fake}
+	require.NoError(t, c.Timeline(context.Background(), AuthConnectionTimelineInput{ID: "auth_1", Type: "health_check"}))
+	assert.Equal(t, kernel.AuthConnectionTimelineParamsTypeHealthCheck, captured.Type)
+}
+
+func TestGet_ShowsCanonicalFieldsAndChoices(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fake := &FakeAuthConnectionService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			return &kernel.ManagedAuth{
+				ID:     id,
+				Domain: "example.com",
+				Fields: []kernel.ManagedAuthField{
+					{ID: "field_email", Ref: "email", Type: "identifier", Label: "Email", Required: true},
+				},
+				Choices: []kernel.ManagedAuthChoice{
+					{ID: "choice_sms", Label: "Text me", Type: "mfa_method"},
+				},
+			}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+	require.NoError(t, c.Get(context.Background(), AuthConnectionGetInput{ID: "auth_1"}))
+
+	out := buf.String()
+	assert.Contains(t, out, "field_email")
+	assert.Contains(t, out, "ref=email")
+	assert.Contains(t, out, "choice_sms")
 }

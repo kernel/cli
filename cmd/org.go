@@ -1,0 +1,173 @@
+package cmd
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/kernel/cli/pkg/util"
+	"github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/param"
+	"github.com/pterm/pterm"
+	"github.com/spf13/cobra"
+)
+
+// OrgLimitsService defines the subset of the Kernel SDK organization limits client that we use.
+type OrgLimitsService interface {
+	Get(ctx context.Context, opts ...option.RequestOption) (res *kernel.OrgLimits, err error)
+	Update(ctx context.Context, body kernel.OrganizationLimitUpdateParams, opts ...option.RequestOption) (res *kernel.OrgLimits, err error)
+}
+
+type OrgCmd struct {
+	limits OrgLimitsService
+}
+
+type OrgLimitsGetInput struct {
+	Output string
+}
+
+type OrgLimitsSetInput struct {
+	DefaultProjectMaxConcurrentSessions Int64Flag
+	Output                              string
+}
+
+func (c OrgCmd) LimitsGet(ctx context.Context, in OrgLimitsGetInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+
+	limits, err := c.limits.Get(ctx)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		if limits == nil {
+			fmt.Println("null")
+			return nil
+		}
+		return util.PrintPrettyJSON(limits)
+	}
+
+	renderOrgLimits(limits)
+	return nil
+}
+
+func (c OrgCmd) LimitsSet(ctx context.Context, in OrgLimitsSetInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+
+	if !in.DefaultProjectMaxConcurrentSessions.Set {
+		return fmt.Errorf("must provide --default-project-max-concurrent-sessions")
+	}
+	if in.DefaultProjectMaxConcurrentSessions.Value < 0 {
+		return fmt.Errorf("--default-project-max-concurrent-sessions must be non-negative (got %d); use 0 to remove the default", in.DefaultProjectMaxConcurrentSessions.Value)
+	}
+
+	limits, err := c.limits.Update(ctx, kernel.OrganizationLimitUpdateParams{
+		UpdateOrgLimitsRequest: kernel.UpdateOrgLimitsRequestParam{
+			DefaultProjectMaxConcurrentSessions: param.NewOpt(in.DefaultProjectMaxConcurrentSessions.Value),
+		},
+	})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		if limits == nil {
+			fmt.Println("null")
+			return nil
+		}
+		return util.PrintPrettyJSON(limits)
+	}
+
+	pterm.Success.Println("Organization limits updated:")
+	renderOrgLimits(limits)
+	return nil
+}
+
+func renderOrgLimits(limits *kernel.OrgLimits) {
+	if limits == nil {
+		pterm.Info.Println("No organization limits found")
+		return
+	}
+
+	rows := pterm.TableData{
+		{"Limit", "Value"},
+		// max_concurrent_sessions is read-only and always present; only the
+		// per-project default is nullable, so reuse the "unlimited" rendering.
+		{"Max Concurrent Sessions", fmt.Sprintf("%d", limits.MaxConcurrentSessions)},
+		{"Default Project Max Concurrent Sessions", formatProjectLimitValue(limits.DefaultProjectMaxConcurrentSessions, limits.JSON.DefaultProjectMaxConcurrentSessions)},
+	}
+	PrintTableNoPad(rows, true)
+}
+
+// --- Cobra wiring ---
+
+var orgCmd = &cobra.Command{
+	Use:     "org",
+	Aliases: []string{"organization"},
+	Short:   "Manage organization-wide settings",
+	Run: func(cmd *cobra.Command, args []string) {
+		_ = cmd.Help()
+	},
+}
+
+var orgLimitsCmd = &cobra.Command{
+	Use:   "limits",
+	Short: "Manage organization concurrency limits",
+	Run: func(cmd *cobra.Command, args []string) {
+		_ = cmd.Help()
+	},
+}
+
+var orgLimitsGetCmd = &cobra.Command{
+	Use:   "get",
+	Short: "Get organization concurrency limits",
+	Long:  "Show the organization's concurrency limit and the default per-project cap applied to projects without an explicit override.",
+	Args:  cobra.NoArgs,
+	RunE:  runOrgLimitsGet,
+}
+
+var orgLimitsSetCmd = &cobra.Command{
+	Use:   "set",
+	Short: "Set the default per-project concurrency cap",
+	Long:  "Set the default per-project concurrency cap applied to projects without an explicit override. Use 0 to remove the default. The default cannot exceed the organization's concurrency limit.",
+	Args:  cobra.NoArgs,
+	RunE:  runOrgLimitsSet,
+}
+
+func getOrgHandler(cmd *cobra.Command) OrgCmd {
+	client := getKernelClient(cmd)
+	return OrgCmd{limits: &client.Organization.Limits}
+}
+
+func runOrgLimitsGet(cmd *cobra.Command, args []string) error {
+	c := getOrgHandler(cmd)
+	output, _ := cmd.Flags().GetString("output")
+	return c.LimitsGet(cmd.Context(), OrgLimitsGetInput{Output: output})
+}
+
+func runOrgLimitsSet(cmd *cobra.Command, args []string) error {
+	c := getOrgHandler(cmd)
+	defaultMax, _ := cmd.Flags().GetInt64("default-project-max-concurrent-sessions")
+	output, _ := cmd.Flags().GetString("output")
+	return c.LimitsSet(cmd.Context(), OrgLimitsSetInput{
+		DefaultProjectMaxConcurrentSessions: Int64Flag{
+			Set:   cmd.Flags().Changed("default-project-max-concurrent-sessions"),
+			Value: defaultMax,
+		},
+		Output: output,
+	})
+}
+
+func init() {
+	addJSONOutputFlag(orgLimitsGetCmd)
+	orgLimitsSetCmd.Flags().Int64("default-project-max-concurrent-sessions", 0, "Default maximum concurrent browsers for projects without an explicit override (0 to remove the default)")
+	addJSONOutputFlag(orgLimitsSetCmd)
+
+	orgLimitsCmd.AddCommand(orgLimitsGetCmd)
+	orgLimitsCmd.AddCommand(orgLimitsSetCmd)
+	orgCmd.AddCommand(orgLimitsCmd)
+}

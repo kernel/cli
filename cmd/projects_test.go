@@ -16,7 +16,15 @@ type FakeProjectsService struct {
 	ListFunc   func(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error)
 	NewFunc    func(ctx context.Context, body kernel.ProjectNewParams, opts ...option.RequestOption) (*kernel.Project, error)
 	GetFunc    func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.Project, error)
+	UpdateFunc func(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (*kernel.Project, error)
 	DeleteFunc func(ctx context.Context, id string, opts ...option.RequestOption) error
+}
+
+func (f *FakeProjectsService) Update(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (*kernel.Project, error) {
+	if f.UpdateFunc != nil {
+		return f.UpdateFunc(ctx, id, body, opts...)
+	}
+	return &kernel.Project{ID: id}, nil
 }
 
 func (f *FakeProjectsService) List(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error) {
@@ -193,4 +201,81 @@ func TestResolveProjectByName_PaginatesAcrossResults(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "proj_target", id)
 	assert.Equal(t, []int64{0, 100}, seenOffsets)
+}
+
+func TestProjectsUpdate_RenamesByID(t *testing.T) {
+	buf := capturePtermOutput(t)
+	var capturedID string
+	var capturedBody kernel.ProjectUpdateParams
+	fakeProjects := &FakeProjectsService{
+		UpdateFunc: func(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (*kernel.Project, error) {
+			capturedID = id
+			capturedBody = body
+			return &kernel.Project{ID: id, Name: "renamed", Status: kernel.ProjectStatusActive}, nil
+		},
+	}
+	c := ProjectsCmd{projects: fakeProjects, limits: &FakeProjectLimitsService{}}
+	err := c.Update(context.Background(), ProjectsUpdateInput{
+		Identifier: "cm5xk8n2p0000abcdefghijk",
+		Name:       "renamed",
+		NameSet:    true,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, "cm5xk8n2p0000abcdefghijk", capturedID)
+	assert.True(t, capturedBody.UpdateProjectRequest.Name.Valid())
+	assert.Equal(t, "renamed", capturedBody.UpdateProjectRequest.Name.Value)
+	assert.Contains(t, buf.String(), "Updated project: renamed")
+}
+
+func TestProjectsUpdate_ResolvesNameToID(t *testing.T) {
+	capturePtermOutput(t)
+	var capturedID string
+	fakeProjects := &FakeProjectsService{
+		ListFunc: func(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error) {
+			return &pagination.OffsetPagination[kernel.Project]{
+				Items: []kernel.Project{{ID: "proj_target", Name: "my-project"}},
+			}, nil
+		},
+		UpdateFunc: func(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (*kernel.Project, error) {
+			capturedID = id
+			return &kernel.Project{ID: id, Name: "my-project", Status: kernel.ProjectStatusArchived}, nil
+		},
+	}
+	c := ProjectsCmd{projects: fakeProjects, limits: &FakeProjectLimitsService{}}
+	err := c.Update(context.Background(), ProjectsUpdateInput{Identifier: "my-project", Status: "archived"})
+	assert.NoError(t, err)
+	assert.Equal(t, "proj_target", capturedID)
+}
+
+func TestProjectsUpdate_SetsStatus(t *testing.T) {
+	capturePtermOutput(t)
+	var capturedBody kernel.ProjectUpdateParams
+	fakeProjects := &FakeProjectsService{
+		UpdateFunc: func(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (*kernel.Project, error) {
+			capturedBody = body
+			return &kernel.Project{ID: id, Status: kernel.ProjectStatusArchived}, nil
+		},
+	}
+	c := ProjectsCmd{projects: fakeProjects, limits: &FakeProjectLimitsService{}}
+	err := c.Update(context.Background(), ProjectsUpdateInput{
+		Identifier: "cm5xk8n2p0000abcdefghijk",
+		Status:     "archived",
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, kernel.UpdateProjectRequestStatusArchived, capturedBody.UpdateProjectRequest.Status)
+	assert.False(t, capturedBody.UpdateProjectRequest.Name.Valid())
+}
+
+func TestProjectsUpdate_RejectsUnknownStatus(t *testing.T) {
+	c := ProjectsCmd{projects: &FakeProjectsService{}, limits: &FakeProjectLimitsService{}}
+	err := c.Update(context.Background(), ProjectsUpdateInput{Identifier: "p1", Status: "deleted"})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid --status")
+}
+
+func TestProjectsUpdate_RequiresAtLeastOneField(t *testing.T) {
+	c := ProjectsCmd{projects: &FakeProjectsService{}, limits: &FakeProjectLimitsService{}}
+	err := c.Update(context.Background(), ProjectsUpdateInput{Identifier: "p1"})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "at least one of --name or --status")
 }

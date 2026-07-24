@@ -27,7 +27,15 @@ type FakeProfilesService struct {
 	ListFunc     func(ctx context.Context, query kernel.ProfileListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Profile], error)
 	DeleteFunc   func(ctx context.Context, idOrName string, opts ...option.RequestOption) error
 	NewFunc      func(ctx context.Context, body kernel.ProfileNewParams, opts ...option.RequestOption) (*kernel.Profile, error)
-	DownloadFunc func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*http.Response, error)
+	UpdateFunc   func(ctx context.Context, idOrName string, body kernel.ProfileUpdateParams, opts ...option.RequestOption) (*kernel.Profile, error)
+	DownloadFunc func(ctx context.Context, idOrName string, query kernel.ProfileDownloadParams, opts ...option.RequestOption) (*http.Response, error)
+}
+
+func (f *FakeProfilesService) Update(ctx context.Context, idOrName string, body kernel.ProfileUpdateParams, opts ...option.RequestOption) (*kernel.Profile, error) {
+	if f.UpdateFunc != nil {
+		return f.UpdateFunc(ctx, idOrName, body, opts...)
+	}
+	return &kernel.Profile{ID: idOrName, Name: body.Name}, nil
 }
 
 func (f *FakeProfilesService) Get(ctx context.Context, idOrName string, opts ...option.RequestOption) (*kernel.Profile, error) {
@@ -48,9 +56,9 @@ func (f *FakeProfilesService) Delete(ctx context.Context, idOrName string, opts 
 	}
 	return nil
 }
-func (f *FakeProfilesService) Download(ctx context.Context, idOrName string, opts ...option.RequestOption) (*http.Response, error) {
+func (f *FakeProfilesService) Download(ctx context.Context, idOrName string, query kernel.ProfileDownloadParams, opts ...option.RequestOption) (*http.Response, error) {
 	if f.DownloadFunc != nil {
-		return f.DownloadFunc(ctx, idOrName, opts...)
+		return f.DownloadFunc(ctx, idOrName, query, opts...)
 	}
 	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}}, nil
 }
@@ -239,7 +247,7 @@ func TestProfilesDownload_ExtractSuccess(t *testing.T) {
 		"Default/Preferences": "{\"k\":1}",
 		"Local State":         "local",
 	})
-	fake := &FakeProfilesService{DownloadFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*http.Response, error) {
+	fake := &FakeProfilesService{DownloadFunc: func(ctx context.Context, idOrName string, query kernel.ProfileDownloadParams, opts ...option.RequestOption) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(archive)), Header: http.Header{}}, nil
 	}}
 	p := ProfilesCmd{profiles: fake}
@@ -263,7 +271,7 @@ func TestProfilesDownload_202NoData(t *testing.T) {
 	assert.NoError(t, err)
 	defer os.RemoveAll(dir)
 
-	fake := &FakeProfilesService{DownloadFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*http.Response, error) {
+	fake := &FakeProfilesService{DownloadFunc: func(ctx context.Context, idOrName string, query kernel.ProfileDownloadParams, opts ...option.RequestOption) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}}, nil
 	}}
 	p := ProfilesCmd{profiles: fake}
@@ -283,11 +291,95 @@ func TestProfilesDownload_PathTraversalRejected(t *testing.T) {
 	archive := makeProfileArchive(t, map[string]string{
 		"../escape": "nope",
 	})
-	fake := &FakeProfilesService{DownloadFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*http.Response, error) {
+	fake := &FakeProfilesService{DownloadFunc: func(ctx context.Context, idOrName string, query kernel.ProfileDownloadParams, opts ...option.RequestOption) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(archive)), Header: http.Header{}}, nil
 	}}
 	p := ProfilesCmd{profiles: fake}
 	err = p.Download(context.Background(), ProfilesDownloadInput{Identifier: "p1", To: dir})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "illegal entry path")
+}
+
+// makeUncompressedProfileArchive builds a plain (uncompressed) tar archive, as
+// returned by the download endpoint when --format tar is requested.
+func makeUncompressedProfileArchive(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	for name, content := range files {
+		hdr := &tar.Header{Name: name, Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg}
+		assert.NoError(t, tw.WriteHeader(hdr))
+		_, err := tw.Write([]byte(content))
+		assert.NoError(t, err)
+	}
+	assert.NoError(t, tw.Close())
+	return buf.Bytes()
+}
+
+func TestProfilesDownload_DefaultsToTarZstFormat(t *testing.T) {
+	capturePtermOutput(t)
+	dir, err := os.MkdirTemp("", "profile-*")
+	assert.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	var captured kernel.ProfileDownloadParams
+	archive := makeProfileArchive(t, map[string]string{"Local State": "local"})
+	fake := &FakeProfilesService{DownloadFunc: func(ctx context.Context, idOrName string, query kernel.ProfileDownloadParams, opts ...option.RequestOption) (*http.Response, error) {
+		captured = query
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(archive)), Header: http.Header{}}, nil
+	}}
+	p := ProfilesCmd{profiles: fake}
+	assert.NoError(t, p.Download(context.Background(), ProfilesDownloadInput{Identifier: "p1", To: dir}))
+	assert.Equal(t, kernel.ProfileDownloadParamsFormatTarZst, captured.Format)
+}
+
+func TestProfilesDownload_TarFormatSkipsDecompression(t *testing.T) {
+	capturePtermOutput(t)
+	dir, err := os.MkdirTemp("", "profile-*")
+	assert.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	var captured kernel.ProfileDownloadParams
+	archive := makeUncompressedProfileArchive(t, map[string]string{"Local State": "local"})
+	fake := &FakeProfilesService{DownloadFunc: func(ctx context.Context, idOrName string, query kernel.ProfileDownloadParams, opts ...option.RequestOption) (*http.Response, error) {
+		captured = query
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(archive)), Header: http.Header{}}, nil
+	}}
+	p := ProfilesCmd{profiles: fake}
+	assert.NoError(t, p.Download(context.Background(), ProfilesDownloadInput{Identifier: "p1", To: dir, Format: "tar"}))
+	assert.Equal(t, kernel.ProfileDownloadParamsFormatTar, captured.Format)
+
+	b, readErr := os.ReadFile(filepath.Join(dir, "Local State"))
+	assert.NoError(t, readErr)
+	assert.Equal(t, "local", string(b))
+}
+
+func TestProfilesDownload_RejectsUnknownFormat(t *testing.T) {
+	p := ProfilesCmd{profiles: &FakeProfilesService{}}
+	err := p.Download(context.Background(), ProfilesDownloadInput{Identifier: "p1", To: "/tmp", Format: "zip"})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid --format")
+}
+
+func TestProfilesUpdate_RenamesProfile(t *testing.T) {
+	buf := capturePtermOutput(t)
+	var capturedID string
+	var capturedBody kernel.ProfileUpdateParams
+	fake := &FakeProfilesService{UpdateFunc: func(ctx context.Context, idOrName string, body kernel.ProfileUpdateParams, opts ...option.RequestOption) (*kernel.Profile, error) {
+		capturedID = idOrName
+		capturedBody = body
+		return &kernel.Profile{ID: "prof_1", Name: body.Name}, nil
+	}}
+	p := ProfilesCmd{profiles: fake}
+	assert.NoError(t, p.Update(context.Background(), ProfilesUpdateInput{Identifier: "old-name", Name: "new-name"}))
+	assert.Equal(t, "old-name", capturedID)
+	assert.Equal(t, "new-name", capturedBody.Name)
+	assert.Contains(t, buf.String(), "Renamed profile prof_1 to new-name")
+}
+
+func TestProfilesUpdate_RequiresName(t *testing.T) {
+	p := ProfilesCmd{profiles: &FakeProfilesService{}}
+	err := p.Update(context.Background(), ProfilesUpdateInput{Identifier: "p1", Name: "  "})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "--name is required")
 }

@@ -113,5 +113,6 @@ func init() {
 	proxiesDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 
 	// Check flags
+	proxiesCheckCmd.Flags().String("url", "", "Optional public HTTP or HTTPS URL to test reachability against")
 	addJSONOutputFlag(proxiesCheckCmd)
 }

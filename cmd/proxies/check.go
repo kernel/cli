@@ -20,7 +20,12 @@ func (p ProxyCmd) Check(ctx context.Context, in ProxyCheckInput) error {
 		pterm.Info.Printf("Running health check on proxy %s...\n", in.ID)
 	}
 
-	proxy, err := p.proxies.Check(ctx, in.ID, kernel.ProxyCheckParams{})
+	params := kernel.ProxyCheckParams{}
+	if in.URL != "" {
+		params.URL = kernel.Opt(in.URL)
+	}
+
+	proxy, err := p.proxies.Check(ctx, in.ID, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}

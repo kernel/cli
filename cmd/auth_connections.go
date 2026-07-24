@@ -13,6 +13,7 @@ import (
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/kernel/kernel-go-sdk/packages/ssestream"
 	"github.com/pterm/pterm"
+	"github.com/samber/lo"
 	"github.com/spf13/cobra"
 )
 
@@ -25,6 +26,7 @@ type AuthConnectionService interface {
 	Delete(ctx context.Context, id string, opts ...option.RequestOption) (err error)
 	Login(ctx context.Context, id string, body kernel.AuthConnectionLoginParams, opts ...option.RequestOption) (res *kernel.LoginResponse, err error)
 	Submit(ctx context.Context, id string, body kernel.AuthConnectionSubmitParams, opts ...option.RequestOption) (res *kernel.SubmitFieldsResponse, err error)
+	Timeline(ctx context.Context, id string, query kernel.AuthConnectionTimelineParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.ManagedAuthTimelineEvent], err error)
 	FollowStreaming(ctx context.Context, id string, opts ...option.RequestOption) (stream *ssestream.Stream[kernel.AuthConnectionFollowResponseUnion])
 }
 
@@ -48,6 +50,7 @@ type AuthConnectionCreateInput struct {
 	SaveCredentials     bool
 	NoSaveCredentials   bool
 	HealthCheckInterval int
+	Telemetry           string
 	Output              string
 }
 
@@ -76,6 +79,7 @@ type AuthConnectionUpdateInput struct {
 	SaveCredentials        BoolFlag
 	HealthCheckInterval    int
 	HealthCheckIntervalSet bool
+	Telemetry              string
 	Output                 string
 }
 
@@ -96,17 +100,32 @@ type AuthConnectionLoginInput struct {
 	ID        string
 	ProxyID   string
 	ProxyName string
+	Telemetry string
 	Output    string
 }
 
 type AuthConnectionSubmitInput struct {
-	ID                string
-	FieldValues       map[string]string
+	ID string
+	// FieldValues holds legacy --field name=value pairs, submitted as `fields`.
+	FieldValues map[string]string
+	// CanonicalFieldValues holds --field-value id=value pairs, submitted as the
+	// canonical `field_values` keyed by the field IDs the API returned.
+	CanonicalFieldValues map[string]string
+	// SelectedChoiceID is the canonical choice ID from the API's `choices` list.
+	SelectedChoiceID  string
 	MfaOptionID       string
 	SignInOptionID    string
 	SSOButtonSelector string
 	SSOProvider       string
 	Output            string
+}
+
+type AuthConnectionTimelineInput struct {
+	ID      string
+	Type    string
+	Page    int
+	PerPage int
+	Output  string
 }
 
 type AuthConnectionFollowInput struct {
@@ -181,6 +200,14 @@ func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateIn
 		params.ManagedAuthCreateRequest.SaveCredentials = kernel.Opt(false)
 	}
 
+	if in.Telemetry != "" {
+		t, err := buildAuthConnectionCreateTelemetryParam(in.Telemetry)
+		if err != nil {
+			return err
+		}
+		params.ManagedAuthCreateRequest.BrowserTelemetry = t
+	}
+
 	if in.Output != "json" {
 		pterm.Info.Printf("Creating managed auth for %s...\n", in.Domain)
 	}
@@ -219,6 +246,9 @@ func printManagedAuthSummary(auth *kernel.ManagedAuth) {
 	}
 	if auth.ProxyID != "" {
 		tableData = append(tableData, []string{"Proxy ID", auth.ProxyID})
+	}
+	if auth.BrowserTelemetry.Enabled || len(telemetryEnabledCategories(kernel.BrowserTelemetryConfig{Browser: auth.BrowserTelemetry.Browser})) > 0 {
+		tableData = append(tableData, []string{"Browser Telemetry", formatManagedAuthTelemetry(auth.BrowserTelemetry)})
 	}
 	PrintTableNoPad(tableData, true)
 }
@@ -283,6 +313,15 @@ func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateIn
 		hasChanges = true
 	}
 
+	if in.Telemetry != "" {
+		t, err := buildAuthConnectionUpdateTelemetryParam(in.Telemetry)
+		if err != nil {
+			return err
+		}
+		params.ManagedAuthUpdateRequest.BrowserTelemetry = t
+		hasChanges = true
+	}
+
 	if !hasChanges {
 		return fmt.Errorf("must provide at least one field to update")
 	}
@@ -341,6 +380,47 @@ func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) e
 	}
 	if auth.FlowStep != "" {
 		tableData = append(tableData, []string{"Flow Step", string(auth.FlowStep)})
+	}
+	// Canonical fields/choices supersede discovered_fields, mfa_options and
+	// pending_sso_buttons. Show them first so the IDs needed by `submit
+	// --field-value` and `submit --choice-id` are the first thing visible.
+	if len(auth.Fields) > 0 {
+		fields := make([]string, 0, len(auth.Fields))
+		for _, f := range auth.Fields {
+			meta := make([]string, 0, 3)
+			if f.Type != "" {
+				meta = append(meta, f.Type)
+			}
+			if f.Ref != "" {
+				meta = append(meta, "ref="+f.Ref)
+			}
+			if f.Required {
+				meta = append(meta, "required")
+			}
+			entry := f.ID
+			if f.Label != "" {
+				entry = fmt.Sprintf("%s (%s)", f.ID, f.Label)
+			}
+			if len(meta) > 0 {
+				entry = fmt.Sprintf("%s [%s]", entry, strings.Join(meta, ", "))
+			}
+			fields = append(fields, entry)
+		}
+		tableData = append(tableData, []string{"Fields", strings.Join(fields, "; ")})
+	}
+	if len(auth.Choices) > 0 {
+		choices := make([]string, 0, len(auth.Choices))
+		for _, ch := range auth.Choices {
+			entry := ch.ID
+			if ch.Label != "" {
+				entry = fmt.Sprintf("%s (%s)", ch.ID, ch.Label)
+			}
+			if ch.Type != "" {
+				entry = fmt.Sprintf("%s [%s]", entry, ch.Type)
+			}
+			choices = append(choices, entry)
+		}
+		tableData = append(tableData, []string{"Choices", strings.Join(choices, "; ")})
 	}
 	if len(auth.DiscoveredFields) > 0 {
 		discoveredFields := make([]string, 0, len(auth.DiscoveredFields))
@@ -421,6 +501,12 @@ func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) e
 	}
 	if auth.HealthCheckInterval > 0 {
 		tableData = append(tableData, []string{"Health Check Interval", fmt.Sprintf("%d seconds", auth.HealthCheckInterval)})
+	}
+	if auth.BrowserSessionID != "" {
+		tableData = append(tableData, []string{"Browser Session ID", auth.BrowserSessionID})
+	}
+	if auth.BrowserTelemetry.Enabled || len(telemetryEnabledCategories(kernel.BrowserTelemetryConfig{Browser: auth.BrowserTelemetry.Browser})) > 0 {
+		tableData = append(tableData, []string{"Browser Telemetry", formatManagedAuthTelemetry(auth.BrowserTelemetry)})
 	}
 
 	PrintTableNoPad(tableData, true)
@@ -533,6 +619,14 @@ func (c AuthConnectionCmd) Login(ctx context.Context, in AuthConnectionLoginInpu
 		}
 	}
 
+	if in.Telemetry != "" {
+		t, err := buildAuthConnectionLoginTelemetryParam(in.Telemetry)
+		if err != nil {
+			return err
+		}
+		params.BrowserTelemetry = t
+	}
+
 	if in.Output != "json" {
 		pterm.Info.Println("Starting login flow...")
 	}
@@ -570,22 +664,25 @@ func (c AuthConnectionCmd) Submit(ctx context.Context, in AuthConnectionSubmitIn
 
 	// Validate that we have some input to submit
 	hasFields := len(in.FieldValues) > 0
+	hasCanonicalFields := len(in.CanonicalFieldValues) > 0
+	hasChoice := in.SelectedChoiceID != ""
 	hasMfaOption := in.MfaOptionID != ""
 	hasSignInOption := in.SignInOptionID != ""
 	hasSSOButton := in.SSOButtonSelector != ""
 	hasSSOProvider := in.SSOProvider != ""
 	submitModes := 0
-	for _, active := range []bool{hasFields, hasMfaOption, hasSignInOption, hasSSOButton, hasSSOProvider} {
+	for _, active := range []bool{hasFields, hasCanonicalFields, hasChoice, hasMfaOption, hasSignInOption, hasSSOButton, hasSSOProvider} {
 		if active {
 			submitModes++
 		}
 	}
 
+	const submitModeFlags = "--field-value, --choice-id, --field, --mfa-option-id, --sign-in-option-id, --sso-button-selector, or --sso-provider"
 	if submitModes == 0 {
-		return fmt.Errorf("must provide exactly one of: --field, --mfa-option-id, --sign-in-option-id, --sso-button-selector, or --sso-provider")
+		return fmt.Errorf("must provide exactly one of: %s", submitModeFlags)
 	}
 	if submitModes > 1 {
-		return fmt.Errorf("provide exactly one of: --field, --mfa-option-id, --sign-in-option-id, --sso-button-selector, or --sso-provider")
+		return fmt.Errorf("provide exactly one of: %s", submitModeFlags)
 	}
 
 	// Resolve MFA option: the user may pass the label (e.g. "Get a text"), the
@@ -620,9 +717,19 @@ func (c AuthConnectionCmd) Submit(ctx context.Context, in AuthConnectionSubmitIn
 	}
 
 	params := kernel.AuthConnectionSubmitParams{
-		SubmitFieldsRequest: kernel.SubmitFieldsRequestParam{
-			Fields: in.FieldValues,
-		},
+		SubmitFieldsRequest: kernel.SubmitFieldsRequestParam{},
+	}
+	// Only attach legacy `fields` when it carries values. An empty-but-non-nil map
+	// still marshals as `"fields": {}`, which the API reads as a second submit mode
+	// alongside whichever canonical or legacy selector the user actually chose.
+	if hasFields {
+		params.SubmitFieldsRequest.Fields = in.FieldValues
+	}
+	if hasCanonicalFields {
+		params.SubmitFieldsRequest.FieldValues = in.CanonicalFieldValues
+	}
+	if hasChoice {
+		params.SubmitFieldsRequest.SelectedChoiceID = kernel.Opt(in.SelectedChoiceID)
 	}
 	if hasMfaOption {
 		params.SubmitFieldsRequest.MfaOptionID = kernel.Opt(in.MfaOptionID)
@@ -654,6 +761,95 @@ func (c AuthConnectionCmd) Submit(ctx context.Context, in AuthConnectionSubmitIn
 		pterm.Success.Println("Submission accepted")
 	} else {
 		pterm.Warning.Println("Submission not accepted")
+	}
+	return nil
+}
+
+func (c AuthConnectionCmd) Timeline(ctx context.Context, in AuthConnectionTimelineInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+
+	page := in.Page
+	perPage := in.PerPage
+	if page <= 0 {
+		page = 1
+	}
+	if perPage <= 0 {
+		perPage = 20
+	}
+
+	params := kernel.AuthConnectionTimelineParams{}
+	if in.Type != "" {
+		switch in.Type {
+		case string(kernel.AuthConnectionTimelineParamsTypeLogin),
+			string(kernel.AuthConnectionTimelineParamsTypeReauth),
+			string(kernel.AuthConnectionTimelineParamsTypeHealthCheck):
+			params.Type = kernel.AuthConnectionTimelineParamsType(in.Type)
+		default:
+			return fmt.Errorf("invalid --type %q: must be one of login, reauth, health_check", in.Type)
+		}
+	}
+	// Request one extra event so we can report whether another page exists
+	// without spending a second round trip on the pagination headers.
+	params.Limit = kernel.Opt(int64(perPage + 1))
+	params.Offset = kernel.Opt(int64((page - 1) * perPage))
+
+	result, err := c.svc.Timeline(ctx, in.ID, params)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	var events []kernel.ManagedAuthTimelineEvent
+	if result != nil {
+		events = result.Items
+	}
+
+	hasMore := len(events) > perPage
+	if hasMore {
+		events = events[:perPage]
+	}
+
+	if in.Output == "json" {
+		if len(events) == 0 {
+			fmt.Println("[]")
+			return nil
+		}
+		return util.PrintPrettyJSONSlice(events)
+	}
+
+	if len(events) == 0 {
+		pterm.Info.Println("No timeline events found")
+		return nil
+	}
+
+	tableData := pterm.TableData{{"Timestamp", "Type", "Status", "Step", "Browser Session", "Details"}}
+	for _, e := range events {
+		details := e.ErrorMessage
+		if details == "" {
+			details = e.WebsiteError
+		}
+		if details == "" && e.PreviousStatus != "" {
+			details = fmt.Sprintf("%s -> %s", e.PreviousStatus, e.Status)
+		}
+		tableData = append(tableData, []string{
+			util.FormatLocal(e.Timestamp),
+			string(e.Type),
+			string(e.Status),
+			string(e.Step),
+			util.OrDash(e.BrowserSessionID),
+			util.OrDash(details),
+		})
+	}
+	PrintTableNoPad(tableData, true)
+
+	pterm.Printf("\nPage: %d  Per-page: %d  Items this page: %d  Has more: %s\n", page, perPage, len(events), lo.Ternary(hasMore, "yes", "no"))
+	if hasMore {
+		next := fmt.Sprintf("kernel auth connections timeline %s --page %d --per-page %d", in.ID, page+1, perPage)
+		if in.Type != "" {
+			next += fmt.Sprintf(" --type %q", in.Type)
+		}
+		pterm.Printf("Next: %s\n", next)
 	}
 	return nil
 }
@@ -691,6 +887,20 @@ func (c AuthConnectionCmd) Follow(ctx context.Context, in AuthConnectionFollowIn
 				state.Timestamp.Local().Format(time.RFC3339),
 				state.FlowStatus,
 				state.FlowStep)
+			if len(state.Fields) > 0 {
+				fieldIDs := make([]string, 0, len(state.Fields))
+				for _, f := range state.Fields {
+					fieldIDs = append(fieldIDs, f.ID)
+				}
+				pterm.Info.Printf("  Fields: %s\n", strings.Join(fieldIDs, ", "))
+			}
+			if len(state.Choices) > 0 {
+				choiceIDs := make([]string, 0, len(state.Choices))
+				for _, ch := range state.Choices {
+					choiceIDs = append(choiceIDs, ch.ID)
+				}
+				pterm.Info.Printf("  Choices: %s\n", strings.Join(choiceIDs, ", "))
+			}
 			if len(state.DiscoveredFields) > 0 {
 				var fieldNames []string
 				for _, f := range state.DiscoveredFields {
@@ -801,6 +1011,14 @@ var authConnectionsFollowCmd = &cobra.Command{
 	RunE:  runAuthConnectionsFollow,
 }
 
+var authConnectionsTimelineCmd = &cobra.Command{
+	Use:   "timeline <id>",
+	Short: "List login, reauth, and health-check events",
+	Long:  "List the managed auth connection's history of login, reauth, and health-check events, most recent first.",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runAuthConnectionsTimeline,
+}
+
 func init() {
 	// Create flags
 	addJSONOutputFlag(authConnectionsCreateCmd)
@@ -816,6 +1034,7 @@ func init() {
 	authConnectionsCreateCmd.Flags().String("proxy-name", "", "Proxy name to use")
 	authConnectionsCreateCmd.Flags().Bool("no-save-credentials", false, "Disable saving credentials after successful login")
 	authConnectionsCreateCmd.Flags().Int("health-check-interval", 0, "Interval in seconds between health checks (300-86400)")
+	authConnectionsCreateCmd.Flags().String("telemetry", "", "Configure telemetry for this connection's browser sessions (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
 	_ = authConnectionsCreateCmd.MarkFlagRequired("domain")
 	_ = authConnectionsCreateCmd.MarkFlagRequired("profile-name")
 	authConnectionsCreateCmd.MarkFlagsMutuallyExclusive("credential-name", "credential-provider")
@@ -836,6 +1055,7 @@ func init() {
 	authConnectionsUpdateCmd.Flags().Bool("save-credentials", false, "Enable saving credentials after successful login")
 	authConnectionsUpdateCmd.Flags().Bool("no-save-credentials", false, "Disable saving credentials after successful login")
 	authConnectionsUpdateCmd.Flags().Int("health-check-interval", 0, "Interval in seconds between health checks")
+	authConnectionsUpdateCmd.Flags().String("telemetry", "", "Update telemetry for future browser sessions: --telemetry=all (reset to default set), --telemetry=off (disable), or --telemetry=console,network (merge those categories into the current selection)")
 	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("credential-name", "credential-provider")
 	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("save-credentials", "no-save-credentials")
 
@@ -853,10 +1073,13 @@ func init() {
 	addJSONOutputFlag(authConnectionsLoginCmd)
 	authConnectionsLoginCmd.Flags().String("proxy-id", "", "Proxy ID to use for this login")
 	authConnectionsLoginCmd.Flags().String("proxy-name", "", "Proxy name to use for this login")
+	authConnectionsLoginCmd.Flags().String("telemetry", "", "Telemetry override for this login only, merged onto the connection's config: --telemetry=all, --telemetry=off, or --telemetry=console,network")
 
 	// Submit flags
 	addJSONOutputFlag(authConnectionsSubmitCmd)
-	authConnectionsSubmitCmd.Flags().StringArray("field", []string{}, "Field name=value pair (repeatable)")
+	authConnectionsSubmitCmd.Flags().StringArray("field-value", []string{}, "Canonical field-id=value pair from the connection's `fields` list (repeatable)")
+	authConnectionsSubmitCmd.Flags().String("choice-id", "", "Canonical choice ID from the connection's `choices` list")
+	authConnectionsSubmitCmd.Flags().StringArray("field", []string{}, "Legacy field name=value pair (repeatable); prefer --field-value")
 	authConnectionsSubmitCmd.Flags().String("mfa-option-id", "", "MFA option ID if user selected an MFA method")
 	authConnectionsSubmitCmd.Flags().String("sign-in-option-id", "", "Sign-in option ID if the flow returned non-MFA choices")
 	authConnectionsSubmitCmd.Flags().String("sso-button-selector", "", "XPath selector if user chose an SSO button")
@@ -864,6 +1087,12 @@ func init() {
 
 	// Follow flags
 	addJSONOutputFlag(authConnectionsFollowCmd)
+
+	// Timeline flags
+	addJSONOutputFlag(authConnectionsTimelineCmd)
+	authConnectionsTimelineCmd.Flags().String("type", "", "Filter to a single event type: login, reauth, or health_check")
+	authConnectionsTimelineCmd.Flags().Int("page", 1, "Page number (1-based)")
+	authConnectionsTimelineCmd.Flags().Int("per-page", 20, "Items per page (default 20)")
 
 	// Wire up commands
 	authConnectionsCmd.AddCommand(authConnectionsCreateCmd)
@@ -874,6 +1103,7 @@ func init() {
 	authConnectionsCmd.AddCommand(authConnectionsLoginCmd)
 	authConnectionsCmd.AddCommand(authConnectionsSubmitCmd)
 	authConnectionsCmd.AddCommand(authConnectionsFollowCmd)
+	authConnectionsCmd.AddCommand(authConnectionsTimelineCmd)
 
 	authCmd.AddCommand(authConnectionsCmd)
 }
@@ -893,6 +1123,7 @@ func runAuthConnectionsCreate(cmd *cobra.Command, args []string) error {
 	proxyName, _ := cmd.Flags().GetString("proxy-name")
 	noSaveCredentials, _ := cmd.Flags().GetBool("no-save-credentials")
 	healthCheckInterval, _ := cmd.Flags().GetInt("health-check-interval")
+	telemetry, _ := cmd.Flags().GetString("telemetry")
 
 	svc := client.Auth.Connections
 	c := AuthConnectionCmd{svc: &svc}
@@ -909,6 +1140,7 @@ func runAuthConnectionsCreate(cmd *cobra.Command, args []string) error {
 		ProxyName:           proxyName,
 		NoSaveCredentials:   noSaveCredentials,
 		HealthCheckInterval: healthCheckInterval,
+		Telemetry:           telemetry,
 		Output:              output,
 	})
 }
@@ -939,6 +1171,7 @@ func runAuthConnectionsUpdate(cmd *cobra.Command, args []string) error {
 	saveCredentials, _ := cmd.Flags().GetBool("save-credentials")
 	noSaveCredentials, _ := cmd.Flags().GetBool("no-save-credentials")
 	healthCheckInterval, _ := cmd.Flags().GetInt("health-check-interval")
+	telemetry, _ := cmd.Flags().GetString("telemetry")
 
 	saveCredentialsFlag := BoolFlag{}
 	if cmd.Flags().Changed("save-credentials") {
@@ -970,6 +1203,7 @@ func runAuthConnectionsUpdate(cmd *cobra.Command, args []string) error {
 		SaveCredentials:        saveCredentialsFlag,
 		HealthCheckInterval:    healthCheckInterval,
 		HealthCheckIntervalSet: cmd.Flags().Changed("health-check-interval"),
+		Telemetry:              telemetry,
 		Output:                 output,
 	})
 }
@@ -1010,6 +1244,7 @@ func runAuthConnectionsLogin(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
 	proxyName, _ := cmd.Flags().GetString("proxy-name")
+	telemetry, _ := cmd.Flags().GetString("telemetry")
 
 	svc := client.Auth.Connections
 	c := AuthConnectionCmd{svc: &svc}
@@ -1017,6 +1252,7 @@ func runAuthConnectionsLogin(cmd *cobra.Command, args []string) error {
 		ID:        args[0],
 		ProxyID:   proxyID,
 		ProxyName: proxyName,
+		Telemetry: telemetry,
 		Output:    output,
 	})
 }
@@ -1025,6 +1261,8 @@ func runAuthConnectionsSubmit(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	output, _ := cmd.Flags().GetString("output")
 	fieldPairs, _ := cmd.Flags().GetStringArray("field")
+	canonicalFieldPairs, _ := cmd.Flags().GetStringArray("field-value")
+	choiceID, _ := cmd.Flags().GetString("choice-id")
 	mfaOptionID, _ := cmd.Flags().GetString("mfa-option-id")
 	signInOptionID, _ := cmd.Flags().GetString("sign-in-option-id")
 	ssoButtonSelector, _ := cmd.Flags().GetString("sso-button-selector")
@@ -1040,16 +1278,23 @@ func runAuthConnectionsSubmit(cmd *cobra.Command, args []string) error {
 		fieldValues[parts[0]] = parts[1]
 	}
 
+	canonicalFieldValues, err := parseStringMapFlag(canonicalFieldPairs, "--field-value")
+	if err != nil {
+		return err
+	}
+
 	svc := client.Auth.Connections
 	c := AuthConnectionCmd{svc: &svc}
 	return c.Submit(cmd.Context(), AuthConnectionSubmitInput{
-		ID:                args[0],
-		FieldValues:       fieldValues,
-		MfaOptionID:       mfaOptionID,
-		SignInOptionID:    signInOptionID,
-		SSOButtonSelector: ssoButtonSelector,
-		SSOProvider:       ssoProvider,
-		Output:            output,
+		ID:                   args[0],
+		FieldValues:          fieldValues,
+		CanonicalFieldValues: canonicalFieldValues,
+		SelectedChoiceID:     choiceID,
+		MfaOptionID:          mfaOptionID,
+		SignInOptionID:       signInOptionID,
+		SSOButtonSelector:    ssoButtonSelector,
+		SSOProvider:          ssoProvider,
+		Output:               output,
 	})
 }
 
@@ -1062,5 +1307,23 @@ func runAuthConnectionsFollow(cmd *cobra.Command, args []string) error {
 	return c.Follow(cmd.Context(), AuthConnectionFollowInput{
 		ID:     args[0],
 		Output: output,
+	})
+}
+
+func runAuthConnectionsTimeline(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	output, _ := cmd.Flags().GetString("output")
+	eventType, _ := cmd.Flags().GetString("type")
+	page, _ := cmd.Flags().GetInt("page")
+	perPage, _ := cmd.Flags().GetInt("per-page")
+
+	svc := client.Auth.Connections
+	c := AuthConnectionCmd{svc: &svc}
+	return c.Timeline(cmd.Context(), AuthConnectionTimelineInput{
+		ID:      args[0],
+		Type:    eventType,
+		Page:    page,
+		PerPage: perPage,
+		Output:  output,
 	})
 }
