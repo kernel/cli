@@ -11,6 +11,7 @@ package interactive
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"golang.org/x/term"
 )
@@ -35,4 +36,31 @@ func ErrConfirmationRequired(action string) error {
 // name".
 func ErrInputRequired(what, hint string) error {
 	return fmt.Errorf("cannot prompt for %s: stdin is not an interactive terminal; %s", what, hint)
+}
+
+// ErrInputsRequired builds the fail-fast error for one or more missing or
+// invalid inputs. Commands with several promptable inputs should validate
+// them all up front and report every problem in a single error, so a
+// non-interactive caller can fix everything in one retry instead of
+// discovering problems one invocation at a time.
+//
+// Problems are numbered inline — "(1) ...; (2) ..." — rather than
+// newline-separated because the CLI error renderer reflows text and would
+// collapse line breaks anyway.
+func ErrInputsRequired(problems []string) error {
+	switch len(problems) {
+	case 0:
+		return nil
+	case 1:
+		return fmt.Errorf("cannot prompt for input: stdin is not an interactive terminal; %s", problems[0])
+	default:
+		var b strings.Builder
+		for i, p := range problems {
+			if i > 0 {
+				b.WriteString("; ")
+			}
+			fmt.Fprintf(&b, "(%d) %s", i+1, p)
+		}
+		return fmt.Errorf("cannot prompt for input: stdin is not an interactive terminal; fix all of the following and re-run: %s", b.String())
+	}
 }

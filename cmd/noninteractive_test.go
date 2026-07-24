@@ -31,10 +31,10 @@ func TestAPIKeysDeleteFailsFastWhenNonInteractive(t *testing.T) {
 	assert.Contains(t, err.Error(), "not an interactive terminal")
 }
 
-// runCreateApp must return prompt errors unwrapped so the CLI output matches
-// the documented fail-fast messages ("cannot prompt for ...", "invalid --...")
-// without "failed to get ..." prefixes.
-func TestCreateFailsFastUnwrappedWhenNonInteractive(t *testing.T) {
+// In a non-interactive shell, `kernel create` must report every missing or
+// invalid input in a single unwrapped error (no "failed to get ..."
+// prefixes), so one retry can fix everything.
+func TestCreateFailsFastAggregatedWhenNonInteractive(t *testing.T) {
 	newCreateCmd := func(flags map[string]string) *cobra.Command {
 		cmd := &cobra.Command{}
 		cmd.Flags().String("name", "", "")
@@ -47,25 +47,28 @@ func TestCreateFailsFastUnwrappedWhenNonInteractive(t *testing.T) {
 		return cmd
 	}
 
-	t.Run("missing app name", func(t *testing.T) {
+	t.Run("no flags reports all three inputs in one error", func(t *testing.T) {
 		err := runCreateApp(newCreateCmd(nil), nil)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "cannot prompt for app name")
+		assert.Contains(t, err.Error(), "--name is required")
+		assert.Contains(t, err.Error(), "--language is required")
+		assert.Contains(t, err.Error(), "--template is required")
 		assert.NotContains(t, err.Error(), "failed to get")
 	})
 
-	t.Run("invalid language", func(t *testing.T) {
-		err := runCreateApp(newCreateCmd(map[string]string{"name": "my-app", "language": "ruby"}), nil)
+	t.Run("mixed missing and invalid flags aggregated", func(t *testing.T) {
+		err := runCreateApp(newCreateCmd(map[string]string{"language": "ruby", "template": "nope"}), nil)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid --language 'ruby'")
-		assert.NotContains(t, err.Error(), "failed to get")
+		assert.Contains(t, err.Error(), "--name is required")
+		assert.Contains(t, err.Error(), "--language 'ruby' is invalid")
+		assert.Contains(t, err.Error(), "--template 'nope' is invalid")
 	})
 
-	t.Run("invalid template", func(t *testing.T) {
+	t.Run("single problem stays a single-line error", func(t *testing.T) {
 		err := runCreateApp(newCreateCmd(map[string]string{"name": "my-app", "language": "typescript", "template": "nope"}), nil)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid --template 'nope'")
-		assert.NotContains(t, err.Error(), "failed to get")
+		assert.Contains(t, err.Error(), "--template 'nope' is invalid for language 'typescript'")
+		assert.NotContains(t, err.Error(), "\n")
 	})
 }
 

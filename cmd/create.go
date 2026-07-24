@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/kernel/cli/pkg/create"
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -150,8 +151,19 @@ func runCreateApp(cmd *cobra.Command, args []string) error {
 	template, _ := cmd.Flags().GetString("template")
 	skipConfirm, _ := cmd.Flags().GetBool("yes")
 
-	// Return prompt errors unwrapped: in non-interactive shells they are
-	// crafted fail-fast messages that name the exact flags to pass.
+	c := CreateCmd{}
+
+	// In a non-interactive shell, validate every input up front so a single
+	// error reports everything the caller must fix, instead of failing on one
+	// missing input per invocation.
+	if !interactive.IsInteractive() {
+		in, err := create.ValidateNonInteractive(appName, language, template, skipConfirm)
+		if err != nil {
+			return err
+		}
+		return c.Create(cmd.Context(), in)
+	}
+
 	appName, err := create.PromptForAppName(appName)
 	if err != nil {
 		return err
@@ -167,7 +179,6 @@ func runCreateApp(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	c := CreateCmd{}
 	return c.Create(cmd.Context(), create.CreateInput{
 		Name:        appName,
 		Language:    language,
