@@ -12,9 +12,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/table"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
@@ -30,12 +33,12 @@ import (
 // BrowsersService defines the subset of the Kernel SDK browser client that we use.
 // See https://github.com/kernel/kernel-go-sdk/blob/main/browser.go
 type BrowsersService interface {
-	Get(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (res *kernel.BrowserGetResponse, err error)
+	Get(ctx context.Context, idOrName string, query kernel.BrowserGetParams, opts ...option.RequestOption) (res *kernel.BrowserGetResponse, err error)
 	List(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.BrowserListResponse], err error)
 	New(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (res *kernel.BrowserNewResponse, err error)
-	Update(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (res *kernel.BrowserUpdateResponse, err error)
-	Delete(ctx context.Context, body kernel.BrowserDeleteParams, opts ...option.RequestOption) (err error)
-	DeleteByID(ctx context.Context, id string, opts ...option.RequestOption) (err error)
+	Update(ctx context.Context, idOrName string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (res *kernel.BrowserUpdateResponse, err error)
+	DeleteByID(ctx context.Context, idOrName string, opts ...option.RequestOption) (err error)
+	HTTPClient(id string, opts ...option.RequestOption) (*http.Client, error)
 	LoadExtensions(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) (err error)
 }
 
@@ -107,20 +110,8 @@ type BrowserComputerService interface {
 	WriteClipboard(ctx context.Context, id string, body kernel.BrowserComputerWriteClipboardParams, opts ...option.RequestOption) (err error)
 }
 
-// BoolFlag captures whether a boolean flag was set explicitly and its value.
-type BoolFlag struct {
-	Set   bool
-	Value bool
-}
-
-// Int64Flag captures whether an int64 flag was set explicitly and its value.
-type Int64Flag struct {
-	Set   bool
-	Value int64
-}
-
-// Regular expression to validate CUID2 identifiers (24 lowercase alphanumeric characters).
-var cuidRegex = regexp.MustCompile(`^[a-z0-9]{24}$`)
+// Regular expression to validate CUID2 identifiers (starts with a letter, 24 lowercase alphanumeric characters).
+var cuidRegex = regexp.MustCompile(`^[a-z][a-z0-9]{23}$`)
 
 // getAvailableViewports returns the list of supported viewport configurations.
 func getAvailableViewports() []string {
@@ -171,26 +162,100 @@ func parseViewport(viewport string) (width, height, refreshRate int64, err error
 	return w, h, refreshRate, nil
 }
 
-func parseStringMapFlag(values []string, flagName string) (map[string]string, error) {
-	if len(values) == 0 {
+// parseChromePolicy resolves the --chrome-policy / --chrome-policy-file inputs into a
+// custom Chrome enterprise policy object. The two inputs are mutually exclusive (enforced
+// by cobra); a file path of "-" reads stdin. It returns a nil map when neither input is
+// set or the content is empty. An explicit empty object ("{}") yields a non-nil empty map,
+// so callers must guard the SDK assignment with len>0: chrome_policy uses omitzero, which
+// drops only a nil map, not an empty one.
+func parseChromePolicy(inline, file string) (map[string]any, error) {
+	data := strings.TrimSpace(inline)
+	if file != "" {
+		var b []byte
+		var err error
+		if file == "-" {
+			b, err = io.ReadAll(os.Stdin)
+		} else {
+			b, err = os.ReadFile(file)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read chrome policy file: %w", err)
+		}
+		data = strings.TrimSpace(string(b))
+	}
+
+	if data == "" {
 		return nil, nil
 	}
 
-	parsed := make(map[string]string, len(values))
-	for _, pair := range values {
-		parts := strings.SplitN(pair, "=", 2)
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid %s value: %s (expected KEY=value)", flagName, pair)
-		}
-		parsed[parts[0]] = parts[1]
+	policy := map[string]any{}
+	if err := json.Unmarshal([]byte(data), &policy); err != nil {
+		return nil, fmt.Errorf("invalid JSON in chrome policy (must be a JSON object): %w", err)
 	}
+	if policy == nil {
+		// json.Unmarshal of the literal `null` succeeds but nils the map.
+		return nil, fmt.Errorf("chrome policy must be a JSON object, not null")
+	}
+	return policy, nil
+}
 
-	return parsed, nil
+// parseKeyValueSpecs parses repeated KEY=VALUE flag values into a map. It
+// returns the parsed pairs along with any specs that were malformed (missing
+// "=" or an empty key), mirroring the kernel hypeman CLI convention.
+func parseKeyValueSpecs(specs []string) (map[string]string, []string) {
+	values := make(map[string]string)
+	var malformed []string
+	for _, spec := range specs {
+		parts := strings.SplitN(spec, "=", 2)
+		if len(parts) != 2 || parts[0] == "" {
+			malformed = append(malformed, spec)
+			continue
+		}
+		values[parts[0]] = parts[1]
+	}
+	return values, malformed
+}
+
+// tagsFromFlag reads a repeated KEY=VALUE flag and parses it into a map,
+// warning about any malformed entries. It returns the parsed tags (nil when no
+// valid pairs are set) and whether the flag was provided on the command line.
+//
+// "Provided" keys off Changed, not len(specs): pflag records an empty `--tag=`
+// as Changed-but-empty, and that must still count as provided so the update
+// path rejects it (or `--tag= --clear-tags`) instead of silently ignoring it.
+func tagsFromFlag(cmd *cobra.Command, flagName string) (map[string]string, bool) {
+	provided := cmd.Flags().Changed(flagName)
+	specs, _ := cmd.Flags().GetStringArray(flagName)
+	tags, malformed := parseKeyValueSpecs(specs)
+	for _, invalid := range malformed {
+		pterm.Warning.Printf("Ignoring malformed tag: %s\n", invalid)
+	}
+	if len(tags) == 0 {
+		return nil, provided
+	}
+	return tags, provided
+}
+
+// formatTags renders tags as a deterministic "k=v, k2=v2" string with keys
+// sorted, for display in detail tables.
+func formatTags(tags kernel.Tags) string {
+	if len(tags) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(tags))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%s", k, tags[k]))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // Inputs for each command
 type BrowsersCreateInput struct {
-	PersistenceID      string
 	TimeoutSeconds     int
 	Stealth            BoolFlag
 	Headless           BoolFlag
@@ -201,8 +266,14 @@ type BrowsersCreateInput struct {
 	ProfileName        string
 	ProfileSaveChanges BoolFlag
 	ProxyID            string
+	StartURL           string
 	Extensions         []string
 	Viewport           string
+	Telemetry          string
+	ChromePolicy       string
+	ChromePolicyFile   string
+	Name               string
+	Tags               map[string]string
 	Output             string
 }
 
@@ -222,16 +293,22 @@ type BrowsersGetInput struct {
 }
 
 type BrowsersUpdateInput struct {
-	Identifier          string
-	ProxyID             string
-	ClearProxy          bool
-	DisableDefaultProxy BoolFlag
-	ProfileID           string
-	ProfileName         string
-	ProfileSaveChanges  BoolFlag
-	Viewport            string
-	Force               bool
-	Output              string
+	Identifier         string
+	ProxyID            string
+	ClearProxy         bool
+	ProfileID          string
+	ProfileName        string
+	ProfileSaveChanges BoolFlag
+	Viewport           string
+	Force              bool
+	Telemetry          string
+	Name               string
+	SetName            bool
+	ClearName          bool
+	Tags               map[string]string
+	TagsProvided       bool
+	ClearTags          bool
+	Output             string
 }
 
 // BrowsersCmd is a cobra-independent command handler for browsers operations.
@@ -244,6 +321,7 @@ type BrowsersCmd struct {
 	logs       BrowserLogService
 	computer   BrowserComputerService
 	playwright BrowserPlaywrightService
+	telemetry  BrowserTelemetryService
 }
 
 type BrowsersListInput struct {
@@ -253,11 +331,12 @@ type BrowsersListInput struct {
 	Limit          int
 	Offset         int
 	Query          string
+	Tags           map[string]string
 }
 
 func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	params := kernel.BrowserListParams{}
@@ -285,6 +364,9 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	if in.Query != "" {
 		params.Query = kernel.Opt(in.Query)
 	}
+	if len(in.Tags) > 0 {
+		params.Tags = in.Tags
+	}
 
 	page, err := b.browsers.List(ctx, params)
 	if err != nil {
@@ -306,7 +388,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	}
 
 	// Prepare table data
-	headers := []string{"Browser ID", "Created At", "Persistent ID", "Profile", "Pool", "CDP WS URL", "Live View URL"}
+	headers := []string{"Browser ID", "Name", "Created At", "Profile", "Pool", "CDP WS URL", "Live View URL"}
 	showDeletedAt := in.IncludeDeleted || in.Status == "deleted" || in.Status == "all"
 	if showDeletedAt {
 		headers = append(headers, "Deleted At")
@@ -314,11 +396,6 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	tableData := pterm.TableData{headers}
 
 	for _, browser := range browsers {
-		persistentID := "-"
-		if browser.Persistence.ID != "" {
-			persistentID = browser.Persistence.ID
-		}
-
 		profile := "-"
 		if browser.Profile.Name != "" {
 			profile = browser.Profile.Name
@@ -335,8 +412,8 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 
 		row := []string{
 			browser.SessionID,
+			util.OrDash(browser.Name),
 			util.FormatLocal(browser.CreatedAt),
-			persistentID,
 			profile,
 			pool,
 			truncateURL(browser.CdpWsURL, 50),
@@ -359,17 +436,14 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 }
 
 func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+	if err := validateStartURLFlag(in.StartURL); err != nil {
+		return err
 	}
 
-	if in.Output != "json" {
-		pterm.Info.Println("Creating browser session...")
-	}
 	params := kernel.BrowserNewParams{}
-	if in.PersistenceID != "" {
-		params.Persistence = kernel.BrowserPersistenceParam{ID: in.PersistenceID}
-	}
 	if in.TimeoutSeconds > 0 {
 		params.TimeoutSeconds = kernel.Opt(int64(in.TimeoutSeconds))
 	}
@@ -408,6 +482,9 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	if in.ProxyID != "" {
 		params.ProxyID = kernel.Opt(in.ProxyID)
 	}
+	if in.StartURL != "" {
+		params.StartURL = kernel.Opt(in.StartURL)
+	}
 
 	// Map extensions (IDs or names) into params.Extensions
 	if len(in.Extensions) > 0 {
@@ -442,6 +519,32 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		}
 	}
 
+	if in.Telemetry != "" {
+		t, err := buildNewTelemetryParam(in.Telemetry)
+		if err != nil {
+			return err
+		}
+		params.Telemetry = t
+	}
+
+	chromePolicy, err := parseChromePolicy(in.ChromePolicy, in.ChromePolicyFile)
+	if err != nil {
+		return err
+	}
+	if len(chromePolicy) > 0 {
+		params.ChromePolicy = chromePolicy
+	}
+
+	if in.Name != "" {
+		params.Name = kernel.Opt(in.Name)
+	}
+	if len(in.Tags) > 0 {
+		params.Tags = kernel.Tags(in.Tags)
+	}
+
+	if in.Output != "json" {
+		pterm.Info.Println("Creating browser session...")
+	}
 	browser, err := b.browsers.New(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -451,27 +554,30 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		return util.PrintPrettyJSON(browser)
 	}
 
-	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Persistence, browser.Profile)
+	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.StartURL, browser.Name, browser.Tags)
+	if in.Telemetry != "" {
+		printTelemetrySummary(browser.Telemetry)
+	}
 	return nil
 }
 
-func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, persistence kernel.BrowserPersistence, profile kernel.Profile) {
-	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, persistence, profile)
+func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, startURL, name string, tags kernel.Tags) {
+	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, profile, startURL, name, tags)
 	PrintTableNoPad(tableData, true)
 }
 
 // buildBrowserTableData creates a base table with common browser session fields.
-func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, persistence kernel.BrowserPersistence, profile kernel.Profile) pterm.TableData {
+func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, startURL, name string, tags kernel.Tags) pterm.TableData {
 	tableData := pterm.TableData{
 		{"Property", "Value"},
 		{"Session ID", sessionID},
-		{"CDP WebSocket URL", cdpURL},
 	}
+	if name != "" {
+		tableData = append(tableData, []string{"Name", name})
+	}
+	tableData = append(tableData, []string{"CDP WebSocket URL", cdpURL})
 	if liveViewURL != "" {
 		tableData = append(tableData, []string{"Live View URL", liveViewURL})
-	}
-	if persistence.ID != "" {
-		tableData = append(tableData, []string{"Persistent ID", persistence.ID})
 	}
 	if profile.ID != "" || profile.Name != "" {
 		profVal := profile.Name
@@ -480,40 +586,27 @@ func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, persistence ke
 		}
 		tableData = append(tableData, []string{"Profile", profVal})
 	}
+	if startURL != "" {
+		tableData = append(tableData, []string{"Start URL", startURL})
+	}
+	if len(tags) > 0 {
+		tableData = append(tableData, []string{"Tags", formatTags(tags)})
+	}
 	return tableData
 }
 
 func (b BrowsersCmd) Delete(ctx context.Context, in BrowsersDeleteInput) error {
-	// Try both deletion modes without confirmation
 	// Treat not found as a success (idempotent delete)
-	var nonNotFoundErrors []error
-
-	// Attempt by session ID
-	if err := b.browsers.DeleteByID(ctx, in.Identifier); err != nil {
-		if !util.IsNotFound(err) {
-			nonNotFoundErrors = append(nonNotFoundErrors, err)
-		}
+	if err := b.browsers.DeleteByID(ctx, in.Identifier); err != nil && !util.IsNotFound(err) {
+		return util.CleanedUpSdkError{Err: err}
 	}
-
-	// Attempt by persistent ID (backward compatibility)
-	if err := b.browsers.Delete(ctx, kernel.BrowserDeleteParams{PersistentID: in.Identifier}); err != nil {
-		if !util.IsNotFound(err) {
-			nonNotFoundErrors = append(nonNotFoundErrors, err)
-		}
-	}
-
-	if len(nonNotFoundErrors) >= 2 {
-		// Both failed with meaningful errors; report one
-		return util.CleanedUpSdkError{Err: nonNotFoundErrors[0]}
-	}
-
 	pterm.Success.Printf("Successfully deleted (or already absent) browser: %s\n", in.Identifier)
 	return nil
 }
 
 func (b BrowsersCmd) View(ctx context.Context, in BrowsersViewInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	browser, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
@@ -546,8 +639,8 @@ func (b BrowsersCmd) View(ctx context.Context, in BrowsersViewInput) error {
 }
 
 func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	query := kernel.BrowserGetParams{}
@@ -568,8 +661,10 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		browser.SessionID,
 		browser.CdpWsURL,
 		browser.BrowserLiveViewURL,
-		browser.Persistence,
 		browser.Profile,
+		browser.StartURL,
+		browser.Name,
+		browser.Tags,
 	)
 
 	// Append additional detailed fields
@@ -598,8 +693,8 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 }
 
 func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	// Validate profile selection: at most one of profile-id or profile-name must be provided
@@ -612,9 +707,37 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("cannot specify both --proxy-id and --clear-proxy")
 	}
 
-	hasProxyChange := in.ProxyID != "" || in.ClearProxy || in.DisableDefaultProxy.Set
+	// Cannot specify both --name and --clear-name
+	if in.SetName && in.ClearName {
+		return fmt.Errorf("cannot specify both --name and --clear-name")
+	}
+
+	// Cannot specify both --tag and --clear-tags. TagsProvided (whether the flag
+	// was passed) is the authoritative signal so the check still fires when every
+	// --tag value was malformed and dropped to an empty map.
+	if (in.TagsProvided || len(in.Tags) > 0) && in.ClearTags {
+		return fmt.Errorf("cannot specify both --tag and --clear-tags")
+	}
+
+	// --tag was provided but parsed to zero valid pairs (every value malformed).
+	// Treat as a user error rather than silently leaving tags unchanged.
+	if in.TagsProvided && len(in.Tags) == 0 {
+		return fmt.Errorf("no valid --tag KEY=VALUE pairs provided")
+	}
+
+	// --name must carry a value; clearing is done explicitly via --clear-name.
+	// (A set name combined with --clear-name is already rejected above, so the
+	// ClearName case cannot reach here.)
+	if in.SetName && in.Name == "" {
+		return fmt.Errorf("--name requires a non-empty value; use --clear-name to clear the name")
+	}
+
+	hasProxyChange := in.ProxyID != "" || in.ClearProxy
 	hasProfileChange := in.ProfileID != "" || in.ProfileName != ""
 	hasViewportChange := in.Viewport != ""
+	// By this point a set name is guaranteed non-empty (the guard above rejects --name "").
+	hasNameChange := in.SetName || in.ClearName
+	hasTagsChange := len(in.Tags) > 0 || in.ClearTags
 
 	// Validate --save-changes is only used with a profile
 	if in.ProfileSaveChanges.Set && !hasProfileChange {
@@ -627,11 +750,26 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	// Validate that at least one update option is provided
-	if !hasProxyChange && !hasProfileChange && !hasViewportChange {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, or --viewport")
+	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && !hasNameChange && !hasTagsChange {
+		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --profile-id, --profile-name, --viewport, --telemetry, --name, --clear-name, --tag, or --clear-tags")
 	}
 
 	params := kernel.BrowserUpdateParams{}
+
+	// Handle name changes
+	if in.ClearName {
+		params.Name = kernel.Opt("")
+	} else if in.SetName {
+		params.Name = kernel.Opt(in.Name)
+	}
+
+	// Handle tag changes. Tags are a full replace, not a merge: providing --tag
+	// replaces the entire set, and --clear-tags removes all tags.
+	if in.ClearTags {
+		params.Tags = kernel.Tags{}
+	} else if len(in.Tags) > 0 {
+		params.Tags = kernel.Tags(in.Tags)
+	}
 
 	// Handle proxy changes
 	if in.ClearProxy {
@@ -654,6 +792,15 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		if in.ProfileSaveChanges.Set {
 			params.Profile.SaveChanges = kernel.Opt(in.ProfileSaveChanges.Value)
 		}
+	}
+
+	// Handle telemetry changes
+	if in.Telemetry != "" {
+		t, err := buildUpdateTelemetryParam(in.Telemetry)
+		if err != nil {
+			return err
+		}
+		params.Telemetry = t
 	}
 
 	// Handle viewport changes
@@ -690,6 +837,15 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	pterm.Success.Printf("Updated browser %s\n", browser.SessionID)
+	if hasNameChange {
+		pterm.Info.Printf("Name: %s\n", util.OrDash(browser.Name))
+	}
+	if hasTagsChange {
+		pterm.Info.Printf("Tags: %s\n", util.OrDash(formatTags(browser.Tags)))
+	}
+	if in.Telemetry != "" {
+		printTelemetrySummary(browser.Telemetry)
+	}
 	return nil
 }
 
@@ -1108,8 +1264,8 @@ func (b BrowsersCmd) ComputerBatch(ctx context.Context, in BrowsersComputerBatch
 }
 
 func (b BrowsersCmd) ComputerReadClipboard(ctx context.Context, in BrowsersComputerReadClipboardInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 	if b.computer == nil {
 		pterm.Error.Println("computer service not available")
@@ -1173,8 +1329,8 @@ type BrowsersReplaysDownloadInput struct {
 }
 
 func (b BrowsersCmd) ReplaysList(ctx context.Context, in BrowsersReplaysListInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	items, err := b.replays.List(ctx, in.Identifier)
@@ -1203,8 +1359,8 @@ func (b BrowsersCmd) ReplaysList(ctx context.Context, in BrowsersReplaysListInpu
 }
 
 func (b BrowsersCmd) ReplaysStart(ctx context.Context, in BrowsersReplaysStartInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
@@ -1350,9 +1506,14 @@ type BrowsersPlaywrightExecuteInput struct {
 	Identifier string
 	Code       string
 	Timeout    int64
+	Output     string
 }
 
 func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrightExecuteInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+
 	if b.playwright == nil {
 		pterm.Error.Println("playwright service not available")
 		return nil
@@ -1368,6 +1529,10 @@ func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrigh
 	res, err := b.playwright.Execute(ctx, br.SessionID, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(res)
 	}
 
 	rows := pterm.TableData{{"Property", "Value"}, {"Success", fmt.Sprintf("%t", res.Success)}}
@@ -1395,8 +1560,8 @@ func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrigh
 }
 
 func (b BrowsersCmd) ProcessExec(ctx context.Context, in BrowsersProcessExecInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if b.process == nil {
@@ -1469,8 +1634,8 @@ func (b BrowsersCmd) ProcessExec(ctx context.Context, in BrowsersProcessExecInpu
 }
 
 func (b BrowsersCmd) ProcessSpawn(ctx context.Context, in BrowsersProcessSpawnInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if b.process == nil {
@@ -1639,8 +1804,8 @@ func (b BrowsersCmd) ProcessResize(ctx context.Context, in BrowsersProcessResize
 
 // FS Watch
 func (b BrowsersCmd) FSWatchStart(ctx context.Context, in BrowsersFSWatchStartInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if b.fsWatch == nil {
@@ -1880,8 +2045,8 @@ func (b BrowsersCmd) FSDownloadDirZip(ctx context.Context, in BrowsersFSDownload
 }
 
 func (b BrowsersCmd) FSFileInfo(ctx context.Context, in BrowsersFSFileInfoInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if b.fs == nil {
@@ -1907,8 +2072,8 @@ func (b BrowsersCmd) FSFileInfo(ctx context.Context, in BrowsersFSFileInfoInput)
 }
 
 func (b BrowsersCmd) FSListFiles(ctx context.Context, in BrowsersFSListFilesInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if b.fs == nil {
@@ -2237,30 +2402,30 @@ var browsersCreateCmd = &cobra.Command{
 }
 
 var browsersDeleteCmd = &cobra.Command{
-	Use:   "delete <id> [ids...]",
-	Short: "Delete a browser",
+	Use:   "delete <id-or-name> [ids-or-names...]",
+	Short: "Delete a browser by ID or name",
 	Args:  cobra.MinimumNArgs(1),
 	RunE:  runBrowsersDelete,
 }
 
 var browsersViewCmd = &cobra.Command{
-	Use:   "view <id>",
-	Short: "Get the live view URL for a browser",
+	Use:   "view <id-or-name>",
+	Short: "Get the live view URL for a browser by ID or name",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runBrowsersView,
 }
 
 var browsersGetCmd = &cobra.Command{
-	Use:   "get <id>",
-	Short: "Get detailed information about a browser session",
-	Long:  "Retrieve and display detailed information about a specific browser session including configuration, URLs, and status.",
+	Use:   "get <id-or-name>",
+	Short: "Get detailed information about a browser session by ID or name",
+	Long:  "Retrieve and display detailed information about a specific browser session (by ID or name) including configuration, URLs, and status.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runBrowsersGet,
 }
 
 var browsersUpdateCmd = &cobra.Command{
-	Use:   "update <id>",
-	Short: "Update a browser session",
+	Use:   "update <id-or-name>",
+	Short: "Update a browser session by ID or name",
 	Long: `Update a running browser session.
 
 Supported operations:
@@ -2269,14 +2434,18 @@ Supported operations:
   - Load a profile into a session that doesn't have one (--profile-id or --profile-name)
   - Change viewport dimensions (--viewport)
   - Force viewport resize during active live view or recording (--force with --viewport)
+  - Rename or clear the session name (--name or --clear-name)
+  - Replace or clear the session tags (--tag or --clear-tags)
 
-Note: Profiles can only be loaded into sessions that don't already have a profile.`,
+Notes:
+  - Profiles can only be loaded into sessions that don't already have a profile.
+  - --tag replaces the entire tag set (it is not merged with existing tags).`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
-			return fmt.Errorf("missing required argument: browser ID\n\nUsage: kernel browsers update <id> [flags]")
+			return fmt.Errorf("missing required argument: browser ID or name\n\nUsage: kernel browsers update <id-or-name> [flags]")
 		}
 		if len(args) > 1 {
-			return fmt.Errorf("expected 1 argument (browser ID), got %d", len(args))
+			return fmt.Errorf("expected 1 argument (browser ID or name), got %d", len(args))
 		}
 		return nil
 	},
@@ -2285,22 +2454,23 @@ Note: Profiles can only be loaded into sessions that don't already have a profil
 
 func init() {
 	// list flags
-	browsersListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(browsersListCmd)
 	browsersListCmd.Flags().Bool("include-deleted", false, "DEPRECATED: Use --status instead. Include soft-deleted browser sessions in the results")
 	browsersListCmd.Flags().String("status", "", "Filter by status: 'active' (default), 'deleted', or 'all'")
 	browsersListCmd.Flags().Int("limit", 0, "Maximum number of results to return (default 20, max 100)")
 	browsersListCmd.Flags().Int("offset", 0, "Number of results to skip (for pagination)")
-	browsersListCmd.Flags().String("query", "", "Search browsers by session ID, profile ID, or proxy ID")
+	browsersListCmd.Flags().String("query", "", "Search browsers by name, session ID, profile ID, proxy ID, or pool name")
+	browsersListCmd.Flags().StringArray("tag", nil, "Filter by tag KEY=VALUE (repeatable; a session must match every pair)")
 
 	// get flags
-	browsersGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(browsersGetCmd)
 	browsersGetCmd.Flags().Bool("include-deleted", false, "Include soft-deleted browser sessions in the lookup")
 
 	// view flags
-	browsersViewCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(browsersViewCmd)
 
 	// update flags
-	browsersUpdateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(browsersUpdateCmd)
 	browsersUpdateCmd.Flags().String("proxy-id", "", "ID of the proxy to use for the browser session")
 	browsersUpdateCmd.Flags().Bool("clear-proxy", false, "Remove the proxy from the browser session")
 	browsersUpdateCmd.Flags().Bool("disable-default-proxy", false, "Disable the default stealth proxy so the browser connects directly; use --disable-default-proxy=false to re-enable it")
@@ -2309,6 +2479,11 @@ func init() {
 	browsersUpdateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
 	browsersUpdateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersUpdateCmd.Flags().Bool("force", false, "Force viewport resize even when a live view or recording/replay is active")
+	browsersUpdateCmd.Flags().String("telemetry", "", "Update telemetry: --telemetry=all (reset to default set), --telemetry=off (disable), or --telemetry=console,network (merge those categories into the current selection)")
+	browsersUpdateCmd.Flags().String("name", "", "Set a new unique name for the browser session (mutually exclusive with --clear-name)")
+	browsersUpdateCmd.Flags().Bool("clear-name", false, "Clear the browser session name")
+	browsersUpdateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE (repeatable; up to 50 pairs). Replaces the entire tag set; mutually exclusive with --clear-tags")
+	browsersUpdateCmd.Flags().Bool("clear-tags", false, "Remove all tags from the browser session")
 
 	browsersCmd.AddCommand(browsersListCmd)
 	browsersCmd.AddCommand(browsersCreateCmd)
@@ -2334,11 +2509,11 @@ func init() {
 	// replays
 	replaysRoot := &cobra.Command{Use: "replays", Short: "Manage browser replays"}
 	replaysList := &cobra.Command{Use: "list <id>", Short: "List replays for a browser", Args: cobra.ExactArgs(1), RunE: runBrowsersReplaysList}
-	replaysList.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(replaysList)
 	replaysStart := &cobra.Command{Use: "start <id>", Short: "Start a replay recording", Args: cobra.ExactArgs(1), RunE: runBrowsersReplaysStart}
 	replaysStart.Flags().Int("framerate", 0, "Recording framerate (fps)")
 	replaysStart.Flags().Int("max-duration", 0, "Maximum duration in seconds")
-	replaysStart.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(replaysStart)
 	replaysStop := &cobra.Command{Use: "stop <id> <replay-id>", Short: "Stop a replay recording", Args: cobra.ExactArgs(2), RunE: runBrowsersReplaysStop}
 	replaysDownload := &cobra.Command{Use: "download <id> <replay-id>", Short: "Download a replay video", Args: cobra.ExactArgs(2), RunE: runBrowsersReplaysDownload}
 	replaysDownload.Flags().StringP("output-file", "f", "", "Output file path for the replay video")
@@ -2354,8 +2529,7 @@ func init() {
 	procExec.Flags().Int("timeout", 0, "Timeout in seconds")
 	procExec.Flags().String("as-user", "", "Run as user")
 	procExec.Flags().Bool("as-root", false, "Run as root")
-	procExec.Flags().StringArray("env", nil, "Environment variable in KEY=value format (repeatable)")
-	procExec.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(procExec)
 	procSpawn := &cobra.Command{Use: "spawn <id> [--] [command...]", Short: "Execute a command asynchronously", Args: cobra.MinimumNArgs(1), RunE: runBrowsersProcessSpawn}
 	procSpawn.Flags().String("command", "", "Command to execute (optional; if omitted, trailing args are executed via /bin/bash -c)")
 	procSpawn.Flags().StringSlice("args", []string{}, "Command arguments")
@@ -2363,11 +2537,7 @@ func init() {
 	procSpawn.Flags().Int("timeout", 0, "Timeout in seconds")
 	procSpawn.Flags().String("as-user", "", "Run as user")
 	procSpawn.Flags().Bool("as-root", false, "Run as root")
-	procSpawn.Flags().Bool("allocate-tty", false, "Allocate a pseudo-terminal (PTY) for interactive shells")
-	procSpawn.Flags().Int64("cols", 0, "Initial terminal columns when --allocate-tty is enabled")
-	procSpawn.Flags().Int64("rows", 0, "Initial terminal rows when --allocate-tty is enabled")
-	procSpawn.Flags().StringArray("env", nil, "Environment variable in KEY=value format (repeatable)")
-	procSpawn.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(procSpawn)
 	procKill := &cobra.Command{Use: "kill <id> <process-id>", Short: "Send a signal to a process", Args: cobra.ExactArgs(2), RunE: runBrowsersProcessKill}
 	procKill.Flags().String("signal", "TERM", "Signal to send (TERM, KILL, INT, HUP)")
 	procStatus := &cobra.Command{Use: "status <id> <process-id>", Short: "Get process status", Args: cobra.ExactArgs(2), RunE: runBrowsersProcessStatus}
@@ -2402,11 +2572,11 @@ func init() {
 	fsFileInfo := &cobra.Command{Use: "file-info <id>", Short: "Get file or directory info", Args: cobra.ExactArgs(1), RunE: runBrowsersFSFileInfo}
 	fsFileInfo.Flags().String("path", "", "Absolute file or directory path")
 	_ = fsFileInfo.MarkFlagRequired("path")
-	fsFileInfo.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(fsFileInfo)
 	fsListFiles := &cobra.Command{Use: "list-files <id>", Short: "List files in a directory", Args: cobra.ExactArgs(1), RunE: runBrowsersFSListFiles}
 	fsListFiles.Flags().String("path", "", "Absolute directory path")
 	_ = fsListFiles.MarkFlagRequired("path")
-	fsListFiles.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(fsListFiles)
 	fsMove := &cobra.Command{Use: "move <id>", Short: "Move or rename a file or directory", Args: cobra.ExactArgs(1), RunE: runBrowsersFSMove}
 	fsMove.Flags().String("src", "", "Absolute source path")
 	fsMove.Flags().String("dest", "", "Absolute destination path")
@@ -2451,7 +2621,7 @@ func init() {
 	fsWatchStart.Flags().String("path", "", "Directory to watch (required)")
 	_ = fsWatchStart.MarkFlagRequired("path")
 	fsWatchStart.Flags().Bool("recursive", false, "Watch recursively")
-	fsWatchStart.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(fsWatchStart)
 	fsWatchStop := &cobra.Command{Use: "stop <id> <watch-id>", Short: "Stop watching a directory", Args: cobra.ExactArgs(2), RunE: runBrowsersFSWatchStop}
 	fsWatchEvents := &cobra.Command{Use: "events <id> <watch-id>", Short: "Stream filesystem events", Args: cobra.ExactArgs(2), RunE: runBrowsersFSWatchEvents}
 	fsWatchRoot.AddCommand(fsWatchStart, fsWatchStop, fsWatchEvents)
@@ -2534,7 +2704,7 @@ func init() {
 
 	// computer get-mouse-position
 	computerGetMousePosition := &cobra.Command{Use: "get-mouse-position <id>", Short: "Get current mouse cursor position", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerGetMousePosition}
-	computerGetMousePosition.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(computerGetMousePosition)
 
 	// computer batch
 	computerBatch := &cobra.Command{Use: "batch <id>", Short: "Execute a batch of computer actions from JSON", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerBatch}
@@ -2543,7 +2713,7 @@ func init() {
 
 	// computer read-clipboard
 	computerReadClipboard := &cobra.Command{Use: "read-clipboard <id>", Short: "Read text from the browser clipboard", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerReadClipboard}
-	computerReadClipboard.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(computerReadClipboard)
 
 	// computer write-clipboard
 	computerWriteClipboard := &cobra.Command{Use: "write-clipboard <id>", Short: "Write text to the browser clipboard", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerWriteClipboard}
@@ -2557,13 +2727,12 @@ func init() {
 	playwrightRoot := &cobra.Command{Use: "playwright", Short: "Playwright operations"}
 	playwrightExecute := &cobra.Command{Use: "execute <id> [code]", Short: "Execute Playwright/TypeScript code against the browser", Args: cobra.MinimumNArgs(1), RunE: runBrowsersPlaywrightExecute}
 	playwrightExecute.Flags().Int64("timeout", 0, "Maximum execution time in seconds (default per server)")
+	addJSONOutputFlag(playwrightExecute)
 	playwrightRoot.AddCommand(playwrightExecute)
 	browsersCmd.AddCommand(playwrightRoot)
 
 	// Add flags for create command
-	browsersCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
-	browsersCreateCmd.Flags().StringP("persistent-id", "p", "", "[DEPRECATED] Use --timeout and profiles instead. Unique identifier for browser session persistence")
-	_ = browsersCreateCmd.Flags().MarkDeprecated("persistent-id", "use --timeout (up to 72 hours) and profiles instead")
+	addJSONOutputFlag(browsersCreateCmd)
 	browsersCreateCmd.Flags().BoolP("stealth", "s", false, "Launch browser in stealth mode to avoid detection")
 	browsersCreateCmd.Flags().BoolP("headless", "H", false, "Launch browser without GUI access")
 	browsersCreateCmd.Flags().Bool("gpu", false, "Launch browser with hardware-accelerated GPU rendering")
@@ -2574,11 +2743,66 @@ func init() {
 	browsersCreateCmd.Flags().String("profile-name", "", "Profile name to load into the browser session (mutually exclusive with --profile-id)")
 	browsersCreateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
 	browsersCreateCmd.Flags().String("proxy-id", "", "Proxy ID to use for the browser session")
+	browsersCreateCmd.Flags().String("start-url", "", "Initial page to open on launch")
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
 	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersCreateCmd.Flags().Bool("viewport-interactive", false, "Interactively select viewport size from list")
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
+	browsersCreateCmd.Flags().String("telemetry", "", "Configure telemetry (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
+	browsersCreateCmd.Flags().String("name", "", "Optional unique name for the browser session (used to find it later; can be changed with 'browsers update --name')")
+	browsersCreateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the session (repeatable; up to 50 pairs)")
+	browsersCreateCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts")
+	browsersCreateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
+	browsersCreateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
+	browsersCreateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
+
+	// curl
+	curlCmd := &cobra.Command{
+		Use:   "curl <session-id> <url>",
+		Short: "Make HTTP requests through a browser session",
+		Long: `Execute HTTP requests through Chrome's network stack, inheriting the
+browser's TLS fingerprint, cookies, proxy configuration, and headers.
+Works like curl but requests go through the browser session. Redirects are
+followed automatically by Chromium.`,
+		Args: cobra.ExactArgs(2),
+		RunE: runBrowsersCurl,
+	}
+	curlCmd.Flags().StringP("request", "X", "", "HTTP method (default: GET)")
+	curlCmd.Flags().StringArrayP("header", "H", nil, "HTTP header (repeatable, \"Key: Value\" format)")
+	curlCmd.Flags().StringP("data", "d", "", "Request body")
+	curlCmd.Flags().String("data-file", "", "Read request body from file")
+	curlCmd.Flags().Float64("max-time", 30, "Maximum time allowed for the request in seconds")
+	curlCmd.Flags().StringP("output", "o", "", "Write response body to file")
+	curlCmd.Flags().BoolP("head", "I", false, "Fetch headers only")
+	curlCmd.Flags().BoolP("include", "i", false, "Include response headers in output")
+	curlCmd.Flags().StringP("dump-header", "D", "", "Write received headers to file (use - for stdout)")
+	curlCmd.Flags().StringP("write-out", "w", "", "Output text after completion; supports %{http_code}, %{response_code}, %{time_total}, %{size_download}")
+	curlCmd.Flags().BoolP("fail", "f", false, "Fail with no body output on HTTP errors")
+	curlCmd.Flags().BoolP("silent", "s", false, "Suppress progress output")
+	browsersCmd.AddCommand(curlCmd)
+
+	telemetryRoot := &cobra.Command{Use: "telemetry", Short: "Browser telemetry operations"}
+	telemetryStream := &cobra.Command{Use: "stream <id>", Short: "Stream live telemetry events", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStream}
+	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,connection,system,screenshot,captcha,monitor)")
+	telemetryStream.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error)")
+	telemetryStream.Flags().Int64("seq", -1, "Resume after sequence number N (Last-Event-ID); replays events with seq > N. Default -1 streams from now")
+	telemetryStream.Flags().StringP("output", "o", "", "Output format: json for newline-delimited JSON envelopes")
+	telemetryStream.Flags().String("replay", "", "Replay buffered events on connect: --replay=all starts from the oldest retained event")
+	telemetryStream.MarkFlagsMutuallyExclusive("seq", "replay")
+	telemetryRoot.AddCommand(telemetryStream)
+
+	telemetryEvents := &cobra.Command{Use: "events <id>", Short: "Read historical telemetry events (paged)", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryEvents}
+	telemetryEvents.Flags().Int64("limit", 0, "Maximum number of events per page (1-100, default 20)")
+	telemetryEvents.Flags().Int64("offset", 0, "Pagination cursor: pass the X-Next-Offset from a previous response")
+	telemetryEvents.Flags().String("since", "", "Window start: RFC-3339 timestamp or a duration like 5m (default 5m). Ignored when --offset is set")
+	telemetryEvents.Flags().String("until", "", "Window end (exclusive): RFC-3339 timestamp or a duration like 5m")
+	telemetryEvents.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,connection,system,screenshot,captcha,monitor)")
+	telemetryEvents.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error); walks every page in the window")
+	telemetryEvents.Flags().Bool("all", false, "Walk every page in the window instead of just the first (ignores --offset)")
+	addJSONOutputFlag(telemetryEvents)
+	telemetryRoot.AddCommand(telemetryEvents)
+	browsersCmd.AddCommand(telemetryRoot)
 
 	// no flags for view; it takes a single positional argument
 }
@@ -2593,6 +2817,7 @@ func runBrowsersList(cmd *cobra.Command, args []string) error {
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
 	query, _ := cmd.Flags().GetString("query")
+	tags, _ := tagsFromFlag(cmd, "tag")
 	return b.List(cmd.Context(), BrowsersListInput{
 		Output:         out,
 		IncludeDeleted: includeDeleted,
@@ -2600,17 +2825,35 @@ func runBrowsersList(cmd *cobra.Command, args []string) error {
 		Limit:          limit,
 		Offset:         offset,
 		Query:          query,
+		Tags:           tags,
 	})
+}
+
+// poolLeaseAllowedFlags returns the `browsers create` flags that are compatible with
+// acquiring a session from a pool (--pool-id/--pool-name). When a pool flag is set, the
+// pool determines browser configuration, so any other browser-config flag set alongside it
+// triggers a conflict warning. Session-only flags like --chrome-policy must stay out of
+// this set so they correctly surface that warning rather than being silently ignored.
+func poolLeaseAllowedFlags() map[string]bool {
+	return map[string]bool{
+		"pool-id":   true,
+		"pool-name": true,
+		"timeout":   true,
+		"name":      true,
+		"tag":       true,
+		"telemetry": true,
+		"output":    true,
+		"yes":       true,
+		// Global persistent flags that don't configure browsers
+		"no-color":  true,
+		"log-level": true,
+	}
 }
 
 func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 
 	// Get flag values
-	persistenceID, _ := cmd.Flags().GetString("persistent-id")
-	if persistenceID != "" {
-		pterm.Warning.Println("--persistent-id is deprecated. Use --timeout (up to 72 hours) and profiles instead.")
-	}
 	stealthVal, _ := cmd.Flags().GetBool("stealth")
 	headlessVal, _ := cmd.Flags().GetBool("headless")
 	gpuVal, _ := cmd.Flags().GetBool("gpu")
@@ -2621,12 +2864,19 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	saveChanges, _ := cmd.Flags().GetBool("save-changes")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
+	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	viewportInteractive, _ := cmd.Flags().GetBool("viewport-interactive")
 	poolID, _ := cmd.Flags().GetString("pool-id")
 	poolName, _ := cmd.Flags().GetString("pool-name")
+	telemetry, _ := cmd.Flags().GetString("telemetry")
+	name, _ := cmd.Flags().GetString("name")
+	tags, _ := tagsFromFlag(cmd, "tag")
+	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
+	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
 	output, _ := cmd.Flags().GetString("output")
+	skipConfirm, _ := cmd.Flags().GetBool("yes")
 
 	if poolID != "" && poolName != "" {
 		pterm.Error.Println("must specify at most one of --pool-id or --pool-name")
@@ -2634,16 +2884,9 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	if poolID != "" || poolName != "" {
-		// When using a pool, configuration comes from the pool itself.
-		allowedFlags := map[string]bool{
-			"pool-id":   true,
-			"pool-name": true,
-			"timeout":   true,
-			"output":    true,
-			// Global persistent flags that don't configure browsers
-			"no-color":  true,
-			"log-level": true,
-		}
+		// When using a pool, configuration comes from the pool itself, but
+		// name, tags, and telemetry apply per-lease to the acquired session.
+		allowedFlags := poolLeaseAllowedFlags()
 
 		// Check if any browser configuration flags were set (which would conflict).
 		var conflicts []string
@@ -2662,10 +2905,18 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 			pterm.Info.Println("When using a pool, all browser configuration comes from the pool itself.")
 			pterm.Info.Println("The conflicting flags will be ignored.")
 
-			result, _ := pterm.DefaultInteractiveConfirm.Show("Continue with pool configuration?")
-			if !result {
-				pterm.Info.Println("Cancelled. Remove conflicting flags or omit the pool flag.")
-				return nil
+			if !skipConfirm {
+				result, err := interactive.Confirm(
+					fmt.Sprintf("ignore conflicting browser configuration flags (%s) and continue with %s", strings.Join(conflicts, ", "), flagLabel),
+					"Continue with pool configuration?",
+				)
+				if err != nil {
+					return err
+				}
+				if !result {
+					pterm.Info.Println("Cancelled. Remove conflicting flags or omit the pool flag.")
+					return nil
+				}
 			}
 			pterm.Success.Println("Proceeding with pool configuration...")
 		}
@@ -2680,9 +2931,13 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		}
 		poolSvc := client.BrowserPools
 
-		acquireParams := kernel.BrowserPoolAcquireParams{}
+		var acquireTimeout int64
 		if cmd.Flags().Changed("timeout") && timeout > 0 {
-			acquireParams.AcquireTimeoutSeconds = kernel.Int(int64(timeout))
+			acquireTimeout = int64(timeout)
+		}
+		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry)
+		if err != nil {
+			return err
 		}
 
 		resp, err := (&poolSvc).Acquire(cmd.Context(), pool, acquireParams)
@@ -2700,29 +2955,28 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if output == "json" {
 			return util.PrintPrettyJSON(resp)
 		}
-		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Persistence, resp.Profile)
+		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.StartURL, resp.Name, resp.Tags)
 		return nil
 	}
 
 	// Handle interactive viewport selection
 	if viewportInteractive {
-		if viewport != "" {
+		if viewport != "" && interactive.IsInteractive() {
 			pterm.Warning.Println("Both --viewport and --viewport-interactive specified; using interactive mode")
 		}
-		options := getAvailableViewports()
-		selectedViewport, err := pterm.DefaultInteractiveSelect.
-			WithOptions(options).
-			WithDefaultText("Select a viewport size:").
-			Show()
+		selectedViewport, err := interactive.Select(
+			"viewport selection",
+			"pass --viewport instead of --viewport-interactive (e.g. --viewport 1920x1080@25)",
+			"Select a viewport size:",
+			getAvailableViewports(),
+		)
 		if err != nil {
-			pterm.Error.Printf("Failed to select viewport: %v\n", err)
-			return nil
+			return err
 		}
 		viewport = selectedViewport
 	}
 
 	in := BrowsersCreateInput{
-		PersistenceID:      persistenceID,
 		TimeoutSeconds:     timeout,
 		Stealth:            BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealthVal},
 		Headless:           BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headlessVal},
@@ -2733,8 +2987,14 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		ProfileName:        profileName,
 		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
 		ProxyID:            proxyID,
+		StartURL:           startURL,
 		Extensions:         extensions,
 		Viewport:           viewport,
+		Telemetry:          telemetry,
+		ChromePolicy:       chromePolicy,
+		ChromePolicyFile:   chromePolicyFile,
+		Name:               name,
+		Tags:               tags,
 		Output:             output,
 	}
 
@@ -2794,20 +3054,31 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	saveChanges, _ := cmd.Flags().GetBool("save-changes")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	force, _ := cmd.Flags().GetBool("force")
+	telemetry, _ := cmd.Flags().GetString("telemetry")
+	name, _ := cmd.Flags().GetString("name")
+	clearName, _ := cmd.Flags().GetBool("clear-name")
+	tags, tagsProvided := tagsFromFlag(cmd, "tag")
+	clearTags, _ := cmd.Flags().GetBool("clear-tags")
 
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
 	return b.Update(cmd.Context(), BrowsersUpdateInput{
-		Identifier:          args[0],
-		ProxyID:             proxyID,
-		ClearProxy:          clearProxy,
-		DisableDefaultProxy: BoolFlag{Set: cmd.Flags().Changed("disable-default-proxy"), Value: disableDefaultProxy},
-		ProfileID:           profileID,
-		ProfileName:         profileName,
-		ProfileSaveChanges:  BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
-		Viewport:            viewport,
-		Force:               force,
-		Output:              out,
+		Identifier:         args[0],
+		ProxyID:            proxyID,
+		ClearProxy:         clearProxy,
+		ProfileID:          profileID,
+		ProfileName:        profileName,
+		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
+		Viewport:           viewport,
+		Force:              force,
+		Telemetry:          telemetry,
+		Name:               name,
+		SetName:            cmd.Flags().Changed("name"),
+		ClearName:          clearName,
+		Tags:               tags,
+		TagsProvided:       tagsProvided,
+		ClearTags:          clearTags,
+		Output:             out,
 	})
 }
 
@@ -3008,8 +3279,9 @@ func runBrowsersPlaywrightExecute(cmd *cobra.Command, args []string) error {
 		code = string(data)
 	}
 	timeout, _ := cmd.Flags().GetInt64("timeout")
+	output, _ := cmd.Flags().GetString("output")
 	b := BrowsersCmd{browsers: &svc, playwright: &svc.Playwright}
-	return b.PlaywrightExecute(cmd.Context(), BrowsersPlaywrightExecuteInput{Identifier: args[0], Code: strings.TrimSpace(code), Timeout: timeout})
+	return b.PlaywrightExecute(cmd.Context(), BrowsersPlaywrightExecuteInput{Identifier: args[0], Code: strings.TrimSpace(code), Timeout: timeout, Output: output})
 }
 
 func runBrowsersFSNewDirectory(cmd *cobra.Command, args []string) error {
@@ -3335,6 +3607,281 @@ func runBrowsersComputerWriteClipboard(cmd *cobra.Command, args []string) error 
 
 	b := BrowsersCmd{browsers: &svc, computer: &svc.Computer}
 	return b.ComputerWriteClipboard(cmd.Context(), BrowsersComputerWriteClipboardInput{Identifier: args[0], Text: text})
+}
+
+// Curl
+
+type BrowsersCurlInput struct {
+	Identifier string
+	URL        string
+	Method     string
+	Headers    []string
+	Data       string
+	DataFile   string
+	MaxTime    time.Duration
+	OutputFile string
+	Head       bool
+	Include    bool
+	DumpHeader string
+	WriteOut   string
+	Fail       bool
+	Silent     bool
+}
+
+type silentCurlError struct {
+	err error
+}
+
+func (e silentCurlError) Error() string {
+	return e.err.Error()
+}
+
+func (e silentCurlError) Unwrap() error {
+	return e.err
+}
+
+func (e silentCurlError) Silent() bool {
+	return true
+}
+
+func curlError(in BrowsersCurlInput, err error) error {
+	if err == nil {
+		return nil
+	}
+	if in.Silent {
+		return silentCurlError{err: err}
+	}
+	return err
+}
+
+func parseCurlHeaders(raw []string) http.Header {
+	if len(raw) == 0 {
+		return nil
+	}
+	headers := make(http.Header)
+	for _, h := range raw {
+		k, v, ok := strings.Cut(h, ":")
+		if !ok {
+			continue
+		}
+		headers.Add(strings.TrimSpace(k), strings.TrimSpace(v))
+	}
+	return headers
+}
+
+func readCurlBody(in BrowsersCurlInput) (string, error) {
+	if in.DataFile == "" {
+		return in.Data, nil
+	}
+
+	data, err := os.ReadFile(in.DataFile)
+	if err != nil {
+		return "", fmt.Errorf("reading data file: %w", err)
+	}
+	return string(data), nil
+}
+
+func hasCurlHeader(headers http.Header, name string) bool {
+	for key := range headers {
+		if strings.EqualFold(key, name) {
+			return true
+		}
+	}
+	return false
+}
+
+type curlWriteOutStats struct {
+	statusCode   int
+	timeTotal    time.Duration
+	sizeDownload int64
+}
+
+func expandCurlWriteOut(format string, stats curlWriteOutStats) string {
+	replacer := strings.NewReplacer(
+		`\\`, "\\",
+		`\n`, "\n",
+		`\r`, "\r",
+		`\t`, "\t",
+		`%%`, "%",
+		"%{http_code}", fmt.Sprintf("%03d", stats.statusCode),
+		"%{response_code}", fmt.Sprintf("%03d", stats.statusCode),
+		"%{time_total}", fmt.Sprintf("%.6f", stats.timeTotal.Seconds()),
+		"%{size_download}", fmt.Sprintf("%d", stats.sizeDownload),
+	)
+	return replacer.Replace(format)
+}
+
+func openCurlOutputFile(path string) (io.Writer, func() error, error) {
+	if path == "" {
+		return nil, nil, nil
+	}
+	if path == "-" {
+		return os.Stdout, func() error { return nil }, nil
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	return f, f.Close, nil
+}
+
+func (b BrowsersCmd) Curl(ctx context.Context, in BrowsersCurlInput) error {
+	body, err := readCurlBody(in)
+	if err != nil {
+		return curlError(in, err)
+	}
+
+	method := in.Method
+	if method == "" {
+		method = "GET"
+		if body != "" {
+			method = "POST"
+		}
+		if in.Head {
+			method = "HEAD"
+		}
+	}
+	include := in.Include || in.Head
+
+	var bodyReader io.Reader
+	if body != "" {
+		bodyReader = strings.NewReader(body)
+	}
+
+	// Seed the SDK's browser route cache before constructing the raw curl client.
+	if _, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{}); err != nil {
+		return curlError(in, util.CleanedUpSdkError{Err: err})
+	}
+
+	httpClient, err := b.browsers.HTTPClient(in.Identifier)
+	if err != nil {
+		return curlError(in, util.CleanedUpSdkError{Err: err})
+	}
+	if in.MaxTime > 0 {
+		httpClient.Timeout = in.MaxTime
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, in.URL, bodyReader)
+	if err != nil {
+		return curlError(in, fmt.Errorf("creating request: %w", err))
+	}
+	headers := parseCurlHeaders(in.Headers)
+	for key, values := range headers {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+	if body != "" && !hasCurlHeader(headers, "Content-Type") {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+
+	start := time.Now()
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return curlError(in, fmt.Errorf("request failed: %w", err))
+	}
+	defer resp.Body.Close()
+
+	var writer io.Writer = os.Stdout
+	var outputFile *os.File
+	if in.OutputFile != "" {
+		f, err := os.Create(in.OutputFile)
+		if err != nil {
+			return curlError(in, fmt.Errorf("creating output file: %w", err))
+		}
+		outputFile = f
+		defer outputFile.Close()
+		writer = outputFile
+	}
+
+	if in.DumpHeader != "" {
+		headerWriter, closeHeaderWriter, err := openCurlOutputFile(in.DumpHeader)
+		if err != nil {
+			return curlError(in, fmt.Errorf("creating dump header file: %w", err))
+		}
+		defer closeHeaderWriter()
+		writeCurlResponseHeaders(headerWriter, resp)
+	}
+
+	if in.Fail && resp.StatusCode >= 400 {
+		if in.WriteOut != "" {
+			fmt.Fprint(os.Stdout, expandCurlWriteOut(in.WriteOut, curlWriteOutStats{
+				statusCode: resp.StatusCode,
+				timeTotal:  time.Since(start),
+			}))
+		}
+		return curlError(in, fmt.Errorf("HTTP error: %s", resp.Status))
+	}
+
+	if include {
+		writeCurlResponseHeaders(writer, resp)
+	}
+
+	var sizeDownload int64
+	if !in.Head {
+		sizeDownload, err = io.Copy(writer, resp.Body)
+		if err != nil {
+			if in.OutputFile != "" {
+				return curlError(in, fmt.Errorf("writing output file: %w", err))
+			}
+			return curlError(in, err)
+		}
+	}
+
+	if in.WriteOut != "" {
+		fmt.Fprint(os.Stdout, expandCurlWriteOut(in.WriteOut, curlWriteOutStats{
+			statusCode:   resp.StatusCode,
+			timeTotal:    time.Since(start),
+			sizeDownload: sizeDownload,
+		}))
+	}
+	return nil
+}
+
+func writeCurlResponseHeaders(w io.Writer, resp *http.Response) {
+	fmt.Fprintf(w, "%s %s\r\n", resp.Proto, resp.Status)
+	for key, vals := range resp.Header {
+		for _, value := range vals {
+			fmt.Fprintf(w, "%s: %s\r\n", key, value)
+		}
+	}
+	fmt.Fprint(w, "\r\n")
+}
+
+func runBrowsersCurl(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+
+	method, _ := cmd.Flags().GetString("request")
+	headers, _ := cmd.Flags().GetStringArray("header")
+	data, _ := cmd.Flags().GetString("data")
+	dataFile, _ := cmd.Flags().GetString("data-file")
+	maxTime, _ := cmd.Flags().GetFloat64("max-time")
+	outputFile, _ := cmd.Flags().GetString("output")
+	head, _ := cmd.Flags().GetBool("head")
+	include, _ := cmd.Flags().GetBool("include")
+	dumpHeader, _ := cmd.Flags().GetString("dump-header")
+	writeOut, _ := cmd.Flags().GetString("write-out")
+	fail, _ := cmd.Flags().GetBool("fail")
+	silent, _ := cmd.Flags().GetBool("silent")
+
+	b := BrowsersCmd{browsers: &svc}
+	return b.Curl(cmd.Context(), BrowsersCurlInput{
+		Identifier: args[0],
+		URL:        args[1],
+		Method:     method,
+		Headers:    headers,
+		Data:       data,
+		DataFile:   dataFile,
+		MaxTime:    time.Duration(maxTime * float64(time.Second)),
+		OutputFile: outputFile,
+		Head:       head,
+		Include:    include,
+		DumpHeader: dumpHeader,
+		WriteOut:   writeOut,
+		Fail:       fail,
+		Silent:     silent,
+	})
 }
 
 func truncateURL(url string, maxLen int) string {

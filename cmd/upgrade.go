@@ -98,18 +98,24 @@ func isOldTapError(stderr string) bool {
 	return strings.Contains(stderr, "brew tap kernel/tap")
 }
 
-// upgradeCommandArgs returns the command and arguments for a given installation method.
-// Returns nil if the method is unknown.
-func upgradeCommandArgs(method update.InstallMethod) []string {
+// upgradeCommandArgs returns the ordered commands to run for a given installation
+// method. Returns nil if the method is unknown.
+func upgradeCommandArgs(method update.InstallMethod) [][]string {
 	switch method {
 	case update.InstallMethodBrew:
-		return []string{"brew", "upgrade", "kernel/tap/kernel"}
+		// brew upgrade doesn't refresh the tap first, so a freshly released
+		// formula is invisible and the upgrade silently no-ops ("already
+		// installed"). Update the tap before upgrading.
+		return [][]string{
+			{"brew", "update"},
+			{"brew", "upgrade", "kernel/tap/kernel"},
+		}
 	case update.InstallMethodPNPM:
-		return []string{"pnpm", "add", "-g", "@onkernel/cli@latest"}
+		return [][]string{{"pnpm", "add", "-g", "@onkernel/cli@latest"}}
 	case update.InstallMethodNPM:
-		return []string{"npm", "i", "-g", "@onkernel/cli@latest"}
+		return [][]string{{"npm", "i", "-g", "@onkernel/cli@latest"}}
 	case update.InstallMethodBun:
-		return []string{"bun", "add", "-g", "@onkernel/cli@latest"}
+		return [][]string{{"bun", "add", "-g", "@onkernel/cli@latest"}}
 	default:
 		return nil
 	}
@@ -117,31 +123,37 @@ func upgradeCommandArgs(method update.InstallMethod) []string {
 
 // getUpgradeCommand returns the command string for display (e.g., dry-run output).
 func getUpgradeCommand(method update.InstallMethod) string {
-	args := upgradeCommandArgs(method)
-	if args == nil {
+	cmds := upgradeCommandArgs(method)
+	if cmds == nil {
 		return ""
 	}
-	return strings.Join(args, " ")
+	joined := make([]string, len(cmds))
+	for i, args := range cmds {
+		joined[i] = strings.Join(args, " ")
+	}
+	return strings.Join(joined, " && ")
 }
 
-// executeUpgrade runs the appropriate upgrade command based on the installation method.
-// Returns the captured stderr (for error diagnosis) and any error.
+// executeUpgrade runs the appropriate upgrade commands based on the installation
+// method. Returns the captured stderr (for error diagnosis) and any error.
 func executeUpgrade(method update.InstallMethod) (stderr string, err error) {
-	args := upgradeCommandArgs(method)
-	if args == nil {
+	cmds := upgradeCommandArgs(method)
+	if cmds == nil {
 		return "", fmt.Errorf("unknown installation method")
 	}
 
-	cmd := exec.Command(args[0], args[1:]...)
-	cmd.Stdout = os.Stdout
-	cmd.Stdin = os.Stdin
-
-	// Capture stderr while also displaying it to the user
 	var stderrBuf bytes.Buffer
-	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
-
-	err = cmd.Run()
-	return stderrBuf.String(), err
+	for _, args := range cmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Stdout = os.Stdout
+		cmd.Stdin = os.Stdin
+		// Capture stderr while also displaying it to the user
+		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
+		if err = cmd.Run(); err != nil {
+			return stderrBuf.String(), err
+		}
+	}
+	return stderrBuf.String(), nil
 }
 
 // printManualUpgradeInstructions prints instructions for manually upgrading kernel

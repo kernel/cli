@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/kernel/cli/pkg/extensions"
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -43,7 +45,8 @@ var defaultExtensionExclusions = util.ZipOptions{
 
 // ExtensionsService defines the subset of the Kernel SDK extension client that we use.
 type ExtensionsService interface {
-	List(ctx context.Context, opts ...option.RequestOption) (res *[]kernel.ExtensionListResponse, err error)
+	List(ctx context.Context, query kernel.ExtensionListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.ExtensionListResponse], err error)
+	Get(ctx context.Context, idOrName string, opts ...option.RequestOption) (res *kernel.ExtensionGetResponse, err error)
 	Delete(ctx context.Context, idOrName string, opts ...option.RequestOption) (err error)
 	Download(ctx context.Context, idOrName string, opts ...option.RequestOption) (res *http.Response, err error)
 	DownloadFromChromeStore(ctx context.Context, query kernel.ExtensionDownloadFromChromeStoreParams, opts ...option.RequestOption) (res *http.Response, err error)
@@ -51,7 +54,14 @@ type ExtensionsService interface {
 }
 
 type ExtensionsListInput struct {
+	Limit  int
+	Offset int
 	Output string
+}
+
+type ExtensionsGetInput struct {
+	Identifier string
+	Output     string
 }
 
 type ExtensionsDeleteInput struct {
@@ -79,35 +89,48 @@ type ExtensionsUploadInput struct {
 // ExtensionsCmd handles extension operations independent of cobra.
 type ExtensionsCmd struct {
 	extensions ExtensionsService
+	prompter   interactive.Prompter
 }
 
 func (e ExtensionsCmd) List(ctx context.Context, in ExtensionsListInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if in.Output != "json" {
 		pterm.Info.Println("Fetching extensions...")
 	}
-	items, err := e.extensions.List(ctx)
+	params := kernel.ExtensionListParams{}
+	if in.Limit > 0 {
+		params.Limit = kernel.Int(int64(in.Limit))
+	}
+	if in.Offset > 0 {
+		params.Offset = kernel.Int(int64(in.Offset))
+	}
+	page, err := e.extensions.List(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
+	var items []kernel.ExtensionListResponse
+	if page != nil {
+		items = page.Items
+	}
+
 	if in.Output == "json" {
-		if items == nil || len(*items) == 0 {
+		if len(items) == 0 {
 			fmt.Println("[]")
 			return nil
 		}
-		return util.PrintPrettyJSONSlice(*items)
+		return util.PrintPrettyJSONSlice(items)
 	}
 
-	if items == nil || len(*items) == 0 {
+	if len(items) == 0 {
 		pterm.Info.Println("No extensions found")
 		return nil
 	}
 	rows := pterm.TableData{{"Extension ID", "Name", "Created At", "Size (bytes)", "Last Used At"}}
-	for _, it := range *items {
+	for _, it := range items {
 		name := it.Name
 		if name == "" {
 			name = "-"
@@ -124,6 +147,38 @@ func (e ExtensionsCmd) List(ctx context.Context, in ExtensionsListInput) error {
 	return nil
 }
 
+func (e ExtensionsCmd) Get(ctx context.Context, in ExtensionsGetInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+	if in.Identifier == "" {
+		pterm.Error.Println("Missing identifier")
+		return nil
+	}
+
+	item, err := e.extensions.Get(ctx, in.Identifier)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(item)
+	}
+
+	name := item.Name
+	if name == "" {
+		name = "-"
+	}
+	rows := pterm.TableData{{"Property", "Value"}}
+	rows = append(rows, []string{"ID", item.ID})
+	rows = append(rows, []string{"Name", name})
+	rows = append(rows, []string{"Created At", util.FormatLocal(item.CreatedAt)})
+	rows = append(rows, []string{"Size (bytes)", fmt.Sprintf("%d", item.SizeBytes)})
+	rows = append(rows, []string{"Last Used At", util.FormatLocal(item.LastUsedAt)})
+	PrintTableNoPad(rows, true)
+	return nil
+}
+
 func (e ExtensionsCmd) Delete(ctx context.Context, in ExtensionsDeleteInput) error {
 	if in.Identifier == "" {
 		pterm.Error.Println("Missing identifier")
@@ -131,9 +186,13 @@ func (e ExtensionsCmd) Delete(ctx context.Context, in ExtensionsDeleteInput) err
 	}
 
 	if !in.SkipConfirm {
-		msg := fmt.Sprintf("Are you sure you want to delete extension '%s'?", in.Identifier)
-		pterm.DefaultInteractiveConfirm.DefaultText = msg
-		ok, _ := pterm.DefaultInteractiveConfirm.Show()
+		ok, err := e.prompter.Confirm(
+			fmt.Sprintf("delete extension '%s'", in.Identifier),
+			fmt.Sprintf("Are you sure you want to delete extension '%s'?", in.Identifier),
+		)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			pterm.Info.Println("Deletion cancelled")
 			return nil
@@ -301,8 +360,8 @@ func (e ExtensionsCmd) DownloadWebStore(ctx context.Context, in ExtensionsDownlo
 }
 
 func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if in.Dir == "" {
@@ -402,9 +461,24 @@ var extensionsListCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := getKernelClient(cmd)
 		output, _ := cmd.Flags().GetString("output")
+		limit, _ := cmd.Flags().GetInt("limit")
+		offset, _ := cmd.Flags().GetInt("offset")
 		svc := client.Extensions
 		e := ExtensionsCmd{extensions: &svc}
-		return e.List(cmd.Context(), ExtensionsListInput{Output: output})
+		return e.List(cmd.Context(), ExtensionsListInput{Limit: limit, Offset: offset, Output: output})
+	},
+}
+
+var extensionsGetCmd = &cobra.Command{
+	Use:   "get <id-or-name>",
+	Short: "Get extension metadata by ID or name",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client := getKernelClient(cmd)
+		output, _ := cmd.Flags().GetString("output")
+		svc := client.Extensions
+		e := ExtensionsCmd{extensions: &svc}
+		return e.Get(cmd.Context(), ExtensionsGetInput{Identifier: args[0], Output: output})
 	},
 }
 
@@ -512,18 +586,22 @@ var extensionsBuildWebBotAuthCmd = &cobra.Command{
 
 func init() {
 	extensionsCmd.AddCommand(extensionsListCmd)
+	extensionsCmd.AddCommand(extensionsGetCmd)
 	extensionsCmd.AddCommand(extensionsDeleteCmd)
 	extensionsCmd.AddCommand(extensionsDownloadCmd)
 	extensionsCmd.AddCommand(extensionsDownloadWebStoreCmd)
 	extensionsCmd.AddCommand(extensionsUploadCmd)
 	extensionsCmd.AddCommand(extensionsBuildWebBotAuthCmd)
 
-	extensionsListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(extensionsListCmd)
+	addJSONOutputFlag(extensionsGetCmd)
+	extensionsListCmd.Flags().Int("limit", 0, "Maximum number of extensions to return")
+	extensionsListCmd.Flags().Int("offset", 0, "Number of extensions to skip (for pagination)")
 	extensionsDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 	extensionsDownloadCmd.Flags().String("to", "", "Output zip file path")
 	extensionsDownloadWebStoreCmd.Flags().String("to", "", "Output zip file path for the downloaded archive")
 	extensionsDownloadWebStoreCmd.Flags().String("os", "", "Target OS: mac, win, or linux (default linux)")
-	extensionsUploadCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(extensionsUploadCmd)
 	extensionsUploadCmd.Flags().String("name", "", "Optional unique extension name")
 	extensionsBuildWebBotAuthCmd.Flags().String("to", "./web-bot-auth", "Output directory for the prepared extension")
 	extensionsBuildWebBotAuthCmd.Flags().String("url", "http://127.0.0.1:10001", "Base URL for update.xml and policy templates")

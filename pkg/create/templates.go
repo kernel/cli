@@ -87,8 +87,8 @@ var Templates = map[string]TemplateInfo{
 		Languages:   []string{LanguageTypeScript, LanguagePython},
 	},
 	TemplateYutoriComputerUse: {
-		Name:        "Yutori n1 Computer Use",
-		Description: "Implements a Yutori n1 computer use agent",
+		Name:        "Yutori n1.5 Computer Use",
+		Description: "Implements a Yutori n1.5 computer use agent",
 		Languages:   []string{LanguageTypeScript, LanguagePython},
 	},
 	TemplateTzafonComputerUse: {
@@ -219,7 +219,7 @@ var Commands = map[string]map[string]DeployConfig{
 		TemplateYutoriComputerUse: {
 			EntryPoint:    "index.ts",
 			NeedsEnvFile:  true,
-			InvokeCommand: `kernel invoke ts-yutori-cua cua-task --payload '{"query": "Navigate to https://example.com and describe the page"}'`,
+			InvokeCommand: `kernel invoke ts-yutori-cua cua-task --payload '{"query": "Navigate to https://www.yutori.com and list the team member names."}'`,
 		},
 		TemplateTzafonComputerUse: {
 			EntryPoint:    "index.ts",
@@ -271,7 +271,7 @@ var Commands = map[string]map[string]DeployConfig{
 		TemplateYutoriComputerUse: {
 			EntryPoint:    "main.py",
 			NeedsEnvFile:  true,
-			InvokeCommand: `kernel invoke python-yutori-cua cua-task --payload '{"query": "Navigate to https://example.com and describe the page"}'`,
+			InvokeCommand: `kernel invoke python-yutori-cua cua-task --payload '{"query": "Navigate to https://www.yutori.com and list the team member names."}'`,
 		},
 		TemplateTzafonComputerUse: {
 			EntryPoint:    "main.py",

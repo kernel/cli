@@ -7,15 +7,15 @@ import (
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestProxyList_Empty(t *testing.T) {
 	buf := captureOutput(t)
 	fake := &FakeProxyService{
-		ListFunc: func(ctx context.Context, opts ...option.RequestOption) (*[]kernel.ProxyListResponse, error) {
-			empty := []kernel.ProxyListResponse{}
-			return &empty, nil
+		ListFunc: func(ctx context.Context, query kernel.ProxyListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ProxyListResponse], error) {
+			return &pagination.OffsetPagination[kernel.ProxyListResponse]{Items: []kernel.ProxyListResponse{}}, nil
 		},
 	}
 
@@ -40,7 +40,7 @@ func TestProxyList_WithProxies(t *testing.T) {
 			BypassHosts: []string{"abc"},
 			Config: kernel.ProxyListResponseConfigUnion{
 				Country: "US",
-				Carrier: "verizon",
+				City:    "sanfrancisco",
 			},
 		},
 		{
@@ -54,8 +54,8 @@ func TestProxyList_WithProxies(t *testing.T) {
 	}
 
 	fake := &FakeProxyService{
-		ListFunc: func(ctx context.Context, opts ...option.RequestOption) (*[]kernel.ProxyListResponse, error) {
-			return &proxies, nil
+		ListFunc: func(ctx context.Context, query kernel.ProxyListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ProxyListResponse], error) {
+			return &pagination.OffsetPagination[kernel.ProxyListResponse]{Items: proxies}, nil
 		},
 	}
 
@@ -97,7 +97,7 @@ func TestProxyList_Error(t *testing.T) {
 	_ = captureOutput(t)
 
 	fake := &FakeProxyService{
-		ListFunc: func(ctx context.Context, opts ...option.RequestOption) (*[]kernel.ProxyListResponse, error) {
+		ListFunc: func(ctx context.Context, query kernel.ProxyListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ProxyListResponse], error) {
 			return nil, errors.New("API error")
 		},
 	}
@@ -107,4 +107,23 @@ func TestProxyList_Error(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "API error")
+}
+
+func TestProxyList_ForwardsLimitOffset(t *testing.T) {
+	_ = captureOutput(t)
+
+	var captured kernel.ProxyListParams
+	fake := &FakeProxyService{
+		ListFunc: func(ctx context.Context, query kernel.ProxyListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ProxyListResponse], error) {
+			captured = query
+			return &pagination.OffsetPagination[kernel.ProxyListResponse]{Items: []kernel.ProxyListResponse{}}, nil
+		},
+	}
+
+	p := ProxyCmd{proxies: fake}
+	err := p.List(context.Background(), ProxyListInput{Limit: 5, Offset: 10})
+
+	assert.NoError(t, err)
+	assert.Equal(t, int64(5), captured.Limit.Value)
+	assert.Equal(t, int64(10), captured.Offset.Value)
 }

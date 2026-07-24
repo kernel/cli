@@ -1,18 +1,22 @@
 package cmd
 
 import (
-	"bytes"
+	"archive/tar"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
+	"github.com/klauspost/compress/zstd"
 	"github.com/pterm/pterm"
 	"github.com/samber/lo"
 	"github.com/spf13/cobra"
@@ -51,18 +55,18 @@ type ProfilesDeleteInput struct {
 
 type ProfilesDownloadInput struct {
 	Identifier string
-	Output     string
-	Pretty     bool
+	To         string
 }
 
 // ProfilesCmd handles profile operations independent of cobra.
 type ProfilesCmd struct {
 	profiles ProfilesService
+	prompter interactive.Prompter
 }
 
 func (p ProfilesCmd) List(ctx context.Context, in ProfilesListInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	page := in.Page
@@ -143,8 +147,8 @@ func (p ProfilesCmd) List(ctx context.Context, in ProfilesListInput) error {
 }
 
 func (p ProfilesCmd) Get(ctx context.Context, in ProfilesGetInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	item, err := p.profiles.Get(ctx, in.Identifier)
@@ -179,8 +183,8 @@ func (p ProfilesCmd) Get(ctx context.Context, in ProfilesGetInput) error {
 }
 
 func (p ProfilesCmd) Create(ctx context.Context, in ProfilesCreateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	params := kernel.ProfileNewParams{}
@@ -225,9 +229,13 @@ func (p ProfilesCmd) Delete(ctx context.Context, in ProfilesDeleteInput) error {
 	}
 
 	if !in.SkipConfirm {
-		msg := fmt.Sprintf("Are you sure you want to delete profile '%s'?", in.Identifier)
-		pterm.DefaultInteractiveConfirm.DefaultText = msg
-		ok, _ := pterm.DefaultInteractiveConfirm.Show()
+		ok, err := p.prompter.Confirm(
+			fmt.Sprintf("delete profile '%s'", in.Identifier),
+			fmt.Sprintf("Are you sure you want to delete profile '%s'?", in.Identifier),
+		)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			pterm.Info.Println("Deletion cancelled")
 			return nil
@@ -246,48 +254,91 @@ func (p ProfilesCmd) Delete(ctx context.Context, in ProfilesDeleteInput) error {
 }
 
 func (p ProfilesCmd) Download(ctx context.Context, in ProfilesDownloadInput) error {
+	if in.To == "" {
+		return fmt.Errorf("missing required --to <path> for extraction directory")
+	}
+
 	res, err := p.profiles.Download(ctx, in.Identifier)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 	defer res.Body.Close()
 
-	if in.Output == "" {
-		pterm.Error.Println("Missing --to output file path")
+	if res.StatusCode == http.StatusAccepted {
 		_, _ = io.Copy(io.Discard, res.Body)
+		pterm.Info.Printf("Profile '%s' has no saved data yet. Use it in a browser session first to capture state.\n", in.Identifier)
 		return nil
 	}
 
-	f, err := os.Create(in.Output)
-	if err != nil {
-		pterm.Error.Printf("Failed to create file: %v\n", err)
-		return nil
-	}
-	defer f.Close()
-	if in.Pretty {
-		var buf bytes.Buffer
+	if res.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(res.Body)
-		if len(body) == 0 {
-			pterm.Error.Println("Empty response body")
-			return nil
-		}
-		if err := json.Indent(&buf, body, "", "  "); err != nil {
-			pterm.Error.Printf("Failed to pretty-print JSON: %v\n", err)
-			return nil
-		}
-		if _, err := io.Copy(f, &buf); err != nil {
-			pterm.Error.Printf("Failed to write pretty-printed JSON: %v\n", err)
-			return nil
-		}
-		return nil
-	} else {
-		if _, err := io.Copy(f, res.Body); err != nil {
-			pterm.Error.Printf("Failed to write file: %v\n", err)
-			return nil
-		}
+		return fmt.Errorf("unexpected status %d from profile download: %s", res.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	pterm.Success.Printf("Saved profile to %s\n", in.Output)
+	if err := extractProfileArchive(res.Body, in.To); err != nil {
+		return fmt.Errorf("extract profile archive: %w", err)
+	}
+
+	pterm.Success.Printf("Extracted profile '%s' to %s\n", in.Identifier, in.To)
+	return nil
+}
+
+// extractProfileArchive streams a zstd-compressed tar archive into destDir.
+// Files and directories are created relative to destDir; symlinks and other
+// special entry types are skipped. Path-traversal entries are rejected.
+func extractProfileArchive(r io.Reader, destDir string) error {
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return fmt.Errorf("create destination: %w", err)
+	}
+
+	cleanedDest, err := filepath.Abs(destDir)
+	if err != nil {
+		return fmt.Errorf("resolve destination: %w", err)
+	}
+
+	decoder, err := zstd.NewReader(r)
+	if err != nil {
+		return fmt.Errorf("zstd init: %w", err)
+	}
+	defer decoder.Close()
+
+	tr := tar.NewReader(decoder)
+	for {
+		header, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("tar read: %w", err)
+		}
+
+		destPath := filepath.Join(cleanedDest, header.Name)
+		if !strings.HasPrefix(destPath, cleanedDest+string(os.PathSeparator)) && destPath != cleanedDest {
+			return fmt.Errorf("illegal entry path: %s", header.Name)
+		}
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(destPath, 0o755); err != nil {
+				return fmt.Errorf("mkdir %s: %w", destPath, err)
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+				return fmt.Errorf("mkdir parent of %s: %w", destPath, err)
+			}
+			f, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.FileMode(header.Mode)&0o777)
+			if err != nil {
+				return fmt.Errorf("create %s: %w", destPath, err)
+			}
+			if _, err := io.Copy(f, tr); err != nil {
+				f.Close()
+				return fmt.Errorf("write %s: %w", destPath, err)
+			}
+			if err := f.Close(); err != nil {
+				return fmt.Errorf("close %s: %w", destPath, err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -329,8 +380,9 @@ var profilesDeleteCmd = &cobra.Command{
 }
 
 var profilesDownloadCmd = &cobra.Command{
-	Use:   "download <id-or-name>",
-	Short: "Download a profile as a ZIP archive",
+	Use:   "download <id-or-name> --to <dir>",
+	Short: "Download a profile and extract it to a directory",
+	Long:  "Download a profile and extract its zstd-compressed user-data tar archive into the directory given by --to. The directory is created if it does not exist.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runProfilesDownload,
 }
@@ -342,16 +394,16 @@ func init() {
 	profilesCmd.AddCommand(profilesDeleteCmd)
 	profilesCmd.AddCommand(profilesDownloadCmd)
 
-	profilesListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(profilesListCmd)
 	profilesListCmd.Flags().Int("per-page", 20, "Items per page (default 20)")
 	profilesListCmd.Flags().Int("page", 1, "Page number (1-based)")
 	profilesListCmd.Flags().String("query", "", "Search profiles by name or ID")
-	profilesGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
-	profilesCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(profilesGetCmd)
+	addJSONOutputFlag(profilesCreateCmd)
 	profilesCreateCmd.Flags().String("name", "", "Optional unique profile name")
 	profilesDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
-	profilesDownloadCmd.Flags().String("to", "", "Output zip file path")
-	profilesDownloadCmd.Flags().Bool("pretty", false, "Pretty-print JSON to file")
+	profilesDownloadCmd.Flags().String("to", "", "Directory to extract the profile into (required)")
+	_ = profilesDownloadCmd.MarkFlagRequired("to")
 }
 
 func runProfilesList(cmd *cobra.Command, args []string) error {
@@ -398,9 +450,8 @@ func runProfilesDelete(cmd *cobra.Command, args []string) error {
 
 func runProfilesDownload(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
-	out, _ := cmd.Flags().GetString("to")
-	pretty, _ := cmd.Flags().GetBool("pretty")
+	to, _ := cmd.Flags().GetString("to")
 	svc := client.Profiles
 	p := ProfilesCmd{profiles: &svc}
-	return p.Download(cmd.Context(), ProfilesDownloadInput{Identifier: args[0], Output: out, Pretty: pretty})
+	return p.Download(cmd.Context(), ProfilesDownloadInput{Identifier: args[0], To: to})
 }

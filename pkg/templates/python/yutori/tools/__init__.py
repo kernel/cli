@@ -1,11 +1,11 @@
-"""Yutori n1 Computer Tools."""
+"""Yutori n1.5 Computer Tools."""
 
 from .base import ToolError, ToolResult
-from .computer import ComputerTool, N1Action
+from .computer import ComputerTool, N15Action
 
 __all__ = [
     "ToolError",
     "ToolResult",
     "ComputerTool",
-    "N1Action",
+    "N15Action",
 ]

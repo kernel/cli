@@ -11,11 +11,11 @@ func TestSuggestUpgradeCommandForMethod(t *testing.T) {
 		method   InstallMethod
 		expected string
 	}{
-		{InstallMethodBrew, "brew upgrade kernel/tap/kernel"},
+		{InstallMethodBrew, "brew update && brew upgrade kernel/tap/kernel"},
 		{InstallMethodNPM, "npm i -g @onkernel/cli@latest"},
 		{InstallMethodPNPM, "pnpm add -g @onkernel/cli@latest"},
 		{InstallMethodBun, "bun add -g @onkernel/cli@latest"},
-		{InstallMethodUnknown, "brew upgrade kernel/tap/kernel"},
+		{InstallMethodUnknown, "brew update && brew upgrade kernel/tap/kernel"},
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.method), func(t *testing.T) {
@@ -110,4 +110,37 @@ func TestInstallMethodRulesPathPrecedence(t *testing.T) {
 	assert.Equal(t, InstallMethodBrew, detect("/opt/homebrew/bin/kernel"))
 	assert.Equal(t, InstallMethodPNPM, detect("/home/user/.local/share/pnpm/kernel"))
 	assert.Equal(t, InstallMethodUnknown, detect("/usr/local/bin/kernel"))
+}
+
+func TestIsVeryOldVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		current string
+		latest  string
+		want    bool
+		wantErr bool
+	}{
+		{"same version", "v0.19.1", "v0.19.1", false, false},
+		{"one minor behind", "v0.18.0", "v0.19.0", false, false},
+		{"four minor behind", "v0.15.0", "v0.19.0", false, false},
+		{"five minor behind escalates", "v0.14.0", "v0.19.0", true, false},
+		{"many minor behind", "v0.5.0", "v0.19.1", true, false},
+		{"single major bump does not escalate", "v1.2.3", "v2.0.0", false, false},
+		{"single major bump from 0.x does not escalate", "v0.19.2", "v1.0.0", false, false},
+		{"two majors behind escalates", "v1.2.3", "v3.0.0", true, false},
+		{"patch behind only", "v0.19.0", "v0.19.5", false, false},
+		{"v prefix tolerated", "0.10.0", "v0.19.0", true, false},
+		{"non-semver returns error", "dev", "v0.19.0", false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := IsVeryOldVersion(tt.current, tt.latest)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }

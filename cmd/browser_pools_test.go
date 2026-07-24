@@ -6,67 +6,378 @@ import (
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/stretchr/testify/assert"
 )
 
-type fakeBrowserPoolsService struct {
-	newFunc func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error)
+// FakeBrowserPoolsService is a configurable fake implementing BrowserPoolsService.
+type FakeBrowserPoolsService struct {
+	AcquireFunc func(ctx context.Context, id string, body kernel.BrowserPoolAcquireParams, opts ...option.RequestOption) (*kernel.BrowserPoolAcquireResponse, error)
+	ListFunc    func(ctx context.Context, query kernel.BrowserPoolListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserPool], error)
+	NewFunc     func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error)
+	UpdateFunc  func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error)
 }
 
-func (f *fakeBrowserPoolsService) List(ctx context.Context, opts ...option.RequestOption) (*[]kernel.BrowserPool, error) {
-	return &[]kernel.BrowserPool{}, nil
+func (f *FakeBrowserPoolsService) List(ctx context.Context, query kernel.BrowserPoolListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserPool], error) {
+	if f.ListFunc != nil {
+		return f.ListFunc(ctx, query, opts...)
+	}
+	return &pagination.OffsetPagination[kernel.BrowserPool]{Items: []kernel.BrowserPool{}}, nil
 }
 
-func (f *fakeBrowserPoolsService) New(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
-	if f.newFunc != nil {
-		return f.newFunc(ctx, body, opts...)
+func (f *FakeBrowserPoolsService) New(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+	if f.NewFunc != nil {
+		return f.NewFunc(ctx, body, opts...)
 	}
 	return &kernel.BrowserPool{}, nil
 }
 
-func (f *fakeBrowserPoolsService) Get(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+func (f *FakeBrowserPoolsService) Get(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
 	return &kernel.BrowserPool{}, nil
 }
 
-func (f *fakeBrowserPoolsService) Update(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+func (f *FakeBrowserPoolsService) Update(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+	if f.UpdateFunc != nil {
+		return f.UpdateFunc(ctx, id, body, opts...)
+	}
 	return &kernel.BrowserPool{}, nil
 }
 
-func (f *fakeBrowserPoolsService) Delete(ctx context.Context, id string, body kernel.BrowserPoolDeleteParams, opts ...option.RequestOption) error {
+func (f *FakeBrowserPoolsService) Delete(ctx context.Context, id string, body kernel.BrowserPoolDeleteParams, opts ...option.RequestOption) error {
 	return nil
 }
 
-func (f *fakeBrowserPoolsService) Acquire(ctx context.Context, id string, body kernel.BrowserPoolAcquireParams, opts ...option.RequestOption) (*kernel.BrowserPoolAcquireResponse, error) {
+func (f *FakeBrowserPoolsService) Acquire(ctx context.Context, id string, body kernel.BrowserPoolAcquireParams, opts ...option.RequestOption) (*kernel.BrowserPoolAcquireResponse, error) {
+	if f.AcquireFunc != nil {
+		return f.AcquireFunc(ctx, id, body, opts...)
+	}
 	return &kernel.BrowserPoolAcquireResponse{}, nil
 }
 
-func (f *fakeBrowserPoolsService) Release(ctx context.Context, id string, body kernel.BrowserPoolReleaseParams, opts ...option.RequestOption) error {
+func (f *FakeBrowserPoolsService) Release(ctx context.Context, id string, body kernel.BrowserPoolReleaseParams, opts ...option.RequestOption) error {
 	return nil
 }
 
-func (f *fakeBrowserPoolsService) Flush(ctx context.Context, id string, opts ...option.RequestOption) error {
+func (f *FakeBrowserPoolsService) Flush(ctx context.Context, id string, opts ...option.RequestOption) error {
 	return nil
 }
 
-func TestBrowserPoolsCreate_MapsChromePolicy(t *testing.T) {
+func TestBrowserPoolsAcquire_WithNameAndTags(t *testing.T) {
 	setupStdoutCapture(t)
 
-	fake := &fakeBrowserPoolsService{
-		newFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
-			assert.Equal(t, map[string]any{
-				"HomepageLocation": "https://example.com",
-				"ShowHomeButton":   true,
-			}, body.ChromePolicy)
-			return &kernel.BrowserPool{ID: "pool_123", Name: "test-pool"}, nil
+	var capturedID string
+	var captured kernel.BrowserPoolAcquireParams
+	fake := &FakeBrowserPoolsService{
+		AcquireFunc: func(ctx context.Context, id string, body kernel.BrowserPoolAcquireParams, opts ...option.RequestOption) (*kernel.BrowserPoolAcquireResponse, error) {
+			capturedID = id
+			captured = body
+			return &kernel.BrowserPoolAcquireResponse{
+				SessionID: "sess-acq",
+				CdpWsURL:  "ws://cdp-acq",
+				Name:      "lease-name",
+				Tags:      kernel.Tags{"env": "prod"},
+			}, nil
 		},
 	}
 
-	cmd := BrowserPoolsCmd{client: fake}
-	err := cmd.Create(context.Background(), BrowserPoolsCreateInput{
-		Name:         "test-pool",
-		Size:         1,
-		ChromePolicy: `{"HomepageLocation":"https://example.com","ShowHomeButton":true}`,
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Acquire(context.Background(), BrowserPoolsAcquireInput{
+		IDOrName: "my-pool",
+		Name:     "lease-name",
+		Tags:     map[string]string{"env": "prod"},
 	})
+	assert.NoError(t, err)
+
+	// Pool lookup is by id or name; name + tags are forwarded per-lease.
+	assert.Equal(t, "my-pool", capturedID)
+	assert.True(t, captured.Name.Valid())
+	assert.Equal(t, "lease-name", captured.Name.Value)
+	assert.Equal(t, "prod", captured.Tags["env"])
+
+	// And surfaced in the acquired-session table.
+	out := outBuf.String()
+	assert.Contains(t, out, "lease-name")
+	assert.Contains(t, out, "Tags")
+	assert.Contains(t, out, "env=prod")
+}
+
+func TestBrowserPoolsList_ForwardsLimitOffset(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolListParams
+	fake := &FakeBrowserPoolsService{
+		ListFunc: func(ctx context.Context, query kernel.BrowserPoolListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserPool], error) {
+			captured = query
+			return &pagination.OffsetPagination[kernel.BrowserPool]{Items: []kernel.BrowserPool{}}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.List(context.Background(), BrowserPoolsListInput{Limit: 4, Offset: 8})
 
 	assert.NoError(t, err)
+	assert.Equal(t, int64(4), captured.Limit.Value)
+	assert.Equal(t, int64(8), captured.Offset.Value)
+}
+
+// TestBuildAcquireParams covers the shared name/tags/timeout/telemetry forwarding
+// used by both `browser-pools acquire` and the `browsers create --pool-id` lease path.
+func TestBuildAcquireParams(t *testing.T) {
+	p, err := buildAcquireParams("lease", map[string]string{"env": "prod"}, 30, "console,network")
+	assert.NoError(t, err)
+	assert.True(t, p.Name.Valid())
+	assert.Equal(t, "lease", p.Name.Value)
+	assert.Equal(t, "prod", p.Tags["env"])
+	assert.True(t, p.AcquireTimeoutSeconds.Valid())
+	assert.Equal(t, int64(30), p.AcquireTimeoutSeconds.Value)
+	assert.True(t, p.Telemetry.Browser.Console.Enabled.Value)
+	assert.True(t, p.Telemetry.Browser.Network.Enabled.Value)
+
+	// Unset inputs produce an empty params struct (nothing forwarded).
+	empty, err := buildAcquireParams("", nil, 0, "")
+	assert.NoError(t, err)
+	assert.False(t, empty.Name.Valid())
+	assert.Len(t, empty.Tags, 0)
+	assert.False(t, empty.AcquireTimeoutSeconds.Valid())
+
+	// An invalid category surfaces an error rather than a partial param.
+	_, err = buildAcquireParams("", nil, 0, "bogus")
+	assert.Error(t, err)
+}
+
+func TestBrowserPoolsCreate_WithRefreshOnProfileUpdate(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolNewParams
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: "pool-ropu"}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Create(context.Background(), BrowserPoolsCreateInput{
+		Size:                   1,
+		RefreshOnProfileUpdate: BoolFlag{Set: true, Value: true},
+	})
+	assert.NoError(t, err)
+	assert.True(t, captured.RefreshOnProfileUpdate.Valid())
+	assert.True(t, captured.RefreshOnProfileUpdate.Value)
+}
+
+func TestBrowserPoolsUpdate_WithRefreshOnProfileUpdate(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolUpdateParams
+	fake := &FakeBrowserPoolsService{
+		UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: id}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Update(context.Background(), BrowserPoolsUpdateInput{
+		IDOrName:               "pool-1",
+		RefreshOnProfileUpdate: BoolFlag{Set: true, Value: false},
+	})
+	assert.NoError(t, err)
+	assert.True(t, captured.RefreshOnProfileUpdate.Valid())
+	assert.False(t, captured.RefreshOnProfileUpdate.Value)
+}
+
+func TestBrowserPoolsCreate_WithChromePolicy(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolNewParams
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: "pool-cp"}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Create(context.Background(), BrowserPoolsCreateInput{
+		Size:         1,
+		ChromePolicy: `{"BookmarkBarEnabled": false}`,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]any{"BookmarkBarEnabled": false}, captured.ChromePolicy)
+}
+
+func TestBrowserPoolsCreate_ChromePolicyEmptyObjectOmitted(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolNewParams
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: "pool-cp"}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, ChromePolicy: "{}"})
+	assert.NoError(t, err)
+	assert.Nil(t, captured.ChromePolicy)
+}
+
+func TestBrowserPoolsUpdate_WithChromePolicy(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolUpdateParams
+	fake := &FakeBrowserPoolsService{
+		UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: id}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Update(context.Background(), BrowserPoolsUpdateInput{
+		IDOrName:     "pool-1",
+		ChromePolicy: `{"BookmarkBarEnabled": false}`,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]any{"BookmarkBarEnabled": false}, captured.ChromePolicy)
+}
+
+func TestBrowserPoolsUpdate_EmptyChromePolicyWarnsAndDoesNotClear(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolUpdateParams
+	fake := &FakeBrowserPoolsService{
+		UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: id}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Update(context.Background(), BrowserPoolsUpdateInput{
+		IDOrName:     "pool-1",
+		ChromePolicy: "{}",
+	})
+	assert.NoError(t, err)
+	assert.Nil(t, captured.ChromePolicy)
+	assert.Contains(t, outBuf.String(), "does not clear")
+}
+
+func TestBrowserPoolsUpdate_EmptyChromePolicyQuietInJSONMode(t *testing.T) {
+	setupStdoutCapture(t)
+
+	fake := &FakeBrowserPoolsService{
+		UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			return &kernel.BrowserPool{ID: id}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Update(context.Background(), BrowserPoolsUpdateInput{
+		IDOrName:     "pool-1",
+		ChromePolicy: "{}",
+		Output:       "json",
+	})
+	assert.NoError(t, err)
+	// The warning must not leak onto stdout in json mode, where it would corrupt the payload.
+	assert.NotContains(t, outBuf.String(), "does not clear")
+}
+
+func TestBrowserPoolsCreate_WithTelemetry(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolNewParams
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: "pool-tel"}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Create(context.Background(), BrowserPoolsCreateInput{
+		Size:      1,
+		Telemetry: "console,network",
+	})
+	assert.NoError(t, err)
+	assert.True(t, captured.Telemetry.Browser.Console.Enabled.Value)
+	assert.True(t, captured.Telemetry.Browser.Network.Enabled.Value)
+	assert.False(t, captured.Telemetry.Enabled.Valid())
+}
+
+func TestBrowserPoolsCreate_TelemetryAllAndOff(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolNewParams
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: "pool-tel"}, nil
+		},
+	}
+	c := BrowserPoolsCmd{client: fake}
+
+	assert.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Telemetry: "all"}))
+	assert.True(t, captured.Telemetry.Enabled.Value)
+
+	assert.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Telemetry: "off"}))
+	assert.True(t, captured.Telemetry.Enabled.Valid())
+	assert.False(t, captured.Telemetry.Enabled.Value)
+}
+
+func TestBrowserPoolsCreate_TelemetryInvalidCategory(t *testing.T) {
+	setupStdoutCapture(t)
+
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			t.Fatal("New should not be called when telemetry parsing fails")
+			return nil, nil
+		},
+	}
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Telemetry: "bogus"})
+	assert.Error(t, err)
+}
+
+func TestBrowserPoolsUpdate_WithTelemetry(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolUpdateParams
+	fake := &FakeBrowserPoolsService{
+		UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: id}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Update(context.Background(), BrowserPoolsUpdateInput{
+		IDOrName:  "pool-1",
+		Telemetry: "off",
+	})
+	assert.NoError(t, err)
+	assert.True(t, captured.Telemetry.Enabled.Valid())
+	assert.False(t, captured.Telemetry.Enabled.Value)
+}
+
+func TestBrowserPoolsAcquire_WithTelemetryOverride(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolAcquireParams
+	fake := &FakeBrowserPoolsService{
+		AcquireFunc: func(ctx context.Context, id string, body kernel.BrowserPoolAcquireParams, opts ...option.RequestOption) (*kernel.BrowserPoolAcquireResponse, error) {
+			captured = body
+			return &kernel.BrowserPoolAcquireResponse{SessionID: "sess-1"}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Acquire(context.Background(), BrowserPoolsAcquireInput{
+		IDOrName:  "pool-1",
+		Telemetry: "page",
+	})
+	assert.NoError(t, err)
+	assert.True(t, captured.Telemetry.Browser.Page.Enabled.Value)
 }

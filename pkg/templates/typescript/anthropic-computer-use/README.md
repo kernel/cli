@@ -1,8 +1,8 @@
 # Kernel TypeScript Sample App - Anthropic Computer Use
 
-This is a Kernel application that implements a prompt loop using Anthropic Computer Use with Kernel's Computer Controls API.
+This is a Kernel application that runs Anthropic Computer Use against a Kernel cloud browser.
 
-It generally follows the [Anthropic Reference Implementation](https://github.com/anthropics/anthropic-quickstarts/tree/main/computer-use-demo) but uses Kernel's Computer Controls API instead of `xdotool` and `gnome-screenshot`.
+It uses [`@onkernel/cua-agent`](https://www.npmjs.com/package/@onkernel/cua-agent) to run the computer-use loop: the `CuaAgent` class translates Claude's computer-use tool calls into Kernel browser controls and feeds a fresh screenshot back on every turn. The app entry point just provisions a browser, hands it to `CuaAgent`, and returns the final answer.
 
 ## Setup
 
@@ -35,13 +35,26 @@ kernel invoke ts-anthropic-cua cua-task --payload '{"query": "Navigate to https:
 
 When enabled, the response will include a `replay_url` field with a link to view the recorded session.
 
-## Known Limitations
+## Playwright escape hatch
 
-### Cursor Position
+Some steps are awkward as raw clicks and keystrokes — precise DOM reads, form fills, data extraction, or waiting on a selector. Pass `playwright: true` when constructing the agent in `index.ts` to add a `playwright_execute` tool that runs Playwright/TypeScript directly against the live browser session:
 
-The `cursor_position` action is not supported with Kernel's Computer Controls API. If the model attempts to use this action, an error will be returned. This is a known limitation that does not significantly impact most computer use workflows, as the model typically tracks cursor position through screenshots.
+```ts
+const agent = new CuaAgent({
+  browser: session.browser,
+  client: kernel,
+  playwright: true,
+  initialState: {
+    model: 'anthropic:claude-sonnet-4-6',
+    systemPrompt: SYSTEM_PROMPT,
+  },
+});
+```
+
+Inside `playwright_execute`, `page`, `context`, and `browser` are in scope and the code may `return` a JSON-serializable value. Each call runs in a fresh context (locals don't persist across calls), and no screenshot is returned automatically — the model can request one on a follow-up turn. See [`@onkernel/cua-agent`](https://www.npmjs.com/package/@onkernel/cua-agent) for details and per-model support status.
 
 ## Resources
 
+- [@onkernel/cua-agent](https://www.npmjs.com/package/@onkernel/cua-agent)
 - [Anthropic Computer Use Documentation](https://docs.anthropic.com/en/docs/build-with-claude/computer-use)
 - [Kernel Documentation](https://www.kernel.sh/docs/quickstart)

@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -17,7 +19,7 @@ type CredentialProvidersService interface {
 	New(ctx context.Context, body kernel.CredentialProviderNewParams, opts ...option.RequestOption) (res *kernel.CredentialProvider, err error)
 	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.CredentialProvider, err error)
 	Update(ctx context.Context, id string, body kernel.CredentialProviderUpdateParams, opts ...option.RequestOption) (res *kernel.CredentialProvider, err error)
-	List(ctx context.Context, opts ...option.RequestOption) (res *[]kernel.CredentialProvider, err error)
+	List(ctx context.Context, query kernel.CredentialProviderListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.CredentialProvider], err error)
 	Delete(ctx context.Context, id string, opts ...option.RequestOption) (err error)
 	Test(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.CredentialProviderTestResult, err error)
 	ListItems(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.CredentialProviderListItemsResponse, err error)
@@ -26,9 +28,12 @@ type CredentialProvidersService interface {
 // CredentialProvidersCmd handles credential provider operations independent of cobra.
 type CredentialProvidersCmd struct {
 	providers CredentialProvidersService
+	prompter  interactive.Prompter
 }
 
 type CredentialProvidersListInput struct {
+	Limit  int
+	Offset int
 	Output string
 }
 
@@ -71,30 +76,42 @@ type CredentialProvidersListItemsInput struct {
 }
 
 func (c CredentialProvidersCmd) List(ctx context.Context, in CredentialProvidersListInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
-	providers, err := c.providers.List(ctx)
+	params := kernel.CredentialProviderListParams{}
+	if in.Limit > 0 {
+		params.Limit = kernel.Int(int64(in.Limit))
+	}
+	if in.Offset > 0 {
+		params.Offset = kernel.Int(int64(in.Offset))
+	}
+	page, err := c.providers.List(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
+	var providers []kernel.CredentialProvider
+	if page != nil {
+		providers = page.Items
+	}
+
 	if in.Output == "json" {
-		if providers == nil || len(*providers) == 0 {
+		if len(providers) == 0 {
 			fmt.Println("[]")
 			return nil
 		}
-		return util.PrintPrettyJSONSlice(*providers)
+		return util.PrintPrettyJSONSlice(providers)
 	}
 
-	if providers == nil || len(*providers) == 0 {
+	if len(providers) == 0 {
 		pterm.Info.Println("No credential providers found")
 		return nil
 	}
 
 	tableData := pterm.TableData{{"ID", "Provider Type", "Enabled", "Priority", "Created At"}}
-	for _, p := range *providers {
+	for _, p := range providers {
 		tableData = append(tableData, []string{
 			p.ID,
 			string(p.ProviderType),
@@ -109,8 +126,8 @@ func (c CredentialProvidersCmd) List(ctx context.Context, in CredentialProviders
 }
 
 func (c CredentialProvidersCmd) Get(ctx context.Context, in CredentialProvidersGetInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	provider, err := c.providers.Get(ctx, in.ID)
@@ -137,8 +154,8 @@ func (c CredentialProvidersCmd) Get(ctx context.Context, in CredentialProvidersG
 }
 
 func (c CredentialProvidersCmd) Create(ctx context.Context, in CredentialProvidersCreateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if in.ProviderType == "" {
@@ -197,8 +214,8 @@ func (c CredentialProvidersCmd) Create(ctx context.Context, in CredentialProvide
 }
 
 func (c CredentialProvidersCmd) Update(ctx context.Context, in CredentialProvidersUpdateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	params := kernel.CredentialProviderUpdateParams{
@@ -239,9 +256,13 @@ func (c CredentialProvidersCmd) Update(ctx context.Context, in CredentialProvide
 
 func (c CredentialProvidersCmd) Delete(ctx context.Context, in CredentialProvidersDeleteInput) error {
 	if !in.SkipConfirm {
-		msg := fmt.Sprintf("Are you sure you want to delete credential provider '%s'?", in.ID)
-		pterm.DefaultInteractiveConfirm.DefaultText = msg
-		ok, _ := pterm.DefaultInteractiveConfirm.Show()
+		ok, err := c.prompter.Confirm(
+			fmt.Sprintf("delete credential provider '%s'", in.ID),
+			fmt.Sprintf("Are you sure you want to delete credential provider '%s'?", in.ID),
+		)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			pterm.Info.Println("Deletion cancelled")
 			return nil
@@ -260,8 +281,8 @@ func (c CredentialProvidersCmd) Delete(ctx context.Context, in CredentialProvide
 }
 
 func (c CredentialProvidersCmd) Test(ctx context.Context, in CredentialProvidersTestInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if in.Output != "json" {
@@ -298,8 +319,8 @@ func (c CredentialProvidersCmd) Test(ctx context.Context, in CredentialProviders
 }
 
 func (c CredentialProvidersCmd) ListItems(ctx context.Context, in CredentialProvidersListItemsInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if in.Output != "json" {
@@ -424,13 +445,15 @@ func init() {
 	credentialProvidersCmd.AddCommand(credentialProvidersListItemsCmd)
 
 	// List flags
-	credentialProvidersListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(credentialProvidersListCmd)
+	credentialProvidersListCmd.Flags().Int("limit", 0, "Maximum number of credential providers to return")
+	credentialProvidersListCmd.Flags().Int("offset", 0, "Number of credential providers to skip (for pagination)")
 
 	// Get flags
-	credentialProvidersGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(credentialProvidersGetCmd)
 
 	// Create flags
-	credentialProvidersCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(credentialProvidersCreateCmd)
 	credentialProvidersCreateCmd.Flags().String("name", "", "Human-readable name for this provider instance")
 	credentialProvidersCreateCmd.Flags().String("provider-type", "", "Provider type (e.g., onepassword)")
 	credentialProvidersCreateCmd.Flags().String("token", "", "Service account token for the provider")
@@ -440,7 +463,7 @@ func init() {
 	_ = credentialProvidersCreateCmd.MarkFlagRequired("token")
 
 	// Update flags
-	credentialProvidersUpdateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(credentialProvidersUpdateCmd)
 	credentialProvidersUpdateCmd.Flags().String("name", "", "New human-readable name for this provider instance")
 	credentialProvidersUpdateCmd.Flags().String("token", "", "New service account token (to rotate credentials)")
 	credentialProvidersUpdateCmd.Flags().Int64("cache-ttl", 0, "How long to cache credential lists in seconds")
@@ -451,19 +474,23 @@ func init() {
 	credentialProvidersDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 
 	// Test flags
-	credentialProvidersTestCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(credentialProvidersTestCmd)
 
 	// ListItems flags
-	credentialProvidersListItemsCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(credentialProvidersListItemsCmd)
 }
 
 func runCredentialProvidersList(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	output, _ := cmd.Flags().GetString("output")
+	limit, _ := cmd.Flags().GetInt("limit")
+	offset, _ := cmd.Flags().GetInt("offset")
 
 	svc := client.CredentialProviders
 	c := CredentialProvidersCmd{providers: &svc}
 	return c.List(cmd.Context(), CredentialProvidersListInput{
+		Limit:  limit,
+		Offset: offset,
 		Output: output,
 	})
 }

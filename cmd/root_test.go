@@ -77,3 +77,20 @@ func TestIsAuthExempt(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveProjectSelection(t *testing.T) {
+	t.Run("flag value wins over env var", func(t *testing.T) {
+		t.Setenv("KERNEL_PROJECT", "env-project")
+		assert.Equal(t, "flag-project", resolveProjectSelection("flag-project"))
+	})
+
+	t.Run("env var used when no flag", func(t *testing.T) {
+		t.Setenv("KERNEL_PROJECT", "env-project")
+		assert.Equal(t, "env-project", resolveProjectSelection(""))
+	})
+
+	t.Run("empty when no flag or env var", func(t *testing.T) {
+		t.Setenv("KERNEL_PROJECT", "")
+		assert.Equal(t, "", resolveProjectSelection(""))
+	})
+}

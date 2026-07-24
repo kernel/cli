@@ -12,20 +12,15 @@ import (
 )
 
 func (p ProxyCmd) Check(ctx context.Context, in ProxyCheckInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if in.Output != "json" {
 		pterm.Info.Printf("Running health check on proxy %s...\n", in.ID)
 	}
 
-	params := kernel.ProxyCheckParams{}
-	if in.URL != "" {
-		params.URL = kernel.Opt(in.URL)
-	}
-
-	proxy, err := p.proxies.Check(ctx, in.ID, params)
+	proxy, err := p.proxies.Check(ctx, in.ID, kernel.ProxyCheckParams{})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -132,9 +127,6 @@ func getProxyCheckConfigRows(proxy *kernel.ProxyCheckResponse) [][]string {
 		}
 		if config.Asn != "" {
 			rows = append(rows, []string{"ASN", config.Asn})
-		}
-		if config.Carrier != "" {
-			rows = append(rows, []string{"Carrier", config.Carrier})
 		}
 	case kernel.ProxyCheckResponseTypeCustom:
 		if config.Host != "" {

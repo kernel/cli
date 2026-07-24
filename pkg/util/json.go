@@ -29,6 +29,22 @@ func PrintPrettyJSON(v RawJSONProvider) error {
 	return nil
 }
 
+// PrintCompactJSONLine prints v as a single compact JSON line followed by a
+// newline. Use inside SSE loops where downstream tooling (jq -c, log shippers)
+// expects newline-delimited JSON.
+func PrintCompactJSONLine(v RawJSONProvider) error {
+	raw := v.RawJSON()
+	if raw == "" {
+		return nil
+	}
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, []byte(raw)); err != nil {
+		return err
+	}
+	fmt.Println(buf.String())
+	return nil
+}
+
 // PrintPrettyJSONSlice prints a slice of SDK response types as a JSON array.
 // Each element must implement RawJSONProvider.
 func PrintPrettyJSONSlice[T RawJSONProvider](items []T) error {

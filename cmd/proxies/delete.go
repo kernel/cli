@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -11,6 +12,11 @@ import (
 
 func (p ProxyCmd) Delete(ctx context.Context, in ProxyDeleteInput) error {
 	if !in.SkipConfirm {
+		if !p.prompter.CanPrompt() {
+			// Fail fast before the proxy lookup below; the lookup only
+			// improves the prompt text.
+			return interactive.ErrConfirmationRequired(fmt.Sprintf("delete proxy '%s'", in.ID))
+		}
 		// Try to get the proxy details for better confirmation message
 		proxy, err := p.proxies.Get(ctx, in.ID)
 		if err != nil {
@@ -28,8 +34,10 @@ func (p ProxyCmd) Delete(ctx context.Context, in ProxyDeleteInput) error {
 			confirmMsg = fmt.Sprintf("Are you sure you want to delete proxy '%s'?", in.ID)
 		}
 
-		pterm.DefaultInteractiveConfirm.DefaultText = confirmMsg
-		result, _ := pterm.DefaultInteractiveConfirm.Show()
+		result, err := p.prompter.Confirm(fmt.Sprintf("delete proxy '%s'", in.ID), confirmMsg)
+		if err != nil {
+			return err
+		}
 		if !result {
 			pterm.Info.Println("Deletion cancelled")
 			return nil

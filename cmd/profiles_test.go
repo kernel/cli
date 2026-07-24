@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,33 +17,9 @@ import (
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
-	"github.com/pterm/pterm"
+	"github.com/klauspost/compress/zstd"
 	"github.com/stretchr/testify/assert"
 )
-
-// captureProfilesOutput sets pterm writers for tests in this file
-func captureProfilesOutput(t *testing.T) *bytes.Buffer {
-	var buf bytes.Buffer
-	pterm.SetDefaultOutput(&buf)
-	pterm.Info.Writer = &buf
-	pterm.Error.Writer = &buf
-	pterm.Success.Writer = &buf
-	pterm.Warning.Writer = &buf
-	pterm.Debug.Writer = &buf
-	pterm.Fatal.Writer = &buf
-	pterm.DefaultTable = *pterm.DefaultTable.WithWriter(&buf)
-	t.Cleanup(func() {
-		pterm.SetDefaultOutput(os.Stdout)
-		pterm.Info.Writer = os.Stdout
-		pterm.Error.Writer = os.Stdout
-		pterm.Success.Writer = os.Stdout
-		pterm.Warning.Writer = os.Stdout
-		pterm.Debug.Writer = os.Stdout
-		pterm.Fatal.Writer = os.Stdout
-		pterm.DefaultTable = *pterm.DefaultTable.WithWriter(os.Stdout)
-	})
-	return &buf
-}
 
 // FakeProfilesService implements ProfilesService
 type FakeProfilesService struct {
@@ -84,7 +62,7 @@ func (f *FakeProfilesService) New(ctx context.Context, body kernel.ProfileNewPar
 }
 
 func TestProfilesList_Empty(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	fake := &FakeProfilesService{}
 	p := ProfilesCmd{profiles: fake}
 	_ = p.List(context.Background(), ProfilesListInput{Page: 1, PerPage: 20})
@@ -92,7 +70,7 @@ func TestProfilesList_Empty(t *testing.T) {
 }
 
 func TestProfilesList_WithRows(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	created := time.Unix(0, 0)
 	rows := []kernel.Profile{{ID: "p1", Name: "alpha", CreatedAt: created, UpdatedAt: created}, {ID: "p2", Name: "", CreatedAt: created, UpdatedAt: created}}
 	fake := &FakeProfilesService{ListFunc: func(ctx context.Context, query kernel.ProfileListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Profile], error) {
@@ -108,7 +86,7 @@ func TestProfilesList_WithRows(t *testing.T) {
 }
 
 func TestProfilesList_HasMore(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	created := time.Unix(0, 0)
 	perPage := 2
 	items := make([]kernel.Profile, perPage+1)
@@ -129,7 +107,7 @@ func TestProfilesList_HasMore(t *testing.T) {
 }
 
 func TestProfilesList_QueryInNextHint(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	created := time.Unix(0, 0)
 	items := make([]kernel.Profile, 3)
 	for i := range items {
@@ -145,7 +123,7 @@ func TestProfilesList_QueryInNextHint(t *testing.T) {
 }
 
 func TestProfilesList_QueryWithSpacesQuoted(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	created := time.Unix(0, 0)
 	items := make([]kernel.Profile, 3)
 	for i := range items {
@@ -161,7 +139,7 @@ func TestProfilesList_QueryWithSpacesQuoted(t *testing.T) {
 }
 
 func TestProfilesGet_Success(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	fake := &FakeProfilesService{GetFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*kernel.Profile, error) {
 		return &kernel.Profile{ID: "p1", Name: "alpha", CreatedAt: time.Unix(0, 0), UpdatedAt: time.Unix(0, 0)}, nil
 	}}
@@ -185,7 +163,7 @@ func TestProfilesGet_Error(t *testing.T) {
 }
 
 func TestProfilesCreate_Success(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	fake := &FakeProfilesService{NewFunc: func(ctx context.Context, body kernel.ProfileNewParams, opts ...option.RequestOption) (*kernel.Profile, error) {
 		return &kernel.Profile{ID: "pnew", Name: body.Name.Value, CreatedAt: time.Unix(0, 0), UpdatedAt: time.Unix(0, 0)}, nil
 	}}
@@ -207,7 +185,7 @@ func TestProfilesCreate_Error(t *testing.T) {
 }
 
 func TestProfilesDelete_ConfirmNotFound(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	fake := &FakeProfilesService{GetFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*kernel.Profile, error) {
 		return nil, &kernel.Error{StatusCode: http.StatusNotFound}
 	}}
@@ -217,93 +195,99 @@ func TestProfilesDelete_ConfirmNotFound(t *testing.T) {
 }
 
 func TestProfilesDelete_SkipConfirm(t *testing.T) {
-	buf := captureProfilesOutput(t)
+	buf := capturePtermOutput(t)
 	fake := &FakeProfilesService{}
 	p := ProfilesCmd{profiles: fake}
 	_ = p.Delete(context.Background(), ProfilesDeleteInput{Identifier: "a", SkipConfirm: true})
 	assert.Contains(t, buf.String(), "Deleted profile: a")
 }
 
-func TestProfilesDownload_MissingOutput(t *testing.T) {
-	buf := captureProfilesOutput(t)
-	fake := &FakeProfilesService{DownloadFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*http.Response, error) {
-		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("content")), Header: http.Header{}}, nil
-	}}
-	p := ProfilesCmd{profiles: fake}
-	_ = p.Download(context.Background(), ProfilesDownloadInput{Identifier: "p1", Output: "", Pretty: false})
-	assert.Contains(t, buf.String(), "Missing --to output file path")
+// makeProfileArchive builds a zstd-compressed tar archive from a map of file
+// paths to contents, for use in download tests.
+func makeProfileArchive(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw, err := zstd.NewWriter(&buf)
+	assert.NoError(t, err)
+	tw := tar.NewWriter(zw)
+	for name, content := range files {
+		hdr := &tar.Header{Name: name, Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg}
+		assert.NoError(t, tw.WriteHeader(hdr))
+		_, err := tw.Write([]byte(content))
+		assert.NoError(t, err)
+	}
+	assert.NoError(t, tw.Close())
+	assert.NoError(t, zw.Close())
+	return buf.Bytes()
 }
 
-func TestProfilesDownload_RawSuccess(t *testing.T) {
-	buf := captureProfilesOutput(t)
-	f, err := os.CreateTemp("", "profile-*.zip")
-	assert.NoError(t, err)
-	name := f.Name()
-	_ = f.Close()
-	defer os.Remove(name)
+func TestProfilesDownload_MissingTo(t *testing.T) {
+	fake := &FakeProfilesService{}
+	p := ProfilesCmd{profiles: fake}
+	err := p.Download(context.Background(), ProfilesDownloadInput{Identifier: "p1", To: ""})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "missing required --to")
+}
 
-	content := "hello"
+func TestProfilesDownload_ExtractSuccess(t *testing.T) {
+	buf := capturePtermOutput(t)
+	dir, err := os.MkdirTemp("", "profile-*")
+	assert.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	archive := makeProfileArchive(t, map[string]string{
+		"Default/Preferences": "{\"k\":1}",
+		"Local State":         "local",
+	})
 	fake := &FakeProfilesService{DownloadFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*http.Response, error) {
-		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(content)), Header: http.Header{}}, nil
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(archive)), Header: http.Header{}}, nil
 	}}
 	p := ProfilesCmd{profiles: fake}
-	_ = p.Download(context.Background(), ProfilesDownloadInput{Identifier: "p1", Output: name, Pretty: false})
+	err = p.Download(context.Background(), ProfilesDownloadInput{Identifier: "p1", To: dir})
+	assert.NoError(t, err)
 
-	b, readErr := os.ReadFile(name)
+	b, readErr := os.ReadFile(filepath.Join(dir, "Default", "Preferences"))
 	assert.NoError(t, readErr)
-	assert.Equal(t, content, string(b))
-	assert.Contains(t, buf.String(), "Saved profile to "+name)
-}
+	assert.Equal(t, "{\"k\":1}", string(b))
 
-func TestProfilesDownload_PrettySuccess(t *testing.T) {
-	f, err := os.CreateTemp("", "profile-*.json")
-	assert.NoError(t, err)
-	name := f.Name()
-	_ = f.Close()
-	defer os.Remove(name)
-
-	jsonBody := "{\"a\":1}"
-	fake := &FakeProfilesService{DownloadFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*http.Response, error) {
-		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(jsonBody)), Header: http.Header{}}, nil
-	}}
-	p := ProfilesCmd{profiles: fake}
-	_ = p.Download(context.Background(), ProfilesDownloadInput{Identifier: "p1", Output: name, Pretty: true})
-
-	b, readErr := os.ReadFile(name)
+	b2, readErr := os.ReadFile(filepath.Join(dir, "Local State"))
 	assert.NoError(t, readErr)
-	out := string(b)
-	assert.Contains(t, out, "\n")
-	assert.Contains(t, out, "\"a\": 1")
+	assert.Equal(t, "local", string(b2))
+
+	assert.Contains(t, buf.String(), "Extracted profile 'p1' to "+dir)
 }
 
-func TestProfilesDownload_PrettyEmptyBody(t *testing.T) {
-	buf := captureProfilesOutput(t)
-	f, err := os.CreateTemp("", "profile-*.json")
+func TestProfilesDownload_202NoData(t *testing.T) {
+	buf := capturePtermOutput(t)
+	dir, err := os.MkdirTemp("", "profile-*")
 	assert.NoError(t, err)
-	name := f.Name()
-	_ = f.Close()
-	defer os.Remove(name)
+	defer os.RemoveAll(dir)
 
 	fake := &FakeProfilesService{DownloadFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*http.Response, error) {
-		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}}, nil
+		return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}}, nil
 	}}
 	p := ProfilesCmd{profiles: fake}
-	_ = p.Download(context.Background(), ProfilesDownloadInput{Identifier: "p1", Output: name, Pretty: true})
-	assert.Contains(t, buf.String(), "Empty response body")
+	err = p.Download(context.Background(), ProfilesDownloadInput{Identifier: "fresh", To: dir})
+	assert.NoError(t, err)
+	assert.Contains(t, buf.String(), "no saved data yet")
+
+	entries, _ := os.ReadDir(dir)
+	assert.Empty(t, entries)
 }
 
-func TestProfilesDownload_PrettyInvalidJSON(t *testing.T) {
-	buf := captureProfilesOutput(t)
-	f, err := os.CreateTemp("", "profile-*.json")
+func TestProfilesDownload_PathTraversalRejected(t *testing.T) {
+	dir, err := os.MkdirTemp("", "profile-*")
 	assert.NoError(t, err)
-	name := f.Name()
-	_ = f.Close()
-	defer os.Remove(name)
+	defer os.RemoveAll(dir)
 
+	archive := makeProfileArchive(t, map[string]string{
+		"../escape": "nope",
+	})
 	fake := &FakeProfilesService{DownloadFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*http.Response, error) {
-		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("not json")), Header: http.Header{}}, nil
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(archive)), Header: http.Header{}}, nil
 	}}
 	p := ProfilesCmd{profiles: fake}
-	_ = p.Download(context.Background(), ProfilesDownloadInput{Identifier: "p1", Output: name, Pretty: true})
-	assert.Contains(t, buf.String(), "Failed to pretty-print JSON")
+	err = p.Download(context.Background(), ProfilesDownloadInput{Identifier: "p1", To: dir})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "illegal entry path")
 }

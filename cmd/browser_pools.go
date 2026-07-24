@@ -9,13 +9,14 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
 
 // BrowserPoolsService defines the subset of the Kernel SDK browser pools client that we use.
 type BrowserPoolsService interface {
-	List(ctx context.Context, opts ...option.RequestOption) (res *[]kernel.BrowserPool, err error)
+	List(ctx context.Context, query kernel.BrowserPoolListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.BrowserPool], err error)
 	New(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (res *kernel.BrowserPool, err error)
 	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.BrowserPool, err error)
 	Update(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (res *kernel.BrowserPool, err error)
@@ -30,28 +31,43 @@ type BrowserPoolsCmd struct {
 }
 
 type BrowserPoolsListInput struct {
+	Limit  int
+	Offset int
 	Output string
 }
 
 func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
-	pools, err := c.client.List(ctx)
+	params := kernel.BrowserPoolListParams{}
+	if in.Limit > 0 {
+		params.Limit = kernel.Int(int64(in.Limit))
+	}
+	if in.Offset > 0 {
+		params.Offset = kernel.Int(int64(in.Offset))
+	}
+
+	page, err := c.client.List(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
+	var pools []kernel.BrowserPool
+	if page != nil {
+		pools = page.Items
+	}
+
 	if in.Output == "json" {
-		if pools == nil || len(*pools) == 0 {
+		if len(pools) == 0 {
 			fmt.Println("[]")
 			return nil
 		}
-		return util.PrintPrettyJSONSlice(*pools)
+		return util.PrintPrettyJSONSlice(pools)
 	}
 
-	if pools == nil || len(*pools) == 0 {
+	if len(pools) == 0 {
 		pterm.Info.Println("No browser pools found")
 		return nil
 	}
@@ -60,7 +76,7 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 		{"ID", "Name", "Available", "Acquired", "Created At", "Size"},
 	}
 
-	for _, p := range *pools {
+	for _, p := range pools {
 		tableData = append(tableData, []string{
 			p.ID,
 			util.OrDash(p.Name),
@@ -75,27 +91,60 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 	return nil
 }
 
+// buildPoolNewTelemetryParam converts a --telemetry flag value to the pool create param.
+func buildPoolNewTelemetryParam(s string) (kernel.BrowserPoolNewParamsTelemetry, error) {
+	enabled, browser, err := resolveTelemetryFlag(s)
+	return kernel.BrowserPoolNewParamsTelemetry{Enabled: enabled, Browser: browser}, err
+}
+
+// buildPoolUpdateTelemetryParam converts a --telemetry flag value to the pool update param.
+func buildPoolUpdateTelemetryParam(s string) (kernel.BrowserPoolUpdateParamsTelemetry, error) {
+	enabled, browser, err := resolveTelemetryFlag(s)
+	return kernel.BrowserPoolUpdateParamsTelemetry{Enabled: enabled, Browser: browser}, err
+}
+
+// buildPoolAcquireTelemetryParam converts a --telemetry flag value to the acquire override param.
+func buildPoolAcquireTelemetryParam(s string) (kernel.BrowserPoolAcquireParamsTelemetry, error) {
+	enabled, browser, err := resolveTelemetryFlag(s)
+	return kernel.BrowserPoolAcquireParamsTelemetry{Enabled: enabled, Browser: browser}, err
+}
+
+// formatPoolTelemetry renders a pool's active telemetry config for the details table.
+func formatPoolTelemetry(cfg kernel.BrowserTelemetryConfig) string {
+	on := telemetryEnabledCategories(cfg)
+	if len(on) == 0 {
+		return "disabled"
+	}
+	return strings.Join(on, ", ")
+}
+
 type BrowserPoolsCreateInput struct {
-	Name               string
-	Size               int64
-	FillRate           int64
-	TimeoutSeconds     int64
-	Stealth            BoolFlag
-	Headless           BoolFlag
-	Kiosk              BoolFlag
-	ProfileID          string
-	ProfileName        string
-	ProfileSaveChanges BoolFlag
-	ProxyID            string
-	ChromePolicy       string
-	Extensions         []string
-	Viewport           string
-	Output             string
+	Name                   string
+	Size                   int64
+	FillRate               int64
+	TimeoutSeconds         int64
+	Stealth                BoolFlag
+	Headless               BoolFlag
+	Kiosk                  BoolFlag
+	RefreshOnProfileUpdate BoolFlag
+	ProfileID              string
+	ProfileName      string
+	ProxyID          string
+	StartURL         string
+	Extensions       []string
+	Viewport         string
+	ChromePolicy     string
+	ChromePolicyFile string
+	Telemetry        string
+	Output           string
 }
 
 func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+	if err := validateStartURLFlag(in.StartURL); err != nil {
+		return err
 	}
 
 	params := kernel.BrowserPoolNewParams{
@@ -120,26 +169,28 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 	if in.Kiosk.Set {
 		params.KioskMode = kernel.Bool(in.Kiosk.Value)
 	}
+	if in.RefreshOnProfileUpdate.Set {
+		params.RefreshOnProfileUpdate = kernel.Bool(in.RefreshOnProfileUpdate.Value)
+	}
 
-	profile, err := buildProfileParam(in.ProfileID, in.ProfileName, in.ProfileSaveChanges)
+	profileID, profileName, profileSet, err := resolvePoolProfile(in.ProfileID, in.ProfileName)
 	if err != nil {
 		pterm.Error.Println(err.Error())
 		return nil
 	}
-	if profile != nil {
-		params.Profile = *profile
+	if profileSet {
+		if profileID != "" {
+			params.Profile.ID = kernel.String(profileID)
+		} else {
+			params.Profile.Name = kernel.String(profileName)
+		}
 	}
 
 	if in.ProxyID != "" {
 		params.ProxyID = kernel.String(in.ProxyID)
 	}
-	chromePolicy, err := parseChromePolicy(in.ChromePolicy)
-	if err != nil {
-		pterm.Error.Println(err.Error())
-		return nil
-	}
-	if len(chromePolicy) > 0 {
-		params.ChromePolicy = chromePolicy
+	if in.StartURL != "" {
+		params.StartURL = kernel.String(in.StartURL)
 	}
 
 	params.Extensions = buildExtensionsParam(in.Extensions)
@@ -151,6 +202,22 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 	}
 	if viewport != nil {
 		params.Viewport = *viewport
+	}
+
+	chromePolicy, err := parseChromePolicy(in.ChromePolicy, in.ChromePolicyFile)
+	if err != nil {
+		return err
+	}
+	if len(chromePolicy) > 0 {
+		params.ChromePolicy = chromePolicy
+	}
+
+	if in.Telemetry != "" {
+		t, err := buildPoolNewTelemetryParam(in.Telemetry)
+		if err != nil {
+			return err
+		}
+		params.Telemetry = t
 	}
 
 	pool, err := c.client.New(ctx, params)
@@ -167,6 +234,9 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 	} else {
 		pterm.Success.Printf("Created browser pool %s\n", pool.ID)
 	}
+	if in.Telemetry != "" {
+		printTelemetrySummary(pool.BrowserPoolConfig.Telemetry)
+	}
 	return nil
 }
 
@@ -176,8 +246,8 @@ type BrowserPoolsGetInput struct {
 }
 
 func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	pool, err := c.client.Get(ctx, in.IDOrName)
@@ -204,11 +274,13 @@ func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error
 		{"Headless", fmt.Sprintf("%t", cfg.Headless)},
 		{"Stealth", fmt.Sprintf("%t", cfg.Stealth)},
 		{"Kiosk Mode", fmt.Sprintf("%t", cfg.KioskMode)},
+		{"Refresh On Profile Update", fmt.Sprintf("%t", cfg.RefreshOnProfileUpdate)},
 		{"Profile", formatProfile(cfg.Profile)},
 		{"Proxy ID", util.OrDash(cfg.ProxyID)},
-		{"Chrome Policy", formatChromePolicy(cfg.ChromePolicy)},
+		{"Start URL", util.OrDash(cfg.StartURL)},
 		{"Extensions", formatExtensions(cfg.Extensions)},
 		{"Viewport", formatViewport(cfg.Viewport)},
+		{"Telemetry", formatPoolTelemetry(cfg.Telemetry)},
 	}
 
 	PrintTableNoPad(rows, true)
@@ -216,28 +288,38 @@ func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error
 }
 
 type BrowserPoolsUpdateInput struct {
-	IDOrName           string
-	Name               string
-	Size               int64
-	FillRate           int64
-	TimeoutSeconds     int64
-	Stealth            BoolFlag
-	Headless           BoolFlag
-	Kiosk              BoolFlag
-	ProfileID          string
-	ProfileName        string
-	ProfileSaveChanges BoolFlag
-	ProxyID            string
-	ChromePolicy       string
-	Extensions         []string
-	Viewport           string
-	DiscardAllIdle     BoolFlag
-	Output             string
+	IDOrName               string
+	Name                   string
+	Size                   int64
+	FillRate               int64
+	TimeoutSeconds         int64
+	Stealth                BoolFlag
+	Headless               BoolFlag
+	Kiosk                  BoolFlag
+	RefreshOnProfileUpdate BoolFlag
+	ProfileID              string
+	ProfileName      string
+	ProxyID          string
+	StartURL         string
+	ClearStartURL    bool
+	Extensions       []string
+	Viewport         string
+	ChromePolicy     string
+	ChromePolicyFile string
+	Telemetry        string
+	DiscardAllIdle   BoolFlag
+	Output           string
 }
 
 func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+	if err := validateStartURLFlag(in.StartURL); err != nil {
+		return err
+	}
+	if in.StartURL != "" && in.ClearStartURL {
+		return fmt.Errorf("cannot specify both --start-url and --clear-start-url")
 	}
 
 	params := kernel.BrowserPoolUpdateParams{}
@@ -246,7 +328,7 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 		params.Name = kernel.String(in.Name)
 	}
 	if in.Size > 0 {
-		params.Size = in.Size
+		params.Size = kernel.Int(in.Size)
 	}
 	if in.FillRate > 0 {
 		params.FillRatePerMinute = kernel.Int(in.FillRate)
@@ -266,26 +348,30 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 	if in.DiscardAllIdle.Set {
 		params.DiscardAllIdle = kernel.Bool(in.DiscardAllIdle.Value)
 	}
+	if in.RefreshOnProfileUpdate.Set {
+		params.RefreshOnProfileUpdate = kernel.Bool(in.RefreshOnProfileUpdate.Value)
+	}
 
-	profile, err := buildProfileParam(in.ProfileID, in.ProfileName, in.ProfileSaveChanges)
+	profileID, profileName, profileSet, err := resolvePoolProfile(in.ProfileID, in.ProfileName)
 	if err != nil {
 		pterm.Error.Println(err.Error())
 		return nil
 	}
-	if profile != nil {
-		params.Profile = *profile
+	if profileSet {
+		if profileID != "" {
+			params.Profile.ID = kernel.String(profileID)
+		} else {
+			params.Profile.Name = kernel.String(profileName)
+		}
 	}
 
 	if in.ProxyID != "" {
 		params.ProxyID = kernel.String(in.ProxyID)
 	}
-	chromePolicy, err := parseChromePolicy(in.ChromePolicy)
-	if err != nil {
-		pterm.Error.Println(err.Error())
-		return nil
-	}
-	if len(chromePolicy) > 0 {
-		params.ChromePolicy = chromePolicy
+	if in.ClearStartURL {
+		params.StartURL = kernel.String("")
+	} else if in.StartURL != "" {
+		params.StartURL = kernel.String(in.StartURL)
 	}
 
 	params.Extensions = buildExtensionsParam(in.Extensions)
@@ -297,6 +383,27 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 	}
 	if viewport != nil {
 		params.Viewport = *viewport
+	}
+
+	chromePolicy, err := parseChromePolicy(in.ChromePolicy, in.ChromePolicyFile)
+	if err != nil {
+		return err
+	}
+	if len(chromePolicy) > 0 {
+		params.ChromePolicy = chromePolicy
+	} else if (in.ChromePolicy != "" || in.ChromePolicyFile != "") && in.Output != "json" {
+		// An empty policy ({}) cannot clear an existing one: omitzero drops it before it
+		// reaches the server. Warn instead of silently doing nothing, but stay quiet on the
+		// json path so stdout remains valid JSON.
+		pterm.Warning.Println("An empty chrome policy is ignored and does not clear the pool's existing policy; recreate the pool to remove a policy.")
+	}
+
+	if in.Telemetry != "" {
+		t, err := buildPoolUpdateTelemetryParam(in.Telemetry)
+		if err != nil {
+			return err
+		}
+		params.Telemetry = t
 	}
 
 	pool, err := c.client.Update(ctx, in.IDOrName, params)
@@ -312,6 +419,9 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 		pterm.Success.Printf("Updated browser pool %s (%s)\n", pool.Name, pool.ID)
 	} else {
 		pterm.Success.Printf("Updated browser pool %s\n", pool.ID)
+	}
+	if in.Telemetry != "" {
+		printTelemetrySummary(pool.BrowserPoolConfig.Telemetry)
 	}
 	return nil
 }
@@ -337,17 +447,45 @@ func (c BrowserPoolsCmd) Delete(ctx context.Context, in BrowserPoolsDeleteInput)
 type BrowserPoolsAcquireInput struct {
 	IDOrName       string
 	TimeoutSeconds int64
+	Name           string
+	Tags           map[string]string
+	Telemetry      string
 	Output         string
 }
 
+// buildAcquireParams builds the SDK params for acquiring a browser from a pool.
+// Shared by `browser-pools acquire` and the `browsers create --pool-id/--pool-name`
+// path so the per-lease name/tags/telemetry forwarding cannot silently diverge
+// between them. The telemetry override merges onto the pool's config for this lease.
+func buildAcquireParams(name string, tags map[string]string, timeoutSeconds int64, telemetry string) (kernel.BrowserPoolAcquireParams, error) {
+	params := kernel.BrowserPoolAcquireParams{}
+	if timeoutSeconds > 0 {
+		params.AcquireTimeoutSeconds = kernel.Int(timeoutSeconds)
+	}
+	if name != "" {
+		params.Name = kernel.Opt(name)
+	}
+	if len(tags) > 0 {
+		params.Tags = kernel.Tags(tags)
+	}
+	if telemetry != "" {
+		t, err := buildPoolAcquireTelemetryParam(telemetry)
+		if err != nil {
+			return kernel.BrowserPoolAcquireParams{}, err
+		}
+		params.Telemetry = t
+	}
+	return params, nil
+}
+
 func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
-	params := kernel.BrowserPoolAcquireParams{}
-	if in.TimeoutSeconds > 0 {
-		params.AcquireTimeoutSeconds = kernel.Int(in.TimeoutSeconds)
+	params, err := buildAcquireParams(in.Name, in.Tags, in.TimeoutSeconds, in.Telemetry)
+	if err != nil {
+		return err
 	}
 	resp, err := c.client.Acquire(ctx, in.IDOrName, params)
 	if err != nil {
@@ -369,8 +507,19 @@ func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInpu
 	tableData := pterm.TableData{
 		{"Property", "Value"},
 		{"Session ID", resp.SessionID},
-		{"CDP WebSocket URL", resp.CdpWsURL},
-		{"Live View URL", resp.BrowserLiveViewURL},
+	}
+	if resp.Name != "" {
+		tableData = append(tableData, []string{"Name", resp.Name})
+	}
+	tableData = append(tableData,
+		[]string{"CDP WebSocket URL", resp.CdpWsURL},
+		[]string{"Live View URL", resp.BrowserLiveViewURL},
+	)
+	if resp.StartURL != "" {
+		tableData = append(tableData, []string{"Start URL", resp.StartURL})
+	}
+	if len(resp.Tags) > 0 {
+		tableData = append(tableData, []string{"Tags", formatTags(resp.Tags)})
 	}
 	PrintTableNoPad(tableData, true)
 	return nil
@@ -477,9 +626,11 @@ var browserPoolsFlushCmd = &cobra.Command{
 }
 
 func init() {
-	browserPoolsListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(browserPoolsListCmd)
+	browserPoolsListCmd.Flags().Int("limit", 0, "Maximum number of pools to return")
+	browserPoolsListCmd.Flags().Int("offset", 0, "Number of pools to skip (for pagination)")
 
-	browserPoolsCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(browserPoolsCreateCmd)
 	browserPoolsCreateCmd.Flags().String("name", "", "Optional unique name for the pool")
 	browserPoolsCreateCmd.Flags().Int64("size", 0, "Number of browsers in the pool")
 	_ = browserPoolsCreateCmd.MarkFlagRequired("size")
@@ -488,15 +639,19 @@ func init() {
 	browserPoolsCreateCmd.Flags().Bool("stealth", false, "Enable stealth mode")
 	browserPoolsCreateCmd.Flags().Bool("headless", false, "Enable headless mode")
 	browserPoolsCreateCmd.Flags().Bool("kiosk", false, "Enable kiosk mode")
+	browserPoolsCreateCmd.Flags().Bool("refresh-on-profile-update", false, "Flush idle browsers when the pool's profile is updated")
 	browserPoolsCreateCmd.Flags().String("profile-id", "", "Profile ID")
 	browserPoolsCreateCmd.Flags().String("profile-name", "", "Profile name")
-	browserPoolsCreateCmd.Flags().Bool("save-changes", false, "Save changes to profile")
 	browserPoolsCreateCmd.Flags().String("proxy-id", "", "Proxy ID")
-	browserPoolsCreateCmd.Flags().String("chrome-policy", "", "JSON object of Chrome enterprise policy overrides to apply to all browsers in the pool")
+	browserPoolsCreateCmd.Flags().String("start-url", "", "Initial page to open for new browsers")
 	browserPoolsCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsCreateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
+	browserPoolsCreateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
+	browserPoolsCreateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
+	browserPoolsCreateCmd.Flags().String("telemetry", "", "Configure telemetry for browsers warmed into the pool (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
+	browserPoolsCreateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
 
-	browserPoolsGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(browserPoolsGetCmd)
 
 	browserPoolsUpdateCmd.Flags().String("name", "", "Update the pool name")
 	browserPoolsUpdateCmd.Flags().Int64("size", 0, "Number of browsers in the pool")
@@ -505,20 +660,28 @@ func init() {
 	browserPoolsUpdateCmd.Flags().Bool("stealth", false, "Enable stealth mode")
 	browserPoolsUpdateCmd.Flags().Bool("headless", false, "Enable headless mode")
 	browserPoolsUpdateCmd.Flags().Bool("kiosk", false, "Enable kiosk mode")
+	browserPoolsUpdateCmd.Flags().Bool("refresh-on-profile-update", false, "Flush idle browsers when the pool's profile is updated")
 	browserPoolsUpdateCmd.Flags().String("profile-id", "", "Profile ID")
 	browserPoolsUpdateCmd.Flags().String("profile-name", "", "Profile name")
-	browserPoolsUpdateCmd.Flags().Bool("save-changes", false, "Save changes to profile")
 	browserPoolsUpdateCmd.Flags().String("proxy-id", "", "Proxy ID")
-	browserPoolsUpdateCmd.Flags().String("chrome-policy", "", "JSON object of Chrome enterprise policy overrides to apply to all browsers in the pool")
+	browserPoolsUpdateCmd.Flags().String("start-url", "", "Initial page to open for new browsers")
+	browserPoolsUpdateCmd.Flags().Bool("clear-start-url", false, "Clear the pool start URL")
 	browserPoolsUpdateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsUpdateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
+	browserPoolsUpdateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
+	browserPoolsUpdateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
+	browserPoolsUpdateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
+	browserPoolsUpdateCmd.Flags().String("telemetry", "", "Update pool telemetry: --telemetry=all (reset to default set), --telemetry=off (disable), or --telemetry=console,network (merge those categories into the current selection). Applies only to browsers warmed after the update.")
 	browserPoolsUpdateCmd.Flags().Bool("discard-all-idle", false, "Discard all idle browsers")
-	browserPoolsUpdateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(browserPoolsUpdateCmd)
 
 	browserPoolsDeleteCmd.Flags().Bool("force", false, "Force delete even if browsers are leased")
 
 	browserPoolsAcquireCmd.Flags().Int64("timeout", 0, "Acquire timeout in seconds")
-	browserPoolsAcquireCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	browserPoolsAcquireCmd.Flags().String("name", "", "Optional name for the acquired session (applies to this lease; cleared on release)")
+	browserPoolsAcquireCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the acquired session (repeatable; applies to this lease)")
+	browserPoolsAcquireCmd.Flags().String("telemetry", "", "Telemetry override for this lease only, merged onto the pool's config: --telemetry=all, --telemetry=off, or --telemetry=console,network")
+	addJSONOutputFlag(browserPoolsAcquireCmd)
 
 	browserPoolsReleaseCmd.Flags().String("session-id", "", "Browser session ID to release")
 	_ = browserPoolsReleaseCmd.MarkFlagRequired("session-id")
@@ -537,8 +700,10 @@ func init() {
 func runBrowserPoolsList(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	out, _ := cmd.Flags().GetString("output")
+	limit, _ := cmd.Flags().GetInt("limit")
+	offset, _ := cmd.Flags().GetInt("offset")
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
-	return c.List(cmd.Context(), BrowserPoolsListInput{Output: out})
+	return c.List(cmd.Context(), BrowserPoolsListInput{Limit: limit, Offset: offset, Output: out})
 }
 
 func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
@@ -557,31 +722,37 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	stealth, _ := cmd.Flags().GetBool("stealth")
 	headless, _ := cmd.Flags().GetBool("headless")
 	kiosk, _ := cmd.Flags().GetBool("kiosk")
+	refreshOnProfileUpdate, _ := cmd.Flags().GetBool("refresh-on-profile-update")
 	profileID, _ := cmd.Flags().GetString("profile-id")
 	profileName, _ := cmd.Flags().GetString("profile-name")
-	saveChanges, _ := cmd.Flags().GetBool("save-changes")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
-	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
+	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
+	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
+	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
+	telemetry, _ := cmd.Flags().GetString("telemetry")
 	output, _ := cmd.Flags().GetString("output")
 
 	in := BrowserPoolsCreateInput{
-		Name:               name,
-		Size:               size,
-		FillRate:           fillRate,
-		TimeoutSeconds:     timeout,
-		Stealth:            BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealth},
-		Headless:           BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headless},
-		Kiosk:              BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kiosk},
-		ProfileID:          profileID,
-		ProfileName:        profileName,
-		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
-		ProxyID:            proxyID,
-		ChromePolicy:       chromePolicy,
-		Extensions:         extensions,
-		Viewport:           viewport,
-		Output:             output,
+		Name:             name,
+		Size:             size,
+		FillRate:         fillRate,
+		TimeoutSeconds:   timeout,
+		Stealth:          BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealth},
+		Headless:         BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headless},
+		Kiosk:                  BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kiosk},
+		RefreshOnProfileUpdate: BoolFlag{Set: cmd.Flags().Changed("refresh-on-profile-update"), Value: refreshOnProfileUpdate},
+		ProfileID:              profileID,
+		ProfileName:      profileName,
+		ProxyID:          proxyID,
+		StartURL:         startURL,
+		Extensions:       extensions,
+		Viewport:         viewport,
+		ChromePolicy:     chromePolicy,
+		ChromePolicyFile: chromePolicyFile,
+		Telemetry:        telemetry,
+		Output:           output,
 	}
 
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
@@ -605,34 +776,42 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 	stealth, _ := cmd.Flags().GetBool("stealth")
 	headless, _ := cmd.Flags().GetBool("headless")
 	kiosk, _ := cmd.Flags().GetBool("kiosk")
+	refreshOnProfileUpdate, _ := cmd.Flags().GetBool("refresh-on-profile-update")
 	profileID, _ := cmd.Flags().GetString("profile-id")
 	profileName, _ := cmd.Flags().GetString("profile-name")
-	saveChanges, _ := cmd.Flags().GetBool("save-changes")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
-	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
+	startURL, _ := cmd.Flags().GetString("start-url")
+	clearStartURL, _ := cmd.Flags().GetBool("clear-start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
+	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
+	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
+	telemetry, _ := cmd.Flags().GetString("telemetry")
 	discardIdle, _ := cmd.Flags().GetBool("discard-all-idle")
 	output, _ := cmd.Flags().GetString("output")
 
 	in := BrowserPoolsUpdateInput{
-		IDOrName:           args[0],
-		Name:               name,
-		Size:               size,
-		FillRate:           fillRate,
-		TimeoutSeconds:     timeout,
-		Stealth:            BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealth},
-		Headless:           BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headless},
-		Kiosk:              BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kiosk},
-		ProfileID:          profileID,
-		ProfileName:        profileName,
-		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
-		ProxyID:            proxyID,
-		ChromePolicy:       chromePolicy,
-		Extensions:         extensions,
-		Viewport:           viewport,
-		DiscardAllIdle:     BoolFlag{Set: cmd.Flags().Changed("discard-all-idle"), Value: discardIdle},
-		Output:             output,
+		IDOrName:         args[0],
+		Name:             name,
+		Size:             size,
+		FillRate:         fillRate,
+		TimeoutSeconds:   timeout,
+		Stealth:          BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealth},
+		Headless:         BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headless},
+		Kiosk:                  BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kiosk},
+		RefreshOnProfileUpdate: BoolFlag{Set: cmd.Flags().Changed("refresh-on-profile-update"), Value: refreshOnProfileUpdate},
+		ProfileID:              profileID,
+		ProfileName:      profileName,
+		ProxyID:          proxyID,
+		StartURL:         startURL,
+		ClearStartURL:    clearStartURL,
+		Extensions:       extensions,
+		Viewport:         viewport,
+		ChromePolicy:     chromePolicy,
+		ChromePolicyFile: chromePolicyFile,
+		Telemetry:        telemetry,
+		DiscardAllIdle:   BoolFlag{Set: cmd.Flags().Changed("discard-all-idle"), Value: discardIdle},
+		Output:           output,
 	}
 
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
@@ -649,9 +828,19 @@ func runBrowserPoolsDelete(cmd *cobra.Command, args []string) error {
 func runBrowserPoolsAcquire(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	timeout, _ := cmd.Flags().GetInt64("timeout")
+	name, _ := cmd.Flags().GetString("name")
+	tags, _ := tagsFromFlag(cmd, "tag")
+	telemetry, _ := cmd.Flags().GetString("telemetry")
 	output, _ := cmd.Flags().GetString("output")
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
-	return c.Acquire(cmd.Context(), BrowserPoolsAcquireInput{IDOrName: args[0], TimeoutSeconds: timeout, Output: output})
+	return c.Acquire(cmd.Context(), BrowserPoolsAcquireInput{
+		IDOrName:       args[0],
+		TimeoutSeconds: timeout,
+		Name:           name,
+		Tags:           tags,
+		Telemetry:      telemetry,
+		Output:         output,
+	})
 }
 
 func runBrowserPoolsRelease(cmd *cobra.Command, args []string) error {
@@ -672,23 +861,25 @@ func runBrowserPoolsFlush(cmd *cobra.Command, args []string) error {
 	return c.Flush(cmd.Context(), BrowserPoolsFlushInput{IDOrName: args[0]})
 }
 
-func buildProfileParam(profileID, profileName string, saveChanges BoolFlag) (*kernel.BrowserProfileParam, error) {
+// resolvePoolProfile validates and resolves a pool profile selection. Browser
+// pools have their own profile type with no save_changes; this helper works for
+// both create and update param types by returning the resolved id/name plus
+// whether a profile was selected at all.
+func resolvePoolProfile(profileID, profileName string) (id, name string, set bool, err error) {
 	if profileID != "" && profileName != "" {
-		return nil, fmt.Errorf("must specify at most one of --profile-id or --profile-name")
+		return "", "", false, fmt.Errorf("must specify at most one of --profile-id or --profile-name")
 	}
 	if profileID == "" && profileName == "" {
-		return nil, nil
+		return "", "", false, nil
 	}
+	return profileID, profileName, true, nil
+}
 
-	profile := kernel.BrowserProfileParam{
-		SaveChanges: kernel.Bool(saveChanges.Value),
+func validateStartURLFlag(startURL string) error {
+	if strings.HasPrefix(startURL, "-") {
+		return fmt.Errorf("--start-url requires a URL value")
 	}
-	if profileID != "" {
-		profile.ID = kernel.String(profileID)
-	} else if profileName != "" {
-		profile.Name = kernel.String(profileName)
-	}
-	return &profile, nil
+	return nil
 }
 
 func buildExtensionsParam(extensions []string) []kernel.BrowserExtensionParam {
@@ -757,15 +948,8 @@ func formatFillRate(rate int64) string {
 	return "-"
 }
 
-func formatProfile(profile kernel.BrowserProfile) string {
-	name := util.FirstOrDash(profile.Name, profile.ID)
-	if name == "-" {
-		return "-"
-	}
-	if profile.SaveChanges {
-		return fmt.Sprintf("%s (save changes: true)", name)
-	}
-	return fmt.Sprintf("%s (save changes: false)", name)
+func formatProfile(profile kernel.BrowserPoolBrowserPoolConfigProfile) string {
+	return util.FirstOrDash(profile.Name, profile.ID)
 }
 
 func formatExtensions(extensions []kernel.BrowserExtension) string {

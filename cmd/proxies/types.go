@@ -3,13 +3,15 @@ package proxies
 import (
 	"context"
 
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 )
 
 // ProxyService defines the subset of the Kernel SDK proxy client that we use.
 type ProxyService interface {
-	List(ctx context.Context, opts ...option.RequestOption) (res *[]kernel.ProxyListResponse, err error)
+	List(ctx context.Context, query kernel.ProxyListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.ProxyListResponse], err error)
 	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.ProxyGetResponse, err error)
 	New(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (res *kernel.ProxyNewResponse, err error)
 	Delete(ctx context.Context, id string, opts ...option.RequestOption) (err error)
@@ -18,11 +20,14 @@ type ProxyService interface {
 
 // ProxyCmd handles proxy operations independent of cobra.
 type ProxyCmd struct {
-	proxies ProxyService
+	proxies  ProxyService
+	prompter interactive.Prompter
 }
 
 // Input types for proxy operations
 type ProxyListInput struct {
+	Limit  int
+	Offset int
 	Output string
 }
 
@@ -45,8 +50,6 @@ type ProxyCreateInput struct {
 	Zip   string
 	ASN   string
 	OS    string
-	// Mobile specific
-	Carrier string
 	// Custom proxy config
 	Host     string
 	Port     int

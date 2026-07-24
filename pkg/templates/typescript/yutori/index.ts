@@ -1,4 +1,5 @@
 import { Kernel, type KernelContext } from '@onkernel/sdk';
+import type OpenAI from 'openai';
 import { samplingLoop } from './loop';
 import { KernelBrowserSession } from './session';
 
@@ -10,6 +11,8 @@ interface QueryInput {
   query: string;
   record_replay?: boolean;
   kiosk?: boolean;
+  user_timezone?: string;
+  user_location?: string;
 }
 
 interface QueryOutput {
@@ -47,7 +50,7 @@ app.action<QueryInput, QueryOutput>(
     try {
       // Run the sampling loop
       const { finalAnswer, messages } = await samplingLoop({
-        model: 'n1-latest',
+        model: 'n1.5-latest',
         task: payload.query,
         apiKey: YUTORI_API_KEY,
         kernel,
@@ -55,6 +58,8 @@ app.action<QueryInput, QueryOutput>(
         viewportWidth: session.viewportWidth,
         viewportHeight: session.viewportHeight,
         kioskMode,
+        userTimezone: payload.user_timezone,
+        userLocation: payload.user_location,
       });
 
       // Extract the result
@@ -75,10 +80,10 @@ app.action<QueryInput, QueryOutput>(
   },
 );
 
-function extractLastAssistantMessage(messages: { role: string; content: string | unknown[] }[]): string {
+function extractLastAssistantMessage(messages: OpenAI.ChatCompletionMessageParam[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
-    if (msg.role === 'assistant' && typeof msg.content === 'string' && msg.content) {
+    if (msg && msg.role === 'assistant' && typeof msg.content === 'string' && msg.content) {
       return msg.content;
     }
   }

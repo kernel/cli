@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
@@ -29,7 +30,8 @@ type AuthConnectionService interface {
 
 // AuthConnectionCmd handles auth connection operations independent of cobra.
 type AuthConnectionCmd struct {
-	svc AuthConnectionService
+	svc      AuthConnectionService
+	prompter interactive.Prompter
 }
 
 type AuthConnectionCreateInput struct {
@@ -113,8 +115,8 @@ type AuthConnectionFollowInput struct {
 }
 
 func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	if in.Domain == "" {
@@ -151,6 +153,14 @@ func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateIn
 		}
 		if in.CredentialPath != "" {
 			params.ManagedAuthCreateRequest.Credential.Path = kernel.Opt(in.CredentialPath)
+		} else {
+			// Default to domain auto-lookup when no explicit --credential-path is
+			// given. This matches the dashboard's UX, where picking a provider
+			// without a specific item always means "look up by domain". Without
+			// this default, the server receives { provider } with no path or
+			// auto flag, which is a valid-but-inert credential reference that
+			// causes the managed auth session to never fetch credentials.
+			params.ManagedAuthCreateRequest.Credential.Auto = kernel.Opt(true)
 		}
 		if in.CredentialAuto {
 			params.ManagedAuthCreateRequest.Credential.Auto = kernel.Opt(true)
@@ -199,7 +209,7 @@ func printManagedAuthSummary(auth *kernel.ManagedAuth) {
 		{"Can Reauth", fmt.Sprintf("%t", auth.CanReauth)},
 	}
 	if auth.CanReauthReason != "" {
-		tableData = append(tableData, []string{"Can Reauth Reason", auth.CanReauthReason})
+		tableData = append(tableData, []string{"Can Reauth Reason", string(auth.CanReauthReason)})
 	}
 	if auth.Credential.Name != "" {
 		tableData = append(tableData, []string{"Credential Name", auth.Credential.Name})
@@ -214,8 +224,8 @@ func printManagedAuthSummary(auth *kernel.ManagedAuth) {
 }
 
 func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	params := kernel.AuthConnectionUpdateParams{
@@ -296,8 +306,8 @@ func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateIn
 }
 
 func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	auth, err := c.svc.Get(ctx, in.ID)
@@ -318,7 +328,7 @@ func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) e
 		{"Can Reauth", fmt.Sprintf("%t", auth.CanReauth)},
 	}
 	if auth.CanReauthReason != "" {
-		tableData = append(tableData, []string{"Can Reauth Reason", auth.CanReauthReason})
+		tableData = append(tableData, []string{"Can Reauth Reason", string(auth.CanReauthReason)})
 	}
 	if auth.Credential.Name != "" {
 		tableData = append(tableData, []string{"Credential Name", auth.Credential.Name})
@@ -418,8 +428,8 @@ func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) e
 }
 
 func (c AuthConnectionCmd) List(ctx context.Context, in AuthConnectionListInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	params := kernel.AuthConnectionListParams{}
@@ -483,9 +493,13 @@ func (c AuthConnectionCmd) List(ctx context.Context, in AuthConnectionListInput)
 
 func (c AuthConnectionCmd) Delete(ctx context.Context, in AuthConnectionDeleteInput) error {
 	if !in.SkipConfirm {
-		msg := fmt.Sprintf("Are you sure you want to delete managed auth '%s'?", in.ID)
-		pterm.DefaultInteractiveConfirm.DefaultText = msg
-		ok, _ := pterm.DefaultInteractiveConfirm.Show()
+		ok, err := c.prompter.Confirm(
+			fmt.Sprintf("delete managed auth '%s'", in.ID),
+			fmt.Sprintf("Are you sure you want to delete managed auth '%s'?", in.ID),
+		)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			pterm.Info.Println("Deletion cancelled")
 			return nil
@@ -504,8 +518,8 @@ func (c AuthConnectionCmd) Delete(ctx context.Context, in AuthConnectionDeleteIn
 }
 
 func (c AuthConnectionCmd) Login(ctx context.Context, in AuthConnectionLoginInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	params := kernel.AuthConnectionLoginParams{}
@@ -550,8 +564,8 @@ func (c AuthConnectionCmd) Login(ctx context.Context, in AuthConnectionLoginInpu
 }
 
 func (c AuthConnectionCmd) Submit(ctx context.Context, in AuthConnectionSubmitInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	// Validate that we have some input to submit
@@ -645,8 +659,8 @@ func (c AuthConnectionCmd) Submit(ctx context.Context, in AuthConnectionSubmitIn
 }
 
 func (c AuthConnectionCmd) Follow(ctx context.Context, in AuthConnectionFollowInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	stream := c.svc.FollowStreaming(ctx, in.ID)
@@ -789,7 +803,7 @@ var authConnectionsFollowCmd = &cobra.Command{
 
 func init() {
 	// Create flags
-	authConnectionsCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(authConnectionsCreateCmd)
 	authConnectionsCreateCmd.Flags().String("domain", "", "Target domain for authentication (required)")
 	authConnectionsCreateCmd.Flags().String("profile-name", "", "Name of the profile to manage (required)")
 	authConnectionsCreateCmd.Flags().String("login-url", "", "Optional login page URL to skip discovery")
@@ -797,7 +811,7 @@ func init() {
 	authConnectionsCreateCmd.Flags().String("credential-name", "", "Kernel credential name to use")
 	authConnectionsCreateCmd.Flags().String("credential-provider", "", "External credential provider name")
 	authConnectionsCreateCmd.Flags().String("credential-path", "", "Provider-specific path (e.g., VaultName/ItemName)")
-	authConnectionsCreateCmd.Flags().Bool("credential-auto", false, "Lookup by domain from the specified provider")
+	authConnectionsCreateCmd.Flags().Bool("credential-auto", false, "Lookup by domain from the specified provider (defaults to true when --credential-provider is set without --credential-path)")
 	authConnectionsCreateCmd.Flags().String("proxy-id", "", "Proxy ID to use")
 	authConnectionsCreateCmd.Flags().String("proxy-name", "", "Proxy name to use")
 	authConnectionsCreateCmd.Flags().Bool("no-save-credentials", false, "Disable saving credentials after successful login")
@@ -807,10 +821,10 @@ func init() {
 	authConnectionsCreateCmd.MarkFlagsMutuallyExclusive("credential-name", "credential-provider")
 
 	// Get flags
-	authConnectionsGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(authConnectionsGetCmd)
 
 	// Update flags
-	authConnectionsUpdateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(authConnectionsUpdateCmd)
 	authConnectionsUpdateCmd.Flags().String("login-url", "", "Login page URL (set to empty string to clear)")
 	authConnectionsUpdateCmd.Flags().StringSlice("allowed-domain", []string{}, "Additional allowed domains (replaces existing list)")
 	authConnectionsUpdateCmd.Flags().String("credential-name", "", "Kernel credential name to use")
@@ -826,7 +840,7 @@ func init() {
 	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("save-credentials", "no-save-credentials")
 
 	// List flags
-	authConnectionsListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(authConnectionsListCmd)
 	authConnectionsListCmd.Flags().String("domain", "", "Filter by domain")
 	authConnectionsListCmd.Flags().String("profile-name", "", "Filter by profile name")
 	authConnectionsListCmd.Flags().Int("limit", 0, "Maximum number of results to return")
@@ -836,12 +850,12 @@ func init() {
 	authConnectionsDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 
 	// Login flags
-	authConnectionsLoginCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(authConnectionsLoginCmd)
 	authConnectionsLoginCmd.Flags().String("proxy-id", "", "Proxy ID to use for this login")
 	authConnectionsLoginCmd.Flags().String("proxy-name", "", "Proxy name to use for this login")
 
 	// Submit flags
-	authConnectionsSubmitCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(authConnectionsSubmitCmd)
 	authConnectionsSubmitCmd.Flags().StringArray("field", []string{}, "Field name=value pair (repeatable)")
 	authConnectionsSubmitCmd.Flags().String("mfa-option-id", "", "MFA option ID if user selected an MFA method")
 	authConnectionsSubmitCmd.Flags().String("sign-in-option-id", "", "Sign-in option ID if the flow returned non-MFA choices")
@@ -849,7 +863,7 @@ func init() {
 	authConnectionsSubmitCmd.Flags().String("sso-provider", "", "SSO provider if user chose an SSO button by provider (e.g. google, github)")
 
 	// Follow flags
-	authConnectionsFollowCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(authConnectionsFollowCmd)
 
 	// Wire up commands
 	authConnectionsCmd.AddCommand(authConnectionsCreateCmd)

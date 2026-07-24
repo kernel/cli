@@ -73,8 +73,8 @@ func runSSH(cmd *cobra.Command, args []string) error {
 	setupOnly, _ := cmd.Flags().GetBool("setup-only")
 	output, _ := cmd.Flags().GetString("output")
 
-	if output != "" && output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(output); err != nil {
+		return err
 	}
 	if output == "json" && !setupOnly {
 		return fmt.Errorf("--output json is only supported with --setup-only")

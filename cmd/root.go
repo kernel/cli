@@ -2,22 +2,27 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/fang"
 	"github.com/charmbracelet/lipgloss/v2"
 	"github.com/kernel/cli/cmd/mcp"
 	"github.com/kernel/cli/cmd/proxies"
 	"github.com/kernel/cli/pkg/auth"
+	"github.com/kernel/cli/pkg/interactive"
+	"github.com/kernel/cli/pkg/table"
 	"github.com/kernel/cli/pkg/update"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/param"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -100,10 +105,18 @@ func isAuthExempt(cmd *cobra.Command) bool {
 	return false
 }
 
+func resolveProjectSelection(projectFlag string) string {
+	if projectFlag != "" {
+		return projectFlag
+	}
+	return os.Getenv("KERNEL_PROJECT")
+}
+
 func init() {
 	rootCmd.PersistentFlags().BoolP("version", "v", false, "Print the CLI version")
 	rootCmd.PersistentFlags().BoolP("no-color", "", false, "Disable color output")
 	rootCmd.PersistentFlags().String("log-level", "warn", "Set the log level (trace, debug, info, warn, error, fatal, print)")
+	rootCmd.PersistentFlags().String("project", "", "Project ID or name to scope all requests to (or set KERNEL_PROJECT env var)")
 	rootCmd.SilenceUsage = true
 	rootCmd.SilenceErrors = true
 	cobra.OnInitialize(initConfig)
@@ -122,8 +135,18 @@ func init() {
 			return nil
 		}
 
-		// Get authenticated client with OAuth tokens or API key fallback
-		client, err := auth.GetAuthenticatedClient(option.WithHeader("X-Kernel-Cli-Version", metadata.Version))
+		clientOpts := []option.RequestOption{
+			option.WithHeader("X-Kernel-Cli-Version", metadata.Version),
+		}
+
+		projectVal, _ := cmd.Flags().GetString("project")
+		projectVal = resolveProjectSelection(projectVal)
+
+		if projectVal != "" {
+			clientOpts = append(clientOpts, option.WithHeader("X-Kernel-Project-Id", projectVal))
+		}
+
+		client, err := auth.GetAuthenticatedClient(clientOpts...)
 		if err != nil {
 			return fmt.Errorf("authentication required: %w", err)
 		}
@@ -145,6 +168,7 @@ func init() {
 	rootCmd.AddCommand(extensionsCmd)
 	rootCmd.AddCommand(credentialsCmd)
 	rootCmd.AddCommand(credentialProvidersCmd)
+	rootCmd.AddCommand(projectsCmd)
 	rootCmd.AddCommand(createCmd)
 	rootCmd.AddCommand(mcp.MCPCmd)
 	rootCmd.AddCommand(upgradeCmd)
@@ -157,9 +181,22 @@ func init() {
 	}
 }
 
+// shouldEnableColor decides whether pterm color styling should be on.
+// NO_COLOR (any non-empty value) always wins per https://no-color.org.
+// Otherwise color is enabled only when stdout is an interactive terminal.
+func shouldEnableColor(noColorEnv string, isTTY bool) bool {
+	if noColorEnv != "" {
+		return false
+	}
+	return isTTY
+}
+
 func initConfig() {
-	// Placeholder for future configuration (env vars, config files, etc.)
-	pterm.EnableStyling() // ensure pterm is initialised in case env disables it
+	if shouldEnableColor(os.Getenv("NO_COLOR"), table.IsStdoutTTY()) {
+		pterm.EnableStyling()
+	} else {
+		pterm.DisableStyling()
+	}
 }
 
 // Execute executes the root command.
@@ -185,13 +222,42 @@ func Execute(m Metadata) {
 		fang.WithCommit(metadata.Commit),
 		fang.WithErrorHandler(func(w io.Writer, styles fang.Styles, err error) {
 			err = util.CleanedUpSdkError{Err: err}
+
+			// Some subcommands intentionally suppress diagnostics for curl-like
+			// quiet modes while still returning a non-zero exit status.
+			var silent interface{ Silent() bool }
+			if errors.As(err, &silent) && silent.Silent() {
+				return
+			}
+
 			// remove margins so that it matches other pterm.error "style"
 			// we should add them back later as it looks cleaner
 			errorTextStyle := styles.ErrorText.UnsetMargins()
-			pterm.Error.Println(errorTextStyle.Render(strings.TrimSpace(err.Error())))
+
+			// Keep command errors on fang's error stream, normally stderr. This
+			// gives curl-like commands a quiet stdout for response bodies and
+			// scripts while preserving the existing pterm error styling.
+			oldErrorWriter := pterm.Error.Writer
+			pterm.Error.Writer = w
+			defer func() {
+				pterm.Error.Writer = oldErrorWriter
+			}()
+			// Fail-fast interactivity errors render one problem per line.
+			// The default ErrorText style must not apply: its width-based
+			// word-wrap splits flag tokens like --template across lines, and
+			// its transform (strings.Fields + Join) collapses the newlines
+			// between problems.
+			msg := strings.TrimSpace(err.Error())
+			style := errorTextStyle
+			var promptErr *interactive.PromptError
+			if errors.As(err, &promptErr) {
+				msg = capitalizeFirst(promptErr.Display())
+				style = style.UnsetWidth().UnsetTransform()
+			}
+			pterm.Error.Println(style.Render(msg))
 			if isUsageError(err) {
-				pterm.Println()
-				pterm.Println(lipgloss.JoinHorizontal(
+				fmt.Fprintln(w)
+				fmt.Fprintln(w, lipgloss.JoinHorizontal(
 					lipgloss.Left,
 					errorTextStyle.UnsetWidth().Render("Try"),
 					styles.Program.Flag.Render("--help"),
@@ -208,6 +274,18 @@ func Execute(m Metadata) {
 // isUsageError is a hack to detect usage errors.
 // See: https://github.com/spf13/cobra/pull/2266
 // from github.com/charmbracelet/fang/help.go
+// capitalizeFirst uppercases the first letter of s, matching the visual
+// convention of fang's default error transform (which we bypass for
+// interactive.PromptError to preserve newlines and flag tokens).
+func capitalizeFirst(s string) string {
+	r := []rune(s)
+	if len(r) == 0 {
+		return s
+	}
+	r[0] = unicode.ToUpper(r[0])
+	return string(r)
+}
+
 func isUsageError(err error) bool {
 	s := err.Error()
 	for _, prefix := range []string{
@@ -222,6 +300,50 @@ func isUsageError(err error) bool {
 		}
 	}
 	return false
+}
+
+// resolveProjectByName lists the caller's projects and returns the ID of the
+// one whose name matches (case-insensitive). Returns an error if no match or
+// multiple matches are found.
+func resolveProjectByName(ctx context.Context, projects ProjectListService, name string) (string, error) {
+	const pageSize int64 = 100
+	var matched []struct{ id, name string }
+	lower := strings.ToLower(name)
+
+	var offset int64
+	for {
+		page, err := projects.List(ctx, kernel.ProjectListParams{
+			Limit:  param.NewOpt(pageSize),
+			Offset: param.NewOpt(offset),
+		})
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve project name %q: %w", name, err)
+		}
+		if page == nil || len(page.Items) == 0 {
+			break
+		}
+
+		for _, p := range page.Items {
+			if strings.ToLower(p.Name) == lower {
+				matched = append(matched, struct{ id, name string }{p.ID, p.Name})
+			}
+		}
+
+		if len(matched) > 1 || int64(len(page.Items)) < pageSize {
+			break
+		}
+		offset += int64(len(page.Items))
+	}
+
+	switch len(matched) {
+	case 0:
+		return "", fmt.Errorf("no project found with name %q", name)
+	case 1:
+		pterm.Debug.Printf("Resolved project %q → %s\n", matched[0].name, matched[0].id)
+		return matched[0].id, nil
+	default:
+		return "", fmt.Errorf("multiple projects match name %q; use a project ID instead", name)
+	}
 }
 
 // onCancel runs a function when the provided context is cancelled

@@ -1,7 +1,7 @@
 [project]
 name = "python-yutori-cua"
 version = "0.1.0"
-description = "Kernel reference app for Yutori n1 Computer Use"
+description = "Kernel reference app for Yutori n1.5 Computer Use"
 requires-python = ">=3.9"
 dependencies = [
     "openai>=1.58.0",

@@ -24,3 +24,22 @@ func TestNormalizeLanguage(t *testing.T) {
 		})
 	}
 }
+
+func TestLanguageShorthand(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"typescript", "ts"},
+		{"python", "py"},
+		{"ts", ""},
+		{"unknown", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := LanguageShorthand(tt.input)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}

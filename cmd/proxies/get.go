@@ -12,8 +12,8 @@ import (
 )
 
 func (p ProxyCmd) Get(ctx context.Context, in ProxyGetInput) error {
-	if in.Output != "" && in.Output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
 	}
 
 	item, err := p.proxies.Get(ctx, in.ID)
@@ -110,9 +110,6 @@ func getProxyConfigRows(proxy *kernel.ProxyGetResponse) [][]string {
 		}
 		if config.Asn != "" {
 			rows = append(rows, []string{"ASN", config.Asn})
-		}
-		if config.Carrier != "" {
-			rows = append(rows, []string{"Carrier", config.Carrier})
 		}
 	case kernel.ProxyGetResponseTypeCustom:
 		if config.Host != "" {

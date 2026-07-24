@@ -84,13 +84,13 @@ func init() {
 	invocationHistoryCmd.Flags().String("since", "", "Show invocations that started since the given time")
 	invocationHistoryCmd.Flags().String("status", "", "Filter by invocation status: queued, running, succeeded, failed")
 	invocationHistoryCmd.Flags().String("version", "", "Filter by invocation version")
-	invocationHistoryCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(invocationHistoryCmd)
 	invokeCmd.AddCommand(invocationHistoryCmd)
 
-	invocationBrowsersCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(invocationBrowsersCmd)
 	invokeCmd.AddCommand(invocationBrowsersCmd)
 
-	invocationGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(invocationGetCmd)
 	invokeCmd.AddCommand(invocationGetCmd)
 
 	invocationUpdateCmd.Flags().String("status", "", "New invocation status: succeeded or failed")
@@ -112,8 +112,8 @@ func runInvoke(cmd *cobra.Command, args []string) error {
 	version, _ := cmd.Flags().GetString("version")
 	output, _ := cmd.Flags().GetString("output")
 
-	if output != "" && output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(output); err != nil {
+		return err
 	}
 	jsonOutput := output == "json"
 
@@ -427,8 +427,8 @@ func runInvocationHistory(cmd *cobra.Command, args []string) error {
 	versionFilter, _ := cmd.Flags().GetString("version")
 	output, _ := cmd.Flags().GetString("output")
 
-	if output != "" && output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(output); err != nil {
+		return err
 	}
 
 	// Build parameters for the API call
@@ -552,8 +552,8 @@ func runInvocationBrowsers(cmd *cobra.Command, args []string) error {
 	invocationID := args[0]
 	output, _ := cmd.Flags().GetString("output")
 
-	if output != "" && output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(output); err != nil {
+		return err
 	}
 
 	resp, err := client.Invocations.ListBrowsers(cmd.Context(), invocationID)
@@ -608,8 +608,8 @@ func runInvocationGet(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	output, _ := cmd.Flags().GetString("output")
 
-	if output != "" && output != "json" {
-		return fmt.Errorf("unsupported --output value: use 'json'")
+	if err := validateJSONOutput(output); err != nil {
+		return err
 	}
 
 	resp, err := client.Invocations.Get(cmd.Context(), args[0])

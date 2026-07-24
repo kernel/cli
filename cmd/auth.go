@@ -7,6 +7,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/kernel/cli/pkg/auth"
+	"github.com/kernel/cli/pkg/util"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 	"github.com/zalando/go-keyring"
@@ -85,6 +86,7 @@ func runAuth(cmd *cobra.Command, args []string) error {
 		// Check if API key is being used as fallback
 		if apiKey := os.Getenv("KERNEL_API_KEY"); apiKey != "" {
 			pterm.Info.Println("Authentication method: API Key")
+			pterm.Info.Printf("API URL: %s\n", util.GetBaseURL())
 			if len(apiKey) >= 12 {
 				pterm.Info.Printf("API Key: %s...%s\n", apiKey[:8], apiKey[len(apiKey)-4:])
 			} else {
@@ -94,6 +96,8 @@ func runAuth(cmd *cobra.Command, args []string) error {
 		}
 
 		pterm.Info.Println("No active session found - not authenticated")
+		pterm.Info.Printf("API URL: %s\n", util.GetBaseURL())
+		pterm.Info.Printf("Auth URL: %s\n", auth.CurrentAuthBaseURL())
 		pterm.Info.Println("Run 'kernel login' to authenticate with OAuth")
 		pterm.Info.Println("Or set KERNEL_API_KEY environment variable")
 		return nil
@@ -101,6 +105,9 @@ func runAuth(cmd *cobra.Command, args []string) error {
 
 	// Display OAuth authentication status
 	pterm.Success.Println("✓ Authenticated with OAuth")
+	pterm.Info.Printf("API URL: %s\n", util.GetBaseURL())
+	pterm.Info.Printf("Auth URL: %s\n", tokenAuthBaseURLForDisplay(tokens))
+	pterm.Info.Printf("OAuth client ID: %s\n", maskClientID(tokenOAuthClientIDForDisplay(tokens)))
 
 	// Extract info from JWT token
 	if claims, err := parseJWT(tokens.AccessToken); err == nil && claims != nil {
@@ -136,4 +143,25 @@ func runAuth(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func tokenAuthBaseURLForDisplay(tokens *auth.TokenStorage) string {
+	if tokens.AuthBaseURL != "" {
+		return tokens.AuthBaseURL
+	}
+	return auth.DefaultAuthBaseURL
+}
+
+func tokenOAuthClientIDForDisplay(tokens *auth.TokenStorage) string {
+	if tokens.OAuthClientID != "" {
+		return tokens.OAuthClientID
+	}
+	return auth.DefaultClientID
+}
+
+func maskClientID(clientID string) string {
+	if len(clientID) <= 8 {
+		return clientID
+	}
+	return clientID[:4] + "..." + clientID[len(clientID)-4:]
 }

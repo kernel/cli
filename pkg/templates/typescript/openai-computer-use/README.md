@@ -1,28 +1,49 @@
 # Kernel TypeScript Sample App - OpenAI Computer Use
 
-This is a Kernel application that demonstrates using the Computer Use Agent (CUA) from OpenAI with Kernel's native browser control API.
+This is a Kernel application that runs an OpenAI computer-use agent against a Kernel cloud browser.
 
-It uses Kernel's computer control endpoints (screenshot, click, type, scroll, batch, etc.) and includes a `batch_computer_actions` tool that executes multiple actions in a single API call for lower latency.
-
-## Local testing
-
-You can test against a remote Kernel browser without deploying:
-
-```bash
-cp .env.example .env
-# Fill in OPENAI_API_KEY and KERNEL_API_KEY in .env
-pnpm install
-pnpm exec tsx run_local.ts
-pnpm exec tsx run_local.ts --task "go to https://news.ycombinator.com and get the top 5 articles"
-```
-
-The local runner defaults to a built-in sample task. Pass `--task "..."` to run a custom prompt locally, and add `--debug` to include verbose in-flight events.
+It uses [`@onkernel/cua-agent`](https://www.npmjs.com/package/@onkernel/cua-agent) to run the computer-use loop: the `CuaAgent` class translates OpenAI's computer-use tool calls into Kernel browser controls and feeds a fresh screenshot back on every turn. OpenAI's computer tool has no native URL navigation, so the template enables `computerUseExtra` to give the model a `goto`/`back`/`forward`/`url` helper.
 
 ## Deploy to Kernel
 
 ```bash
+kernel login
+cp .env.example .env  # Add your OPENAI_API_KEY
 kernel deploy index.ts --env-file .env
 kernel invoke ts-openai-cua cua-task -p '{"task":"Go to https://news.ycombinator.com and get the top 5 articles"}'
 ```
 
-See the [docs](https://www.kernel.sh/docs/quickstart) for more information.
+## Recording Replays
+
+> **Note:** Replay recording is only available to Kernel users on paid plans.
+
+Add `"replay": true` to your payload to capture a video of the browser session. When enabled, the response includes a `replay_url` field with a link to view the recording.
+
+```bash
+kernel invoke ts-openai-cua cua-task -p '{"task":"Go to https://news.ycombinator.com", "replay": true}'
+```
+
+## Playwright escape hatch
+
+Some steps are awkward as raw clicks and keystrokes — precise DOM reads, form fills, data extraction, or waiting on a selector. Pass `playwright: true` when constructing the agent in `index.ts` to add a `playwright_execute` tool that runs Playwright/TypeScript directly against the live browser session:
+
+```ts
+const agent = new CuaAgent({
+  browser,
+  client: kernel,
+  computerUseExtra: true,
+  playwright: true,
+  initialState: {
+    model: 'openai:gpt-5.5',
+    systemPrompt: `...`,
+  },
+});
+```
+
+Inside `playwright_execute`, `page`, `context`, and `browser` are in scope and the code may `return` a JSON-serializable value. Each call runs in a fresh context (locals don't persist across calls), and no screenshot is returned automatically — the model can request one on a follow-up turn. See [`@onkernel/cua-agent`](https://www.npmjs.com/package/@onkernel/cua-agent) for details and per-model support status.
+
+## Resources
+
+- [@onkernel/cua-agent](https://www.npmjs.com/package/@onkernel/cua-agent)
+- [OpenAI Computer Use Documentation](https://platform.openai.com/docs/guides/tools-computer-use)
+- [Kernel Documentation](https://www.kernel.sh/docs/quickstart)

@@ -6,6 +6,9 @@ type CreateInput struct {
 	Name     string
 	Language string
 	Template string
+	// SkipConfirm skips confirmation prompts (e.g. overwriting an existing
+	// directory). Set via the --yes flag.
+	SkipConfirm bool
 }
 
 const (
@@ -54,5 +57,18 @@ func NormalizeLanguage(language string) string {
 		return LanguagePython
 	default:
 		return language
+	}
+}
+
+// LanguageShorthand returns the shorthand for a canonical language name,
+// or an empty string if the language has no shorthand. Inverse of NormalizeLanguage.
+func LanguageShorthand(language string) string {
+	switch language {
+	case LanguageTypeScript:
+		return LanguageShorthandTypeScript
+	case LanguagePython:
+		return LanguageShorthandPython
+	default:
+		return ""
 	}
 }

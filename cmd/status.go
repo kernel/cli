@@ -35,11 +35,14 @@ var statusCmd = &cobra.Command{
 }
 
 func init() {
-	statusCmd.Flags().StringP("output", "o", "", "Output format (json)")
+	addJSONOutputFlag(statusCmd)
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
+	if err := validateJSONOutput(output); err != nil {
+		return err
+	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(util.GetBaseURL() + "/status")
@@ -50,7 +53,15 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		pterm.Error.Println("Could not reach Kernel API. Check https://status.kernel.sh for updates.")
+		healthClient := &http.Client{Timeout: 3 * time.Second}
+		if healthResp, err := healthClient.Get(util.GetBaseURL() + "/health"); err == nil {
+			healthResp.Body.Close()
+			if healthResp.StatusCode >= 200 && healthResp.StatusCode < 300 {
+				pterm.Error.Println("Kernel API is responding but /status is unavailable. Check https://status.kernel.sh for updates.")
+				return nil
+			}
+		}
+		pterm.Error.Println("Kernel API is down. Check https://status.kernel.sh for updates.")
 		return nil
 	}
 

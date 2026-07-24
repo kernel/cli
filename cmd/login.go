@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/kernel/cli/pkg/auth"
+	"github.com/kernel/cli/pkg/util"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -49,6 +50,8 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create OAuth configuration: %w", err)
 	}
+	pterm.Info.Printf("API URL: %s\n", util.GetBaseURL())
+	pterm.Info.Printf("Auth URL: %s\n", oauthConfig.AuthBaseURL)
 
 	pterm.Debug.Printf("Starting local callback server on %s\n", oauthConfig.Config.RedirectURL)
 

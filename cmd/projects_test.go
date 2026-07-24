@@ -2,44 +2,21 @@ package cmd
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"testing"
-	"time"
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
+	"github.com/kernel/kernel-go-sdk/packages/respjson"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 type FakeProjectsService struct {
+	ListFunc   func(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error)
 	NewFunc    func(ctx context.Context, body kernel.ProjectNewParams, opts ...option.RequestOption) (*kernel.Project, error)
 	GetFunc    func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.Project, error)
-	UpdateFunc func(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (*kernel.Project, error)
-	ListFunc   func(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error)
 	DeleteFunc func(ctx context.Context, id string, opts ...option.RequestOption) error
-}
-
-func (f *FakeProjectsService) New(ctx context.Context, body kernel.ProjectNewParams, opts ...option.RequestOption) (*kernel.Project, error) {
-	if f.NewFunc != nil {
-		return f.NewFunc(ctx, body, opts...)
-	}
-	return &kernel.Project{ID: "proj-new", Name: body.CreateProjectRequest.Name}, nil
-}
-
-func (f *FakeProjectsService) Get(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.Project, error) {
-	if f.GetFunc != nil {
-		return f.GetFunc(ctx, id, opts...)
-	}
-	return &kernel.Project{ID: id, Name: "project", Status: kernel.ProjectStatusActive}, nil
-}
-
-func (f *FakeProjectsService) Update(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (*kernel.Project, error) {
-	if f.UpdateFunc != nil {
-		return f.UpdateFunc(ctx, id, body, opts...)
-	}
-	return &kernel.Project{ID: id, Name: body.UpdateProjectRequest.Name.Value, Status: kernel.ProjectStatusActive}, nil
 }
 
 func (f *FakeProjectsService) List(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error) {
@@ -47,6 +24,20 @@ func (f *FakeProjectsService) List(ctx context.Context, query kernel.ProjectList
 		return f.ListFunc(ctx, query, opts...)
 	}
 	return &pagination.OffsetPagination[kernel.Project]{Items: []kernel.Project{}}, nil
+}
+
+func (f *FakeProjectsService) New(ctx context.Context, body kernel.ProjectNewParams, opts ...option.RequestOption) (*kernel.Project, error) {
+	if f.NewFunc != nil {
+		return f.NewFunc(ctx, body, opts...)
+	}
+	return &kernel.Project{ID: "proj_default", Name: body.CreateProjectRequest.Name}, nil
+}
+
+func (f *FakeProjectsService) Get(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.Project, error) {
+	if f.GetFunc != nil {
+		return f.GetFunc(ctx, id, opts...)
+	}
+	return &kernel.Project{ID: id, Name: "default"}, nil
 }
 
 func (f *FakeProjectsService) Delete(ctx context.Context, id string, opts ...option.RequestOption) error {
@@ -75,64 +66,131 @@ func (f *FakeProjectLimitsService) Update(ctx context.Context, id string, body k
 	return &kernel.ProjectLimits{}, nil
 }
 
-func TestProjectsList_HasMore(t *testing.T) {
-	buf := captureProfilesOutput(t)
-	created := time.Unix(0, 0)
-	items := make([]kernel.Project, 3)
-	for i := range items {
-		items[i] = kernel.Project{
-			ID:        fmt.Sprintf("proj-%d", i),
-			Name:      fmt.Sprintf("Project %d", i),
-			Status:    kernel.ProjectStatusActive,
-			CreatedAt: created,
-			UpdatedAt: created,
-		}
+func TestProjectsLimitsGet_DefaultOutput(t *testing.T) {
+	buf := capturePtermOutput(t)
+	limits := &kernel.ProjectLimits{
+		MaxConcurrentSessions:    10,
+		MaxConcurrentInvocations: 5,
 	}
+	limits.JSON.MaxConcurrentSessions = respjson.NewField("10")
+	limits.JSON.MaxConcurrentInvocations = respjson.NewField("5")
 
-	fakeProjects := &FakeProjectsService{
-		ListFunc: func(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error) {
-			require.True(t, query.Limit.Valid())
-			require.True(t, query.Offset.Valid())
-			assert.Equal(t, int64(3), query.Limit.Value)
-			assert.Equal(t, int64(0), query.Offset.Value)
-			return &pagination.OffsetPagination[kernel.Project]{Items: items}, nil
+	fakeProjects := &FakeProjectsService{}
+	fakeLimits := &FakeProjectLimitsService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ProjectLimits, error) {
+			return limits, nil
 		},
 	}
+	c := ProjectsCmd{projects: fakeProjects, limits: fakeLimits}
 
-	p := ProjectsCmd{projects: fakeProjects, limits: &FakeProjectLimitsService{}}
-	err := p.List(context.Background(), ProjectsListInput{Page: 1, PerPage: 2})
-	require.NoError(t, err)
-
+	err := c.LimitsGet(context.Background(), ProjectsLimitsGetInput{
+		Identifier: "a12345678901234567890123",
+	})
+	assert.NoError(t, err)
 	out := buf.String()
-	assert.Contains(t, out, "proj-0")
-	assert.Contains(t, out, "proj-1")
-	assert.NotContains(t, out, "proj-2")
-	assert.Contains(t, out, "Has more: yes")
-	assert.Contains(t, out, "Next: kernel projects list --page 2 --per-page 2")
+	assert.Contains(t, out, "Max Concurrent Sessions")
+	assert.Contains(t, out, "10")
+	assert.Contains(t, out, "unlimited")
 }
 
-func TestProjectsUpdateLimits_OnlyChangedFields(t *testing.T) {
+func TestProjectsLimitsGet_InvalidOutput(t *testing.T) {
+	c := ProjectsCmd{projects: &FakeProjectsService{}, limits: &FakeProjectLimitsService{}}
+	err := c.LimitsGet(context.Background(), ProjectsLimitsGetInput{
+		Identifier: "a12345678901234567890123",
+		Output:     "yaml",
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported --output value")
+}
+
+func TestProjectsLimitsSet_InvalidOutput(t *testing.T) {
+	c := ProjectsCmd{
+		projects: &FakeProjectsService{},
+		limits: &FakeProjectLimitsService{
+			UpdateFunc: func(ctx context.Context, id string, body kernel.ProjectLimitUpdateParams, opts ...option.RequestOption) (*kernel.ProjectLimits, error) {
+				t.Fatal("Update should not be called")
+				return nil, nil
+			},
+		},
+	}
+	err := c.LimitsSet(context.Background(), ProjectsLimitsSetInput{
+		Identifier: "a12345678901234567890123",
+		Output:     "yaml",
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported --output value")
+}
+
+func TestProjectsLimitsSet_RejectsNegativeValues(t *testing.T) {
+	c := ProjectsCmd{projects: &FakeProjectsService{}, limits: &FakeProjectLimitsService{}}
+	err := c.LimitsSet(context.Background(), ProjectsLimitsSetInput{
+		Identifier: "a12345678901234567890123",
+		MaxConcurrentSessions: Int64Flag{
+			Set:   true,
+			Value: -1,
+		},
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "--max-concurrent-sessions must be non-negative")
+}
+
+func TestProjectsLimitsSet_Success(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fakeProjects := &FakeProjectsService{}
 	fakeLimits := &FakeProjectLimitsService{
 		UpdateFunc: func(ctx context.Context, id string, body kernel.ProjectLimitUpdateParams, opts ...option.RequestOption) (*kernel.ProjectLimits, error) {
-			assert.Equal(t, "proj_123", id)
-			assert.True(t, body.UpdateProjectLimitsRequest.MaxConcurrentInvocations.Valid())
-			assert.Equal(t, int64(15), body.UpdateProjectLimitsRequest.MaxConcurrentInvocations.Value)
-			assert.False(t, body.UpdateProjectLimitsRequest.MaxConcurrentSessions.Valid())
-			assert.False(t, body.UpdateProjectLimitsRequest.MaxPersistentSessions.Valid())
-			assert.True(t, body.UpdateProjectLimitsRequest.MaxPooledSessions.Valid())
-			assert.Equal(t, int64(0), body.UpdateProjectLimitsRequest.MaxPooledSessions.Value)
+			assert.Equal(t, "a12345678901234567890123", id)
+			assert.True(t, body.UpdateProjectLimitsRequest.MaxConcurrentSessions.Valid())
+			assert.Equal(t, int64(7), body.UpdateProjectLimitsRequest.MaxConcurrentSessions.Value)
 
-			return &kernel.ProjectLimits{
-				MaxConcurrentInvocations: 15,
-			}, nil
+			updated := &kernel.ProjectLimits{MaxConcurrentSessions: 7}
+			updated.JSON.MaxConcurrentSessions = respjson.NewField("7")
+			return updated, nil
+		},
+	}
+	c := ProjectsCmd{projects: fakeProjects, limits: fakeLimits}
+
+	err := c.LimitsSet(context.Background(), ProjectsLimitsSetInput{
+		Identifier: "a12345678901234567890123",
+		MaxConcurrentSessions: Int64Flag{
+			Set:   true,
+			Value: 7,
+		},
+	})
+	assert.NoError(t, err)
+	out := buf.String()
+	assert.Contains(t, out, "Project limits updated")
+	assert.Contains(t, out, "7")
+}
+
+func TestResolveProjectByName_PaginatesAcrossResults(t *testing.T) {
+	var seenOffsets []int64
+	fakeProjects := &FakeProjectsService{
+		ListFunc: func(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error) {
+			seenOffsets = append(seenOffsets, query.Offset.Value)
+			assert.True(t, query.Limit.Valid())
+			assert.Equal(t, int64(100), query.Limit.Value)
+
+			if query.Offset.Value == 0 {
+				page := make([]kernel.Project, 100)
+				for i := range page {
+					page[i] = kernel.Project{ID: "proj_a", Name: "first-page"}
+				}
+				return &pagination.OffsetPagination[kernel.Project]{Items: page}, nil
+			}
+
+			if query.Offset.Value == 100 {
+				return &pagination.OffsetPagination[kernel.Project]{
+					Items: []kernel.Project{{ID: "proj_target", Name: "Target Name"}},
+				}, nil
+			}
+
+			return nil, errors.New("unexpected offset")
 		},
 	}
 
-	p := ProjectsCmd{projects: &FakeProjectsService{}, limits: fakeLimits}
-	err := p.UpdateLimits(context.Background(), ProjectLimitsUpdateInput{
-		ID:                       "proj_123",
-		MaxConcurrentInvocations: Int64Flag{Set: true, Value: 15},
-		MaxPooledSessions:        Int64Flag{Set: true, Value: 0},
-	})
-	require.NoError(t, err)
+	id, err := resolveProjectByName(context.Background(), fakeProjects, "target name")
+	assert.NoError(t, err)
+	assert.Equal(t, "proj_target", id)
+	assert.Equal(t, []int64{0, 100}, seenOffsets)
 }

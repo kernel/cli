@@ -101,7 +101,7 @@ func TestProxyGet_Mobile(t *testing.T) {
 				Type: kernel.ProxyGetResponseTypeMobile,
 				Config: kernel.ProxyGetResponseConfigUnion{
 					Country: "US",
-					Carrier: "verizon",
+					City:    "sanfrancisco",
 				},
 			}, nil
 		},
@@ -113,8 +113,8 @@ func TestProxyGet_Mobile(t *testing.T) {
 	assert.NoError(t, err)
 	output := buf.String()
 
-	assert.Contains(t, output, "Carrier")
-	assert.Contains(t, output, "verizon")
+	assert.Contains(t, output, "City")
+	assert.Contains(t, output, "sanfrancisco")
 }
 
 func TestProxyGet_Custom(t *testing.T) {

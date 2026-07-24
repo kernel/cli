@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -21,37 +22,42 @@ import (
 )
 
 //go:embed success.html
-var successHTML string
+var successHTMLTemplate string
+
+//go:embed favicon.svg
+var faviconSVG string
+
+// Inlined as a data URI because the callback server shuts down before the browser could fetch a served icon.
+var successHTML = strings.Replace(
+	successHTMLTemplate,
+	"__KERNEL_FAVICON__",
+	"data:image/svg+xml;base64,"+base64.StdEncoding.EncodeToString([]byte(faviconSVG)),
+	1,
+)
 
 const (
 	// MCP Server OAuth endpoints (which proxy to Clerk)
-	// Production
-	AuthURL  = "https://auth.onkernel.com/authorize"
-	TokenURL = "https://auth.onkernel.com/token"
-	
-	// Staging
-	// AuthURL  = "https://auth.dev.onkernel.com/authorize"
-	// TokenURL = "https://auth.dev.onkernel.com/token"
-	
-	// Local
-	// AuthURL  = "http://localhost:3002/authorize"
-	// TokenURL = "http://localhost:3002/token"
+	DefaultAuthBaseURL = "https://auth.onkernel.com"
 
 	// OAuth client configuration
-	ClientID    = "hmFrJn9hKDV2N02M" // Prod Kernel CLI OAuth Client ID
-	// ClientID    = "gkUVbm11p6EqKd7r" // Staging Kernel CLI OAuth Client ID
-	// ClientID    = "J7i8BKwyFBoyPQN3" // Local Kernel CLI OAuth Client ID
-	RedirectURI = "http://localhost"
+	DefaultClientID = "hmFrJn9hKDV2N02M"
+	RedirectURI     = "http://localhost"
 
 	// OAuth scopes - openid for the MCP server flow
 	DefaultScope = "openid email"
+
+	// tokenExchangeTimeout bounds the token/refresh HTTP calls so a stalled auth
+	// server surfaces as an error instead of hanging the CLI indefinitely.
+	tokenExchangeTimeout = 30 * time.Second
 )
 
 // OAuthConfig represents the OAuth2 configuration
 type OAuthConfig struct {
-	Config   *oauth2.Config
-	Verifier string
-	State    string
+	Config        *oauth2.Config
+	Verifier      string
+	State         string
+	AuthBaseURL   string
+	OAuthClientID string
 }
 
 // TokenResponse represents the OAuth token response
@@ -67,6 +73,52 @@ type TokenResponse struct {
 type AuthResult struct {
 	Code  string `json:"code"`
 	OrgID string `json:"org_id,omitempty"`
+}
+
+// CurrentAuthBaseURL returns the OAuth server base URL for new login flows.
+func CurrentAuthBaseURL() string {
+	return authBaseURLFromEnv()
+}
+
+// CurrentOAuthClientID returns the OAuth client ID for new login flows.
+func CurrentOAuthClientID() string {
+	if clientID := strings.TrimSpace(os.Getenv("KERNEL_OAUTH_CLIENT_ID")); clientID != "" {
+		return clientID
+	}
+	return DefaultClientID
+}
+
+func authBaseURLFromEnv() string {
+	return normalizeAuthBaseURL(os.Getenv("KERNEL_AUTH_BASE_URL"))
+}
+
+func normalizeAuthBaseURL(raw string) string {
+	if baseURL := strings.TrimRight(strings.TrimSpace(raw), "/"); baseURL != "" {
+		return baseURL
+	}
+	return DefaultAuthBaseURL
+}
+
+func authorizeURL(authBaseURL string) string {
+	return strings.TrimRight(authBaseURL, "/") + "/authorize"
+}
+
+func tokenURL(authBaseURL string) string {
+	return strings.TrimRight(authBaseURL, "/") + "/token"
+}
+
+func tokenAuthBaseURL(tokens *TokenStorage) string {
+	if tokens != nil && tokens.AuthBaseURL != "" {
+		return normalizeAuthBaseURL(tokens.AuthBaseURL)
+	}
+	return DefaultAuthBaseURL
+}
+
+func tokenOAuthClientID(tokens *TokenStorage) string {
+	if tokens != nil && tokens.OAuthClientID != "" {
+		return tokens.OAuthClientID
+	}
+	return DefaultClientID
 }
 
 // NewOAuthConfig creates a new OAuth configuration with PKCE
@@ -96,22 +148,26 @@ func NewOAuthConfig() (*OAuthConfig, error) {
 	// Try to find an available port from our allowed range
 	// Note: We'll get the actual port later when starting the server to avoid race conditions
 	redirectURI := fmt.Sprintf("%s:0/callback", RedirectURI)
+	authBaseURL := CurrentAuthBaseURL()
+	clientID := CurrentOAuthClientID()
 
 	config := &oauth2.Config{
-		ClientID:    ClientID,
+		ClientID:    clientID,
 		RedirectURL: redirectURI,
 		Scopes:      strings.Split(DefaultScope, " "),
 		Endpoint: oauth2.Endpoint{
-			AuthURL:   AuthURL,
-			TokenURL:  TokenURL,
+			AuthURL:   authorizeURL(authBaseURL),
+			TokenURL:  tokenURL(authBaseURL),
 			AuthStyle: oauth2.AuthStyleInParams,
 		},
 	}
 
 	return &OAuthConfig{
-		Config:   config,
-		Verifier: verifier,
-		State:    state, // Store the encoded state for OAuth URL
+		Config:        config,
+		Verifier:      verifier,
+		State:         state, // Store the encoded state for OAuth URL
+		AuthBaseURL:   authBaseURL,
+		OAuthClientID: clientID,
 	}, nil
 }
 
@@ -259,16 +315,21 @@ func (oc *OAuthConfig) exchangeCodeForTokens(ctx context.Context, code, orgID st
 		opts = append(opts, oauth2.SetAuthURLParam("org_id", orgID))
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, tokenExchangeTimeout)
+	defer cancel()
+
 	token, err := oc.Config.Exchange(ctx, code, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to exchange code for token: %w", err)
 	}
 
 	return &TokenStorage{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.Expiry,
-		OrgID:        orgID,
+		AccessToken:   token.AccessToken,
+		RefreshToken:  token.RefreshToken,
+		ExpiresAt:     token.Expiry,
+		OrgID:         orgID,
+		AuthBaseURL:   oc.AuthBaseURL,
+		OAuthClientID: oc.OAuthClientID,
 	}, nil
 }
 
@@ -281,21 +342,21 @@ func RefreshTokens(ctx context.Context, tokens *TokenStorage) (*TokenStorage, er
 	values := url.Values{}
 	values.Set("grant_type", "refresh_token")
 	values.Set("refresh_token", tokens.RefreshToken)
-	values.Set("client_id", ClientID)
+	values.Set("client_id", tokenOAuthClientID(tokens))
 	values.Set("scope", DefaultScope)
 	if tokens.OrgID != "" {
 		values.Set("org_id", tokens.OrgID)
 	}
 
 	// Make the token request manually to ensure client_id is included
-	req, err := http.NewRequestWithContext(ctx, "POST", TokenURL, strings.NewReader(values.Encode()))
+	req, err := http.NewRequestWithContext(ctx, "POST", tokenURL(tokenAuthBaseURL(tokens)), strings.NewReader(values.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create refresh request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: tokenExchangeTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send refresh request: %w", err)
@@ -328,10 +389,12 @@ func RefreshTokens(ctx context.Context, tokens *TokenStorage) (*TokenStorage, er
 	newToken = newToken.WithExtra(tokenResponse)
 
 	return &TokenStorage{
-		AccessToken:  newToken.AccessToken,
-		RefreshToken: newToken.RefreshToken,
-		ExpiresAt:    newToken.Expiry,
-		OrgID:        tokens.OrgID,
+		AccessToken:   newToken.AccessToken,
+		RefreshToken:  newToken.RefreshToken,
+		ExpiresAt:     newToken.Expiry,
+		OrgID:         tokens.OrgID,
+		AuthBaseURL:   tokenAuthBaseURL(tokens),
+		OAuthClientID: tokenOAuthClientID(tokens),
 	}, nil
 }
 

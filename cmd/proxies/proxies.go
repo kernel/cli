@@ -80,9 +80,11 @@ func init() {
 	ProxiesCmd.AddCommand(proxiesCheckCmd)
 
 	// Add output flags
-	proxiesListCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
-	proxiesGetCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
-	proxiesCreateCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
+	addJSONOutputFlag(proxiesListCmd)
+	proxiesListCmd.Flags().Int("limit", 0, "Maximum number of proxies to return")
+	proxiesListCmd.Flags().Int("offset", 0, "Number of proxies to skip (for pagination)")
+	addJSONOutputFlag(proxiesGetCmd)
+	addJSONOutputFlag(proxiesCreateCmd)
 
 	// Add flags for create command
 	proxiesCreateCmd.Flags().String("name", "", "Proxy configuration name")
@@ -100,9 +102,6 @@ func init() {
 	// OS flag (residential)
 	proxiesCreateCmd.Flags().String("os", "", "Operating system (windows|macos|android)")
 
-	// Carrier flag (mobile)
-	proxiesCreateCmd.Flags().String("carrier", "", "Mobile carrier (see help for full list)")
-
 	// Custom proxy flags
 	proxiesCreateCmd.Flags().String("host", "", "Proxy host address or IP")
 	proxiesCreateCmd.Flags().Int("port", 0, "Proxy port")
@@ -114,6 +113,5 @@ func init() {
 	proxiesDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 
 	// Check flags
-	proxiesCheckCmd.Flags().StringP("output", "o", "", "Output format: json for raw API response")
-	proxiesCheckCmd.Flags().String("url", "", "Optional public HTTP or HTTPS URL to test reachability against")
+	addJSONOutputFlag(proxiesCheckCmd)
 }

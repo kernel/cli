@@ -6,6 +6,7 @@
  */
 
 import type { Kernel } from '@onkernel/sdk';
+import type { BrowserCreateResponse } from '@onkernel/sdk/resources/browsers';
 
 export interface SessionOptions {
   /** Invocation ID to link browser session to the action invocation */
@@ -63,6 +64,7 @@ export class KernelBrowserSession {
   private options: SessionOptionsWithDefaults;
 
   // Session state
+  private _browser: BrowserCreateResponse | null = null;
   private _sessionId: string | null = null;
   private _liveViewUrl: string | null = null;
   private _replayId: string | null = null;
@@ -78,6 +80,13 @@ export class KernelBrowserSession {
       throw new Error('Session not started. Call start() first.');
     }
     return this._sessionId;
+  }
+
+  get browser(): BrowserCreateResponse {
+    if (!this._browser) {
+      throw new Error('Session not started. Call start() first.');
+    }
+    return this._browser;
   }
 
   get liveViewUrl(): string | null {
@@ -122,6 +131,7 @@ export class KernelBrowserSession {
       },
     });
 
+    this._browser = browser;
     this._sessionId = browser.session_id;
     this._liveViewUrl = browser.browser_live_view_url ?? null;
 
@@ -230,6 +240,7 @@ export class KernelBrowserSession {
     }
 
     // Reset state
+    this._browser = null;
     this._sessionId = null;
     this._liveViewUrl = null;
     this._replayId = null;
