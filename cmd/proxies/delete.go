@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -11,6 +12,9 @@ import (
 
 func (p ProxyCmd) Delete(ctx context.Context, in ProxyDeleteInput) error {
 	if !in.SkipConfirm {
+		if !interactive.IsInteractive() {
+			return interactive.ErrConfirmationRequired(fmt.Sprintf("delete proxy '%s'", in.ID))
+		}
 		// Try to get the proxy details for better confirmation message
 		proxy, err := p.proxies.Get(ctx, in.ID)
 		if err != nil {

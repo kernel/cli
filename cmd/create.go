@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/kernel/cli/pkg/create"
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -25,14 +26,16 @@ func (c CreateCmd) Create(ctx context.Context, ci create.CreateInput) error {
 
 	// Check if directory already exists and prompt for overwrite
 	if _, err := os.Stat(appPath); err == nil {
-		overwrite, err := create.PromptForOverwrite(ci.Name)
-		if err != nil {
-			return fmt.Errorf("failed to prompt for overwrite: %w", err)
-		}
+		if !ci.SkipConfirm {
+			overwrite, err := create.PromptForOverwrite(ci.Name)
+			if err != nil {
+				return err
+			}
 
-		if !overwrite {
-			pterm.Warning.Println("Operation cancelled.")
-			return nil
+			if !overwrite {
+				pterm.Warning.Println("Operation cancelled.")
+				return nil
+			}
 		}
 
 		// Remove existing directory
@@ -81,6 +84,7 @@ func init() {
 	createCmd.Flags().StringP("name", "n", "", "Name of the application")
 	createCmd.Flags().StringP("language", "l", "", fmt.Sprintf("Language of the application (%s)", strings.Join(supportedLanguageDisplay(), ", ")))
 	createCmd.Flags().StringP("template", "t", "", "Template to use for the application (see 'kernel create --help' for the full list)")
+	createCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts (overwrite an existing directory without asking)")
 }
 
 // supportedLanguageDisplay returns each supported language with its shorthand,
@@ -104,7 +108,9 @@ func buildCreateLongHelp() string {
 	var b strings.Builder
 	b.WriteString("Commands for creating new Kernel applications.\n\n")
 	b.WriteString("Pass --name, --language and --template to scaffold non-interactively;\n")
-	b.WriteString("any omitted flag falls back to an interactive prompt.\n\n")
+	b.WriteString("any omitted flag falls back to an interactive prompt. In a\n")
+	b.WriteString("non-interactive shell the command fails fast instead of prompting.\n")
+	b.WriteString("Pass --yes to overwrite an existing directory without confirmation.\n\n")
 
 	b.WriteString("Languages:\n")
 	for _, l := range create.SupportedLanguages {
@@ -143,26 +149,40 @@ func runCreateApp(cmd *cobra.Command, args []string) error {
 	appName, _ := cmd.Flags().GetString("name")
 	language, _ := cmd.Flags().GetString("language")
 	template, _ := cmd.Flags().GetString("template")
+	skipConfirm, _ := cmd.Flags().GetBool("yes")
+
+	c := CreateCmd{}
+
+	// In a non-interactive shell, validate every input up front so a single
+	// error reports everything the caller must fix, instead of failing on one
+	// missing input per invocation.
+	if !interactive.IsInteractive() {
+		in, err := create.ValidateNonInteractive(appName, language, template, skipConfirm)
+		if err != nil {
+			return err
+		}
+		return c.Create(cmd.Context(), in)
+	}
 
 	appName, err := create.PromptForAppName(appName)
 	if err != nil {
-		return fmt.Errorf("failed to get app name: %w", err)
+		return err
 	}
 
 	language, err = create.PromptForLanguage(language)
 	if err != nil {
-		return fmt.Errorf("failed to get language: %w", err)
+		return err
 	}
 
 	template, err = create.PromptForTemplate(template, language)
 	if err != nil {
-		return fmt.Errorf("failed to get template: %w", err)
+		return err
 	}
 
-	c := CreateCmd{}
 	return c.Create(cmd.Context(), create.CreateInput{
-		Name:     appName,
-		Language: language,
-		Template: template,
+		Name:        appName,
+		Language:    language,
+		Template:    template,
+		SkipConfirm: skipConfirm,
 	})
 }

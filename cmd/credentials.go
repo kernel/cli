@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
@@ -281,6 +282,9 @@ func (c CredentialsCmd) Update(ctx context.Context, in CredentialsUpdateInput) e
 
 func (c CredentialsCmd) Delete(ctx context.Context, in CredentialsDeleteInput) error {
 	if !in.SkipConfirm {
+		if !interactive.IsInteractive() {
+			return interactive.ErrConfirmationRequired(fmt.Sprintf("delete credential '%s'", in.Identifier))
+		}
 		msg := fmt.Sprintf("Are you sure you want to delete credential '%s'?", in.Identifier)
 		pterm.DefaultInteractiveConfirm.DefaultText = msg
 		ok, _ := pterm.DefaultInteractiveConfirm.Show()

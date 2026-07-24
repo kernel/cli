@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strings"
 
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/pterm/pterm"
 )
 
@@ -31,8 +33,35 @@ func validateAppName(val any) error {
 	return nil
 }
 
+// languageOptionsHint renders the supported languages (with shorthands) for
+// use in flag-usage hints, e.g. "typescript (ts), python (py)".
+func languageOptionsHint() string {
+	opts := make([]string, 0, len(SupportedLanguages))
+	for _, l := range SupportedLanguages {
+		if s := LanguageShorthand(l); s != "" {
+			opts = append(opts, fmt.Sprintf("%s (%s)", l, s))
+		} else {
+			opts = append(opts, l)
+		}
+	}
+	return strings.Join(opts, ", ")
+}
+
+// templateOptionsHint renders the template keys for use in flag-usage hints.
+func templateOptionsHint(templateKVs TemplateKeyValues) string {
+	keys := make([]string, 0, len(templateKVs))
+	for _, kv := range templateKVs {
+		keys = append(keys, kv.Key)
+	}
+	return strings.Join(keys, ", ")
+}
+
 // handleAppNamePrompt prompts the user for an app name interactively.
 func handleAppNamePrompt() (string, error) {
+	if !interactive.IsInteractive() {
+		return "", interactive.ErrInputRequired("app name", "pass --name to set the app name (e.g. --name "+DefaultAppName+")")
+	}
+
 	promptText := fmt.Sprintf("%s (%s)", AppNamePrompt, DefaultAppName)
 	appName, err := pterm.DefaultInteractiveTextInput.
 		WithDefaultText(promptText).
@@ -56,6 +85,7 @@ func handleAppNamePrompt() (string, error) {
 
 // PromptForAppName validates the provided app name or prompts the user for one.
 // If the provided name is invalid, it shows a warning and prompts the user.
+// In a non-interactive shell it fails fast instead of prompting.
 func PromptForAppName(providedAppName string) (string, error) {
 	// If no app name was provided, prompt the user
 	if providedAppName == "" {
@@ -63,6 +93,9 @@ func PromptForAppName(providedAppName string) (string, error) {
 	}
 
 	if err := validateAppName(providedAppName); err != nil {
+		if !interactive.IsInteractive() {
+			return "", fmt.Errorf("invalid --name '%s': %w", providedAppName, err)
+		}
 		pterm.Warning.Printf("Invalid app name '%s': %v\n", providedAppName, err)
 		pterm.Info.Println("Please provide a valid app name.")
 		return handleAppNamePrompt()
@@ -72,6 +105,10 @@ func PromptForAppName(providedAppName string) (string, error) {
 }
 
 func handleLanguagePrompt() (string, error) {
+	if !interactive.IsInteractive() {
+		return "", interactive.ErrInputRequired("language selection", "pass --language with one of: "+languageOptionsHint())
+	}
+
 	l, err := pterm.DefaultInteractiveSelect.
 		WithOptions(SupportedLanguages).
 		WithDefaultText(LanguagePrompt).
@@ -82,6 +119,8 @@ func handleLanguagePrompt() (string, error) {
 	return l, nil
 }
 
+// PromptForLanguage validates the provided language or prompts the user for
+// one. In a non-interactive shell it fails fast instead of prompting.
 func PromptForLanguage(providedLanguage string) (string, error) {
 	if providedLanguage == "" {
 		return handleLanguagePrompt()
@@ -92,11 +131,18 @@ func PromptForLanguage(providedLanguage string) (string, error) {
 		return l, nil
 	}
 
+	if !interactive.IsInteractive() {
+		return "", fmt.Errorf("invalid --language '%s': must be one of: %s", providedLanguage, languageOptionsHint())
+	}
 	pterm.Warning.Printfln("Language '%s' not found. Please select from available languages.\n", providedLanguage)
 	return handleLanguagePrompt()
 }
 
 func handleTemplatePrompt(templateKVs TemplateKeyValues) (string, error) {
+	if !interactive.IsInteractive() {
+		return "", interactive.ErrInputRequired("template selection", "pass --template with one of: "+templateOptionsHint(templateKVs))
+	}
+
 	template, err := pterm.DefaultInteractiveSelect.
 		WithOptions(templateKVs.GetTemplateDisplayValues()).
 		WithDefaultText(TemplatePrompt).
@@ -109,6 +155,8 @@ func handleTemplatePrompt(templateKVs TemplateKeyValues) (string, error) {
 	return templateKVs.GetTemplateKeyFromValue(template)
 }
 
+// PromptForTemplate validates the provided template or prompts the user for
+// one. In a non-interactive shell it fails fast instead of prompting.
 func PromptForTemplate(providedTemplate string, providedLanguage string) (string, error) {
 	templateKVs := GetSupportedTemplatesForLanguage(NormalizeLanguage(providedLanguage))
 
@@ -120,12 +168,21 @@ func PromptForTemplate(providedTemplate string, providedLanguage string) (string
 		return providedTemplate, nil
 	}
 
+	if !interactive.IsInteractive() {
+		return "", fmt.Errorf("invalid --template '%s' for language '%s': must be one of: %s", providedTemplate, NormalizeLanguage(providedLanguage), templateOptionsHint(templateKVs))
+	}
 	pterm.Warning.Printfln("Template '%s' not found. Please select from available templates.\n", providedTemplate)
 	return handleTemplatePrompt(templateKVs)
 }
 
-// PromptForOverwrite prompts the user to confirm overwriting an existing directory.
+// PromptForOverwrite prompts the user to confirm overwriting an existing
+// directory. In a non-interactive shell it fails fast instead of prompting;
+// pass --yes to overwrite without confirmation.
 func PromptForOverwrite(dirName string) (bool, error) {
+	if !interactive.IsInteractive() {
+		return false, interactive.ErrConfirmationRequired(fmt.Sprintf("overwrite existing directory '%s'", dirName))
+	}
+
 	overwrite, err := pterm.DefaultInteractiveConfirm.
 		WithDefaultText(fmt.Sprintf("\nDirectory %s already exists. Overwrite?", dirName)).
 		WithDefaultValue(false).

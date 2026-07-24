@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
@@ -181,6 +182,9 @@ func (c APIKeysCmd) Update(ctx context.Context, in APIKeysUpdateInput) error {
 
 func (c APIKeysCmd) Delete(ctx context.Context, in APIKeysDeleteInput) error {
 	if !in.SkipConfirm {
+		if !interactive.IsInteractive() {
+			return interactive.ErrConfirmationRequired(fmt.Sprintf("delete API key '%s'", in.ID))
+		}
 		msg := fmt.Sprintf("Are you sure you want to delete API key '%s'?", in.ID)
 		pterm.DefaultInteractiveConfirm.DefaultText = msg
 		ok, _ := pterm.DefaultInteractiveConfirm.Show()
