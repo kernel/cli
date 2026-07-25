@@ -19,6 +19,7 @@ type FakeAPIKeysService struct {
 	GetFunc    func(ctx context.Context, id string, query kernel.APIKeyGetParams, opts ...option.RequestOption) (*kernel.APIKey, error)
 	UpdateFunc func(ctx context.Context, id string, body kernel.APIKeyUpdateParams, opts ...option.RequestOption) (*kernel.APIKey, error)
 	ListFunc   func(ctx context.Context, query kernel.APIKeyListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.APIKey], error)
+	RotateFunc func(ctx context.Context, id string, body kernel.APIKeyRotateParams, opts ...option.RequestOption) (*kernel.CreatedAPIKey, error)
 	DeleteFunc func(ctx context.Context, id string, opts ...option.RequestOption) error
 }
 
@@ -48,6 +49,13 @@ func (f *FakeAPIKeysService) List(ctx context.Context, query kernel.APIKeyListPa
 		return f.ListFunc(ctx, query, opts...)
 	}
 	return &pagination.OffsetPagination[kernel.APIKey]{Items: []kernel.APIKey{}}, nil
+}
+
+func (f *FakeAPIKeysService) Rotate(ctx context.Context, id string, body kernel.APIKeyRotateParams, opts ...option.RequestOption) (*kernel.CreatedAPIKey, error) {
+	if f.RotateFunc != nil {
+		return f.RotateFunc(ctx, id, body, opts...)
+	}
+	return createdAPIKeyFromJSON(`{"id":"key_rotated","name":"default","key":"sk_rotated","masked_key":"sk_...ated","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123","email":"dev@example.com","name":"Dev"},"expires_at":null,"project_id":null,"project_name":null}`), nil
 }
 
 func (f *FakeAPIKeysService) Delete(ctx context.Context, id string, opts ...option.RequestOption) error {
@@ -266,4 +274,81 @@ func TestAPIKeysDeleteReturnsAPIError(t *testing.T) {
 	err := c.Delete(context.Background(), APIKeysDeleteInput{ID: "key_123", SkipConfirm: true})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "API error")
+}
+
+func TestAPIKeysRotateBuildsParamsAndPrintsNewKey(t *testing.T) {
+	buf := capturePtermOutput(t)
+	var capturedID string
+	var captured kernel.APIKeyRotateParams
+	fake := &FakeAPIKeysService{
+		RotateFunc: func(ctx context.Context, id string, body kernel.APIKeyRotateParams, opts ...option.RequestOption) (*kernel.CreatedAPIKey, error) {
+			capturedID = id
+			captured = body
+			return createdAPIKeyFromJSON(`{"id":"key_new","name":"ci","key":"sk_new","masked_key":"sk_...new","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123","email":"dev@example.com","name":"Dev"},"expires_at":null,"project_id":null,"project_name":null}`), nil
+		},
+	}
+	c := APIKeysCmd{apiKeys: fake}
+
+	err := c.Rotate(context.Background(), APIKeysRotateInput{
+		ID:           "key_123",
+		DaysToExpire: Int64Flag{Set: true, Value: 30},
+		ExpireInDays: Int64Flag{Set: true, Value: 0},
+		SkipConfirm:  true,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "key_123", capturedID)
+	assert.True(t, captured.DaysToExpire.Valid())
+	assert.Equal(t, int64(30), captured.DaysToExpire.Value)
+	// 0 must reach the API as an explicit value, not be dropped: it means
+	// "revoke the rotated key now" rather than "use the default grace period".
+	assert.True(t, captured.ExpireInDays.Valid())
+	assert.Equal(t, int64(0), captured.ExpireInDays.Value)
+
+	out := buf.String()
+	assert.Contains(t, out, "Rotated API key key_123 into new key: key_new")
+	assert.Contains(t, out, "sk_new")
+}
+
+func TestAPIKeysRotateRejectsOutOfRangeDaysToExpire(t *testing.T) {
+	c := APIKeysCmd{apiKeys: &FakeAPIKeysService{}}
+	err := c.Rotate(context.Background(), APIKeysRotateInput{
+		ID:           "key_123",
+		DaysToExpire: Int64Flag{Set: true, Value: 4000},
+		SkipConfirm:  true,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--days-to-expire must be between 1 and 3650")
+}
+
+func TestAPIKeysRotateOmitsUnsetParams(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.APIKeyRotateParams
+	fake := &FakeAPIKeysService{
+		RotateFunc: func(ctx context.Context, id string, body kernel.APIKeyRotateParams, opts ...option.RequestOption) (*kernel.CreatedAPIKey, error) {
+			captured = body
+			return createdAPIKeyFromJSON(`{"id":"key_new","name":"ci","key":"sk_new","masked_key":"sk_...new","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123","email":"dev@example.com","name":"Dev"},"expires_at":null,"project_id":null,"project_name":null}`), nil
+		},
+	}
+	c := APIKeysCmd{apiKeys: fake}
+
+	require.NoError(t, c.Rotate(context.Background(), APIKeysRotateInput{ID: "key_123", SkipConfirm: true}))
+	assert.False(t, captured.DaysToExpire.Valid())
+	assert.False(t, captured.ExpireInDays.Valid())
+}
+
+func TestAPIKeysGetPassesIncludeDeleted(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.APIKeyGetParams
+	fake := &FakeAPIKeysService{
+		GetFunc: func(ctx context.Context, id string, query kernel.APIKeyGetParams, opts ...option.RequestOption) (*kernel.APIKey, error) {
+			captured = query
+			return apiKeyFromJSON(`{"id":"` + id + `","name":"default","masked_key":"sk_...test","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123","email":"dev@example.com","name":"Dev"},"expires_at":null,"project_id":null,"project_name":null}`), nil
+		},
+	}
+	c := APIKeysCmd{apiKeys: fake}
+
+	require.NoError(t, c.Get(context.Background(), APIKeysGetInput{ID: "key_123", IncludeDeleted: true}))
+	assert.True(t, captured.IncludeDeleted.Valid())
+	assert.True(t, captured.IncludeDeleted.Value)
 }

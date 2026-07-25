@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -127,15 +128,15 @@ type BrowserPoolsCreateInput struct {
 	Kiosk                  BoolFlag
 	RefreshOnProfileUpdate BoolFlag
 	ProfileID              string
-	ProfileName      string
-	ProxyID          string
-	StartURL         string
-	Extensions       []string
-	Viewport         string
-	ChromePolicy     string
-	ChromePolicyFile string
-	Telemetry        string
-	Output           string
+	ProfileName            string
+	ProxyID                string
+	StartURL               string
+	Extensions             []string
+	Viewport               string
+	ChromePolicy           string
+	ChromePolicyFile       string
+	Telemetry              string
+	Output                 string
 }
 
 func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput) error {
@@ -297,17 +298,17 @@ type BrowserPoolsUpdateInput struct {
 	Kiosk                  BoolFlag
 	RefreshOnProfileUpdate BoolFlag
 	ProfileID              string
-	ProfileName      string
-	ProxyID          string
-	StartURL         string
-	ClearStartURL    bool
-	Extensions       []string
-	Viewport         string
-	ChromePolicy     string
-	ChromePolicyFile string
-	Telemetry        string
-	DiscardAllIdle   BoolFlag
-	Output           string
+	ProfileName            string
+	ProxyID                string
+	StartURL               string
+	ClearStartURL          bool
+	Extensions             []string
+	Viewport               string
+	ChromePolicy           string
+	ChromePolicyFile       string
+	Telemetry              string
+	DiscardAllIdle         BoolFlag
+	Output                 string
 }
 
 func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput) error {
@@ -734,24 +735,24 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 
 	in := BrowserPoolsCreateInput{
-		Name:             name,
-		Size:             size,
-		FillRate:         fillRate,
-		TimeoutSeconds:   timeout,
-		Stealth:          BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealth},
-		Headless:         BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headless},
+		Name:                   name,
+		Size:                   size,
+		FillRate:               fillRate,
+		TimeoutSeconds:         timeout,
+		Stealth:                BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealth},
+		Headless:               BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headless},
 		Kiosk:                  BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kiosk},
 		RefreshOnProfileUpdate: BoolFlag{Set: cmd.Flags().Changed("refresh-on-profile-update"), Value: refreshOnProfileUpdate},
 		ProfileID:              profileID,
-		ProfileName:      profileName,
-		ProxyID:          proxyID,
-		StartURL:         startURL,
-		Extensions:       extensions,
-		Viewport:         viewport,
-		ChromePolicy:     chromePolicy,
-		ChromePolicyFile: chromePolicyFile,
-		Telemetry:        telemetry,
-		Output:           output,
+		ProfileName:            profileName,
+		ProxyID:                proxyID,
+		StartURL:               startURL,
+		Extensions:             extensions,
+		Viewport:               viewport,
+		ChromePolicy:           chromePolicy,
+		ChromePolicyFile:       chromePolicyFile,
+		Telemetry:              telemetry,
+		Output:                 output,
 	}
 
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
@@ -790,27 +791,27 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 
 	in := BrowserPoolsUpdateInput{
-		IDOrName:         args[0],
-		Name:             name,
-		Size:             size,
-		FillRate:         fillRate,
-		TimeoutSeconds:   timeout,
-		Stealth:          BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealth},
-		Headless:         BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headless},
+		IDOrName:               args[0],
+		Name:                   name,
+		Size:                   size,
+		FillRate:               fillRate,
+		TimeoutSeconds:         timeout,
+		Stealth:                BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealth},
+		Headless:               BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headless},
 		Kiosk:                  BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kiosk},
 		RefreshOnProfileUpdate: BoolFlag{Set: cmd.Flags().Changed("refresh-on-profile-update"), Value: refreshOnProfileUpdate},
 		ProfileID:              profileID,
-		ProfileName:      profileName,
-		ProxyID:          proxyID,
-		StartURL:         startURL,
-		ClearStartURL:    clearStartURL,
-		Extensions:       extensions,
-		Viewport:         viewport,
-		ChromePolicy:     chromePolicy,
-		ChromePolicyFile: chromePolicyFile,
-		Telemetry:        telemetry,
-		DiscardAllIdle:   BoolFlag{Set: cmd.Flags().Changed("discard-all-idle"), Value: discardIdle},
-		Output:           output,
+		ProfileName:            profileName,
+		ProxyID:                proxyID,
+		StartURL:               startURL,
+		ClearStartURL:          clearStartURL,
+		Extensions:             extensions,
+		Viewport:               viewport,
+		ChromePolicy:           chromePolicy,
+		ChromePolicyFile:       chromePolicyFile,
+		Telemetry:              telemetry,
+		DiscardAllIdle:         BoolFlag{Set: cmd.Flags().Changed("discard-all-idle"), Value: discardIdle},
+		Output:                 output,
 	}
 
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
@@ -942,6 +943,19 @@ func formatExtensions(extensions []kernel.BrowserExtension) string {
 		}
 	}
 	return util.JoinOrDash(names...)
+}
+
+func formatChromePolicy(policy map[string]any) string {
+	if len(policy) == 0 {
+		return "-"
+	}
+
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return fmt.Sprintf("%v", policy)
+	}
+
+	return string(data)
 }
 
 func formatViewport(viewport kernel.BrowserViewport) string {

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
@@ -22,6 +23,7 @@ type ProjectsService interface {
 	ProjectListService
 	New(ctx context.Context, body kernel.ProjectNewParams, opts ...option.RequestOption) (res *kernel.Project, err error)
 	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.Project, err error)
+	Update(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (res *kernel.Project, err error)
 	Delete(ctx context.Context, id string, opts ...option.RequestOption) (err error)
 }
 
@@ -43,6 +45,14 @@ type ProjectsCreateInput struct {
 
 type ProjectsGetInput struct {
 	Identifier string
+}
+
+type ProjectsUpdateInput struct {
+	Identifier string
+	Name       string
+	NameSet    bool
+	Status     string
+	Output     string
 }
 
 type ProjectsDeleteInput struct {
@@ -119,6 +129,61 @@ func (c ProjectsCmd) Get(ctx context.Context, in ProjectsGetInput) error {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
+	table := pterm.TableData{
+		{"Field", "Value"},
+		{"ID", project.ID},
+		{"Name", project.Name},
+		{"Status", string(project.Status)},
+		{"Created At", util.FormatLocal(project.CreatedAt)},
+		{"Updated At", util.FormatLocal(project.UpdatedAt)},
+	}
+	PrintTableNoPad(table, true)
+	return nil
+}
+
+func (c ProjectsCmd) Update(ctx context.Context, in ProjectsUpdateInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+
+	inner := kernel.UpdateProjectRequestParam{}
+	if in.NameSet {
+		if strings.TrimSpace(in.Name) == "" {
+			return fmt.Errorf("--name must not be empty")
+		}
+		inner.Name = param.NewOpt(in.Name)
+	}
+	if in.Status != "" {
+		switch in.Status {
+		case string(kernel.UpdateProjectRequestStatusActive), string(kernel.UpdateProjectRequestStatusArchived):
+			inner.Status = kernel.UpdateProjectRequestStatus(in.Status)
+		default:
+			return fmt.Errorf("invalid --status %q: must be one of active, archived", in.Status)
+		}
+	}
+	if !in.NameSet && in.Status == "" {
+		return fmt.Errorf("must provide at least one of --name or --status")
+	}
+
+	// The PATCH endpoint takes an ID only, so resolve names client-side the way
+	// delete and the limits endpoints do.
+	projectID, err := resolveProjectArg(ctx, c.projects, in.Identifier)
+	if err != nil {
+		return err
+	}
+
+	project, err := c.projects.Update(ctx, projectID, kernel.ProjectUpdateParams{
+		UpdateProjectRequest: inner,
+	})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(project)
+	}
+
+	pterm.Success.Printf("Updated project: %s (ID: %s)\n", project.Name, project.ID)
 	table := pterm.TableData{
 		{"Field", "Value"},
 		{"ID", project.ID},
@@ -271,6 +336,20 @@ func runProjectsGet(cmd *cobra.Command, args []string) error {
 	return c.Get(cmd.Context(), ProjectsGetInput{Identifier: args[0]})
 }
 
+func runProjectsUpdate(cmd *cobra.Command, args []string) error {
+	c := getProjectsHandler(cmd)
+	name, _ := cmd.Flags().GetString("name")
+	status, _ := cmd.Flags().GetString("status")
+	output, _ := cmd.Flags().GetString("output")
+	return c.Update(cmd.Context(), ProjectsUpdateInput{
+		Identifier: args[0],
+		Name:       name,
+		NameSet:    cmd.Flags().Changed("name"),
+		Status:     status,
+		Output:     output,
+	})
+}
+
 func runProjectsDelete(cmd *cobra.Command, args []string) error {
 	c := getProjectsHandler(cmd)
 	return c.Delete(cmd.Context(), ProjectsDeleteInput{Identifier: args[0]})
@@ -345,6 +424,13 @@ var projectsGetCmd = &cobra.Command{
 	RunE:  runProjectsGet,
 }
 
+var projectsUpdateCmd = &cobra.Command{
+	Use:   "update <id-or-name>",
+	Short: "Update a project's name or status",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runProjectsUpdate,
+}
+
 var projectsDeleteCmd = &cobra.Command{
 	Use:   "delete <id-or-name>",
 	Short: "Delete a project",
@@ -391,6 +477,10 @@ var projectsSetLimitsCompatCmd = &cobra.Command{
 }
 
 func init() {
+	projectsUpdateCmd.Flags().String("name", "", "New project name (1-255 characters)")
+	projectsUpdateCmd.Flags().String("status", "", "New project status: active or archived")
+	addJSONOutputFlag(projectsUpdateCmd)
+
 	addJSONOutputFlag(projectsLimitsGetCmd)
 	addProjectsLimitsSetFlags(projectsLimitsSetCmd)
 	addJSONOutputFlag(projectsGetLimitsCompatCmd)
@@ -402,6 +492,7 @@ func init() {
 	projectsCmd.AddCommand(projectsListCmd)
 	projectsCmd.AddCommand(projectsCreateCmd)
 	projectsCmd.AddCommand(projectsGetCmd)
+	projectsCmd.AddCommand(projectsUpdateCmd)
 	projectsCmd.AddCommand(projectsDeleteCmd)
 	projectsCmd.AddCommand(projectsLimitsCmd)
 	projectsCmd.AddCommand(projectsGetLimitsCompatCmd)

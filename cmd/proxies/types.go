@@ -14,6 +14,7 @@ type ProxyService interface {
 	List(ctx context.Context, query kernel.ProxyListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.ProxyListResponse], err error)
 	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.ProxyGetResponse, err error)
 	New(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (res *kernel.ProxyNewResponse, err error)
+	Update(ctx context.Context, id string, body kernel.ProxyUpdateParams, opts ...option.RequestOption) (res *kernel.ProxyUpdateResponse, err error)
 	Delete(ctx context.Context, id string, opts ...option.RequestOption) (err error)
 	Check(ctx context.Context, id string, body kernel.ProxyCheckParams, opts ...option.RequestOption) (res *kernel.ProxyCheckResponse, err error)
 }
@@ -58,6 +59,12 @@ type ProxyCreateInput struct {
 	Output   string
 }
 
+type ProxyUpdateInput struct {
+	ID     string
+	Name   string
+	Output string
+}
+
 type ProxyDeleteInput struct {
 	ID          string
 	SkipConfirm bool
@@ -65,5 +72,6 @@ type ProxyDeleteInput struct {
 
 type ProxyCheckInput struct {
 	ID     string
+	URL    string
 	Output string
 }

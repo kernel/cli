@@ -18,6 +18,7 @@ type APIKeysService interface {
 	Get(ctx context.Context, id string, query kernel.APIKeyGetParams, opts ...option.RequestOption) (*kernel.APIKey, error)
 	Update(ctx context.Context, id string, body kernel.APIKeyUpdateParams, opts ...option.RequestOption) (*kernel.APIKey, error)
 	List(ctx context.Context, query kernel.APIKeyListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.APIKey], error)
+	Rotate(ctx context.Context, id string, body kernel.APIKeyRotateParams, opts ...option.RequestOption) (*kernel.CreatedAPIKey, error)
 	Delete(ctx context.Context, id string, opts ...option.RequestOption) error
 }
 
@@ -40,8 +41,17 @@ type APIKeysListInput struct {
 }
 
 type APIKeysGetInput struct {
-	ID     string
-	Output string
+	ID             string
+	IncludeDeleted bool
+	Output         string
+}
+
+type APIKeysRotateInput struct {
+	ID           string
+	DaysToExpire Int64Flag
+	ExpireInDays Int64Flag
+	SkipConfirm  bool
+	Output       string
 }
 
 type APIKeysUpdateInput struct {
@@ -147,7 +157,12 @@ func (c APIKeysCmd) Get(ctx context.Context, in APIKeysGetInput) error {
 		return err
 	}
 
-	key, err := c.apiKeys.Get(ctx, in.ID, kernel.APIKeyGetParams{})
+	params := kernel.APIKeyGetParams{}
+	if in.IncludeDeleted {
+		params.IncludeDeleted = kernel.Bool(true)
+	}
+
+	key, err := c.apiKeys.Get(ctx, in.ID, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -178,6 +193,56 @@ func (c APIKeysCmd) Update(ctx context.Context, in APIKeysUpdateInput) error {
 	}
 
 	pterm.Success.Printf("Updated API key: %s\n", key.ID)
+	return nil
+}
+
+// Rotate issues a replacement API key. The rotated key keeps working until its
+// grace period elapses, so this is disruptive but not immediately breaking --
+// it still prompts, since the old key does eventually stop working.
+func (c APIKeysCmd) Rotate(ctx context.Context, in APIKeysRotateInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+
+	params := kernel.APIKeyRotateParams{}
+	if in.DaysToExpire.Set {
+		if in.DaysToExpire.Value < 1 || in.DaysToExpire.Value > 3650 {
+			return fmt.Errorf("--days-to-expire must be between 1 and 3650")
+		}
+		params.DaysToExpire = kernel.Int(in.DaysToExpire.Value)
+	}
+	if in.ExpireInDays.Set {
+		if in.ExpireInDays.Value < 0 {
+			return fmt.Errorf("--expire-in-days must be non-negative; use 0 to expire the rotated key immediately")
+		}
+		params.ExpireInDays = kernel.Int(in.ExpireInDays.Value)
+	}
+
+	if !in.SkipConfirm {
+		ok, err := c.prompter.Confirm(
+			fmt.Sprintf("rotate API key '%s'", in.ID),
+			fmt.Sprintf("Are you sure you want to rotate API key '%s'? The current key stops working after its grace period.", in.ID),
+		)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			pterm.Info.Println("Rotation cancelled")
+			return nil
+		}
+	}
+
+	key, err := c.apiKeys.Rotate(ctx, in.ID, params)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(key)
+	}
+
+	pterm.Success.Printf("Rotated API key %s into new key: %s\n", in.ID, key.ID)
+	renderCreatedAPIKey(key)
 	return nil
 }
 
@@ -308,7 +373,23 @@ func runAPIKeysList(cmd *cobra.Command, args []string) error {
 func runAPIKeysGet(cmd *cobra.Command, args []string) error {
 	c := getAPIKeysHandler(cmd)
 	output, _ := cmd.Flags().GetString("output")
-	return c.Get(cmd.Context(), APIKeysGetInput{ID: args[0], Output: output})
+	includeDeleted, _ := cmd.Flags().GetBool("include-deleted")
+	return c.Get(cmd.Context(), APIKeysGetInput{ID: args[0], IncludeDeleted: includeDeleted, Output: output})
+}
+
+func runAPIKeysRotate(cmd *cobra.Command, args []string) error {
+	c := getAPIKeysHandler(cmd)
+	daysToExpire, _ := cmd.Flags().GetInt64("days-to-expire")
+	expireInDays, _ := cmd.Flags().GetInt64("expire-in-days")
+	skip, _ := cmd.Flags().GetBool("yes")
+	output, _ := cmd.Flags().GetString("output")
+	return c.Rotate(cmd.Context(), APIKeysRotateInput{
+		ID:           args[0],
+		DaysToExpire: Int64Flag{Set: cmd.Flags().Changed("days-to-expire"), Value: daysToExpire},
+		ExpireInDays: Int64Flag{Set: cmd.Flags().Changed("expire-in-days"), Value: expireInDays},
+		SkipConfirm:  skip,
+		Output:       output,
+	})
 }
 
 func runAPIKeysUpdate(cmd *cobra.Command, args []string) error {
@@ -362,6 +443,14 @@ var apiKeysUpdateCmd = &cobra.Command{
 	RunE:  runAPIKeysUpdate,
 }
 
+var apiKeysRotateCmd = &cobra.Command{
+	Use:   "rotate <id>",
+	Short: "Rotate an API key",
+	Long:  "Issue a replacement API key. The rotated key keeps working for a grace period (7 days by default) so callers can migrate; use --expire-in-days 0 to revoke it immediately.",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runAPIKeysRotate,
+}
+
 var apiKeysDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete an API key",
@@ -381,10 +470,16 @@ func init() {
 	apiKeysListCmd.Flags().Int("offset", 0, "Number of results to skip")
 
 	addJSONOutputFlag(apiKeysGetCmd)
+	apiKeysGetCmd.Flags().Bool("include-deleted", false, "Include soft-deleted API keys in the lookup")
 
 	addJSONOutputFlag(apiKeysUpdateCmd)
 	apiKeysUpdateCmd.Flags().String("name", "", "New API key name (required)")
 	_ = apiKeysUpdateCmd.MarkFlagRequired("name")
+
+	addJSONOutputFlag(apiKeysRotateCmd)
+	apiKeysRotateCmd.Flags().Int64("days-to-expire", 0, "Lifetime in days for the new key (1-3650); omit to reuse the rotated key's lifetime")
+	apiKeysRotateCmd.Flags().Int64("expire-in-days", 0, "Grace period in days before the rotated key expires; 0 expires it immediately, omit for the default 7 days")
+	apiKeysRotateCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 
 	apiKeysDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 
@@ -392,6 +487,7 @@ func init() {
 	apiKeysCmd.AddCommand(apiKeysListCmd)
 	apiKeysCmd.AddCommand(apiKeysGetCmd)
 	apiKeysCmd.AddCommand(apiKeysUpdateCmd)
+	apiKeysCmd.AddCommand(apiKeysRotateCmd)
 	apiKeysCmd.AddCommand(apiKeysDeleteCmd)
 
 	rootCmd.AddCommand(apiKeysCmd)

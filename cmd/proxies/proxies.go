@@ -56,6 +56,14 @@ Examples:
 	RunE: runProxiesCreate,
 }
 
+var proxiesUpdateCmd = &cobra.Command{
+	Use:   "update <id>",
+	Short: "Rename a proxy configuration",
+	Long:  "Rename a proxy configuration. Only the name can be changed; recreate the proxy to change its type or config.",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runProxiesUpdate,
+}
+
 var proxiesDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete a proxy configuration",
@@ -66,7 +74,7 @@ var proxiesDeleteCmd = &cobra.Command{
 var proxiesCheckCmd = &cobra.Command{
 	Use:   "check <id>",
 	Short: "Run a health check on a proxy",
-	Long:  "Run a health check on a proxy to verify it's working and update its status.",
+	Long:  "Run a health check on a proxy to verify it's working and update its status. Optionally test against a specific public URL.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runProxiesCheck,
 }
@@ -76,6 +84,7 @@ func init() {
 	ProxiesCmd.AddCommand(proxiesListCmd)
 	ProxiesCmd.AddCommand(proxiesGetCmd)
 	ProxiesCmd.AddCommand(proxiesCreateCmd)
+	ProxiesCmd.AddCommand(proxiesUpdateCmd)
 	ProxiesCmd.AddCommand(proxiesDeleteCmd)
 	ProxiesCmd.AddCommand(proxiesCheckCmd)
 
@@ -109,9 +118,15 @@ func init() {
 	proxiesCreateCmd.Flags().String("password", "", "Password for proxy authentication")
 	proxiesCreateCmd.Flags().StringSlice("bypass-host", nil, "Hostname(s) to bypass proxy and connect directly (repeat or comma-separated)")
 
+	// Update flags
+	addJSONOutputFlag(proxiesUpdateCmd)
+	proxiesUpdateCmd.Flags().String("name", "", "New proxy name (required)")
+	_ = proxiesUpdateCmd.MarkFlagRequired("name")
+
 	// Delete flags
 	proxiesDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 
 	// Check flags
+	proxiesCheckCmd.Flags().String("url", "", "Optional public HTTP or HTTPS URL to test reachability against")
 	addJSONOutputFlag(proxiesCheckCmd)
 }

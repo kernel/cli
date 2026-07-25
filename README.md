@@ -122,10 +122,13 @@ kernel deploy index.ts -o json
 Commands with JSON output support:
 - **Browsers**: `create`, `list`, `get`, `view`
 - **Browser Pools**: `create`, `list`, `get`, `update`, `acquire`
-- **Profiles**: `create`, `list`, `get`
+- **Profiles**: `create`, `list`, `get`, `update`
 - **Extensions**: `upload`, `list`
-- **Proxies**: `create`, `list`, `get`
-- **API Keys**: `create`, `list`, `get`, `update`
+- **Proxies**: `create`, `list`, `get`, `update`, `check`
+- **API Keys**: `create`, `list`, `get`, `update`, `rotate`
+- **Auth Connections**: `timeline`
+- **Projects**: `update`
+- **Org**: `limits get/set`
 - **Apps**: `list`, `history`
 - **Deploy**: `deploy` (JSONL streaming), `history`
 - **Invoke**: `invoke` (JSONL streaming), `history`
@@ -237,6 +240,7 @@ Commands with JSON output support:
   - `--telemetry=all` - Enable telemetry for all categories
   - `--telemetry=off` - Disable telemetry
   - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`
+  - `--disable-default-proxy` - Disable the default stealth proxy so the browser connects directly; use `--disable-default-proxy=false` to re-enable it
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers curl <id> <url>` - Make HTTP requests through a browser session's Chrome network stack
   - `-X, --request <method>` - HTTP method (default: GET; defaults to POST when `--data` is set)
@@ -341,6 +345,7 @@ Per-category updates are partial — only categories you name are changed; other
   - `--timeout <seconds>` - Timeout in seconds
   - `--as-user <user>` - Run as user
   - `--as-root` - Run as root
+  - `--env <KEY=VALUE>` - Environment variable to set for the process (repeatable)
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers process spawn <id> [--] [command...]` - Execute a command asynchronously
   - `--command <cmd>` - Command to execute (optional; if omitted, trailing args are executed via /bin/bash -c)
@@ -349,6 +354,10 @@ Per-category updates are partial — only categories you name are changed; other
   - `--timeout <seconds>` - Timeout in seconds
   - `--as-user <user>` - Run as user
   - `--as-root` - Run as root
+  - `--env <KEY=VALUE>` - Environment variable to set for the process (repeatable)
+  - `--allocate-tty` - Allocate a pseudo-terminal (PTY) for interactive shells
+  - `--cols <n>` - Initial terminal columns (requires `--allocate-tty`)
+  - `--rows <n>` - Initial terminal rows (requires `--allocate-tty`)
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers process kill <id> <process-id>` - Send a signal to a process
   - `--signal <signal>` - Signal to send: TERM, KILL, INT, HUP (default: TERM)
@@ -452,6 +461,22 @@ Per-category updates are partial — only categories you name are changed; other
   - `--timeout <seconds>` - Maximum execution time in seconds (defaults server-side)
   - If `[code]` is omitted, code is read from stdin
 
+### Profiles
+
+- `kernel profiles update <id-or-name> --name <new-name>` - Rename a profile
+  - `--name <name>` - New unique profile name (required)
+  - `--output json`, `-o json` - Output raw JSON object
+- `kernel profiles download <id-or-name> --to <dir>` - Download a profile archive
+  - `--to <dir>` - Directory to extract the profile into (required)
+  - `--format <format>` - Archive format to request: `tar.zst` (compressed, default) or `tar` (decompressed server-side)
+
+### Projects
+
+- `kernel projects update <id-or-name>` - Update a project's name or status
+  - `--name <name>` - New project name (1-255 characters)
+  - `--status <status>` - New project status: `active` or `archived`
+  - `--output json`, `-o json` - Output raw JSON object
+
 ### Extension Management
 
 - `kernel extensions list` - List all uploaded extensions
@@ -492,8 +517,33 @@ Per-category updates are partial — only categories you name are changed; other
   - `--username <username>` - Username for proxy authentication (custom)
   - `--password <password>` - Password for proxy authentication (custom)
 
+- `kernel proxies update <id>` - Rename a proxy configuration (recreate the proxy to change its type or config)
+  - `--name <name>` - New proxy name (required)
+  - `--output json`, `-o json` - Output raw JSON object
+- `kernel proxies check <id>` - Run a health check on a proxy to verify it's working and update its status
+  - `--url <url>` - Optional public HTTP or HTTPS URL to test reachability against
+  - `--output json`, `-o json` - Output raw JSON object
 - `kernel proxies delete <id>` - Delete a proxy configuration
   - `-y, --yes` - Skip confirmation prompt
+
+### Auth Connections
+
+Managed auth connections (`kernel auth connections`). The commands below are new or gained new flags; run `kernel auth connections --help` for the full command list.
+
+- `kernel auth connections timeline <id>` - List the connection's login, reauth, and health-check events, most recent first
+  - `--type <type>` - Filter to a single event type: `login`, `reauth`, or `health_check`
+  - `--page <n>` - Page number (1-based, default: 1)
+  - `--per-page <n>` - Items per page (default: 20)
+  - `--output json`, `-o json` - Output raw JSON array
+- `kernel auth connections create` - New flag:
+  - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Default telemetry for this connection's browser sessions. Same semantics as `kernel browsers create`
+- `kernel auth connections update <id>` - New flag:
+  - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Update telemetry for future browser sessions
+- `kernel auth connections login <id>` - New flag:
+  - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Telemetry override for this login only, merged onto the connection's config
+- `kernel auth connections submit <id>` - New flags:
+  - `--field-value <id=value>` - Canonical field-id=value pair from the connection's `fields` list (repeatable); preferred over the legacy `--field`
+  - `--choice-id <id>` - Canonical choice ID from the connection's `choices` list
 
 ### Agent Auth
 
@@ -579,14 +629,29 @@ Automated authentication for web services. The `run` command orchestrates the fu
   - `--output json`, `-o json` - Output raw JSON array
 
 - `kernel api-keys get <id>` - Get an API key
+  - `--include-deleted` - Include soft-deleted API keys in the lookup
   - `--output json`, `-o json` - Output raw JSON object
 
 - `kernel api-keys update <id>` - Update an API key
   - `--name <name>` - New API key name
   - `--output json`, `-o json` - Output raw JSON object
 
+- `kernel api-keys rotate <id>` - Issue a replacement API key; the rotated key keeps working for a grace period (7 days by default) so callers can migrate
+  - `--days-to-expire <days>` - Lifetime in days for the new key (1-3650); omit to reuse the rotated key's lifetime
+  - `--expire-in-days <days>` - Grace period in days before the rotated key expires; `0` expires it immediately, omit for the default 7 days
+  - `-y, --yes` - Skip confirmation prompt
+  - `--output json`, `-o json` - Output raw JSON object, including the one-time plaintext key
+
 - `kernel api-keys delete <id>` - Delete an API key
   - `-y, --yes` - Skip confirmation prompt
+
+### Org
+
+- `kernel org limits get` - Show the organization's concurrency limit and the default per-project cap applied to projects without an explicit override
+  - `--output json`, `-o json` - Output raw JSON object
+- `kernel org limits set` - Set the default per-project concurrency cap applied to projects without an explicit override
+  - `--default-project-max-concurrent-sessions <n>` - Default maximum concurrent browsers for projects without an explicit override (`0` to remove the default)
+  - `--output json`, `-o json` - Output raw JSON object
 
 ## Examples
 

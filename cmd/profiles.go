@@ -28,7 +28,8 @@ type ProfilesService interface {
 	List(ctx context.Context, query kernel.ProfileListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.Profile], err error)
 	Delete(ctx context.Context, idOrName string, opts ...option.RequestOption) (err error)
 	New(ctx context.Context, body kernel.ProfileNewParams, opts ...option.RequestOption) (res *kernel.Profile, err error)
-	Download(ctx context.Context, idOrName string, opts ...option.RequestOption) (res *http.Response, err error)
+	Update(ctx context.Context, idOrName string, body kernel.ProfileUpdateParams, opts ...option.RequestOption) (res *kernel.Profile, err error)
+	Download(ctx context.Context, idOrName string, query kernel.ProfileDownloadParams, opts ...option.RequestOption) (res *http.Response, err error)
 }
 
 type ProfilesGetInput struct {
@@ -48,6 +49,12 @@ type ProfilesCreateInput struct {
 	Output string
 }
 
+type ProfilesUpdateInput struct {
+	Identifier string
+	Name       string
+	Output     string
+}
+
 type ProfilesDeleteInput struct {
 	Identifier  string
 	SkipConfirm bool
@@ -56,6 +63,7 @@ type ProfilesDeleteInput struct {
 type ProfilesDownloadInput struct {
 	Identifier string
 	To         string
+	Format     string
 }
 
 // ProfilesCmd handles profile operations independent of cobra.
@@ -253,12 +261,45 @@ func (p ProfilesCmd) Delete(ctx context.Context, in ProfilesDeleteInput) error {
 	return nil
 }
 
+func (p ProfilesCmd) Update(ctx context.Context, in ProfilesUpdateInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+	if strings.TrimSpace(in.Name) == "" {
+		return fmt.Errorf("--name is required")
+	}
+
+	profile, err := p.profiles.Update(ctx, in.Identifier, kernel.ProfileUpdateParams{
+		Name: in.Name,
+	})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(profile)
+	}
+
+	pterm.Success.Printf("Renamed profile %s to %s\n", profile.ID, profile.Name)
+	return nil
+}
+
 func (p ProfilesCmd) Download(ctx context.Context, in ProfilesDownloadInput) error {
 	if in.To == "" {
 		return fmt.Errorf("missing required --to <path> for extraction directory")
 	}
 
-	res, err := p.profiles.Download(ctx, in.Identifier)
+	format := in.Format
+	if format == "" {
+		format = string(kernel.ProfileDownloadParamsFormatTarZst)
+	}
+	if format != string(kernel.ProfileDownloadParamsFormatTarZst) && format != string(kernel.ProfileDownloadParamsFormatTar) {
+		return fmt.Errorf("invalid --format %q: must be one of tar.zst, tar", in.Format)
+	}
+
+	res, err := p.profiles.Download(ctx, in.Identifier, kernel.ProfileDownloadParams{
+		Format: kernel.ProfileDownloadParamsFormat(format),
+	})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -275,7 +316,7 @@ func (p ProfilesCmd) Download(ctx context.Context, in ProfilesDownloadInput) err
 		return fmt.Errorf("unexpected status %d from profile download: %s", res.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	if err := extractProfileArchive(res.Body, in.To); err != nil {
+	if err := extractProfileArchive(res.Body, in.To, format == string(kernel.ProfileDownloadParamsFormatTarZst)); err != nil {
 		return fmt.Errorf("extract profile archive: %w", err)
 	}
 
@@ -283,10 +324,11 @@ func (p ProfilesCmd) Download(ctx context.Context, in ProfilesDownloadInput) err
 	return nil
 }
 
-// extractProfileArchive streams a zstd-compressed tar archive into destDir.
+// extractProfileArchive streams a tar archive into destDir, decompressing it
+// first when compressed is true (the server's default tar.zst format).
 // Files and directories are created relative to destDir; symlinks and other
 // special entry types are skipped. Path-traversal entries are rejected.
-func extractProfileArchive(r io.Reader, destDir string) error {
+func extractProfileArchive(r io.Reader, destDir string, compressed bool) error {
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return fmt.Errorf("create destination: %w", err)
 	}
@@ -296,13 +338,16 @@ func extractProfileArchive(r io.Reader, destDir string) error {
 		return fmt.Errorf("resolve destination: %w", err)
 	}
 
-	decoder, err := zstd.NewReader(r)
-	if err != nil {
-		return fmt.Errorf("zstd init: %w", err)
+	if compressed {
+		decoder, err := zstd.NewReader(r)
+		if err != nil {
+			return fmt.Errorf("zstd init: %w", err)
+		}
+		defer decoder.Close()
+		r = decoder
 	}
-	defer decoder.Close()
 
-	tr := tar.NewReader(decoder)
+	tr := tar.NewReader(r)
 	for {
 		header, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -372,6 +417,14 @@ var profilesCreateCmd = &cobra.Command{
 	RunE:  runProfilesCreate,
 }
 
+var profilesUpdateCmd = &cobra.Command{
+	Use:   "update <id-or-name> --name <new-name>",
+	Short: "Rename a profile",
+	Long:  "Rename a profile. The new name must be unique within the project.",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runProfilesUpdate,
+}
+
 var profilesDeleteCmd = &cobra.Command{
 	Use:   "delete <id-or-name>",
 	Short: "Delete a profile by ID or name",
@@ -382,7 +435,7 @@ var profilesDeleteCmd = &cobra.Command{
 var profilesDownloadCmd = &cobra.Command{
 	Use:   "download <id-or-name> --to <dir>",
 	Short: "Download a profile and extract it to a directory",
-	Long:  "Download a profile and extract its zstd-compressed user-data tar archive into the directory given by --to. The directory is created if it does not exist.",
+	Long:  "Download a profile and extract its user-data tar archive into the directory given by --to. The directory is created if it does not exist. Archives are zstd-compressed by default; pass --format tar to have the server decompress them during download.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runProfilesDownload,
 }
@@ -391,6 +444,7 @@ func init() {
 	profilesCmd.AddCommand(profilesListCmd)
 	profilesCmd.AddCommand(profilesGetCmd)
 	profilesCmd.AddCommand(profilesCreateCmd)
+	profilesCmd.AddCommand(profilesUpdateCmd)
 	profilesCmd.AddCommand(profilesDeleteCmd)
 	profilesCmd.AddCommand(profilesDownloadCmd)
 
@@ -401,8 +455,12 @@ func init() {
 	addJSONOutputFlag(profilesGetCmd)
 	addJSONOutputFlag(profilesCreateCmd)
 	profilesCreateCmd.Flags().String("name", "", "Optional unique profile name")
+	addJSONOutputFlag(profilesUpdateCmd)
+	profilesUpdateCmd.Flags().String("name", "", "New unique profile name (required)")
+	_ = profilesUpdateCmd.MarkFlagRequired("name")
 	profilesDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 	profilesDownloadCmd.Flags().String("to", "", "Directory to extract the profile into (required)")
+	profilesDownloadCmd.Flags().String("format", "tar.zst", "Archive format to request: tar.zst (compressed, default) or tar (decompressed server-side)")
 	_ = profilesDownloadCmd.MarkFlagRequired("to")
 }
 
@@ -448,10 +506,20 @@ func runProfilesDelete(cmd *cobra.Command, args []string) error {
 	return p.Delete(cmd.Context(), ProfilesDeleteInput{Identifier: args[0], SkipConfirm: skip})
 }
 
+func runProfilesUpdate(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	name, _ := cmd.Flags().GetString("name")
+	out, _ := cmd.Flags().GetString("output")
+	svc := client.Profiles
+	p := ProfilesCmd{profiles: &svc}
+	return p.Update(cmd.Context(), ProfilesUpdateInput{Identifier: args[0], Name: name, Output: out})
+}
+
 func runProfilesDownload(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	to, _ := cmd.Flags().GetString("to")
+	format, _ := cmd.Flags().GetString("format")
 	svc := client.Profiles
 	p := ProfilesCmd{profiles: &svc}
-	return p.Download(cmd.Context(), ProfilesDownloadInput{Identifier: args[0], To: to})
+	return p.Download(cmd.Context(), ProfilesDownloadInput{Identifier: args[0], To: to, Format: format})
 }
