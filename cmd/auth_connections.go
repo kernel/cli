@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -811,11 +812,26 @@ func (c AuthConnectionCmd) Timeline(ctx context.Context, in AuthConnectionTimeli
 	}
 
 	if in.Output == "json" {
-		if len(events) == 0 {
-			fmt.Println("[]")
-			return nil
+		rawEvents := make([]json.RawMessage, 0, len(events))
+		for _, e := range events {
+			r := e.RawJSON()
+			if r == "" {
+				r = "{}"
+			}
+			rawEvents = append(rawEvents, json.RawMessage(r))
 		}
-		return util.PrintPrettyJSONSlice(events)
+		payload := struct {
+			Events  []json.RawMessage `json:"events"`
+			Page    int               `json:"page"`
+			PerPage int               `json:"per_page"`
+			HasMore bool              `json:"has_more"`
+		}{Events: rawEvents, Page: page, PerPage: perPage, HasMore: hasMore}
+		data, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
 	}
 
 	if len(events) == 0 {

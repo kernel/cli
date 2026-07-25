@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
@@ -147,6 +148,9 @@ func (c ProjectsCmd) Update(ctx context.Context, in ProjectsUpdateInput) error {
 
 	inner := kernel.UpdateProjectRequestParam{}
 	if in.NameSet {
+		if strings.TrimSpace(in.Name) == "" {
+			return fmt.Errorf("--name must not be empty")
+		}
 		inner.Name = param.NewOpt(in.Name)
 	}
 	if in.Status != "" {
