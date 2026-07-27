@@ -839,7 +839,7 @@ func (c AuthConnectionCmd) Timeline(ctx context.Context, in AuthConnectionTimeli
 		return nil
 	}
 
-	tableData := pterm.TableData{{"Timestamp", "Type", "Status", "Step", "Browser Session", "Details"}}
+	tableData := pterm.TableData{{"Timestamp", "Type", "Status", "Step", "Browser Session", "Telemetry", "Details"}}
 	for _, e := range events {
 		details := e.ErrorMessage
 		if details == "" {
@@ -848,12 +848,20 @@ func (c AuthConnectionCmd) Timeline(ctx context.Context, in AuthConnectionTimeli
 		if details == "" && e.PreviousStatus != "" {
 			details = fmt.Sprintf("%s -> %s", e.PreviousStatus, e.Status)
 		}
+		// Telemetry only means something when the event has a browser session
+		// whose events `kernel browsers telemetry` could fetch, and when the API
+		// actually reported the field.
+		telemetry := "-"
+		if e.BrowserSessionID != "" && e.JSON.TelemetryCaptured.Valid() {
+			telemetry = lo.Ternary(e.TelemetryCaptured, "yes", "no")
+		}
 		tableData = append(tableData, []string{
 			util.FormatLocal(e.Timestamp),
 			string(e.Type),
 			string(e.Status),
 			string(e.Step),
 			util.OrDash(e.BrowserSessionID),
+			telemetry,
 			util.OrDash(details),
 		})
 	}

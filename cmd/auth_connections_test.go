@@ -690,13 +690,23 @@ func TestSubmit_CanonicalAndLegacyAreMutuallyExclusive(t *testing.T) {
 func TestTimeline_RendersEventsAndPagination(t *testing.T) {
 	buf := capturePtermOutput(t)
 	var captured kernel.AuthConnectionTimelineParams
+	// Decoded from JSON so the telemetry_captured field registers as present;
+	// the CLI distinguishes "reported false" from "not reported at all".
+	var loginEvent kernel.ManagedAuthTimelineEvent
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"id": "e1",
+		"type": "login",
+		"status": "SUCCESS",
+		"browser_session_id": "browser_1",
+		"telemetry_captured": true
+	}`), &loginEvent))
 	fake := &FakeAuthConnectionService{
 		TimelineFunc: func(ctx context.Context, id string, query kernel.AuthConnectionTimelineParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ManagedAuthTimelineEvent], error) {
 			captured = query
 			// Return perPage+1 events so the CLI reports another page exists.
 			return &pagination.OffsetPagination[kernel.ManagedAuthTimelineEvent]{
 				Items: []kernel.ManagedAuthTimelineEvent{
-					{ID: "e1", Type: "login", Status: "SUCCESS", BrowserSessionID: "browser_1"},
+					loginEvent,
 					{ID: "e2", Type: "reauth", Status: "FAILED", ErrorMessage: "boom"},
 					{ID: "e3", Type: "health_check", Status: "SUCCESS"},
 				},
@@ -714,6 +724,9 @@ func TestTimeline_RendersEventsAndPagination(t *testing.T) {
 	out := buf.String()
 	assert.Contains(t, out, "browser_1")
 	assert.Contains(t, out, "boom")
+	// Telemetry capture is reported for events that have a browser session.
+	assert.Contains(t, out, "Telemetry")
+	assert.Regexp(t, `browser_1.*yes`, out)
 	// The third event is truncated off the page.
 	assert.NotContains(t, out, "health_check")
 	assert.Contains(t, out, "Has more: yes")
