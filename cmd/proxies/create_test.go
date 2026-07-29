@@ -3,11 +3,14 @@ package proxies
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestProxyCreate_Datacenter_Success(t *testing.T) {
@@ -223,6 +226,116 @@ func TestProxyCreate_Custom_Success(t *testing.T) {
 	output := buf.String()
 	assert.Contains(t, output, "Creating custom proxy")
 	assert.Contains(t, output, "Successfully created proxy")
+}
+
+const testCaBundlePEM = "-----BEGIN CERTIFICATE-----\nMIIBtestbundle\n-----END CERTIFICATE-----"
+
+func TestProxyCreate_Custom_CaBundleInline(t *testing.T) {
+	buf := captureOutput(t)
+
+	fake := &FakeProxyService{
+		NewFunc: func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error) {
+			customConfig := body.Config.OfCustom
+			assert.NotNil(t, customConfig)
+			assert.Equal(t, testCaBundlePEM, customConfig.CaBundle.Value)
+
+			resp := &kernel.ProxyNewResponse{
+				ID:   "custom-new",
+				Type: kernel.ProxyNewResponseTypeCustom,
+			}
+			resp.Config.HasCaBundle = true
+			return resp, nil
+		},
+	}
+
+	p := ProxyCmd{proxies: fake}
+	err := p.Create(context.Background(), ProxyCreateInput{
+		Type:     "custom",
+		Host:     "proxy.example.com",
+		Port:     8080,
+		CaBundle: testCaBundlePEM,
+	})
+
+	assert.NoError(t, err)
+	assert.Contains(t, buf.String(), "Has CA Bundle")
+}
+
+func TestProxyCreate_Custom_CaBundleFromFile(t *testing.T) {
+	captureOutput(t)
+
+	path := filepath.Join(t.TempDir(), "ca.pem")
+	// Trailing whitespace is trimmed before the bundle is sent.
+	require.NoError(t, os.WriteFile(path, []byte(testCaBundlePEM+"\n"), 0o600))
+
+	var sent string
+	fake := &FakeProxyService{
+		NewFunc: func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error) {
+			sent = body.Config.OfCustom.CaBundle.Value
+			return &kernel.ProxyNewResponse{ID: "custom-new", Type: kernel.ProxyNewResponseTypeCustom}, nil
+		},
+	}
+
+	p := ProxyCmd{proxies: fake}
+	err := p.Create(context.Background(), ProxyCreateInput{
+		Type:         "custom",
+		Host:         "proxy.example.com",
+		Port:         8080,
+		CaBundleFile: path,
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, testCaBundlePEM, sent)
+}
+
+func TestProxyCreate_Custom_CaBundleFileMissing(t *testing.T) {
+	captureOutput(t)
+
+	p := ProxyCmd{proxies: &FakeProxyService{}}
+	err := p.Create(context.Background(), ProxyCreateInput{
+		Type:         "custom",
+		Host:         "proxy.example.com",
+		Port:         8080,
+		CaBundleFile: filepath.Join(t.TempDir(), "does-not-exist.pem"),
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read CA bundle file")
+}
+
+func TestProxyCreate_Custom_CaBundleNotPEM(t *testing.T) {
+	captureOutput(t)
+
+	p := ProxyCmd{proxies: &FakeProxyService{}}
+	err := p.Create(context.Background(), ProxyCreateInput{
+		Type:     "custom",
+		Host:     "proxy.example.com",
+		Port:     8080,
+		CaBundle: "not a certificate",
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid CA bundle: expected PEM-encoded certificate data")
+}
+
+func TestProxyCreate_CaBundleIgnoredForNonCustom(t *testing.T) {
+	buf := captureOutput(t)
+
+	fake := &FakeProxyService{
+		NewFunc: func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error) {
+			assert.Nil(t, body.Config.OfCustom)
+			return &kernel.ProxyNewResponse{ID: "dc-new", Type: kernel.ProxyNewResponseTypeDatacenter}, nil
+		},
+	}
+
+	p := ProxyCmd{proxies: fake}
+	err := p.Create(context.Background(), ProxyCreateInput{
+		Type:     "datacenter",
+		Country:  "US",
+		CaBundle: testCaBundlePEM,
+	})
+
+	assert.NoError(t, err)
+	assert.Contains(t, buf.String(), "--ca-bundle is only supported for custom proxies")
 }
 
 func TestProxyCreate_Custom_MissingHost(t *testing.T) {

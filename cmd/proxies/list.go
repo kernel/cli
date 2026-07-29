@@ -141,7 +141,11 @@ func formatProxyConfig(proxy *kernel.ProxyListResponse) string {
 			if config.Username != "" {
 				auth = fmt.Sprintf(", Auth: %s", config.Username)
 			}
-			return fmt.Sprintf("%s:%d%s", config.Host, config.Port, auth)
+			caBundle := ""
+			if config.HasCaBundle {
+				caBundle = ", CA bundle"
+			}
+			return fmt.Sprintf("%s:%d%s%s", config.Host, config.Port, auth, caBundle)
 		}
 	}
 	return "-"

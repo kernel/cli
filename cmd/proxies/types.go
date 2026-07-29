@@ -56,7 +56,10 @@ type ProxyCreateInput struct {
 	Port     int
 	Username string
 	Password string
-	Output   string
+	// PEM-encoded CA bundle for MITM proxies, provided inline or read from a file.
+	CaBundle     string
+	CaBundleFile string
+	Output       string
 }
 
 type ProxyUpdateInput struct {

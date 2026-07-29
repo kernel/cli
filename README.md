@@ -873,6 +873,9 @@ kernel proxies create --type datacenter --country US --protocol http --name "US 
 # Create a custom proxy
 kernel proxies create --type custom --host proxy.example.com --port 8080 --username myuser --password mypass --name "My Custom Proxy"
 
+# Create a custom TLS-terminating (MITM) proxy, trusting its CA bundle in the browser
+kernel proxies create --type custom --host proxy.example.com --port 8080 --ca-bundle-file ./mitm-ca.pem --name "MITM Proxy"
+
 # Create a residential proxy with location and OS
 kernel proxies create --type residential --country US --city sanfrancisco --state CA --zip 94107 --asn AS15169 --os windows --name "SF Residential"
 

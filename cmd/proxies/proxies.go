@@ -51,6 +51,9 @@ Examples:
   # Create a residential proxy with location
   kernel proxies create --type residential --country US --city sanfrancisco --state CA
 
+  # Create a custom TLS-terminating (MITM) proxy with its CA bundle
+  kernel proxies create --type custom --host proxy.example.com --port 8080 --ca-bundle-file ./mitm-ca.pem
+
   # Create a proxy with bypass hosts
   kernel proxies create --type datacenter --country US --bypass-host localhost,internal.service.local`,
 	RunE: runProxiesCreate,
@@ -116,6 +119,9 @@ func init() {
 	proxiesCreateCmd.Flags().Int("port", 0, "Proxy port")
 	proxiesCreateCmd.Flags().String("username", "", "Username for proxy authentication")
 	proxiesCreateCmd.Flags().String("password", "", "Password for proxy authentication")
+	proxiesCreateCmd.Flags().String("ca-bundle", "", "PEM-encoded CA certificate bundle for a TLS-terminating (MITM) custom proxy")
+	proxiesCreateCmd.Flags().String("ca-bundle-file", "", "Read the PEM-encoded CA certificate bundle from a file (use '-' for stdin)")
+	proxiesCreateCmd.MarkFlagsMutuallyExclusive("ca-bundle", "ca-bundle-file")
 	proxiesCreateCmd.Flags().StringSlice("bypass-host", nil, "Hostname(s) to bypass proxy and connect directly (repeat or comma-separated)")
 
 	// Update flags

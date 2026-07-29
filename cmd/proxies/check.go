@@ -148,6 +148,11 @@ func getProxyCheckConfigRows(proxy *kernel.ProxyCheckResponse) [][]string {
 			hasPassword = "Yes"
 		}
 		rows = append(rows, []string{"Has Password", hasPassword})
+		hasCaBundle := "No"
+		if config.HasCaBundle {
+			hasCaBundle = "Yes"
+		}
+		rows = append(rows, []string{"Has CA Bundle", hasCaBundle})
 	}
 
 	return rows
