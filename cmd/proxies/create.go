@@ -3,6 +3,7 @@ package proxies
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/kernel/cli/pkg/table"
@@ -33,13 +34,13 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 	default:
 		return fmt.Errorf("invalid proxy type: %s", in.Type)
 	}
-
-	params := kernel.ProxyNewParams{
-		Type: proxyType,
+	if in.Name == "" {
+		return fmt.Errorf("--name is required")
 	}
 
-	if in.Name != "" {
-		params.Name = kernel.Opt(in.Name)
+	params := kernel.ProxyNewParams{
+		Name: kernel.Opt(in.Name),
+		Type: proxyType,
 	}
 	if len(in.BypassHosts) > 0 {
 		params.BypassHosts = normalizeBypassHosts(in.BypassHosts)
@@ -143,6 +144,16 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 		if in.Password != "" {
 			config.Password = kernel.Opt(in.Password)
 		}
+		if in.CaBundleFile != "" {
+			caBundle, err := os.ReadFile(in.CaBundleFile)
+			if err != nil {
+				return fmt.Errorf("failed to read CA bundle file %q: %w", in.CaBundleFile, err)
+			}
+			if len(caBundle) == 0 {
+				return fmt.Errorf("CA bundle file %q is empty", in.CaBundleFile)
+			}
+			config.CaBundle = kernel.Opt(string(caBundle))
+		}
 		params.Config = kernel.ProxyNewParamsConfigUnion{
 			OfCustom: &config,
 		}
@@ -216,6 +227,7 @@ func runProxiesCreate(cmd *cobra.Command, args []string) error {
 	port, _ := cmd.Flags().GetInt("port")
 	username, _ := cmd.Flags().GetString("username")
 	password, _ := cmd.Flags().GetString("password")
+	caBundle, _ := cmd.Flags().GetString("ca-bundle")
 	bypassHosts, _ := cmd.Flags().GetStringSlice("bypass-host")
 
 	output, _ := cmd.Flags().GetString("output")
@@ -223,21 +235,22 @@ func runProxiesCreate(cmd *cobra.Command, args []string) error {
 	svc := client.Proxies
 	p := ProxyCmd{proxies: &svc}
 	return p.Create(cmd.Context(), ProxyCreateInput{
-		Name:        name,
-		Type:        proxyType,
-		Protocol:    protocol,
-		BypassHosts: bypassHosts,
-		Country:     country,
-		City:        city,
-		State:       state,
-		Zip:         zip,
-		ASN:         asn,
-		OS:          os,
-		Host:        host,
-		Port:        port,
-		Username:    username,
-		Password:    password,
-		Output:      output,
+		Name:         name,
+		Type:         proxyType,
+		Protocol:     protocol,
+		BypassHosts:  bypassHosts,
+		Country:      country,
+		City:         city,
+		State:        state,
+		Zip:          zip,
+		ASN:          asn,
+		OS:           os,
+		Host:         host,
+		Port:         port,
+		Username:     username,
+		Password:     password,
+		CaBundleFile: caBundle,
+		Output:       output,
 	})
 }
 

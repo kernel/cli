@@ -46,13 +46,16 @@ Examples:
   kernel proxies create --type datacenter --country US --name "US Datacenter"
 
   # Create a custom proxy
-  kernel proxies create --type custom --host proxy.example.com --port 8080 --username myuser --password mypass
+  kernel proxies create --type custom --host proxy.example.com --port 8080 --username myuser --password mypass --name "My Custom Proxy"
+
+  # Create a custom TLS-terminating proxy with a CA bundle
+  kernel proxies create --type custom --host proxy.example.com --port 8080 --ca-bundle ./proxy-ca.pem --name "My TLS Proxy"
 
   # Create a residential proxy with location
-  kernel proxies create --type residential --country US --city sanfrancisco --state CA
+  kernel proxies create --type residential --country US --city sanfrancisco --state CA --name "SF Residential"
 
   # Create a proxy with bypass hosts
-  kernel proxies create --type datacenter --country US --bypass-host localhost,internal.service.local`,
+  kernel proxies create --type datacenter --country US --bypass-host localhost,internal.service.local --name "Internal Services"`,
 	RunE: runProxiesCreate,
 }
 
@@ -96,7 +99,8 @@ func init() {
 	addJSONOutputFlag(proxiesCreateCmd)
 
 	// Add flags for create command
-	proxiesCreateCmd.Flags().String("name", "", "Proxy configuration name")
+	proxiesCreateCmd.Flags().String("name", "", "Proxy configuration name (required)")
+	_ = proxiesCreateCmd.MarkFlagRequired("name")
 	proxiesCreateCmd.Flags().String("type", "", "Proxy type (datacenter|isp|residential|mobile|custom)")
 	_ = proxiesCreateCmd.MarkFlagRequired("type")
 	proxiesCreateCmd.Flags().String("protocol", "https", "Protocol to use for the proxy connection (http|https)")
@@ -116,6 +120,7 @@ func init() {
 	proxiesCreateCmd.Flags().Int("port", 0, "Proxy port")
 	proxiesCreateCmd.Flags().String("username", "", "Username for proxy authentication")
 	proxiesCreateCmd.Flags().String("password", "", "Password for proxy authentication")
+	proxiesCreateCmd.Flags().String("ca-bundle", "", "Path to a PEM-encoded CA certificate bundle for a TLS-terminating custom proxy")
 	proxiesCreateCmd.Flags().StringSlice("bypass-host", nil, "Hostname(s) to bypass proxy and connect directly (repeat or comma-separated)")
 
 	// Update flags

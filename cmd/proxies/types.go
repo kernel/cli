@@ -52,11 +52,12 @@ type ProxyCreateInput struct {
 	ASN   string
 	OS    string
 	// Custom proxy config
-	Host     string
-	Port     int
-	Username string
-	Password string
-	Output   string
+	Host         string
+	Port         int
+	Username     string
+	Password     string
+	CaBundleFile string
+	Output       string
 }
 
 type ProxyUpdateInput struct {
