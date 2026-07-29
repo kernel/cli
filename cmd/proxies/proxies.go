@@ -48,6 +48,9 @@ Examples:
   # Create a custom proxy
   kernel proxies create --type custom --host proxy.example.com --port 8080 --username myuser --password mypass
 
+  # Create a custom TLS-terminating proxy with a CA bundle
+  kernel proxies create --type custom --host proxy.example.com --port 8080 --ca-bundle ./proxy-ca.pem
+
   # Create a residential proxy with location
   kernel proxies create --type residential --country US --city sanfrancisco --state CA
 
@@ -116,6 +119,7 @@ func init() {
 	proxiesCreateCmd.Flags().Int("port", 0, "Proxy port")
 	proxiesCreateCmd.Flags().String("username", "", "Username for proxy authentication")
 	proxiesCreateCmd.Flags().String("password", "", "Password for proxy authentication")
+	proxiesCreateCmd.Flags().String("ca-bundle", "", "Path to a PEM-encoded CA certificate bundle for a TLS-terminating custom proxy")
 	proxiesCreateCmd.Flags().StringSlice("bypass-host", nil, "Hostname(s) to bypass proxy and connect directly (repeat or comma-separated)")
 
 	// Update flags
