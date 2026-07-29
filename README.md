@@ -503,7 +503,7 @@ Per-category updates are partial — only categories you name are changed; other
 - `kernel proxies create` - Create a new proxy configuration
   - `--output json`, `-o json` - Output raw JSON object
 
-  - `--name <name>` - Proxy configuration name
+  - `--name <name>` - Proxy configuration name (required)
   - `--type <type>` - Proxy type: datacenter, isp, residential, mobile, custom (required)
   - `--protocol <http|https>` - Protocol to use (default: https)
   - `--country <code>` - ISO 3166 country code or "EU" (location-based types)

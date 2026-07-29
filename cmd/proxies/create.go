@@ -34,13 +34,13 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 	default:
 		return fmt.Errorf("invalid proxy type: %s", in.Type)
 	}
-
-	params := kernel.ProxyNewParams{
-		Type: proxyType,
+	if in.Name == "" {
+		return fmt.Errorf("--name is required")
 	}
 
-	if in.Name != "" {
-		params.Name = kernel.Opt(in.Name)
+	params := kernel.ProxyNewParams{
+		Name: kernel.Opt(in.Name),
+		Type: proxyType,
 	}
 	if len(in.BypassHosts) > 0 {
 		params.BypassHosts = normalizeBypassHosts(in.BypassHosts)

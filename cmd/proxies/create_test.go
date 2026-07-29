@@ -136,6 +136,7 @@ func TestProxyCreate_Residential_CityWithoutCountry(t *testing.T) {
 
 	p := ProxyCmd{proxies: fake}
 	err := p.Create(context.Background(), ProxyCreateInput{
+		Name: "Residential Proxy",
 		Type: "residential",
 		City: "sanfrancisco",
 		// Missing country
@@ -150,12 +151,23 @@ func TestProxyCreate_Residential_InvalidOS(t *testing.T) {
 
 	p := ProxyCmd{proxies: fake}
 	err := p.Create(context.Background(), ProxyCreateInput{
+		Name: "Residential Proxy",
 		Type: "residential",
 		OS:   "linux", // Invalid OS
 	})
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid OS value: linux (must be windows, macos, or android)")
+}
+
+func TestProxyCreate_MissingName(t *testing.T) {
+	p := ProxyCmd{proxies: &FakeProxyService{}}
+	err := p.Create(context.Background(), ProxyCreateInput{
+		Type:    "datacenter",
+		Country: "US",
+	})
+
+	assert.EqualError(t, err, "--name is required")
 }
 
 func TestProxyCreate_Mobile_Success(t *testing.T) {
@@ -245,6 +257,7 @@ func TestProxyCreate_Custom_WithCaBundle(t *testing.T) {
 	}
 
 	err := ProxyCmd{proxies: fake}.Create(context.Background(), ProxyCreateInput{
+		Name:         "Custom Proxy",
 		Type:         "custom",
 		Host:         "proxy.example.com",
 		Port:         8080,
@@ -257,6 +270,7 @@ func TestProxyCreate_Custom_WithCaBundle(t *testing.T) {
 func TestProxyCreate_Custom_CaBundleFileReadError(t *testing.T) {
 	p := ProxyCmd{proxies: &FakeProxyService{}}
 	err := p.Create(context.Background(), ProxyCreateInput{
+		Name:         "Custom Proxy",
 		Type:         "custom",
 		Host:         "proxy.example.com",
 		Port:         8080,
@@ -273,6 +287,7 @@ func TestProxyCreate_Custom_EmptyCaBundleFile(t *testing.T) {
 
 	p := ProxyCmd{proxies: &FakeProxyService{}}
 	err := p.Create(context.Background(), ProxyCreateInput{
+		Name:         "Custom Proxy",
 		Type:         "custom",
 		Host:         "proxy.example.com",
 		Port:         8080,
@@ -287,6 +302,7 @@ func TestProxyCreate_Custom_MissingHost(t *testing.T) {
 
 	p := ProxyCmd{proxies: fake}
 	err := p.Create(context.Background(), ProxyCreateInput{
+		Name: "Custom Proxy",
 		Type: "custom",
 		Port: 8080,
 		// Missing required host
@@ -301,6 +317,7 @@ func TestProxyCreate_Custom_MissingPort(t *testing.T) {
 
 	p := ProxyCmd{proxies: fake}
 	err := p.Create(context.Background(), ProxyCreateInput{
+		Name: "Custom Proxy",
 		Type: "custom",
 		Host: "proxy.example.com",
 		// Missing required port (will be 0)
@@ -346,6 +363,7 @@ func TestProxyCreate_Protocol_Valid(t *testing.T) {
 
 			p := ProxyCmd{proxies: fake}
 			err := p.Create(context.Background(), ProxyCreateInput{
+				Name:     "Test Proxy",
 				Type:     "datacenter",
 				Country:  "US",
 				Protocol: tt.protocol,
@@ -360,6 +378,7 @@ func TestProxyCreate_Protocol_Invalid(t *testing.T) {
 	fake := &FakeProxyService{}
 	p := ProxyCmd{proxies: fake}
 	err := p.Create(context.Background(), ProxyCreateInput{
+		Name:     "Test Proxy",
 		Type:     "datacenter",
 		Country:  "US",
 		Protocol: "ftp",
@@ -382,6 +401,7 @@ func TestProxyCreate_BypassHosts_Normalized(t *testing.T) {
 
 	p := ProxyCmd{proxies: fake}
 	err := p.Create(context.Background(), ProxyCreateInput{
+		Name:        "Test Proxy",
 		Type:        "datacenter",
 		Country:     "US",
 		BypassHosts: []string{" localhost ", "", "internal.service.local"},
