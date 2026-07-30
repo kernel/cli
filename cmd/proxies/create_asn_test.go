@@ -19,7 +19,9 @@ func TestProxyCreate_ISP_SendsASN(t *testing.T) {
 			called = true
 			ispConfig := body.Config.OfIsp
 			require.NotNil(t, ispConfig)
-			assert.Equal(t, "AS6079", ispConfig.Asn.Value)
+			extras := ispConfig.ExtraFields()
+			assert.Contains(t, extras, "asn")
+			assert.Equal(t, "AS6079", extras["asn"])
 
 			return &kernel.ProxyNewResponse{ID: "isp-new", Name: "RCN ISP", Type: kernel.ProxyNewResponseTypeIsp}, nil
 		},
@@ -45,7 +47,7 @@ func TestProxyCreate_ISP_OmitsEmptyASN(t *testing.T) {
 		NewFunc: func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error) {
 			ispConfig := body.Config.OfIsp
 			require.NotNil(t, ispConfig)
-			assert.False(t, ispConfig.Asn.Valid(), "asn should be absent when not requested")
+			assert.NotContains(t, ispConfig.ExtraFields(), "asn", "asn should be absent when not requested")
 
 			return &kernel.ProxyNewResponse{ID: "isp-new", Name: "Any ISP", Type: kernel.ProxyNewResponseTypeIsp}, nil
 		},

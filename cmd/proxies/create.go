@@ -65,8 +65,10 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 		if in.Country != "" {
 			config.Country = kernel.Opt(in.Country)
 		}
+		// The API accepts asn for isp configs but the SDK has no typed field for it yet,
+		// so send it as an extra field until the SDK catches up.
 		if in.ASN != "" {
-			config.Asn = kernel.Opt(in.ASN)
+			config.SetExtraFields(map[string]any{"asn": in.ASN})
 		}
 		params.Config = kernel.ProxyNewParamsConfigUnion{
 			OfIsp: &config,
