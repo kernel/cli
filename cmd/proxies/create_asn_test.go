@@ -2,6 +2,7 @@ package proxies
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/kernel/kernel-go-sdk"
@@ -10,6 +11,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The ASN currently travels as an extra field rather than a generated one, so assert on
+// the serialized request: that is what the API sees, and it stays valid once the field
+// becomes typed.
+func ispConfigJSON(t *testing.T, body kernel.ProxyNewParams) map[string]any {
+	t.Helper()
+
+	raw, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	var decoded struct {
+		Config map[string]any `json:"config"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	return decoded.Config
+}
+
 func TestProxyCreate_ISP_SendsASN(t *testing.T) {
 	captureOutput(t)
 
@@ -17,9 +34,7 @@ func TestProxyCreate_ISP_SendsASN(t *testing.T) {
 	fake := &FakeProxyService{
 		NewFunc: func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error) {
 			called = true
-			ispConfig := body.Config.OfIsp
-			require.NotNil(t, ispConfig)
-			assert.Equal(t, "AS6079", ispConfig.Asn.Value)
+			assert.Equal(t, "AS6079", ispConfigJSON(t, body)["asn"])
 
 			return &kernel.ProxyNewResponse{ID: "isp-new", Name: "RCN ISP", Type: kernel.ProxyNewResponseTypeIsp}, nil
 		},
@@ -36,6 +51,29 @@ func TestProxyCreate_ISP_SendsASN(t *testing.T) {
 	assert.True(t, called, "expected the create request to be sent")
 }
 
+func TestProxyCreate_ISP_SendsASNAlongsideCountry(t *testing.T) {
+	captureOutput(t)
+
+	fake := &FakeProxyService{
+		NewFunc: func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error) {
+			config := ispConfigJSON(t, body)
+			assert.Equal(t, "AS6079", config["asn"])
+			assert.Equal(t, "US", config["country"], "the extra field must not displace country")
+
+			return &kernel.ProxyNewResponse{ID: "isp-new", Name: "RCN ISP", Type: kernel.ProxyNewResponseTypeIsp}, nil
+		},
+	}
+
+	p := ProxyCmd{proxies: fake}
+	err := p.Create(context.Background(), ProxyCreateInput{
+		Name:    "RCN ISP",
+		Type:    "isp",
+		Country: "US",
+		ASN:     "AS6079",
+	})
+	require.NoError(t, err)
+}
+
 // Omitting --asn must not start sending an empty ASN, which the API would reject as
 // malformed rather than treating as "no preference".
 func TestProxyCreate_ISP_OmitsEmptyASN(t *testing.T) {
@@ -43,9 +81,8 @@ func TestProxyCreate_ISP_OmitsEmptyASN(t *testing.T) {
 
 	fake := &FakeProxyService{
 		NewFunc: func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error) {
-			ispConfig := body.Config.OfIsp
-			require.NotNil(t, ispConfig)
-			assert.False(t, ispConfig.Asn.Valid(), "asn should be absent when not requested")
+			_, present := ispConfigJSON(t, body)["asn"]
+			assert.False(t, present, "asn should be absent when not requested")
 
 			return &kernel.ProxyNewResponse{ID: "isp-new", Name: "Any ISP", Type: kernel.ProxyNewResponseTypeIsp}, nil
 		},
