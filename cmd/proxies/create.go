@@ -49,6 +49,9 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 	// Build config based on type
 	switch proxyType {
 	case kernel.ProxyNewParamsTypeDatacenter:
+		if in.ASN != "" {
+			return fmt.Errorf("--asn is not supported for datacenter proxies")
+		}
 		config := kernel.ProxyNewParamsConfigDatacenter{}
 		if in.Country != "" {
 			config.Country = kernel.Opt(in.Country)
@@ -61,6 +64,9 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 		config := kernel.ProxyNewParamsConfigIsp{}
 		if in.Country != "" {
 			config.Country = kernel.Opt(in.Country)
+		}
+		if in.ASN != "" {
+			config.Asn = kernel.Opt(in.ASN)
 		}
 		params.Config = kernel.ProxyNewParamsConfigUnion{
 			OfIsp: &config,
@@ -109,8 +115,11 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 		if in.City != "" && in.Country == "" {
 			return fmt.Errorf("--country is required when --city is specified")
 		}
-		if in.Zip != "" || in.ASN != "" {
-			pterm.Warning.Println("--zip and --asn are not supported for mobile proxies and will be ignored")
+		if in.Zip != "" {
+			return fmt.Errorf("--zip is not supported for mobile proxies")
+		}
+		if in.ASN != "" {
+			return fmt.Errorf("--asn is not supported for mobile proxies")
 		}
 
 		if in.Country != "" {
@@ -127,6 +136,9 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 		}
 
 	case kernel.ProxyNewParamsTypeCustom:
+		if in.ASN != "" {
+			return fmt.Errorf("--asn is not supported for custom proxies; the upstream proxy determines the egress network")
+		}
 		if in.Host == "" {
 			return fmt.Errorf("--host is required for custom proxy type")
 		}

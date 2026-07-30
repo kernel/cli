@@ -110,7 +110,7 @@ func init() {
 	proxiesCreateCmd.Flags().String("city", "", "City name (no spaces, e.g. sanfrancisco)")
 	proxiesCreateCmd.Flags().String("state", "", "Two-letter state code")
 	proxiesCreateCmd.Flags().String("zip", "", "US ZIP code")
-	proxiesCreateCmd.Flags().String("asn", "", "Autonomous system number (e.g. AS15169)")
+	proxiesCreateCmd.Flags().String("asn", "", "Autonomous system number, e.g. AS6079 (isp, residential)")
 
 	// OS flag (residential)
 	proxiesCreateCmd.Flags().String("os", "", "Operating system (windows|macos|android)")
