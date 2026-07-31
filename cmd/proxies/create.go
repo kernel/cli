@@ -3,7 +3,6 @@ package proxies
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
@@ -35,13 +34,13 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 	default:
 		return fmt.Errorf("invalid proxy type: %s", in.Type)
 	}
-
-	params := kernel.ProxyNewParams{
-		Type: proxyType,
+	if in.Name == "" {
+		return fmt.Errorf("--name is required")
 	}
 
-	if in.Name != "" {
-		params.Name = kernel.Opt(in.Name)
+	params := kernel.ProxyNewParams{
+		Name: kernel.Opt(in.Name),
+		Type: proxyType,
 	}
 	if len(in.BypassHosts) > 0 {
 		params.BypassHosts = normalizeBypassHosts(in.BypassHosts)
@@ -150,8 +149,15 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 		if in.Password != "" {
 			config.Password = kernel.Opt(in.Password)
 		}
-		if caBundle != "" {
-			config.CaBundle = kernel.Opt(caBundle)
+		if in.CaBundleFile != "" {
+			caBundle, err := os.ReadFile(in.CaBundleFile)
+			if err != nil {
+				return fmt.Errorf("failed to read CA bundle file %q: %w", in.CaBundleFile, err)
+			}
+			if len(caBundle) == 0 {
+				return fmt.Errorf("CA bundle file %q is empty", in.CaBundleFile)
+			}
+			config.CaBundle = kernel.Opt(string(caBundle))
 		}
 		params.Config = kernel.ProxyNewParamsConfigUnion{
 			OfCustom: &config,
@@ -236,7 +242,6 @@ func runProxiesCreate(cmd *cobra.Command, args []string) error {
 	username, _ := cmd.Flags().GetString("username")
 	password, _ := cmd.Flags().GetString("password")
 	caBundle, _ := cmd.Flags().GetString("ca-bundle")
-	caBundleFile, _ := cmd.Flags().GetString("ca-bundle-file")
 	bypassHosts, _ := cmd.Flags().GetStringSlice("bypass-host")
 
 	output, _ := cmd.Flags().GetString("output")
@@ -258,8 +263,7 @@ func runProxiesCreate(cmd *cobra.Command, args []string) error {
 		Port:         port,
 		Username:     username,
 		Password:     password,
-		CaBundle:     caBundle,
-		CaBundleFile: caBundleFile,
+		CaBundleFile: caBundle,
 		Output:       output,
 	})
 }

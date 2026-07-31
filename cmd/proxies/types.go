@@ -52,12 +52,10 @@ type ProxyCreateInput struct {
 	ASN   string
 	OS    string
 	// Custom proxy config
-	Host     string
-	Port     int
-	Username string
-	Password string
-	// PEM-encoded CA bundle for MITM proxies, provided inline or read from a file.
-	CaBundle     string
+	Host         string
+	Port         int
+	Username     string
+	Password     string
 	CaBundleFile string
 	Output       string
 }

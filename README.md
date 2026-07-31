@@ -503,7 +503,7 @@ Per-category updates are partial — only categories you name are changed; other
 - `kernel proxies create` - Create a new proxy configuration
   - `--output json`, `-o json` - Output raw JSON object
 
-  - `--name <name>` - Proxy configuration name
+  - `--name <name>` - Proxy configuration name (required)
   - `--type <type>` - Proxy type: datacenter, isp, residential, mobile, custom (required)
   - `--protocol <http|https>` - Protocol to use (default: https)
   - `--country <code>` - ISO 3166 country code or "EU" (location-based types)
@@ -516,6 +516,7 @@ Per-category updates are partial — only categories you name are changed; other
   - `--port <port>` - Proxy port (custom; required)
   - `--username <username>` - Username for proxy authentication (custom)
   - `--password <password>` - Password for proxy authentication (custom)
+  - `--ca-bundle <path>` - Path to a PEM-encoded CA certificate bundle (custom TLS-terminating proxies)
 
 - `kernel proxies update <id>` - Rename a proxy configuration (recreate the proxy to change its type or config)
   - `--name <name>` - New proxy name (required)
@@ -873,8 +874,8 @@ kernel proxies create --type datacenter --country US --protocol http --name "US 
 # Create a custom proxy
 kernel proxies create --type custom --host proxy.example.com --port 8080 --username myuser --password mypass --name "My Custom Proxy"
 
-# Create a custom TLS-terminating (MITM) proxy, trusting its CA bundle in the browser
-kernel proxies create --type custom --host proxy.example.com --port 8080 --ca-bundle-file ./mitm-ca.pem --name "MITM Proxy"
+# Create a custom TLS-terminating proxy with a CA bundle
+kernel proxies create --type custom --host proxy.example.com --port 8080 --ca-bundle ./proxy-ca.pem --name "My TLS Proxy"
 
 # Create a residential proxy with location and OS
 kernel proxies create --type residential --country US --city sanfrancisco --state CA --zip 94107 --asn AS15169 --os windows --name "SF Residential"

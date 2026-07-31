@@ -136,6 +136,7 @@ func TestProxyCreate_Residential_CityWithoutCountry(t *testing.T) {
 
 	p := ProxyCmd{proxies: fake}
 	err := p.Create(context.Background(), ProxyCreateInput{
+		Name: "Residential Proxy",
 		Type: "residential",
 		City: "sanfrancisco",
 		// Missing country
@@ -150,12 +151,23 @@ func TestProxyCreate_Residential_InvalidOS(t *testing.T) {
 
 	p := ProxyCmd{proxies: fake}
 	err := p.Create(context.Background(), ProxyCreateInput{
+		Name: "Residential Proxy",
 		Type: "residential",
 		OS:   "linux", // Invalid OS
 	})
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid OS value: linux (must be windows, macos, or android)")
+}
+
+func TestProxyCreate_MissingName(t *testing.T) {
+	p := ProxyCmd{proxies: &FakeProxyService{}}
+	err := p.Create(context.Background(), ProxyCreateInput{
+		Type:    "datacenter",
+		Country: "US",
+	})
+
+	assert.EqualError(t, err, "--name is required")
 }
 
 func TestProxyCreate_Mobile_Success(t *testing.T) {
@@ -228,114 +240,61 @@ func TestProxyCreate_Custom_Success(t *testing.T) {
 	assert.Contains(t, output, "Successfully created proxy")
 }
 
-const testCaBundlePEM = "-----BEGIN CERTIFICATE-----\nMIIBtestbundle\n-----END CERTIFICATE-----"
-
-func TestProxyCreate_Custom_CaBundleInline(t *testing.T) {
-	buf := captureOutput(t)
+func TestProxyCreate_Custom_WithCaBundle(t *testing.T) {
+	caBundle := "-----BEGIN CERTIFICATE-----\ntest certificate\n-----END CERTIFICATE-----\n"
+	caBundlePath := filepath.Join(t.TempDir(), "proxy-ca.pem")
+	require.NoError(t, os.WriteFile(caBundlePath, []byte(caBundle), 0o600))
 
 	fake := &FakeProxyService{
 		NewFunc: func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error) {
 			customConfig := body.Config.OfCustom
 			assert.NotNil(t, customConfig)
-			assert.Equal(t, testCaBundlePEM, customConfig.CaBundle.Value)
+			assert.True(t, customConfig.CaBundle.Valid())
+			assert.Equal(t, caBundle, customConfig.CaBundle.Value)
 
-			resp := &kernel.ProxyNewResponse{
-				ID:   "custom-new",
-				Type: kernel.ProxyNewResponseTypeCustom,
-			}
-			resp.Config.HasCaBundle = true
-			return resp, nil
+			return &kernel.ProxyNewResponse{ID: "custom-ca-new", Type: kernel.ProxyNewResponseTypeCustom}, nil
 		},
 	}
 
-	p := ProxyCmd{proxies: fake}
-	err := p.Create(context.Background(), ProxyCreateInput{
-		Type:     "custom",
-		Host:     "proxy.example.com",
-		Port:     8080,
-		CaBundle: testCaBundlePEM,
-	})
-
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "Has CA Bundle")
-}
-
-func TestProxyCreate_Custom_CaBundleFromFile(t *testing.T) {
-	captureOutput(t)
-
-	path := filepath.Join(t.TempDir(), "ca.pem")
-	// Trailing whitespace is trimmed before the bundle is sent.
-	require.NoError(t, os.WriteFile(path, []byte(testCaBundlePEM+"\n"), 0o600))
-
-	var sent string
-	fake := &FakeProxyService{
-		NewFunc: func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error) {
-			sent = body.Config.OfCustom.CaBundle.Value
-			return &kernel.ProxyNewResponse{ID: "custom-new", Type: kernel.ProxyNewResponseTypeCustom}, nil
-		},
-	}
-
-	p := ProxyCmd{proxies: fake}
-	err := p.Create(context.Background(), ProxyCreateInput{
+	err := ProxyCmd{proxies: fake}.Create(context.Background(), ProxyCreateInput{
+		Name:         "Custom Proxy",
 		Type:         "custom",
 		Host:         "proxy.example.com",
 		Port:         8080,
-		CaBundleFile: path,
+		CaBundleFile: caBundlePath,
 	})
 
 	assert.NoError(t, err)
-	assert.Equal(t, testCaBundlePEM, sent)
 }
 
-func TestProxyCreate_Custom_CaBundleFileMissing(t *testing.T) {
-	captureOutput(t)
-
+func TestProxyCreate_Custom_CaBundleFileReadError(t *testing.T) {
 	p := ProxyCmd{proxies: &FakeProxyService{}}
 	err := p.Create(context.Background(), ProxyCreateInput{
+		Name:         "Custom Proxy",
 		Type:         "custom",
 		Host:         "proxy.example.com",
 		Port:         8080,
-		CaBundleFile: filepath.Join(t.TempDir(), "does-not-exist.pem"),
+		CaBundleFile: "/does/not/exist/proxy-ca.pem",
 	})
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to read CA bundle file")
 }
 
-func TestProxyCreate_Custom_CaBundleNotPEM(t *testing.T) {
-	captureOutput(t)
+func TestProxyCreate_Custom_EmptyCaBundleFile(t *testing.T) {
+	caBundlePath := filepath.Join(t.TempDir(), "proxy-ca.pem")
+	require.NoError(t, os.WriteFile(caBundlePath, nil, 0o600))
 
 	p := ProxyCmd{proxies: &FakeProxyService{}}
 	err := p.Create(context.Background(), ProxyCreateInput{
-		Type:     "custom",
-		Host:     "proxy.example.com",
-		Port:     8080,
-		CaBundle: "not a certificate",
+		Name:         "Custom Proxy",
+		Type:         "custom",
+		Host:         "proxy.example.com",
+		Port:         8080,
+		CaBundleFile: caBundlePath,
 	})
 
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid CA bundle: expected PEM-encoded certificate data")
-}
-
-func TestProxyCreate_CaBundleIgnoredForNonCustom(t *testing.T) {
-	buf := captureOutput(t)
-
-	fake := &FakeProxyService{
-		NewFunc: func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error) {
-			assert.Nil(t, body.Config.OfCustom)
-			return &kernel.ProxyNewResponse{ID: "dc-new", Type: kernel.ProxyNewResponseTypeDatacenter}, nil
-		},
-	}
-
-	p := ProxyCmd{proxies: fake}
-	err := p.Create(context.Background(), ProxyCreateInput{
-		Type:     "datacenter",
-		Country:  "US",
-		CaBundle: testCaBundlePEM,
-	})
-
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "--ca-bundle is only supported for custom proxies")
+	assert.EqualError(t, err, "CA bundle file \""+caBundlePath+"\" is empty")
 }
 
 func TestProxyCreate_Custom_MissingHost(t *testing.T) {
@@ -343,6 +302,7 @@ func TestProxyCreate_Custom_MissingHost(t *testing.T) {
 
 	p := ProxyCmd{proxies: fake}
 	err := p.Create(context.Background(), ProxyCreateInput{
+		Name: "Custom Proxy",
 		Type: "custom",
 		Port: 8080,
 		// Missing required host
@@ -357,6 +317,7 @@ func TestProxyCreate_Custom_MissingPort(t *testing.T) {
 
 	p := ProxyCmd{proxies: fake}
 	err := p.Create(context.Background(), ProxyCreateInput{
+		Name: "Custom Proxy",
 		Type: "custom",
 		Host: "proxy.example.com",
 		// Missing required port (will be 0)
@@ -402,6 +363,7 @@ func TestProxyCreate_Protocol_Valid(t *testing.T) {
 
 			p := ProxyCmd{proxies: fake}
 			err := p.Create(context.Background(), ProxyCreateInput{
+				Name:     "Test Proxy",
 				Type:     "datacenter",
 				Country:  "US",
 				Protocol: tt.protocol,
@@ -416,6 +378,7 @@ func TestProxyCreate_Protocol_Invalid(t *testing.T) {
 	fake := &FakeProxyService{}
 	p := ProxyCmd{proxies: fake}
 	err := p.Create(context.Background(), ProxyCreateInput{
+		Name:     "Test Proxy",
 		Type:     "datacenter",
 		Country:  "US",
 		Protocol: "ftp",
@@ -438,6 +401,7 @@ func TestProxyCreate_BypassHosts_Normalized(t *testing.T) {
 
 	p := ProxyCmd{proxies: fake}
 	err := p.Create(context.Background(), ProxyCreateInput{
+		Name:        "Test Proxy",
 		Type:        "datacenter",
 		Country:     "US",
 		BypassHosts: []string{" localhost ", "", "internal.service.local"},
