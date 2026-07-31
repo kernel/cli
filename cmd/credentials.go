@@ -52,12 +52,13 @@ type CredentialsCreateInput struct {
 }
 
 type CredentialsUpdateInput struct {
-	Identifier  string
-	Name        string
-	SSOProvider string
-	TotpSecret  string
-	Values      map[string]string
-	Output      string
+	Identifier      string
+	Name            string
+	SSOProvider     string
+	TotpSecret      string
+	Values          map[string]string
+	RemoveValueKeys []string
+	Output          string
 }
 
 type CredentialsDeleteInput struct {
@@ -263,6 +264,9 @@ func (c CredentialsCmd) Update(ctx context.Context, in CredentialsUpdateInput) e
 	if len(in.Values) > 0 {
 		params.UpdateCredentialRequest.Values = in.Values
 	}
+	if len(in.RemoveValueKeys) > 0 {
+		params.UpdateCredentialRequest.RemoveValueKeys = in.RemoveValueKeys
+	}
 
 	if in.Output != "json" {
 		pterm.Info.Printf("Updating credential '%s'...\n", in.Identifier)
@@ -428,6 +432,7 @@ func init() {
 	credentialsUpdateCmd.Flags().String("sso-provider", "", "SSO provider (set to empty string to remove)")
 	credentialsUpdateCmd.Flags().String("totp-secret", "", "Base32-encoded TOTP secret (set to empty string to remove)")
 	credentialsUpdateCmd.Flags().StringArray("value", []string{}, "Field name=value pair to update (repeatable)")
+	credentialsUpdateCmd.Flags().StringArray("remove-value-key", []string{}, "Field name to remove from the credential's stored values (repeatable). Removals are applied before --value is merged, so a key given to both keeps its new value")
 
 	// Delete flags
 	credentialsDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
@@ -503,6 +508,7 @@ func runCredentialsUpdate(cmd *cobra.Command, args []string) error {
 	ssoProvider, _ := cmd.Flags().GetString("sso-provider")
 	totpSecret, _ := cmd.Flags().GetString("totp-secret")
 	valuePairs, _ := cmd.Flags().GetStringArray("value")
+	removeValueKeys, _ := cmd.Flags().GetStringArray("remove-value-key")
 
 	// Parse value pairs into map
 	values := make(map[string]string)
@@ -517,12 +523,13 @@ func runCredentialsUpdate(cmd *cobra.Command, args []string) error {
 	svc := client.Credentials
 	c := CredentialsCmd{credentials: &svc}
 	return c.Update(cmd.Context(), CredentialsUpdateInput{
-		Identifier:  args[0],
-		Name:        name,
-		SSOProvider: ssoProvider,
-		TotpSecret:  totpSecret,
-		Values:      values,
-		Output:      output,
+		Identifier:      args[0],
+		Name:            name,
+		SSOProvider:     ssoProvider,
+		TotpSecret:      totpSecret,
+		Values:          values,
+		RemoveValueKeys: removeValueKeys,
+		Output:          output,
 	})
 }
 

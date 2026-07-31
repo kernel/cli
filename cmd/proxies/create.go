@@ -134,11 +134,6 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 			return fmt.Errorf("--port is required for custom proxy type")
 		}
 
-		caBundle, err := resolveCaBundle(in.CaBundle, in.CaBundleFile)
-		if err != nil {
-			return err
-		}
-
 		config := kernel.ProxyNewParamsConfigCustom{
 			Host: in.Host,
 			Port: int64(in.Port),
@@ -164,7 +159,7 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 		}
 	}
 
-	if proxyType != kernel.ProxyNewParamsTypeCustom && (in.CaBundle != "" || in.CaBundleFile != "") {
+	if proxyType != kernel.ProxyNewParamsTypeCustom && in.CaBundleFile != "" {
 		pterm.Warning.Println("--ca-bundle is only supported for custom proxies and will be ignored")
 	}
 
@@ -266,37 +261,6 @@ func runProxiesCreate(cmd *cobra.Command, args []string) error {
 		CaBundleFile: caBundle,
 		Output:       output,
 	})
-}
-
-// resolveCaBundle resolves the --ca-bundle / --ca-bundle-file inputs into a
-// PEM-encoded CA certificate bundle. The two inputs are mutually exclusive
-// (enforced by cobra); a file path of "-" reads stdin. It returns an empty
-// string when neither input is set.
-func resolveCaBundle(inline, file string) (string, error) {
-	data := inline
-	if file != "" {
-		var b []byte
-		var err error
-		if file == "-" {
-			b, err = io.ReadAll(os.Stdin)
-		} else {
-			b, err = os.ReadFile(file)
-		}
-		if err != nil {
-			return "", fmt.Errorf("failed to read CA bundle file: %w", err)
-		}
-		data = string(b)
-	}
-
-	data = strings.TrimSpace(data)
-	if data == "" {
-		return "", nil
-	}
-	if !strings.Contains(data, "-----BEGIN ") {
-		return "", fmt.Errorf("invalid CA bundle: expected PEM-encoded certificate data (a '-----BEGIN CERTIFICATE-----' block)")
-	}
-
-	return data, nil
 }
 
 func normalizeBypassHosts(hosts []string) []string {

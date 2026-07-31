@@ -1335,6 +1335,7 @@ type BrowsersReplaysStartInput struct {
 	Identifier         string
 	Framerate          int
 	MaxDurationSeconds int
+	RecordAudio        bool
 	Output             string
 }
 
@@ -1394,6 +1395,9 @@ func (b BrowsersCmd) ReplaysStart(ctx context.Context, in BrowsersReplaysStartIn
 	}
 	if in.MaxDurationSeconds > 0 {
 		body.MaxDurationInSeconds = kernel.Opt(int64(in.MaxDurationSeconds))
+	}
+	if in.RecordAudio {
+		body.RecordAudio = kernel.Opt(true)
 	}
 	res, err := b.replays.Start(ctx, br.SessionID, body)
 	if err != nil {
@@ -2536,6 +2540,7 @@ func init() {
 	replaysStart := &cobra.Command{Use: "start <id>", Short: "Start a replay recording", Args: cobra.ExactArgs(1), RunE: runBrowsersReplaysStart}
 	replaysStart.Flags().Int("framerate", 0, "Recording framerate (fps)")
 	replaysStart.Flags().Int("max-duration", 0, "Maximum duration in seconds")
+	replaysStart.Flags().Bool("record-audio", false, "Record audio in addition to video (default is video-only)")
 	addJSONOutputFlag(replaysStart)
 	replaysStop := &cobra.Command{Use: "stop <id> <replay-id>", Short: "Stop a replay recording", Args: cobra.ExactArgs(2), RunE: runBrowsersReplaysStop}
 	replaysDownload := &cobra.Command{Use: "download <id> <replay-id>", Short: "Download a replay video", Args: cobra.ExactArgs(2), RunE: runBrowsersReplaysDownload}
@@ -3141,9 +3146,10 @@ func runBrowsersReplaysStart(cmd *cobra.Command, args []string) error {
 	svc := client.Browsers
 	fr, _ := cmd.Flags().GetInt("framerate")
 	md, _ := cmd.Flags().GetInt("max-duration")
+	recordAudio, _ := cmd.Flags().GetBool("record-audio")
 	output, _ := cmd.Flags().GetString("output")
 	b := BrowsersCmd{browsers: &svc, replays: &svc.Replays}
-	return b.ReplaysStart(cmd.Context(), BrowsersReplaysStartInput{Identifier: args[0], Framerate: fr, MaxDurationSeconds: md, Output: output})
+	return b.ReplaysStart(cmd.Context(), BrowsersReplaysStartInput{Identifier: args[0], Framerate: fr, MaxDurationSeconds: md, RecordAudio: recordAudio, Output: output})
 }
 
 func runBrowsersReplaysStop(cmd *cobra.Command, args []string) error {

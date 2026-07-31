@@ -54,9 +54,6 @@ Examples:
   # Create a residential proxy with location
   kernel proxies create --type residential --country US --city sanfrancisco --state CA --name "SF Residential"
 
-  # Create a custom TLS-terminating (MITM) proxy with its CA bundle
-  kernel proxies create --type custom --host proxy.example.com --port 8080 --ca-bundle-file ./mitm-ca.pem
-
   # Create a proxy with bypass hosts
   kernel proxies create --type datacenter --country US --bypass-host localhost,internal.service.local --name "Internal Services"`,
 	RunE: runProxiesCreate,
