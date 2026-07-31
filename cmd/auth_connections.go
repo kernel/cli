@@ -53,7 +53,7 @@ type AuthConnectionCreateInput struct {
 	HealthCheckInterval int
 	NoHealthChecks      bool
 	NoAutoReauth        bool
-	RecordSession       bool
+	RecordSession       BoolFlag
 	Telemetry           string
 	Output              string
 }
@@ -216,8 +216,8 @@ func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateIn
 		params.ManagedAuthCreateRequest.AutoReauth = kernel.Opt(false)
 	}
 
-	if in.RecordSession {
-		params.ManagedAuthCreateRequest.RecordSession = kernel.Opt(true)
+	if in.RecordSession.Set {
+		params.ManagedAuthCreateRequest.RecordSession = kernel.Opt(in.RecordSession.Value)
 	}
 
 	if in.Telemetry != "" {
@@ -1121,14 +1121,12 @@ func init() {
 	authConnectionsUpdateCmd.Flags().Bool("no-health-checks", false, "Disable periodic health checks")
 	authConnectionsUpdateCmd.Flags().Bool("auto-reauth", false, "Permit automatic re-authentication when a health check detects an expired session")
 	authConnectionsUpdateCmd.Flags().Bool("no-auto-reauth", false, "Mark expired sessions as NEEDS_AUTH instead of attempting automatic re-authentication")
-	authConnectionsUpdateCmd.Flags().Bool("record-session", false, "Record browser sessions for this connection by default")
-	authConnectionsUpdateCmd.Flags().Bool("no-record-session", false, "Stop recording browser sessions for this connection by default")
+	authConnectionsUpdateCmd.Flags().Bool("record-session", false, "Set whether browser sessions are recorded by default; use --record-session=false to disable")
 	authConnectionsUpdateCmd.Flags().String("telemetry", "", "Update telemetry for future browser sessions: --telemetry=all (reset to default set), --telemetry=off (disable), or --telemetry=console,network (merge those categories into the current selection)")
 	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("credential-name", "credential-provider")
 	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("save-credentials", "no-save-credentials")
 	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("health-checks", "no-health-checks")
 	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("auto-reauth", "no-auto-reauth")
-	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("record-session", "no-record-session")
 
 	// List flags
 	addJSONOutputFlag(authConnectionsListCmd)
@@ -1144,9 +1142,7 @@ func init() {
 	addJSONOutputFlag(authConnectionsLoginCmd)
 	authConnectionsLoginCmd.Flags().String("proxy-id", "", "Proxy ID to use for this login")
 	authConnectionsLoginCmd.Flags().String("proxy-name", "", "Proxy name to use for this login")
-	authConnectionsLoginCmd.Flags().Bool("record-session", false, "Record this login's browser session, overriding the connection's default")
-	authConnectionsLoginCmd.Flags().Bool("no-record-session", false, "Do not record this login's browser session, overriding the connection's default")
-	authConnectionsLoginCmd.MarkFlagsMutuallyExclusive("record-session", "no-record-session")
+	authConnectionsLoginCmd.Flags().Bool("record-session", false, "Override whether this login's browser session is recorded; use --record-session=false to disable")
 	authConnectionsLoginCmd.Flags().String("telemetry", "", "Telemetry override for this login only, merged onto the connection's config: --telemetry=all, --telemetry=off, or --telemetry=console,network")
 
 	// Submit flags
@@ -1199,7 +1195,6 @@ func runAuthConnectionsCreate(cmd *cobra.Command, args []string) error {
 	healthCheckInterval, _ := cmd.Flags().GetInt("health-check-interval")
 	noHealthChecks, _ := cmd.Flags().GetBool("no-health-checks")
 	noAutoReauth, _ := cmd.Flags().GetBool("no-auto-reauth")
-	recordSession, _ := cmd.Flags().GetBool("record-session")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 
 	svc := client.Auth.Connections
@@ -1219,7 +1214,7 @@ func runAuthConnectionsCreate(cmd *cobra.Command, args []string) error {
 		HealthCheckInterval: healthCheckInterval,
 		NoHealthChecks:      noHealthChecks,
 		NoAutoReauth:        noAutoReauth,
-		RecordSession:       recordSession,
+		RecordSession:       readBoolFlag(cmd.Flags(), "record-session"),
 		Telemetry:           telemetry,
 		Output:              output,
 	})
@@ -1300,7 +1295,7 @@ func runAuthConnectionsUpdate(cmd *cobra.Command, args []string) error {
 		HealthCheckIntervalSet: cmd.Flags().Changed("health-check-interval"),
 		HealthChecks:           togglePair("health-checks", "no-health-checks"),
 		AutoReauth:             togglePair("auto-reauth", "no-auto-reauth"),
-		RecordSession:          togglePair("record-session", "no-record-session"),
+		RecordSession:          readBoolFlag(cmd.Flags(), "record-session"),
 		Telemetry:              telemetry,
 		Output:                 output,
 	})
@@ -1344,19 +1339,13 @@ func runAuthConnectionsLogin(cmd *cobra.Command, args []string) error {
 	proxyName, _ := cmd.Flags().GetString("proxy-name")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 
-	var recordSessionFlag BoolFlag
-	if cmd.Flags().Changed("record-session") || cmd.Flags().Changed("no-record-session") {
-		noRecordSession, _ := cmd.Flags().GetBool("no-record-session")
-		recordSessionFlag = BoolFlag{Set: true, Value: !noRecordSession}
-	}
-
 	svc := client.Auth.Connections
 	c := AuthConnectionCmd{svc: &svc}
 	return c.Login(cmd.Context(), AuthConnectionLoginInput{
 		ID:            args[0],
 		ProxyID:       proxyID,
 		ProxyName:     proxyName,
-		RecordSession: recordSessionFlag,
+		RecordSession: readBoolFlag(cmd.Flags(), "record-session"),
 		Telemetry:     telemetry,
 		Output:        output,
 	})

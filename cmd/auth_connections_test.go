@@ -329,6 +329,42 @@ func TestAuthConnectionsCreate_CredentialName_UnaffectedByAutoDefault(t *testing
 	assert.False(t, cred.Path.Valid())
 }
 
+func TestAuthConnectionsCreate_RecordSession(t *testing.T) {
+	tests := []struct {
+		name string
+		flag BoolFlag
+	}{
+		{name: "omitted"},
+		{name: "enabled", flag: BoolFlag{Set: true, Value: true}},
+		{name: "disabled", flag: BoolFlag{Set: true, Value: false}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var captured kernel.AuthConnectionNewParams
+			fake := &FakeAuthConnectionService{
+				NewFunc: func(ctx context.Context, body kernel.AuthConnectionNewParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+					captured = body
+					return &kernel.ManagedAuth{ID: "conn-new"}, nil
+				},
+			}
+
+			c := AuthConnectionCmd{svc: fake}
+			require.NoError(t, c.Create(context.Background(), AuthConnectionCreateInput{
+				Domain:        "example.com",
+				ProfileName:   "profile-1",
+				RecordSession: tt.flag,
+				Output:        "json",
+			}))
+
+			assert.Equal(t, tt.flag.Set, captured.ManagedAuthCreateRequest.RecordSession.Valid())
+			if tt.flag.Set {
+				assert.Equal(t, tt.flag.Value, captured.ManagedAuthCreateRequest.RecordSession.Value)
+			}
+		})
+	}
+}
+
 func TestAuthConnectionsUpdate_MapsParams(t *testing.T) {
 	var captured kernel.AuthConnectionUpdateParams
 	fake := &FakeAuthConnectionService{
@@ -358,6 +394,7 @@ func TestAuthConnectionsUpdate_MapsParams(t *testing.T) {
 		ProxyID:                "proxy-123",
 		ProxyIDSet:             true,
 		SaveCredentials:        BoolFlag{Set: true, Value: false},
+		RecordSession:          BoolFlag{Set: true, Value: false},
 		HealthCheckInterval:    900,
 		HealthCheckIntervalSet: true,
 	})
@@ -375,8 +412,45 @@ func TestAuthConnectionsUpdate_MapsParams(t *testing.T) {
 	assert.Equal(t, "proxy-123", captured.ManagedAuthUpdateRequest.Proxy.ID.Value)
 	require.True(t, captured.ManagedAuthUpdateRequest.SaveCredentials.Valid())
 	assert.False(t, captured.ManagedAuthUpdateRequest.SaveCredentials.Value)
+	require.True(t, captured.ManagedAuthUpdateRequest.RecordSession.Valid())
+	assert.False(t, captured.ManagedAuthUpdateRequest.RecordSession.Value)
 	require.True(t, captured.ManagedAuthUpdateRequest.HealthCheckInterval.Valid())
 	assert.Equal(t, int64(900), captured.ManagedAuthUpdateRequest.HealthCheckInterval.Value)
+}
+
+func TestAuthConnectionsLogin_RecordSession(t *testing.T) {
+	tests := []struct {
+		name string
+		flag BoolFlag
+	}{
+		{name: "inherits connection default"},
+		{name: "enabled", flag: BoolFlag{Set: true, Value: true}},
+		{name: "disabled", flag: BoolFlag{Set: true, Value: false}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var captured kernel.AuthConnectionLoginParams
+			fake := &FakeAuthConnectionService{
+				LoginFunc: func(ctx context.Context, id string, body kernel.AuthConnectionLoginParams, opts ...option.RequestOption) (*kernel.LoginResponse, error) {
+					captured = body
+					return &kernel.LoginResponse{}, nil
+				},
+			}
+
+			c := AuthConnectionCmd{svc: fake}
+			require.NoError(t, c.Login(context.Background(), AuthConnectionLoginInput{
+				ID:            "conn-1",
+				RecordSession: tt.flag,
+				Output:        "json",
+			}))
+
+			assert.Equal(t, tt.flag.Set, captured.RecordSession.Valid())
+			if tt.flag.Set {
+				assert.Equal(t, tt.flag.Value, captured.RecordSession.Value)
+			}
+		})
+	}
 }
 
 func newFakeWithMfaOptions(options []kernel.ManagedAuthMfaOption) *FakeAuthConnectionService {
