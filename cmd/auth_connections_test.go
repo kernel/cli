@@ -329,6 +329,42 @@ func TestAuthConnectionsCreate_CredentialName_UnaffectedByAutoDefault(t *testing
 	assert.False(t, cred.Path.Valid())
 }
 
+func TestAuthConnectionsCreate_RecordSession(t *testing.T) {
+	tests := []struct {
+		name string
+		flag BoolFlag
+	}{
+		{name: "omitted"},
+		{name: "enabled", flag: BoolFlag{Set: true, Value: true}},
+		{name: "disabled", flag: BoolFlag{Set: true, Value: false}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var captured kernel.AuthConnectionNewParams
+			fake := &FakeAuthConnectionService{
+				NewFunc: func(ctx context.Context, body kernel.AuthConnectionNewParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+					captured = body
+					return &kernel.ManagedAuth{ID: "conn-new"}, nil
+				},
+			}
+
+			c := AuthConnectionCmd{svc: fake}
+			require.NoError(t, c.Create(context.Background(), AuthConnectionCreateInput{
+				Domain:        "example.com",
+				ProfileName:   "profile-1",
+				RecordSession: tt.flag,
+				Output:        "json",
+			}))
+
+			assert.Equal(t, tt.flag.Set, captured.ManagedAuthCreateRequest.RecordSession.Valid())
+			if tt.flag.Set {
+				assert.Equal(t, tt.flag.Value, captured.ManagedAuthCreateRequest.RecordSession.Value)
+			}
+		})
+	}
+}
+
 func TestAuthConnectionsUpdate_MapsParams(t *testing.T) {
 	var captured kernel.AuthConnectionUpdateParams
 	fake := &FakeAuthConnectionService{
@@ -358,6 +394,7 @@ func TestAuthConnectionsUpdate_MapsParams(t *testing.T) {
 		ProxyID:                "proxy-123",
 		ProxyIDSet:             true,
 		SaveCredentials:        BoolFlag{Set: true, Value: false},
+		RecordSession:          BoolFlag{Set: true, Value: false},
 		HealthCheckInterval:    900,
 		HealthCheckIntervalSet: true,
 	})
@@ -375,8 +412,45 @@ func TestAuthConnectionsUpdate_MapsParams(t *testing.T) {
 	assert.Equal(t, "proxy-123", captured.ManagedAuthUpdateRequest.Proxy.ID.Value)
 	require.True(t, captured.ManagedAuthUpdateRequest.SaveCredentials.Valid())
 	assert.False(t, captured.ManagedAuthUpdateRequest.SaveCredentials.Value)
+	require.True(t, captured.ManagedAuthUpdateRequest.RecordSession.Valid())
+	assert.False(t, captured.ManagedAuthUpdateRequest.RecordSession.Value)
 	require.True(t, captured.ManagedAuthUpdateRequest.HealthCheckInterval.Valid())
 	assert.Equal(t, int64(900), captured.ManagedAuthUpdateRequest.HealthCheckInterval.Value)
+}
+
+func TestAuthConnectionsLogin_RecordSession(t *testing.T) {
+	tests := []struct {
+		name string
+		flag BoolFlag
+	}{
+		{name: "inherits connection default"},
+		{name: "enabled", flag: BoolFlag{Set: true, Value: true}},
+		{name: "disabled", flag: BoolFlag{Set: true, Value: false}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var captured kernel.AuthConnectionLoginParams
+			fake := &FakeAuthConnectionService{
+				LoginFunc: func(ctx context.Context, id string, body kernel.AuthConnectionLoginParams, opts ...option.RequestOption) (*kernel.LoginResponse, error) {
+					captured = body
+					return &kernel.LoginResponse{}, nil
+				},
+			}
+
+			c := AuthConnectionCmd{svc: fake}
+			require.NoError(t, c.Login(context.Background(), AuthConnectionLoginInput{
+				ID:            "conn-1",
+				RecordSession: tt.flag,
+				Output:        "json",
+			}))
+
+			assert.Equal(t, tt.flag.Set, captured.RecordSession.Valid())
+			if tt.flag.Set {
+				assert.Equal(t, tt.flag.Value, captured.RecordSession.Value)
+			}
+		})
+	}
 }
 
 func newFakeWithMfaOptions(options []kernel.ManagedAuthMfaOption) *FakeAuthConnectionService {
@@ -690,13 +764,23 @@ func TestSubmit_CanonicalAndLegacyAreMutuallyExclusive(t *testing.T) {
 func TestTimeline_RendersEventsAndPagination(t *testing.T) {
 	buf := capturePtermOutput(t)
 	var captured kernel.AuthConnectionTimelineParams
+	// Decoded from JSON so the telemetry_captured field registers as present;
+	// the CLI distinguishes "reported false" from "not reported at all".
+	var loginEvent kernel.ManagedAuthTimelineEvent
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"id": "e1",
+		"type": "login",
+		"status": "SUCCESS",
+		"browser_session_id": "browser_1",
+		"telemetry_captured": true
+	}`), &loginEvent))
 	fake := &FakeAuthConnectionService{
 		TimelineFunc: func(ctx context.Context, id string, query kernel.AuthConnectionTimelineParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ManagedAuthTimelineEvent], error) {
 			captured = query
 			// Return perPage+1 events so the CLI reports another page exists.
 			return &pagination.OffsetPagination[kernel.ManagedAuthTimelineEvent]{
 				Items: []kernel.ManagedAuthTimelineEvent{
-					{ID: "e1", Type: "login", Status: "SUCCESS", BrowserSessionID: "browser_1"},
+					loginEvent,
 					{ID: "e2", Type: "reauth", Status: "FAILED", ErrorMessage: "boom"},
 					{ID: "e3", Type: "health_check", Status: "SUCCESS"},
 				},
@@ -714,6 +798,9 @@ func TestTimeline_RendersEventsAndPagination(t *testing.T) {
 	out := buf.String()
 	assert.Contains(t, out, "browser_1")
 	assert.Contains(t, out, "boom")
+	// Telemetry capture is reported for events that have a browser session.
+	assert.Contains(t, out, "Telemetry")
+	assert.Regexp(t, `browser_1.*yes`, out)
 	// The third event is truncated off the page.
 	assert.NotContains(t, out, "health_check")
 	assert.Contains(t, out, "Has more: yes")

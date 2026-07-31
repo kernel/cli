@@ -159,6 +159,10 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 		}
 	}
 
+	if proxyType != kernel.ProxyNewParamsTypeCustom && in.CaBundleFile != "" {
+		pterm.Warning.Println("--ca-bundle is only supported for custom proxies and will be ignored")
+	}
+
 	// Set protocol (defaults to https if not specified)
 	if in.Protocol != "" {
 		// Validate and convert protocol
@@ -205,6 +209,11 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 		protocol = "https"
 	}
 	rows = append(rows, []string{"Protocol", protocol})
+
+	// The CA bundle is write-only, so confirm the API stored it.
+	if proxy.Config.HasCaBundle {
+		rows = append(rows, []string{"Has CA Bundle", "Yes"})
+	}
 
 	table.PrintTableNoPad(rows, true)
 	return nil
