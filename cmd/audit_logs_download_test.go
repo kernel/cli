@@ -246,9 +246,36 @@ func TestAuditLogsDownloadDoesNotRetryClientErrors(t *testing.T) {
 func TestDefaultAuditLogsDownloadPath(t *testing.T) {
 	start := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 6, 28, 0, 0, 0, 0, time.UTC)
-	path := defaultAuditLogsDownloadPath(start, end)
 
-	assert.Equal(t, "audit-logs-20260601-20260628.jsonl.gz", path)
+	gz := defaultAuditLogsDownloadPath(start, end, kernel.AuditLogExportChunkParamsFormatJSONLGz)
+	assert.Equal(t, "audit-logs-20260601-20260628.jsonl.gz", gz)
+
+	plain := defaultAuditLogsDownloadPath(start, end, kernel.AuditLogExportChunkParamsFormatJSONL)
+	assert.Equal(t, "audit-logs-20260601-20260628.jsonl", plain)
+}
+
+func TestAuditLogsDownloadFormatParam(t *testing.T) {
+	base := AuditLogsDownloadInput{Start: "2026-06-01", End: "2026-06-02"}
+
+	for _, tc := range []struct {
+		format string
+		want   kernel.AuditLogExportChunkParamsFormat
+	}{
+		{format: "", want: kernel.AuditLogExportChunkParamsFormatJSONLGz},
+		{format: "jsonl.gz", want: kernel.AuditLogExportChunkParamsFormatJSONLGz},
+		{format: "jsonl", want: kernel.AuditLogExportChunkParamsFormatJSONL},
+	} {
+		in := base
+		in.Format = tc.format
+		params, err := buildAuditLogsDownloadParams(in)
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, params.Format)
+	}
+
+	in := base
+	in.Format = "csv"
+	_, err := buildAuditLogsDownloadParams(in)
+	require.ErrorContains(t, err, "invalid --format value")
 }
 
 func TestAuditLogsDownloadRejectsBadChunkBeforeWriting(t *testing.T) {
