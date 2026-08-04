@@ -80,6 +80,7 @@ func init() {
 	invocationHistoryCmd.Flags().String("action", "", "Filter by action name")
 	invocationHistoryCmd.Flags().StringP("app", "a", "", "Filter by app name")
 	invocationHistoryCmd.Flags().String("deployment-id", "", "Filter by deployment ID")
+	invocationHistoryCmd.Flags().String("query", "", "Search invocations by ID, app name, or action name")
 	invocationHistoryCmd.Flags().Int("offset", 0, "Number of results to skip")
 	invocationHistoryCmd.Flags().String("since", "", "Show invocations that started since the given time")
 	invocationHistoryCmd.Flags().String("status", "", "Filter by invocation status: queued, running, succeeded, failed")
@@ -421,6 +422,7 @@ func runInvocationHistory(cmd *cobra.Command, args []string) error {
 	actionFilter, _ := cmd.Flags().GetString("action")
 	appFilter, _ := cmd.Flags().GetString("app")
 	deploymentID, _ := cmd.Flags().GetString("deployment-id")
+	query, _ := cmd.Flags().GetString("query")
 	offset, _ := cmd.Flags().GetInt("offset")
 	since, _ := cmd.Flags().GetString("since")
 	statusFilter, _ := cmd.Flags().GetString("status")
@@ -445,6 +447,9 @@ func runInvocationHistory(cmd *cobra.Command, args []string) error {
 	}
 	if deploymentID != "" {
 		params.DeploymentID = kernel.Opt(deploymentID)
+	}
+	if query != "" {
+		params.Query = kernel.Opt(query)
 	}
 	if offset > 0 {
 		params.Offset = kernel.Opt(int64(offset))

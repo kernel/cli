@@ -93,6 +93,7 @@ type AuthConnectionUpdateInput struct {
 type AuthConnectionListInput struct {
 	Domain      string
 	ProfileName string
+	Query       string
 	Limit       int
 	Offset      int
 	Output      string
@@ -429,6 +430,9 @@ func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) e
 			if f.Required {
 				meta = append(meta, "required")
 			}
+			if f.ReplaceExisting {
+				meta = append(meta, "replace-existing")
+			}
 			entry := f.ID
 			if f.Label != "" {
 				entry = fmt.Sprintf("%s (%s)", f.ID, f.Label)
@@ -556,6 +560,9 @@ func (c AuthConnectionCmd) List(ctx context.Context, in AuthConnectionListInput)
 	}
 	if in.ProfileName != "" {
 		params.ProfileName = kernel.Opt(in.ProfileName)
+	}
+	if in.Query != "" {
+		params.Query = kernel.Opt(in.Query)
 	}
 	if in.Limit > 0 {
 		params.Limit = kernel.Opt(int64(in.Limit))
@@ -949,7 +956,11 @@ func (c AuthConnectionCmd) Follow(ctx context.Context, in AuthConnectionFollowIn
 			if len(state.Fields) > 0 {
 				fieldIDs := make([]string, 0, len(state.Fields))
 				for _, f := range state.Fields {
-					fieldIDs = append(fieldIDs, f.ID)
+					id := f.ID
+					if f.ReplaceExisting {
+						id += " (replace-existing)"
+					}
+					fieldIDs = append(fieldIDs, id)
 				}
 				pterm.Info.Printf("  Fields: %s\n", strings.Join(fieldIDs, ", "))
 			}
@@ -1132,6 +1143,7 @@ func init() {
 	addJSONOutputFlag(authConnectionsListCmd)
 	authConnectionsListCmd.Flags().String("domain", "", "Filter by domain")
 	authConnectionsListCmd.Flags().String("profile-name", "", "Filter by profile name")
+	authConnectionsListCmd.Flags().String("query", "", "Search auth connections by ID, domain, or profile name")
 	authConnectionsListCmd.Flags().Int("limit", 0, "Maximum number of results to return")
 	authConnectionsListCmd.Flags().Int("offset", 0, "Number of results to skip")
 
@@ -1306,6 +1318,7 @@ func runAuthConnectionsList(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 	domain, _ := cmd.Flags().GetString("domain")
 	profileName, _ := cmd.Flags().GetString("profile-name")
+	query, _ := cmd.Flags().GetString("query")
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
 
@@ -1314,6 +1327,7 @@ func runAuthConnectionsList(cmd *cobra.Command, args []string) error {
 	return c.List(cmd.Context(), AuthConnectionListInput{
 		Domain:      domain,
 		ProfileName: profileName,
+		Query:       query,
 		Limit:       limit,
 		Offset:      offset,
 		Output:      output,

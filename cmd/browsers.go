@@ -2828,6 +2828,7 @@ followed automatically by Chromium.`,
 	telemetryEvents := &cobra.Command{Use: "events <id>", Short: "Read historical telemetry events (paged)", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryEvents}
 	telemetryEvents.Flags().Int64("limit", 0, "Maximum number of events per page (1-100, default 20)")
 	telemetryEvents.Flags().Int64("offset", 0, "Pagination cursor: pass the X-Next-Offset from a previous response")
+	telemetryEvents.Flags().String("order", "", "Read direction: asc (default) reads oldest first, desc reads newest first (cannot be combined with --since)")
 	telemetryEvents.Flags().String("since", "", "Window start: RFC-3339 timestamp or a duration like 5m (default 5m). Ignored when --offset is set")
 	telemetryEvents.Flags().String("until", "", "Window end (exclusive): RFC-3339 timestamp or a duration like 5m")
 	telemetryEvents.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,connection,system,screenshot,captcha,monitor)")
@@ -2873,6 +2874,7 @@ func poolLeaseAllowedFlags() map[string]bool {
 		"pool-name": true,
 		"timeout":   true,
 		"name":      true,
+		"start-url": true,
 		"tag":       true,
 		"telemetry": true,
 		"output":    true,
@@ -2918,7 +2920,8 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 
 	if poolID != "" || poolName != "" {
 		// When using a pool, configuration comes from the pool itself, but
-		// name, tags, and telemetry apply per-lease to the acquired session.
+		// name, start URL, tags, and telemetry apply per-lease to the acquired
+		// session — they mirror the fields BrowserPoolAcquireParams accepts.
 		allowedFlags := poolLeaseAllowedFlags()
 
 		// Check if any browser configuration flags were set (which would conflict).
@@ -2968,7 +2971,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("timeout") && timeout > 0 {
 			acquireTimeout = int64(timeout)
 		}
-		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry)
+		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry, startURL)
 		if err != nil {
 			return err
 		}

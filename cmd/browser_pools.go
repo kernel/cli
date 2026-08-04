@@ -31,6 +31,8 @@ type BrowserPoolsCmd struct {
 }
 
 type BrowserPoolsListInput struct {
+	Name   string
+	Query  string
 	Limit  int
 	Offset int
 	Output string
@@ -42,6 +44,12 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 	}
 
 	params := kernel.BrowserPoolListParams{}
+	if in.Name != "" {
+		params.Name = kernel.String(in.Name)
+	}
+	if in.Query != "" {
+		params.Query = kernel.String(in.Query)
+	}
 	if in.Limit > 0 {
 		params.Limit = kernel.Int(int64(in.Limit))
 	}
@@ -448,6 +456,7 @@ type BrowserPoolsAcquireInput struct {
 	IDOrName       string
 	TimeoutSeconds int64
 	Name           string
+	StartURL       string
 	Tags           map[string]string
 	Telemetry      string
 	Output         string
@@ -455,15 +464,19 @@ type BrowserPoolsAcquireInput struct {
 
 // buildAcquireParams builds the SDK params for acquiring a browser from a pool.
 // Shared by `browser-pools acquire` and the `browsers create --pool-id/--pool-name`
-// path so the per-lease name/tags/telemetry forwarding cannot silently diverge
-// between them. The telemetry override merges onto the pool's config for this lease.
-func buildAcquireParams(name string, tags map[string]string, timeoutSeconds int64, telemetry string) (kernel.BrowserPoolAcquireParams, error) {
+// path so the per-lease name/tags/start-url/telemetry forwarding cannot silently
+// diverge between them. The telemetry override merges onto the pool's config for
+// this lease.
+func buildAcquireParams(name string, tags map[string]string, timeoutSeconds int64, telemetry, startURL string) (kernel.BrowserPoolAcquireParams, error) {
 	params := kernel.BrowserPoolAcquireParams{}
 	if timeoutSeconds > 0 {
 		params.AcquireTimeoutSeconds = kernel.Int(timeoutSeconds)
 	}
 	if name != "" {
 		params.Name = kernel.Opt(name)
+	}
+	if startURL != "" {
+		params.StartURL = kernel.Opt(startURL)
 	}
 	if len(tags) > 0 {
 		params.Tags = kernel.Tags(tags)
@@ -483,7 +496,7 @@ func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInpu
 		return err
 	}
 
-	params, err := buildAcquireParams(in.Name, in.Tags, in.TimeoutSeconds, in.Telemetry)
+	params, err := buildAcquireParams(in.Name, in.Tags, in.TimeoutSeconds, in.Telemetry, in.StartURL)
 	if err != nil {
 		return err
 	}
@@ -627,6 +640,8 @@ var browserPoolsFlushCmd = &cobra.Command{
 
 func init() {
 	addJSONOutputFlag(browserPoolsListCmd)
+	browserPoolsListCmd.Flags().String("name", "", "Exact-match filter on browser pool name")
+	browserPoolsListCmd.Flags().String("query", "", "Search browser pools by name (IDs match by exact value)")
 	browserPoolsListCmd.Flags().Int("limit", 0, "Maximum number of pools to return")
 	browserPoolsListCmd.Flags().Int("offset", 0, "Number of pools to skip (for pagination)")
 
@@ -679,6 +694,7 @@ func init() {
 
 	browserPoolsAcquireCmd.Flags().Int64("timeout", 0, "Acquire timeout in seconds")
 	browserPoolsAcquireCmd.Flags().String("name", "", "Optional name for the acquired session (applies to this lease; cleared on release)")
+	browserPoolsAcquireCmd.Flags().String("start-url", "", "URL to navigate the acquired browser to, overriding the pool's start URL for this acquire only (best-effort)")
 	browserPoolsAcquireCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the acquired session (repeatable; applies to this lease)")
 	browserPoolsAcquireCmd.Flags().String("telemetry", "", "Telemetry override for this lease only, merged onto the pool's config: --telemetry=all, --telemetry=off, or --telemetry=console,network")
 	addJSONOutputFlag(browserPoolsAcquireCmd)
@@ -700,10 +716,12 @@ func init() {
 func runBrowserPoolsList(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	out, _ := cmd.Flags().GetString("output")
+	name, _ := cmd.Flags().GetString("name")
+	query, _ := cmd.Flags().GetString("query")
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
-	return c.List(cmd.Context(), BrowserPoolsListInput{Limit: limit, Offset: offset, Output: out})
+	return c.List(cmd.Context(), BrowserPoolsListInput{Name: name, Query: query, Limit: limit, Offset: offset, Output: out})
 }
 
 func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
@@ -829,6 +847,7 @@ func runBrowserPoolsAcquire(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	timeout, _ := cmd.Flags().GetInt64("timeout")
 	name, _ := cmd.Flags().GetString("name")
+	startURL, _ := cmd.Flags().GetString("start-url")
 	tags, _ := tagsFromFlag(cmd, "tag")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 	output, _ := cmd.Flags().GetString("output")
@@ -837,6 +856,7 @@ func runBrowserPoolsAcquire(cmd *cobra.Command, args []string) error {
 		IDOrName:       args[0],
 		TimeoutSeconds: timeout,
 		Name:           name,
+		StartURL:       startURL,
 		Tags:           tags,
 		Telemetry:      telemetry,
 		Output:         output,

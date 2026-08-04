@@ -44,6 +44,7 @@ type BrowsersTelemetryEventsInput struct {
 	Identifier string
 	Limit      int64
 	Offset     int64
+	Order      string
 	Since      string
 	Until      string
 	Categories []string
@@ -307,6 +308,14 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 			return fmt.Errorf("invalid --categories value %q: must be one of %s", c, strings.Join(streamFilterCategories, ", "))
 		}
 	}
+	if in.Order != "" && in.Order != "asc" && in.Order != "desc" {
+		return fmt.Errorf("invalid --order value %q: must be asc or desc", in.Order)
+	}
+	// The endpoint rejects desc combined with a window start, since desc pages
+	// backwards from --until (or the newest archived event) instead.
+	if in.Order == "desc" && in.Since != "" {
+		return fmt.Errorf("--order desc cannot be combined with --since; use --until to bound the window instead")
+	}
 
 	// Resolve a name to a session ID. The events archive outlives the session, so
 	// a 404 (ended or unknown session) is not fatal: fall back to the identifier
@@ -327,6 +336,9 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 	params := kernel.BrowserTelemetryEventsParams{}
 	if in.Limit > 0 {
 		params.Limit = kernel.Opt(in.Limit)
+	}
+	if in.Order != "" {
+		params.Order = kernel.Opt(in.Order)
 	}
 	if in.Offset > 0 && !fullScan {
 		params.Offset = kernel.Opt(in.Offset)
@@ -428,6 +440,7 @@ func runBrowsersTelemetryEvents(cmd *cobra.Command, args []string) error {
 	out, _ := cmd.Flags().GetString("output")
 	limit, _ := cmd.Flags().GetInt64("limit")
 	offset, _ := cmd.Flags().GetInt64("offset")
+	order, _ := cmd.Flags().GetString("order")
 	since, _ := cmd.Flags().GetString("since")
 	until, _ := cmd.Flags().GetString("until")
 	categories, _ := cmd.Flags().GetStringSlice("categories")
@@ -438,6 +451,7 @@ func runBrowsersTelemetryEvents(cmd *cobra.Command, args []string) error {
 		Identifier: args[0],
 		Limit:      limit,
 		Offset:     offset,
+		Order:      order,
 		Since:      since,
 		Until:      until,
 		Categories: categories,

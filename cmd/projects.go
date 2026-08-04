@@ -12,6 +12,7 @@ import (
 	"github.com/kernel/kernel-go-sdk/packages/param"
 	"github.com/kernel/kernel-go-sdk/packages/respjson"
 	"github.com/pterm/pterm"
+	"github.com/samber/lo"
 	"github.com/spf13/cobra"
 )
 
@@ -37,7 +38,12 @@ type ProjectsCmd struct {
 	limits   ProjectLimitsService
 }
 
-type ProjectsListInput struct{}
+type ProjectsListInput struct {
+	Page    int
+	PerPage int
+	Name    string
+	Query   string
+}
 
 type ProjectsCreateInput struct {
 	Name string
@@ -87,21 +93,65 @@ func resolveProjectArg(ctx context.Context, projects ProjectListService, val str
 }
 
 func (c ProjectsCmd) List(ctx context.Context, in ProjectsListInput) error {
-	projects, err := c.projects.List(ctx, kernel.ProjectListParams{})
+	page := in.Page
+	perPage := in.PerPage
+	if page <= 0 {
+		page = 1
+	}
+	if perPage <= 0 {
+		perPage = 20
+	}
+
+	params := kernel.ProjectListParams{}
+	if in.Name != "" {
+		params.Name = kernel.Opt(in.Name)
+	}
+	if in.Query != "" {
+		params.Query = kernel.Opt(in.Query)
+	}
+	// Request one extra item to detect whether another page exists without a
+	// second call; the pagination response headers are not exposed by the SDK.
+	params.Limit = kernel.Opt(int64(perPage + 1))
+	params.Offset = kernel.Opt(int64((page - 1) * perPage))
+
+	projects, err := c.projects.List(ctx, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
-	if projects == nil || len(projects.Items) == 0 {
+	var items []kernel.Project
+	if projects != nil {
+		items = projects.Items
+	}
+
+	hasMore := len(items) > perPage
+	if hasMore {
+		items = items[:perPage]
+	}
+	itemsThisPage := len(items)
+
+	if len(items) == 0 {
 		pterm.Info.Println("No projects found")
 		return nil
 	}
 
 	table := pterm.TableData{{"ID", "Name", "Status", "Created At"}}
-	for _, p := range projects.Items {
+	for _, p := range items {
 		table = append(table, []string{p.ID, p.Name, string(p.Status), util.FormatLocal(p.CreatedAt)})
 	}
 	PrintTableNoPad(table, true)
+
+	pterm.Printf("\nPage: %d  Per-page: %d  Items this page: %d  Has more: %s\n", page, perPage, itemsThisPage, lo.Ternary(hasMore, "yes", "no"))
+	if hasMore {
+		nextCmd := fmt.Sprintf("kernel projects list --page %d --per-page %d", page+1, perPage)
+		if in.Name != "" {
+			nextCmd += fmt.Sprintf(" --name %q", in.Name)
+		}
+		if in.Query != "" {
+			nextCmd += fmt.Sprintf(" --query %q", in.Query)
+		}
+		pterm.Printf("Next: %s\n", nextCmd)
+	}
 	return nil
 }
 
@@ -323,7 +373,16 @@ func getProjectsHandler(cmd *cobra.Command) ProjectsCmd {
 
 func runProjectsList(cmd *cobra.Command, args []string) error {
 	c := getProjectsHandler(cmd)
-	return c.List(cmd.Context(), ProjectsListInput{})
+	page, _ := cmd.Flags().GetInt("page")
+	perPage, _ := cmd.Flags().GetInt("per-page")
+	name, _ := cmd.Flags().GetString("name")
+	query, _ := cmd.Flags().GetString("query")
+	return c.List(cmd.Context(), ProjectsListInput{
+		Page:    page,
+		PerPage: perPage,
+		Name:    name,
+		Query:   query,
+	})
 }
 
 func runProjectsCreate(cmd *cobra.Command, args []string) error {
@@ -477,6 +536,11 @@ var projectsSetLimitsCompatCmd = &cobra.Command{
 }
 
 func init() {
+	projectsListCmd.Flags().Int("page", 1, "Page number (1-based)")
+	projectsListCmd.Flags().Int("per-page", 20, "Items per page (default 20)")
+	projectsListCmd.Flags().String("name", "", "Exact-match filter on project name")
+	projectsListCmd.Flags().String("query", "", "Search projects by name")
+
 	projectsUpdateCmd.Flags().String("name", "", "New project name (1-255 characters)")
 	projectsUpdateCmd.Flags().String("status", "", "New project status: active or archived")
 	addJSONOutputFlag(projectsUpdateCmd)
