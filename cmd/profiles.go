@@ -148,7 +148,7 @@ func (p ProfilesCmd) List(ctx context.Context, in ProfilesListInput) error {
 	pterm.Printf("\nPage: %d  Per-page: %d  Items this page: %d  Has more: %s\n", page, perPage, itemsThisPage, lo.Ternary(hasMore, "yes", "no"))
 	if hasMore {
 		nextPage := page + 1
-		nextCmd := fmt.Sprintf("kernel profile list --page %d --per-page %d", nextPage, perPage)
+		nextCmd := fmt.Sprintf("kernel profiles list --page %d --per-page %d", nextPage, perPage)
 		if in.Name != "" {
 			nextCmd += fmt.Sprintf(" --name \"%s\"", in.Name)
 		}
