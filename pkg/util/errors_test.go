@@ -14,11 +14,11 @@ func TestCleanedUpSDKErrorIncludesStatusForPlainTextResponses(t *testing.T) {
 		StatusCode: http.StatusForbidden,
 		Response: &http.Response{
 			StatusCode: http.StatusForbidden,
-			Body:       io.NopCloser(strings.NewReader("OAuth token is scoped to a different project\n")),
+			Body:       io.NopCloser(strings.NewReader("Credential is scoped to a different project\n")),
 		},
 	}}
 
-	if got, want := err.Error(), "403: OAuth token is scoped to a different project"; got != want {
+	if got, want := err.Error(), "403: Credential is scoped to a different project"; got != want {
 		t.Fatalf("Error() = %q, want %q", got, want)
 	}
 }
