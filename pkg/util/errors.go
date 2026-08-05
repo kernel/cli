@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/kernel/kernel-go-sdk"
 )
@@ -29,7 +30,7 @@ func (e CleanedUpSdkError) Error() string {
 			// try response body as text
 			body, err := io.ReadAll(kerror.Response.Body)
 			if err == nil && len(body) > 0 {
-				return string(body)
+				return fmt.Sprintf("%d: %s", kerror.StatusCode, strings.TrimSpace(string(body)))
 			}
 		}
 	}
