@@ -290,6 +290,7 @@ type BrowsersCreateInput struct {
 	Extensions         []string
 	Viewport           string
 	Telemetry          string
+	TelemetryExport    string
 	ChromePolicy       string
 	ChromePolicyFile   string
 	Name               string
@@ -540,8 +541,8 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		}
 	}
 
-	if in.Telemetry != "" {
-		t, err := buildNewTelemetryParam(in.Telemetry)
+	if in.Telemetry != "" || in.TelemetryExport != "" {
+		t, err := buildNewTelemetryParam(in.Telemetry, in.TelemetryExport)
 		if err != nil {
 			return err
 		}
@@ -576,7 +577,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 
 	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.StartURL, browser.Name, browser.Tags)
-	if in.Telemetry != "" {
+	if in.Telemetry != "" || in.TelemetryExport != "" {
 		printTelemetrySummary(browser.Telemetry)
 	}
 	return nil
@@ -2783,6 +2784,7 @@ func init() {
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
 	browsersCreateCmd.Flags().String("telemetry", "", "Configure telemetry (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
+	browsersCreateCmd.Flags().String("telemetry-export-otlp", "", "Export captured telemetry over OTLP to one of the org's configured destinations, by ID or name; --telemetry-export-otlp=off disables export. Implies --telemetry=all when --telemetry is not set, since export requires capture")
 	browsersCreateCmd.Flags().String("name", "", "Optional unique name for the browser session (used to find it later; can be changed with 'browsers update --name')")
 	browsersCreateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the session (repeatable; up to 50 pairs)")
 	browsersCreateCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts")
@@ -2906,6 +2908,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	poolID, _ := cmd.Flags().GetString("pool-id")
 	poolName, _ := cmd.Flags().GetString("pool-name")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
+	telemetryExport, _ := cmd.Flags().GetString("telemetry-export-otlp")
 	name, _ := cmd.Flags().GetString("name")
 	tags, _ := tagsFromFlag(cmd, "tag")
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
@@ -3027,6 +3030,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		Extensions:         extensions,
 		Viewport:           viewport,
 		Telemetry:          telemetry,
+		TelemetryExport:    telemetryExport,
 		ChromePolicy:       chromePolicy,
 		ChromePolicyFile:   chromePolicyFile,
 		Name:               name,

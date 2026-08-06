@@ -869,6 +869,60 @@ func TestAuthConnectionsGet_TelemetryEnabledWithoutCategories(t *testing.T) {
 	assert.Contains(t, outBuf.String(), "enabled (default categories)")
 }
 
+func TestAuthConnectionsGet_TelemetryShowsExportDestination(t *testing.T) {
+	setupStdoutCapture(t)
+	// A connection bound to an OTLP destination reports where its sessions export,
+	// so the destination is visible without reading the raw JSON. Unlike a browser
+	// session's resolved config (where destination is the ID string), a connection
+	// echoes the stored request verbatim, so destination is an {id, name} object.
+	fake := &FakeAuthConnectionService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			var auth kernel.ManagedAuth
+			require.NoError(t, json.Unmarshal([]byte(`{"id":"conn-1","browser_telemetry":{"enabled":true,"browser":{"console":{"enabled":true}},"export":{"otlp":{"enabled":true,"destination":{"id":"dest-abc"}}}}}`), &auth))
+			return &auth, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+
+	require.NoError(t, c.Get(context.Background(), AuthConnectionGetInput{ID: "conn-1"}))
+	out := outBuf.String()
+	assert.Contains(t, out, "console")
+	assert.Contains(t, out, "exporting to dest-abc")
+}
+
+func TestAuthConnectionsGet_TelemetryShowsExportDestinationByName(t *testing.T) {
+	setupStdoutCapture(t)
+	// A connection created with --telemetry-export-otlp <name> stores the name, so
+	// that is what comes back; fall back to it when no ID is present.
+	fake := &FakeAuthConnectionService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			var auth kernel.ManagedAuth
+			require.NoError(t, json.Unmarshal([]byte(`{"id":"conn-1","browser_telemetry":{"enabled":true,"export":{"otlp":{"enabled":true,"destination":{"name":"my-collector"}}}}}`), &auth))
+			return &auth, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+
+	require.NoError(t, c.Get(context.Background(), AuthConnectionGetInput{ID: "conn-1"}))
+	assert.Contains(t, outBuf.String(), "exporting to my-collector")
+}
+
+func TestAuthConnectionsGet_TelemetryOmitsExportWhenDisabled(t *testing.T) {
+	setupStdoutCapture(t)
+	// An export block that is present but disabled must not read as "exporting".
+	fake := &FakeAuthConnectionService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			var auth kernel.ManagedAuth
+			require.NoError(t, json.Unmarshal([]byte(`{"id":"conn-1","browser_telemetry":{"enabled":true,"export":{"otlp":{"enabled":false}}}}`), &auth))
+			return &auth, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+
+	require.NoError(t, c.Get(context.Background(), AuthConnectionGetInput{ID: "conn-1"}))
+	assert.NotContains(t, outBuf.String(), "exporting to")
+}
+
 func TestAuthConnectionsGet_TelemetryRowOmittedWhenOff(t *testing.T) {
 	setupStdoutCapture(t)
 	// Telemetry that is off is not reported at all, rather than shown as a

@@ -55,6 +55,7 @@ type AuthConnectionCreateInput struct {
 	NoAutoReauth        bool
 	RecordSession       BoolFlag
 	Telemetry           string
+	TelemetryExport     string
 	Output              string
 }
 
@@ -87,6 +88,7 @@ type AuthConnectionUpdateInput struct {
 	AutoReauth             BoolFlag
 	RecordSession          BoolFlag
 	Telemetry              string
+	TelemetryExport        string
 	Output                 string
 }
 
@@ -105,12 +107,13 @@ type AuthConnectionDeleteInput struct {
 }
 
 type AuthConnectionLoginInput struct {
-	ID            string
-	ProxyID       string
-	ProxyName     string
-	RecordSession BoolFlag
-	Telemetry     string
-	Output        string
+	ID              string
+	ProxyID         string
+	ProxyName       string
+	RecordSession   BoolFlag
+	Telemetry       string
+	TelemetryExport string
+	Output          string
 }
 
 type AuthConnectionSubmitInput struct {
@@ -221,8 +224,8 @@ func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateIn
 		params.ManagedAuthCreateRequest.RecordSession = kernel.Opt(in.RecordSession.Value)
 	}
 
-	if in.Telemetry != "" {
-		t, err := buildAuthConnectionCreateTelemetryParam(in.Telemetry)
+	if in.Telemetry != "" || in.TelemetryExport != "" {
+		t, err := buildAuthConnectionCreateTelemetryParam(in.Telemetry, in.TelemetryExport)
 		if err != nil {
 			return err
 		}
@@ -346,8 +349,8 @@ func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateIn
 		hasChanges = true
 	}
 
-	if in.Telemetry != "" {
-		t, err := buildAuthConnectionUpdateTelemetryParam(in.Telemetry)
+	if in.Telemetry != "" || in.TelemetryExport != "" {
+		t, err := buildAuthConnectionUpdateTelemetryParam(in.Telemetry, in.TelemetryExport)
 		if err != nil {
 			return err
 		}
@@ -662,8 +665,8 @@ func (c AuthConnectionCmd) Login(ctx context.Context, in AuthConnectionLoginInpu
 		params.RecordSession = kernel.Opt(in.RecordSession.Value)
 	}
 
-	if in.Telemetry != "" {
-		t, err := buildAuthConnectionLoginTelemetryParam(in.Telemetry)
+	if in.Telemetry != "" || in.TelemetryExport != "" {
+		t, err := buildAuthConnectionLoginTelemetryParam(in.Telemetry, in.TelemetryExport)
 		if err != nil {
 			return err
 		}
@@ -1108,6 +1111,7 @@ func init() {
 	authConnectionsCreateCmd.Flags().Bool("no-auto-reauth", false, "Mark expired sessions as NEEDS_AUTH instead of attempting automatic re-authentication (auto re-auth is enabled by default)")
 	authConnectionsCreateCmd.Flags().Bool("record-session", false, "Record browser sessions for this connection by default (useful for debugging)")
 	authConnectionsCreateCmd.Flags().String("telemetry", "", "Configure telemetry for this connection's browser sessions (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
+	authConnectionsCreateCmd.Flags().String("telemetry-export-otlp", "", "Export this connection's captured telemetry over OTLP to one of the org's configured destinations, by ID or name; --telemetry-export-otlp=off disables export. Implies --telemetry=all when --telemetry is not set, since export requires capture")
 	_ = authConnectionsCreateCmd.MarkFlagRequired("domain")
 	_ = authConnectionsCreateCmd.MarkFlagRequired("profile-name")
 	authConnectionsCreateCmd.MarkFlagsMutuallyExclusive("credential-name", "credential-provider")
@@ -1134,6 +1138,7 @@ func init() {
 	authConnectionsUpdateCmd.Flags().Bool("no-auto-reauth", false, "Mark expired sessions as NEEDS_AUTH instead of attempting automatic re-authentication")
 	authConnectionsUpdateCmd.Flags().Bool("record-session", false, "Set whether browser sessions are recorded by default; use --record-session=false to disable")
 	authConnectionsUpdateCmd.Flags().String("telemetry", "", "Update telemetry for future browser sessions: --telemetry=all (reset to default set), --telemetry=off (disable), or --telemetry=console,network (merge those categories into the current selection)")
+	authConnectionsUpdateCmd.Flags().String("telemetry-export-otlp", "", "Update where future sessions export captured telemetry over OTLP, by destination ID or name; --telemetry-export-otlp=off disables export. Naming a destination requires passing --telemetry in the same command, since export and capture are validated together")
 	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("credential-name", "credential-provider")
 	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("save-credentials", "no-save-credentials")
 	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("health-checks", "no-health-checks")
@@ -1156,6 +1161,7 @@ func init() {
 	authConnectionsLoginCmd.Flags().String("proxy-name", "", "Proxy name to use for this login")
 	authConnectionsLoginCmd.Flags().Bool("record-session", false, "Override whether this login's browser session is recorded; use --record-session=false to disable")
 	authConnectionsLoginCmd.Flags().String("telemetry", "", "Telemetry override for this login only, merged onto the connection's config: --telemetry=all, --telemetry=off, or --telemetry=console,network")
+	authConnectionsLoginCmd.Flags().String("telemetry-export-otlp", "", "Export override for this login only: an OTLP destination ID or name; --telemetry-export-otlp=off disables export for this login. Naming a destination requires passing --telemetry in the same command, since export and capture are validated together")
 
 	// Submit flags
 	addJSONOutputFlag(authConnectionsSubmitCmd)
@@ -1208,6 +1214,7 @@ func runAuthConnectionsCreate(cmd *cobra.Command, args []string) error {
 	noHealthChecks, _ := cmd.Flags().GetBool("no-health-checks")
 	noAutoReauth, _ := cmd.Flags().GetBool("no-auto-reauth")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
+	telemetryExport, _ := cmd.Flags().GetString("telemetry-export-otlp")
 
 	svc := client.Auth.Connections
 	c := AuthConnectionCmd{svc: &svc}
@@ -1228,6 +1235,7 @@ func runAuthConnectionsCreate(cmd *cobra.Command, args []string) error {
 		NoAutoReauth:        noAutoReauth,
 		RecordSession:       readBoolFlag(cmd.Flags(), "record-session"),
 		Telemetry:           telemetry,
+		TelemetryExport:     telemetryExport,
 		Output:              output,
 	})
 }
@@ -1259,6 +1267,7 @@ func runAuthConnectionsUpdate(cmd *cobra.Command, args []string) error {
 	noSaveCredentials, _ := cmd.Flags().GetBool("no-save-credentials")
 	healthCheckInterval, _ := cmd.Flags().GetInt("health-check-interval")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
+	telemetryExport, _ := cmd.Flags().GetString("telemetry-export-otlp")
 
 	saveCredentialsFlag := BoolFlag{}
 
@@ -1309,6 +1318,7 @@ func runAuthConnectionsUpdate(cmd *cobra.Command, args []string) error {
 		AutoReauth:             togglePair("auto-reauth", "no-auto-reauth"),
 		RecordSession:          readBoolFlag(cmd.Flags(), "record-session"),
 		Telemetry:              telemetry,
+		TelemetryExport:        telemetryExport,
 		Output:                 output,
 	})
 }
@@ -1352,16 +1362,18 @@ func runAuthConnectionsLogin(cmd *cobra.Command, args []string) error {
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
 	proxyName, _ := cmd.Flags().GetString("proxy-name")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
+	telemetryExport, _ := cmd.Flags().GetString("telemetry-export-otlp")
 
 	svc := client.Auth.Connections
 	c := AuthConnectionCmd{svc: &svc}
 	return c.Login(cmd.Context(), AuthConnectionLoginInput{
-		ID:            args[0],
-		ProxyID:       proxyID,
-		ProxyName:     proxyName,
-		RecordSession: readBoolFlag(cmd.Flags(), "record-session"),
-		Telemetry:     telemetry,
-		Output:        output,
+		ID:              args[0],
+		ProxyID:         proxyID,
+		ProxyName:       proxyName,
+		RecordSession:   readBoolFlag(cmd.Flags(), "record-session"),
+		Telemetry:       telemetry,
+		TelemetryExport: telemetryExport,
+		Output:          output,
 	})
 }
 
