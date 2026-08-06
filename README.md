@@ -275,7 +275,7 @@ Commands with JSON output support:
 - `kernel browser-pools get <id-or-name>` - Get pool details
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools update <id-or-name>` - Update pool configuration
-  - Same flags as create plus `--clear-start-url` (remove the pool's start URL) and `--discard-all-idle` (discard all idle browsers and refill). An empty `--chrome-policy '{}'` is ignored and does not clear an existing policy; recreate the pool to remove one. `--telemetry` updates only apply to browsers warmed after the update.
+  - Same flags as create plus `--clear-profile`, `--clear-proxy`, `--clear-start-url`, `--clear-extensions`, and `--clear-chrome-policy` for removing durable configuration. `--fill-rate 0` pauses automatic filling. `--discard-all-idle` discards all idle browsers and refills the pool. `--telemetry` updates only apply to browsers warmed after the update.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools delete <id-or-name>` - Delete a pool
   - `--force` - Force delete even if browsers are leased
