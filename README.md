@@ -103,6 +103,7 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
 - `--version`, `-v` - Print the CLI version
 - `--no-color` - Disable color output
 - `--log-level <level>` - Set log level (trace, debug, info, warn, error, fatal, print)
+- `--project <project-id>` - Scope requests to a project ID (or set `KERNEL_PROJECT` to a project ID)
 
 ## JSON Output
 
@@ -621,7 +622,7 @@ Automated authentication for web services. The `run` command orchestrates the fu
 - `kernel api-keys create` - Create a new API key
   - `--name <name>` - API key name (required)
   - `--days-to-expire <days>` - Number of days until expiry (1-3650); omit for never
-  - `--project-id <project_id>` - Create a project-scoped API key for this project ID; omit for org-wide. This is different from global `--project`, which only scopes the CLI request.
+  - `--project-id <project_id>` - Create a project-scoped API key for this project ID; omit for org-wide. This is different from global `--project`, which scopes the CLI request to a project ID.
   - `--output json`, `-o json` - Output raw JSON object, including the one-time plaintext key
 
 - `kernel api-keys list` - List API keys
