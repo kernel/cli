@@ -481,7 +481,7 @@ Per-category updates are partial — only categories you name are changed; other
 
 - `kernel extensions list` - List all uploaded extensions
   - `--output json`, `-o json` - Output raw JSON array
-- `kernel extensions get <id-or-name>` - Show extension metadata (id, name, created, size, last used)
+- `kernel extensions get <id-or-name>` - Show extension metadata (id, name, checksum, created, size, last used)
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel extensions upload <directory>` - Upload an unpacked browser extension directory
   - `--name <name>` - Optional unique extension name
