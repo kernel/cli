@@ -16,6 +16,7 @@ import (
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
+	"github.com/pterm/pterm"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -128,7 +129,7 @@ func TestExtensionsList_WithRows(t *testing.T) {
 	assert.Contains(t, out, "alpha")
 	assert.Contains(t, out, "abc123")
 	assert.Contains(t, out, "e2")
-	assert.Regexp(t, `legacy\s+\|\s+-`, out)
+	assert.Regexp(t, `legacy\s+\|\s+-`, pterm.RemoveColorFromString(out))
 }
 
 func TestExtensionsList_ForwardsLimitOffset(t *testing.T) {
