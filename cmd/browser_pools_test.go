@@ -287,6 +287,13 @@ func TestBrowserPoolsUpdate_DurableClearAndZeroStates(t *testing.T) {
 			wantJSON: `{"profile":{"id":""}}`,
 		},
 		{
+			name: "clear start URL",
+			input: BrowserPoolsUpdateInput{
+				ClearStartURL: true,
+			},
+			wantJSON: `{"start_url":""}`,
+		},
+		{
 			name: "clear extensions",
 			input: BrowserPoolsUpdateInput{
 				ClearExtensions: true,
@@ -327,10 +334,11 @@ func TestBrowserPoolsUpdate_DurableClearAndZeroStates(t *testing.T) {
 				FillRate:          Int64Flag{Set: true, Value: 0},
 				ClearProfile:      true,
 				ClearProxy:        true,
+				ClearStartURL:     true,
 				ClearExtensions:   true,
 				ClearChromePolicy: true,
 			},
-			wantJSON: `{"fill_rate_per_minute":0,"profile":{"id":""},"proxy_id":"","extensions":[],"chrome_policy":{}}`,
+			wantJSON: `{"fill_rate_per_minute":0,"profile":{"id":""},"proxy_id":"","start_url":"","extensions":[],"chrome_policy":{}}`,
 		},
 	}
 
@@ -366,6 +374,11 @@ func TestBrowserPoolsUpdate_RejectsInvalidDurableInputs(t *testing.T) {
 			name:    "conflicting proxy flags",
 			input:   BrowserPoolsUpdateInput{ProxyID: "proxy-1", ClearProxy: true},
 			wantErr: "cannot specify both --proxy-id and --clear-proxy",
+		},
+		{
+			name:    "conflicting start URL flags",
+			input:   BrowserPoolsUpdateInput{StartURL: "https://example.com", ClearStartURL: true},
+			wantErr: "cannot specify both --start-url and --clear-start-url",
 		},
 		{
 			name:    "conflicting profile flags",
