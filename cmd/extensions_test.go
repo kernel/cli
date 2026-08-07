@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -84,6 +85,26 @@ func TestExtensionsGet_Table(t *testing.T) {
 	assert.Contains(t, out, "42")
 }
 
+func TestExtensionsGet_JSONOutput(t *testing.T) {
+	ptermOutput := capturePtermOutput(t)
+	fake := &FakeExtensionsService{
+		GetFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*kernel.ExtensionGetResponse, error) {
+			var response kernel.ExtensionGetResponse
+			err := json.Unmarshal([]byte(`{"id":"e-123","name":"my-ext","checksum":"abc123","created_at":"1970-01-01T00:00:00Z","size_bytes":42}`), &response)
+			assert.NoError(t, err)
+			return &response, nil
+		},
+	}
+	e := ExtensionsCmd{extensions: fake}
+	var commandErr error
+	stdout := captureStdout(t, func() {
+		commandErr = e.Get(context.Background(), ExtensionsGetInput{Identifier: "my-ext", Output: "json"})
+	})
+	assert.NoError(t, commandErr)
+	assert.JSONEq(t, `{"id":"e-123","name":"my-ext","checksum":"abc123","created_at":"1970-01-01T00:00:00Z","size_bytes":42}`, stdout)
+	assert.Empty(t, ptermOutput.String())
+}
+
 func TestExtensionsList_Empty(t *testing.T) {
 	buf := capturePtermOutput(t)
 	fake := &FakeExtensionsService{}
@@ -95,7 +116,7 @@ func TestExtensionsList_Empty(t *testing.T) {
 func TestExtensionsList_WithRows(t *testing.T) {
 	buf := capturePtermOutput(t)
 	created := time.Unix(0, 0)
-	rows := []kernel.ExtensionListResponse{{ID: "e1", Name: "alpha", Checksum: "abc123", CreatedAt: created, SizeBytes: 10}, {ID: "e2", Name: "", CreatedAt: created, SizeBytes: 20}}
+	rows := []kernel.ExtensionListResponse{{ID: "e1", Name: "alpha", Checksum: "abc123", CreatedAt: created, SizeBytes: 10}, {ID: "e2", Name: "legacy", CreatedAt: created, SizeBytes: 20}}
 	fake := &FakeExtensionsService{ListFunc: func(ctx context.Context, query kernel.ExtensionListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ExtensionListResponse], error) {
 		return &pagination.OffsetPagination[kernel.ExtensionListResponse]{Items: rows}, nil
 	}}
@@ -107,6 +128,7 @@ func TestExtensionsList_WithRows(t *testing.T) {
 	assert.Contains(t, out, "alpha")
 	assert.Contains(t, out, "abc123")
 	assert.Contains(t, out, "e2")
+	assert.Regexp(t, `legacy\s+\|\s+-`, out)
 }
 
 func TestExtensionsList_ForwardsLimitOffset(t *testing.T) {
@@ -219,7 +241,7 @@ func TestExtensionsUpload_Success(t *testing.T) {
 		return &kernel.ExtensionUploadResponse{ID: "e1", Name: "myext", Checksum: checksum, CreatedAt: time.Unix(0, 0), SizeBytes: 10}, nil
 	}}
 	e := ExtensionsCmd{extensions: fake}
-	_ = e.Upload(context.Background(), ExtensionsUploadInput{Dir: dir, Name: "myext"})
+	assert.NoError(t, e.Upload(context.Background(), ExtensionsUploadInput{Dir: dir, Name: "myext"}))
 	out := buf.String()
 	assert.Contains(t, out, "ID")
 	assert.Contains(t, out, "e1")
