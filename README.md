@@ -479,13 +479,14 @@ Per-category updates are partial — only categories you name are changed; other
 
 ### Extension Management
 
-- `kernel extensions list` - List all uploaded extensions
+- `kernel extensions list` - List all uploaded extensions, including available checksums
   - `--output json`, `-o json` - Output raw JSON array
-- `kernel extensions get <id-or-name>` - Show extension metadata (id, name, created, size, last used)
+- `kernel extensions get <id-or-name>` - Show extension metadata (id, name, checksum, created, size, last used)
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel extensions upload <directory>` - Upload an unpacked browser extension directory
   - `--name <name>` - Optional unique extension name
   - `--output json`, `-o json` - Output raw JSON object
+  - Successful uploads show the stored archive checksum
 - `kernel extensions download <id-or-name>` - Download an extension archive
   - `--to <directory>` - Output directory (required)
 - `kernel extensions download-web-store <url>` - Download an extension from the Chrome Web Store
