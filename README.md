@@ -479,7 +479,7 @@ Per-category updates are partial — only categories you name are changed; other
 
 ### Extension Management
 
-- `kernel extensions list` - List all uploaded extensions with checksums
+- `kernel extensions list` - List all uploaded extensions, including available checksums
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel extensions get <id-or-name>` - Show extension metadata (id, name, checksum, created, size, last used)
   - `--output json`, `-o json` - Output raw JSON object
