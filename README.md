@@ -84,7 +84,7 @@ The easiest way to authenticate is using OAuth:
 kernel login
 ```
 
-This opens your browser to complete the authentication flow. Your credentials are securely stored and automatically refreshed.
+This opens your browser to complete the authentication flow. Choose organization-wide access or restrict the login to one project. Your credentials are securely stored, automatically refreshed, and retain the selected scope until you log in again.
 
 ### API Key
 
@@ -103,7 +103,7 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
 - `--version`, `-v` - Print the CLI version
 - `--no-color` - Disable color output
 - `--log-level <level>` - Set log level (trace, debug, info, warn, error, fatal, print)
-- `--project <project-id>` - Scope requests to a project ID (or set `KERNEL_PROJECT` to a project ID)
+- `--project <project-id>` - Scope requests to a project ID (or set `KERNEL_PROJECT` to a project ID). Project-scoped OAuth tokens cannot switch projects.
 
 ## JSON Output
 
