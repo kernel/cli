@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
+	"github.com/pterm/pterm"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -67,10 +69,11 @@ func (f *FakeExtensionsService) Upload(ctx context.Context, body kernel.Extensio
 
 func TestExtensionsGet_Table(t *testing.T) {
 	buf := capturePtermOutput(t)
+	const checksum = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	fake := &FakeExtensionsService{
 		GetFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*kernel.ExtensionGetResponse, error) {
 			assert.Equal(t, "my-ext", idOrName)
-			return &kernel.ExtensionGetResponse{ID: "e-123", Name: "my-ext", CreatedAt: time.Unix(0, 0), SizeBytes: 42}, nil
+			return &kernel.ExtensionGetResponse{ID: "e-123", Name: "my-ext", Checksum: checksum, CreatedAt: time.Unix(0, 0), SizeBytes: 42}, nil
 		},
 	}
 	e := ExtensionsCmd{extensions: fake}
@@ -79,7 +82,28 @@ func TestExtensionsGet_Table(t *testing.T) {
 	out := buf.String()
 	assert.Contains(t, out, "e-123")
 	assert.Contains(t, out, "my-ext")
+	assert.Contains(t, out, "Checksum: "+checksum)
 	assert.Contains(t, out, "42")
+}
+
+func TestExtensionsGet_JSONOutput(t *testing.T) {
+	ptermOutput := capturePtermOutput(t)
+	fake := &FakeExtensionsService{
+		GetFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*kernel.ExtensionGetResponse, error) {
+			var response kernel.ExtensionGetResponse
+			err := json.Unmarshal([]byte(`{"id":"e-123","name":"my-ext","checksum":"abc123","created_at":"1970-01-01T00:00:00Z","size_bytes":42}`), &response)
+			assert.NoError(t, err)
+			return &response, nil
+		},
+	}
+	e := ExtensionsCmd{extensions: fake}
+	var commandErr error
+	stdout := captureStdout(t, func() {
+		commandErr = e.Get(context.Background(), ExtensionsGetInput{Identifier: "my-ext", Output: "json"})
+	})
+	assert.NoError(t, commandErr)
+	assert.JSONEq(t, `{"id":"e-123","name":"my-ext","checksum":"abc123","created_at":"1970-01-01T00:00:00Z","size_bytes":42}`, stdout)
+	assert.Empty(t, ptermOutput.String())
 }
 
 func TestExtensionsList_Empty(t *testing.T) {
@@ -93,16 +117,19 @@ func TestExtensionsList_Empty(t *testing.T) {
 func TestExtensionsList_WithRows(t *testing.T) {
 	buf := capturePtermOutput(t)
 	created := time.Unix(0, 0)
-	rows := []kernel.ExtensionListResponse{{ID: "e1", Name: "alpha", CreatedAt: created, SizeBytes: 10}, {ID: "e2", Name: "", CreatedAt: created, SizeBytes: 20}}
+	rows := []kernel.ExtensionListResponse{{ID: "e1", Name: "alpha", Checksum: "abc123", CreatedAt: created, SizeBytes: 10}, {ID: "e2", Name: "legacy", CreatedAt: created, SizeBytes: 20}}
 	fake := &FakeExtensionsService{ListFunc: func(ctx context.Context, query kernel.ExtensionListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ExtensionListResponse], error) {
 		return &pagination.OffsetPagination[kernel.ExtensionListResponse]{Items: rows}, nil
 	}}
 	e := ExtensionsCmd{extensions: fake}
 	_ = e.List(context.Background(), ExtensionsListInput{})
 	out := buf.String()
+	assert.Contains(t, out, "Checksum")
 	assert.Contains(t, out, "e1")
 	assert.Contains(t, out, "alpha")
+	assert.Contains(t, out, "abc123")
 	assert.Contains(t, out, "e2")
+	assert.Regexp(t, `legacy\s+\|\s+-`, pterm.RemoveColorFromString(out))
 }
 
 func TestExtensionsList_ForwardsLimitOffset(t *testing.T) {
@@ -205,21 +232,23 @@ func TestExtensionsDownloadWebStore_InvalidOS(t *testing.T) {
 
 func TestExtensionsUpload_Success(t *testing.T) {
 	buf := capturePtermOutput(t)
+	const checksum = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	dir := t.TempDir()
 	// create a sample file inside dir
 	err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte("{}"), 0644)
 	assert.NoError(t, err)
 
 	fake := &FakeExtensionsService{UploadFunc: func(ctx context.Context, body kernel.ExtensionUploadParams, opts ...option.RequestOption) (*kernel.ExtensionUploadResponse, error) {
-		return &kernel.ExtensionUploadResponse{ID: "e1", Name: "myext", CreatedAt: time.Unix(0, 0), SizeBytes: 10}, nil
+		return &kernel.ExtensionUploadResponse{ID: "e1", Name: "myext", Checksum: checksum, CreatedAt: time.Unix(0, 0), SizeBytes: 10}, nil
 	}}
 	e := ExtensionsCmd{extensions: fake}
-	_ = e.Upload(context.Background(), ExtensionsUploadInput{Dir: dir, Name: "myext"})
+	assert.NoError(t, e.Upload(context.Background(), ExtensionsUploadInput{Dir: dir, Name: "myext"}))
 	out := buf.String()
 	assert.Contains(t, out, "ID")
 	assert.Contains(t, out, "e1")
 	assert.Contains(t, out, "Name")
 	assert.Contains(t, out, "myext")
+	assert.Contains(t, out, "Checksum: "+checksum)
 }
 
 func TestExtensionsUpload_InvalidDir(t *testing.T) {
