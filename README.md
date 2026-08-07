@@ -540,6 +540,11 @@ Export is bound at session creation, so it is available on `browsers create` and
 - `kernel proxies delete <id>` - Delete a proxy configuration
   - `-y, --yes` - Skip confirmation prompt
 
+### Auth Context
+
+- `kernel auth context` - Show the identity and authorization context resolved for the current credentials: the authenticated principal, organization, credential scope, and the effective scope for the request. Credential secrets are never returned. Pass `--project <id>` to see the effective scope a project-scoped request would get.
+  - `--output json`, `-o json` - Output raw JSON object
+
 ### Auth Connections
 
 Managed auth connections (`kernel auth connections`). The commands below are new or gained new flags; run `kernel auth connections --help` for the full command list.
