@@ -137,15 +137,12 @@ func (e ExtensionsCmd) List(ctx context.Context, in ExtensionsListInput) error {
 		pterm.Info.Println("No extensions found")
 		return nil
 	}
-	rows := pterm.TableData{{"Extension ID", "Name", "Created At", "Size (bytes)", "Last Used At"}}
+	rows := pterm.TableData{{"Extension ID", "Name", "Checksum", "Created At", "Size (bytes)", "Last Used At"}}
 	for _, it := range items {
-		name := it.Name
-		if name == "" {
-			name = "-"
-		}
 		rows = append(rows, []string{
 			it.ID,
-			name,
+			util.FirstOrDash(it.Name),
+			util.FirstOrDash(it.Checksum),
 			util.FormatLocal(it.CreatedAt),
 			fmt.Sprintf("%d", it.SizeBytes),
 			util.FormatLocal(it.LastUsedAt),
@@ -173,17 +170,14 @@ func (e ExtensionsCmd) Get(ctx context.Context, in ExtensionsGetInput) error {
 		return util.PrintPrettyJSON(item)
 	}
 
-	name := item.Name
-	if name == "" {
-		name = "-"
-	}
 	rows := pterm.TableData{{"Property", "Value"}}
 	rows = append(rows, []string{"ID", item.ID})
-	rows = append(rows, []string{"Name", name})
+	rows = append(rows, []string{"Name", util.FirstOrDash(item.Name)})
 	rows = append(rows, []string{"Created At", util.FormatLocal(item.CreatedAt)})
 	rows = append(rows, []string{"Size (bytes)", fmt.Sprintf("%d", item.SizeBytes)})
 	rows = append(rows, []string{"Last Used At", util.FormatLocal(item.LastUsedAt)})
 	PrintTableNoPad(rows, true)
+	pterm.Printf("Checksum: %s\n", util.FirstOrDash(item.Checksum))
 	return nil
 }
 
@@ -440,16 +434,13 @@ func (e ExtensionsCmd) Upload(ctx context.Context, in ExtensionsUploadInput) err
 		return util.PrintPrettyJSON(item)
 	}
 
-	name := item.Name
-	if name == "" {
-		name = "-"
-	}
 	rows := pterm.TableData{{"Property", "Value"}}
 	rows = append(rows, []string{"ID", item.ID})
-	rows = append(rows, []string{"Name", name})
+	rows = append(rows, []string{"Name", util.FirstOrDash(item.Name)})
 	rows = append(rows, []string{"Created At", util.FormatLocal(item.CreatedAt)})
 	rows = append(rows, []string{"Size (bytes)", fmt.Sprintf("%d", item.SizeBytes)})
 	PrintTableNoPad(rows, true)
+	pterm.Printf("Checksum: %s\n", util.FirstOrDash(item.Checksum))
 	return nil
 }
 

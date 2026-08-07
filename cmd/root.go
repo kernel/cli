@@ -116,7 +116,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolP("version", "v", false, "Print the CLI version")
 	rootCmd.PersistentFlags().BoolP("no-color", "", false, "Disable color output")
 	rootCmd.PersistentFlags().String("log-level", "warn", "Set the log level (trace, debug, info, warn, error, fatal, print)")
-	rootCmd.PersistentFlags().String("project", "", "Project ID or name to scope all requests to (or set KERNEL_PROJECT env var)")
+	rootCmd.PersistentFlags().String("project", "", "Project ID to scope all requests to (or set KERNEL_PROJECT to a project ID)")
 	rootCmd.SilenceUsage = true
 	rootCmd.SilenceErrors = true
 	cobra.OnInitialize(initConfig)
@@ -143,7 +143,7 @@ func init() {
 		projectVal = resolveProjectSelection(projectVal)
 
 		if projectVal != "" {
-			clientOpts = append(clientOpts, option.WithHeader("X-Kernel-Project-Id", projectVal))
+			clientOpts = append(clientOpts, option.WithProjectID(projectVal))
 		}
 
 		client, err := auth.GetAuthenticatedClient(clientOpts...)

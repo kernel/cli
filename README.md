@@ -103,6 +103,7 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
 - `--version`, `-v` - Print the CLI version
 - `--no-color` - Disable color output
 - `--log-level <level>` - Set log level (trace, debug, info, warn, error, fatal, print)
+- `--project <project-id>` - Scope requests to a project ID (or set `KERNEL_PROJECT` to a project ID)
 
 ## JSON Output
 
@@ -276,7 +277,7 @@ Commands with JSON output support:
 - `kernel browser-pools get <id-or-name>` - Get pool details
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools update <id-or-name>` - Update pool configuration
-  - Same flags as create plus `--clear-start-url` (remove the pool's start URL) and `--discard-all-idle` (discard all idle browsers and refill). An empty `--chrome-policy '{}'` is ignored and does not clear an existing policy; recreate the pool to remove one. `--telemetry` updates only apply to browsers warmed after the update.
+  - Same flags as create plus `--clear-profile`, `--clear-proxy`, `--clear-start-url`, `--clear-extensions`, and `--clear-chrome-policy` for removing durable configuration. `--fill-rate 0` pauses automatic filling. `--discard-all-idle` discards all idle browsers and refills the pool. `--telemetry` updates only apply to browsers warmed after the update.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools delete <id-or-name>` - Delete a pool
   - `--force` - Force delete even if browsers are leased
@@ -490,13 +491,14 @@ Export is bound at session creation, so it is available on `browsers create` and
 
 ### Extension Management
 
-- `kernel extensions list` - List all uploaded extensions
+- `kernel extensions list` - List all uploaded extensions, including available checksums
   - `--output json`, `-o json` - Output raw JSON array
-- `kernel extensions get <id-or-name>` - Show extension metadata (id, name, created, size, last used)
+- `kernel extensions get <id-or-name>` - Show extension metadata (id, name, checksum, created, size, last used)
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel extensions upload <directory>` - Upload an unpacked browser extension directory
   - `--name <name>` - Optional unique extension name
   - `--output json`, `-o json` - Output raw JSON object
+  - Successful uploads show the stored archive checksum
 - `kernel extensions download <id-or-name>` - Download an extension archive
   - `--to <directory>` - Output directory (required)
 - `kernel extensions download-web-store <url>` - Download an extension from the Chrome Web Store
@@ -635,7 +637,7 @@ Automated authentication for web services. The `run` command orchestrates the fu
 - `kernel api-keys create` - Create a new API key
   - `--name <name>` - API key name (required)
   - `--days-to-expire <days>` - Number of days until expiry (1-3650); omit for never
-  - `--project-id <project_id>` - Create a project-scoped API key for this project ID; omit for org-wide. This is different from global `--project`, which only scopes the CLI request.
+  - `--project-id <project_id>` - Create a project-scoped API key for this project ID; omit for org-wide. This is different from global `--project`, which scopes the CLI request to a project ID.
   - `--output json`, `-o json` - Output raw JSON object, including the one-time plaintext key
 
 - `kernel api-keys list` - List API keys

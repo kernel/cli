@@ -2,12 +2,16 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // FakeBrowserPoolsService is a configurable fake implementing BrowserPoolsService.
@@ -248,45 +252,174 @@ func TestBrowserPoolsUpdate_WithChromePolicy(t *testing.T) {
 	assert.Equal(t, map[string]any{"BookmarkBarEnabled": false}, captured.ChromePolicy)
 }
 
-func TestBrowserPoolsUpdate_EmptyChromePolicyWarnsAndDoesNotClear(t *testing.T) {
-	setupStdoutCapture(t)
+func TestBrowserPoolsUpdate_DurableClearAndZeroStates(t *testing.T) {
+	policyDir := t.TempDir()
+	emptyObjectPolicyFile := filepath.Join(policyDir, "empty-object.json")
+	require.NoError(t, os.WriteFile(emptyObjectPolicyFile, []byte(`{}`), 0o600))
+	blankPolicyFile := filepath.Join(policyDir, "blank.json")
+	require.NoError(t, os.WriteFile(blankPolicyFile, []byte("\n"), 0o600))
 
-	var captured kernel.BrowserPoolUpdateParams
-	fake := &FakeBrowserPoolsService{
-		UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
-			captured = body
-			return &kernel.BrowserPool{ID: id}, nil
+	tests := []struct {
+		name     string
+		input    BrowserPoolsUpdateInput
+		wantJSON string
+	}{
+		{
+			name:     "durable fields omitted",
+			input:    BrowserPoolsUpdateInput{},
+			wantJSON: `{}`,
+		},
+		{
+			name: "fill rate zero",
+			input: BrowserPoolsUpdateInput{
+				FillRate: Int64Flag{Set: true, Value: 0},
+			},
+			wantJSON: `{"fill_rate_per_minute":0}`,
+		},
+		{
+			name: "clear proxy",
+			input: BrowserPoolsUpdateInput{
+				ClearProxy: true,
+			},
+			wantJSON: `{"proxy_id":""}`,
+		},
+		{
+			name: "clear profile",
+			input: BrowserPoolsUpdateInput{
+				ClearProfile: true,
+			},
+			wantJSON: `{"profile":{"id":""}}`,
+		},
+		{
+			name: "clear start URL",
+			input: BrowserPoolsUpdateInput{
+				ClearStartURL: true,
+			},
+			wantJSON: `{"start_url":""}`,
+		},
+		{
+			name: "clear extensions",
+			input: BrowserPoolsUpdateInput{
+				ClearExtensions: true,
+			},
+			wantJSON: `{"extensions":[]}`,
+		},
+		{
+			name: "clear Chrome policy",
+			input: BrowserPoolsUpdateInput{
+				ClearChromePolicy: true,
+			},
+			wantJSON: `{"chrome_policy":{}}`,
+		},
+		{
+			name: "empty inline Chrome policy",
+			input: BrowserPoolsUpdateInput{
+				ChromePolicy: `{}`,
+			},
+			wantJSON: `{"chrome_policy":{}}`,
+		},
+		{
+			name: "empty object Chrome policy file",
+			input: BrowserPoolsUpdateInput{
+				ChromePolicyFile: emptyObjectPolicyFile,
+			},
+			wantJSON: `{"chrome_policy":{}}`,
+		},
+		{
+			name: "blank Chrome policy file",
+			input: BrowserPoolsUpdateInput{
+				ChromePolicyFile: blankPolicyFile,
+			},
+			wantJSON: `{}`,
+		},
+		{
+			name: "all durable clear states",
+			input: BrowserPoolsUpdateInput{
+				FillRate:          Int64Flag{Set: true, Value: 0},
+				ClearProfile:      true,
+				ClearProxy:        true,
+				ClearStartURL:     true,
+				ClearExtensions:   true,
+				ClearChromePolicy: true,
+			},
+			wantJSON: `{"fill_rate_per_minute":0,"profile":{"id":""},"proxy_id":"","start_url":"","extensions":[],"chrome_policy":{}}`,
 		},
 	}
 
-	c := BrowserPoolsCmd{client: fake}
-	err := c.Update(context.Background(), BrowserPoolsUpdateInput{
-		IDOrName:     "pool-1",
-		ChromePolicy: "{}",
-	})
-	assert.NoError(t, err)
-	assert.Nil(t, captured.ChromePolicy)
-	assert.Contains(t, outBuf.String(), "does not clear")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupStdoutCapture(t)
+
+			var gotJSON []byte
+			var marshalErr error
+			fake := &FakeBrowserPoolsService{
+				UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+					gotJSON, marshalErr = json.Marshal(body)
+					return &kernel.BrowserPool{ID: id}, nil
+				},
+			}
+
+			tt.input.IDOrName = "pool-1"
+			err := (BrowserPoolsCmd{client: fake}).Update(context.Background(), tt.input)
+			require.NoError(t, err)
+			require.NoError(t, marshalErr)
+			assert.JSONEq(t, tt.wantJSON, string(gotJSON))
+		})
+	}
 }
 
-func TestBrowserPoolsUpdate_EmptyChromePolicyQuietInJSONMode(t *testing.T) {
-	setupStdoutCapture(t)
-
-	fake := &FakeBrowserPoolsService{
-		UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
-			return &kernel.BrowserPool{ID: id}, nil
+func TestBrowserPoolsUpdate_RejectsInvalidDurableInputs(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   BrowserPoolsUpdateInput
+		wantErr string
+	}{
+		{
+			name:    "conflicting proxy flags",
+			input:   BrowserPoolsUpdateInput{ProxyID: "proxy-1", ClearProxy: true},
+			wantErr: "cannot specify both --proxy-id and --clear-proxy",
+		},
+		{
+			name:    "conflicting start URL flags",
+			input:   BrowserPoolsUpdateInput{StartURL: "https://example.com", ClearStartURL: true},
+			wantErr: "cannot specify both --start-url and --clear-start-url",
+		},
+		{
+			name:    "conflicting profile flags",
+			input:   BrowserPoolsUpdateInput{ProfileID: "profile-1", ClearProfile: true},
+			wantErr: "cannot specify --clear-profile with --profile-id or --profile-name",
+		},
+		{
+			name:    "conflicting extension flags",
+			input:   BrowserPoolsUpdateInput{Extensions: []string{"extension-1"}, ClearExtensions: true},
+			wantErr: "cannot specify both --extension and --clear-extensions",
+		},
+		{
+			name:    "conflicting Chrome policy flags",
+			input:   BrowserPoolsUpdateInput{ChromePolicy: `{}`, ClearChromePolicy: true},
+			wantErr: "cannot specify --clear-chrome-policy with --chrome-policy or --chrome-policy-file",
+		},
+		{
+			name:    "negative fill rate",
+			input:   BrowserPoolsUpdateInput{FillRate: Int64Flag{Set: true, Value: -1}},
+			wantErr: "--fill-rate must be zero or greater",
 		},
 	}
 
-	c := BrowserPoolsCmd{client: fake}
-	err := c.Update(context.Background(), BrowserPoolsUpdateInput{
-		IDOrName:     "pool-1",
-		ChromePolicy: "{}",
-		Output:       "json",
-	})
-	assert.NoError(t, err)
-	// The warning must not leak onto stdout in json mode, where it would corrupt the payload.
-	assert.NotContains(t, outBuf.String(), "does not clear")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &FakeBrowserPoolsService{
+				UpdateFunc: func(context.Context, string, kernel.BrowserPoolUpdateParams, ...option.RequestOption) (*kernel.BrowserPool, error) {
+					t.Fatal("Update should not be called for invalid input")
+					return nil, nil
+				},
+			}
+
+			tt.input.IDOrName = "pool-1"
+			err := (BrowserPoolsCmd{client: fake}).Update(context.Background(), tt.input)
+			require.EqualError(t, err, tt.wantErr)
+		})
+	}
 }
 
 func TestBrowserPoolsCreate_WithTelemetry(t *testing.T) {

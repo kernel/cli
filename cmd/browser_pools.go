@@ -299,7 +299,7 @@ type BrowserPoolsUpdateInput struct {
 	IDOrName               string
 	Name                   string
 	Size                   int64
-	FillRate               int64
+	FillRate               Int64Flag
 	TimeoutSeconds         int64
 	Stealth                BoolFlag
 	Headless               BoolFlag
@@ -307,16 +307,42 @@ type BrowserPoolsUpdateInput struct {
 	RefreshOnProfileUpdate BoolFlag
 	ProfileID              string
 	ProfileName            string
+	ClearProfile           bool
 	ProxyID                string
+	ClearProxy             bool
 	StartURL               string
 	ClearStartURL          bool
 	Extensions             []string
+	ClearExtensions        bool
 	Viewport               string
 	ChromePolicy           string
 	ChromePolicyFile       string
+	ClearChromePolicy      bool
 	Telemetry              string
 	DiscardAllIdle         BoolFlag
 	Output                 string
+}
+
+func validateBrowserPoolUpdateInput(in BrowserPoolsUpdateInput) error {
+	if in.StartURL != "" && in.ClearStartURL {
+		return fmt.Errorf("cannot specify both --start-url and --clear-start-url")
+	}
+	if in.FillRate.Set && in.FillRate.Value < 0 {
+		return fmt.Errorf("--fill-rate must be zero or greater")
+	}
+	if in.ProxyID != "" && in.ClearProxy {
+		return fmt.Errorf("cannot specify both --proxy-id and --clear-proxy")
+	}
+	if (in.ProfileID != "" || in.ProfileName != "") && in.ClearProfile {
+		return fmt.Errorf("cannot specify --clear-profile with --profile-id or --profile-name")
+	}
+	if len(in.Extensions) > 0 && in.ClearExtensions {
+		return fmt.Errorf("cannot specify both --extension and --clear-extensions")
+	}
+	if (in.ChromePolicy != "" || in.ChromePolicyFile != "") && in.ClearChromePolicy {
+		return fmt.Errorf("cannot specify --clear-chrome-policy with --chrome-policy or --chrome-policy-file")
+	}
+	return nil
 }
 
 func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput) error {
@@ -326,8 +352,8 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 	if err := validateStartURLFlag(in.StartURL); err != nil {
 		return err
 	}
-	if in.StartURL != "" && in.ClearStartURL {
-		return fmt.Errorf("cannot specify both --start-url and --clear-start-url")
+	if err := validateBrowserPoolUpdateInput(in); err != nil {
+		return err
 	}
 
 	params := kernel.BrowserPoolUpdateParams{}
@@ -338,8 +364,8 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 	if in.Size > 0 {
 		params.Size = kernel.Int(in.Size)
 	}
-	if in.FillRate > 0 {
-		params.FillRatePerMinute = kernel.Int(in.FillRate)
+	if in.FillRate.Set {
+		params.FillRatePerMinute = kernel.Int(in.FillRate.Value)
 	}
 	if in.TimeoutSeconds > 0 {
 		params.TimeoutSeconds = kernel.Int(in.TimeoutSeconds)
@@ -365,7 +391,9 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 		pterm.Error.Println(err.Error())
 		return nil
 	}
-	if profileSet {
+	if in.ClearProfile {
+		params.Profile.ID = kernel.String("")
+	} else if profileSet {
 		if profileID != "" {
 			params.Profile.ID = kernel.String(profileID)
 		} else {
@@ -373,7 +401,9 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 		}
 	}
 
-	if in.ProxyID != "" {
+	if in.ClearProxy {
+		params.ProxyID = kernel.String("")
+	} else if in.ProxyID != "" {
 		params.ProxyID = kernel.String(in.ProxyID)
 	}
 	if in.ClearStartURL {
@@ -399,11 +429,19 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 	}
 	if len(chromePolicy) > 0 {
 		params.ChromePolicy = chromePolicy
-	} else if (in.ChromePolicy != "" || in.ChromePolicyFile != "") && in.Output != "json" {
-		// An empty policy ({}) cannot clear an existing one: omitzero drops it before it
-		// reaches the server. Warn instead of silently doing nothing, but stay quiet on the
-		// json path so stdout remains valid JSON.
-		pterm.Warning.Println("An empty chrome policy is ignored and does not clear the pool's existing policy; recreate the pool to remove a policy.")
+	}
+
+	extraFields := map[string]any{}
+	// The SDK's omitzero encoder drops empty collections, so explicit clears use
+	// its extra-fields escape hatch to preserve {} and [] on the wire.
+	if in.ClearExtensions {
+		extraFields["extensions"] = []kernel.BrowserExtensionParam{}
+	}
+	if in.ClearChromePolicy || (chromePolicy != nil && len(chromePolicy) == 0) {
+		extraFields["chrome_policy"] = map[string]any{}
+	}
+	if len(extraFields) > 0 {
+		params.SetExtraFields(extraFields)
 	}
 
 	if in.Telemetry != "" {
@@ -678,13 +716,17 @@ func init() {
 	browserPoolsUpdateCmd.Flags().Bool("refresh-on-profile-update", false, "Flush idle browsers when the pool's profile is updated")
 	browserPoolsUpdateCmd.Flags().String("profile-id", "", "Profile ID")
 	browserPoolsUpdateCmd.Flags().String("profile-name", "", "Profile name")
+	browserPoolsUpdateCmd.Flags().Bool("clear-profile", false, "Remove the pool profile")
 	browserPoolsUpdateCmd.Flags().String("proxy-id", "", "Proxy ID")
+	browserPoolsUpdateCmd.Flags().Bool("clear-proxy", false, "Remove the pool proxy")
 	browserPoolsUpdateCmd.Flags().String("start-url", "", "Initial page to open for new browsers")
 	browserPoolsUpdateCmd.Flags().Bool("clear-start-url", false, "Clear the pool start URL")
 	browserPoolsUpdateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
+	browserPoolsUpdateCmd.Flags().Bool("clear-extensions", false, "Remove all pool extensions")
 	browserPoolsUpdateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
 	browserPoolsUpdateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
 	browserPoolsUpdateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
+	browserPoolsUpdateCmd.Flags().Bool("clear-chrome-policy", false, "Remove the pool's custom Chrome enterprise policy")
 	browserPoolsUpdateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
 	browserPoolsUpdateCmd.Flags().String("telemetry", "", "Update pool telemetry: --telemetry=all (reset to default set), --telemetry=off (disable), or --telemetry=console,network (merge those categories into the current selection). Applies only to browsers warmed after the update.")
 	browserPoolsUpdateCmd.Flags().Bool("discard-all-idle", false, "Discard all idle browsers")
@@ -797,13 +839,17 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 	refreshOnProfileUpdate, _ := cmd.Flags().GetBool("refresh-on-profile-update")
 	profileID, _ := cmd.Flags().GetString("profile-id")
 	profileName, _ := cmd.Flags().GetString("profile-name")
+	clearProfile, _ := cmd.Flags().GetBool("clear-profile")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
+	clearProxy, _ := cmd.Flags().GetBool("clear-proxy")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	clearStartURL, _ := cmd.Flags().GetBool("clear-start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
+	clearExtensions, _ := cmd.Flags().GetBool("clear-extensions")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
 	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
+	clearChromePolicy, _ := cmd.Flags().GetBool("clear-chrome-policy")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 	discardIdle, _ := cmd.Flags().GetBool("discard-all-idle")
 	output, _ := cmd.Flags().GetString("output")
@@ -812,7 +858,7 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 		IDOrName:               args[0],
 		Name:                   name,
 		Size:                   size,
-		FillRate:               fillRate,
+		FillRate:               Int64Flag{Set: cmd.Flags().Changed("fill-rate"), Value: fillRate},
 		TimeoutSeconds:         timeout,
 		Stealth:                BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealth},
 		Headless:               BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headless},
@@ -820,13 +866,17 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 		RefreshOnProfileUpdate: BoolFlag{Set: cmd.Flags().Changed("refresh-on-profile-update"), Value: refreshOnProfileUpdate},
 		ProfileID:              profileID,
 		ProfileName:            profileName,
+		ClearProfile:           clearProfile,
 		ProxyID:                proxyID,
+		ClearProxy:             clearProxy,
 		StartURL:               startURL,
 		ClearStartURL:          clearStartURL,
 		Extensions:             extensions,
+		ClearExtensions:        clearExtensions,
 		Viewport:               viewport,
 		ChromePolicy:           chromePolicy,
 		ChromePolicyFile:       chromePolicyFile,
+		ClearChromePolicy:      clearChromePolicy,
 		Telemetry:              telemetry,
 		DiscardAllIdle:         BoolFlag{Set: cmd.Flags().Changed("discard-all-idle"), Value: discardIdle},
 		Output:                 output,
