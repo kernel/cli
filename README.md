@@ -476,6 +476,7 @@ Per-category updates are partial — only categories you name are changed; other
 - `kernel projects list` - List projects (up to 100 by default)
   - `--limit <n>` - Maximum number of projects to return (1-100, default 100)
   - `--offset <n>` - Number of projects to skip; table indexes match this offset
+  - `--output json`, `-o json` - Output `{ "projects": [...], "next_offset": <n> }`; `next_offset` is omitted on the last page
   - When more projects are available, the CLI prints the exact command to fetch the next page
 - `kernel projects update <id-or-name>` - Update a project's name or status
   - `--name <name>` - New project name (1-255 characters)

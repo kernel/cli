@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -42,6 +43,7 @@ type ProjectsCmd struct {
 type ProjectsListInput struct {
 	Limit  int
 	Offset int
+	Output string
 }
 
 type ProjectsCreateInput struct {
@@ -92,6 +94,9 @@ func resolveProjectArg(ctx context.Context, projects ProjectListService, val str
 }
 
 func (c ProjectsCmd) List(ctx context.Context, in ProjectsListInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
 	if in.Limit < 1 || in.Limit > 100 {
 		return fmt.Errorf("--limit must be between 1 and 100")
 	}
@@ -108,13 +113,28 @@ func (c ProjectsCmd) List(ctx context.Context, in ProjectsListInput) error {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
-	if projects == nil || len(projects.Items) == 0 {
+	items := make([]kernel.Project, 0)
+	if projects != nil {
+		items = projects.Items
+	}
+	nextOffset, hasMore := projectListNextOffset(response)
+
+	if in.Output == "json" {
+		data, err := marshalProjectsListJSON(items, nextOffset)
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
+	if len(items) == 0 {
 		pterm.Info.Println("No projects found")
 		return nil
 	}
 
 	table := pterm.TableData{{"ID", "Name", "Status", "Created At", "idx"}}
-	for i, p := range projects.Items {
+	for i, p := range items {
 		table = append(table, []string{
 			p.ID,
 			p.Name,
@@ -125,10 +145,10 @@ func (c ProjectsCmd) List(ctx context.Context, in ProjectsListInput) error {
 	}
 	PrintTableNoPad(table, true)
 
-	if nextOffset, ok := projectListNextOffset(response); ok {
+	if hasMore {
 		pterm.Warning.Printfln(
 			"Output truncated after index %d. Continue with: kernel projects list --limit %d --offset %d",
-			in.Offset+len(projects.Items)-1, in.Limit, nextOffset,
+			in.Offset+len(items)-1, in.Limit, nextOffset,
 		)
 	}
 	return nil
@@ -140,6 +160,22 @@ func projectListNextOffset(response *http.Response) (int, bool) {
 	}
 	nextOffset, err := strconv.Atoi(response.Header.Get("X-Next-Offset"))
 	return nextOffset, err == nil && nextOffset > 0
+}
+
+func marshalProjectsListJSON(projects []kernel.Project, nextOffset int) ([]byte, error) {
+	rawProjects := make([]json.RawMessage, 0, len(projects))
+	for _, project := range projects {
+		raw := project.RawJSON()
+		if raw == "" {
+			raw = "{}"
+		}
+		rawProjects = append(rawProjects, json.RawMessage(raw))
+	}
+	payload := struct {
+		Projects   []json.RawMessage `json:"projects"`
+		NextOffset int               `json:"next_offset,omitempty"`
+	}{Projects: rawProjects, NextOffset: nextOffset}
+	return json.MarshalIndent(payload, "", "  ")
 }
 
 func (c ProjectsCmd) Create(ctx context.Context, in ProjectsCreateInput) error {
@@ -362,7 +398,8 @@ func runProjectsList(cmd *cobra.Command, args []string) error {
 	c := getProjectsHandler(cmd)
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
-	return c.List(cmd.Context(), ProjectsListInput{Limit: limit, Offset: offset})
+	output, _ := cmd.Flags().GetString("output")
+	return c.List(cmd.Context(), ProjectsListInput{Limit: limit, Offset: offset, Output: output})
 }
 
 func runProjectsCreate(cmd *cobra.Command, args []string) error {
@@ -518,6 +555,7 @@ var projectsSetLimitsCompatCmd = &cobra.Command{
 func init() {
 	projectsListCmd.Flags().Int("limit", 100, "Maximum number of projects to return (1-100)")
 	projectsListCmd.Flags().Int("offset", 0, "Number of projects to skip (for pagination)")
+	addJSONOutputFlag(projectsListCmd)
 
 	projectsUpdateCmd.Flags().String("name", "", "New project name (1-255 characters)")
 	projectsUpdateCmd.Flags().String("status", "", "New project status: active or archived")

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"testing"
@@ -116,6 +117,7 @@ func TestProjectsList_RejectsInvalidPagination(t *testing.T) {
 		{Limit: 0},
 		{Limit: 101},
 		{Limit: 100, Offset: -1},
+		{Limit: 100, Output: "yaml"},
 	} {
 		assert.Error(t, c.List(context.Background(), in))
 	}
@@ -131,6 +133,19 @@ func TestProjectListNextOffset(t *testing.T) {
 	assert.False(t, ok)
 	_, ok = projectListNextOffset(nil)
 	assert.False(t, ok)
+}
+
+func TestMarshalProjectsListJSON_IncludesNextOffset(t *testing.T) {
+	var project kernel.Project
+	assert.NoError(t, json.Unmarshal([]byte(`{"id":"proj_1","name":"one","status":"active","created_at":"2026-08-08T12:00:00Z","updated_at":"2026-08-08T12:00:00Z"}`), &project))
+
+	data, err := marshalProjectsListJSON([]kernel.Project{project}, 100)
+	assert.NoError(t, err)
+	assert.JSONEq(t, `{"projects":[{"id":"proj_1","name":"one","status":"active","created_at":"2026-08-08T12:00:00Z","updated_at":"2026-08-08T12:00:00Z"}],"next_offset":100}`, string(data))
+
+	data, err = marshalProjectsListJSON([]kernel.Project{}, 0)
+	assert.NoError(t, err)
+	assert.JSONEq(t, `{"projects":[]}`, string(data))
 }
 
 func TestProjectsLimitsGet_DefaultOutput(t *testing.T) {
