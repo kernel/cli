@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/kernel/cli/pkg/util"
@@ -37,7 +39,10 @@ type ProjectsCmd struct {
 	limits   ProjectLimitsService
 }
 
-type ProjectsListInput struct{}
+type ProjectsListInput struct {
+	Limit  int
+	Offset int
+}
 
 type ProjectsCreateInput struct {
 	Name string
@@ -87,7 +92,18 @@ func resolveProjectArg(ctx context.Context, projects ProjectListService, val str
 }
 
 func (c ProjectsCmd) List(ctx context.Context, in ProjectsListInput) error {
-	projects, err := c.projects.List(ctx, kernel.ProjectListParams{})
+	if in.Limit < 1 || in.Limit > 100 {
+		return fmt.Errorf("--limit must be between 1 and 100")
+	}
+	if in.Offset < 0 {
+		return fmt.Errorf("--offset must be non-negative")
+	}
+
+	var response *http.Response
+	projects, err := c.projects.List(ctx, kernel.ProjectListParams{
+		Limit:  param.NewOpt(int64(in.Limit)),
+		Offset: param.NewOpt(int64(in.Offset)),
+	}, option.WithResponseInto(&response))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -97,12 +113,33 @@ func (c ProjectsCmd) List(ctx context.Context, in ProjectsListInput) error {
 		return nil
 	}
 
-	table := pterm.TableData{{"ID", "Name", "Status", "Created At"}}
-	for _, p := range projects.Items {
-		table = append(table, []string{p.ID, p.Name, string(p.Status), util.FormatLocal(p.CreatedAt)})
+	table := pterm.TableData{{"ID", "Name", "Status", "Created At", "idx"}}
+	for i, p := range projects.Items {
+		table = append(table, []string{
+			p.ID,
+			p.Name,
+			string(p.Status),
+			util.FormatLocal(p.CreatedAt),
+			strconv.Itoa(in.Offset + i),
+		})
 	}
 	PrintTableNoPad(table, true)
+
+	if nextOffset, ok := projectListNextOffset(response); ok {
+		pterm.Warning.Printfln(
+			"Output truncated after index %d. Continue with: kernel projects list --limit %d --offset %d",
+			in.Offset+len(projects.Items)-1, in.Limit, nextOffset,
+		)
+	}
 	return nil
+}
+
+func projectListNextOffset(response *http.Response) (int, bool) {
+	if response == nil {
+		return 0, false
+	}
+	nextOffset, err := strconv.Atoi(response.Header.Get("X-Next-Offset"))
+	return nextOffset, err == nil && nextOffset > 0
 }
 
 func (c ProjectsCmd) Create(ctx context.Context, in ProjectsCreateInput) error {
@@ -323,7 +360,9 @@ func getProjectsHandler(cmd *cobra.Command) ProjectsCmd {
 
 func runProjectsList(cmd *cobra.Command, args []string) error {
 	c := getProjectsHandler(cmd)
-	return c.List(cmd.Context(), ProjectsListInput{})
+	limit, _ := cmd.Flags().GetInt("limit")
+	offset, _ := cmd.Flags().GetInt("offset")
+	return c.List(cmd.Context(), ProjectsListInput{Limit: limit, Offset: offset})
 }
 
 func runProjectsCreate(cmd *cobra.Command, args []string) error {
@@ -477,6 +516,9 @@ var projectsSetLimitsCompatCmd = &cobra.Command{
 }
 
 func init() {
+	projectsListCmd.Flags().Int("limit", 100, "Maximum number of projects to return (1-100)")
+	projectsListCmd.Flags().Int("offset", 0, "Number of projects to skip (for pagination)")
+
 	projectsUpdateCmd.Flags().String("name", "", "New project name (1-255 characters)")
 	projectsUpdateCmd.Flags().String("status", "", "New project status: active or archived")
 	addJSONOutputFlag(projectsUpdateCmd)
