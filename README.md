@@ -217,6 +217,8 @@ Commands with JSON output support:
   - `-H, --headless` - Launch browser without GUI access
   - `--kiosk` - Launch browser in kiosk mode
   - `--start-url <url>` - Initial page to open on launch
+  - `--proxy-id <id>` / `--proxy-name <name>` - Use that proxy for the session regardless of stealth (mutually exclusive with each other and with `--proxy-mode`)
+  - `--proxy-mode direct|default` - Egress mode instead of a selected proxy: `direct` for no proxy regardless of stealth, `default` for the stealth-derived default (Kernel's stealth proxy with `--stealth`, direct egress otherwise). Omit all proxy flags to get the default.
   - `--name <name>` - Optional unique name for the session (used to find it later by name; can be changed with `browsers update --name`)
   - `--tag <KEY=VALUE>` - Set a tag on the session, repeatable; up to 50 pairs
   - `--pool-id <id>` - Acquire a browser from the specified pool (mutually exclusive with --pool-name; ignores other session flags). `--name`/`--tag` still apply to the acquired session.
@@ -242,7 +244,10 @@ Commands with JSON output support:
   - `--telemetry=all` - Enable telemetry for all categories
   - `--telemetry=off` - Disable telemetry
   - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`
-  - `--disable-default-proxy` - Disable the default stealth proxy so the browser connects directly; use `--disable-default-proxy=false` to re-enable it
+  - `--proxy-id <id>` / `--proxy-name <name>` - Switch the session to that proxy regardless of stealth (mutually exclusive with each other and with `--proxy-mode`)
+  - `--proxy-mode direct|default` - Change egress mode: `direct` for no proxy regardless of stealth, `default` to restore the browser default after using a selected proxy. Changing the proxy does not change stealth or CAPTCHA solver behavior.
+  - `--clear-proxy` - Drop the selected proxy and restore the browser default (same as `--proxy-mode=default`)
+  - `--disable-default-proxy` - Connect directly instead of through the default stealth proxy (same as `--proxy-mode=direct`); use `--disable-default-proxy=false` to restore the default
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers curl <id> <url>` - Make HTTP requests through a browser session's Chrome network stack
   - `-X, --request <method>` - HTTP method (default: GET; defaults to POST when `--data` is set)
@@ -555,12 +560,18 @@ Managed auth connections (`kernel auth connections`). The commands below are new
   - `--per-page <n>` - Items per page (default: 20)
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel auth connections create` - New flags:
+  - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy configuration for this connection's login, reauth, and health-check browser sessions (mutually exclusive). Omit to derive the default from stealth.
+  - `--stealth` - Whether those browser sessions run in stealth mode (default: true); use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Default telemetry for this connection's browser sessions. Same semantics as `kernel browsers create`
   - `--telemetry-export-otlp <id-or-name>` - Export this connection's captured telemetry over OTLP to one of the org's configured destinations. Implies `--telemetry=all` when `--telemetry` is not set. Use `=off` to disable export.
 - `kernel auth connections update <id>` - New flags:
+  - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy configuration for future browser sessions (mutually exclusive). Use `--proxy-mode=default` to drop a selected proxy rather than passing an empty value.
+  - `--stealth` - Set whether future browser sessions run in stealth mode; use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Update telemetry for future browser sessions
   - `--telemetry-export-otlp <id-or-name>` - Update where future sessions export captured telemetry. Naming a destination requires passing `--telemetry` in the same command, since the API validates capture and export together and enabling capture here would replace the connection's current category selection. Use `=off` to disable export.
 - `kernel auth connections login <id>` - New flags:
+  - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy override for this login's browser session (mutually exclusive); omitted properties inherit the connection defaults
+  - `--stealth` - Stealth override for this login's browser session; use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Telemetry override for this login only, merged onto the connection's config
   - `--telemetry-export-otlp <id-or-name>` - Export override for this login only. Naming a destination requires passing `--telemetry` in the same command. Use `=off` to disable export.
 - `kernel auth connections submit <id>` - New flags:

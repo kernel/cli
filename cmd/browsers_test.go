@@ -486,6 +486,65 @@ func TestBrowsersCreate_WithNameAndTags(t *testing.T) {
 	assert.Contains(t, out, "env=staging, team=backend")
 }
 
+// The API takes a proxy object rather than the deprecated proxy_id field, and
+// accepts exactly one of id, name, or mode.
+func TestBrowsersCreate_ProxySelection(t *testing.T) {
+	setupStdoutCapture(t)
+	for _, tc := range []struct {
+		name   string
+		in     BrowsersCreateInput
+		assert func(t *testing.T, p kernel.BrowserProxyConfigParam)
+	}{
+		{"by id", BrowsersCreateInput{ProxyID: "proxy-123"}, func(t *testing.T, p kernel.BrowserProxyConfigParam) {
+			assert.Equal(t, "proxy-123", p.ID.Value)
+		}},
+		{"by name", BrowsersCreateInput{ProxyName: "my-proxy"}, func(t *testing.T, p kernel.BrowserProxyConfigParam) {
+			assert.Equal(t, "my-proxy", p.Name.Value)
+		}},
+		{"by mode", BrowsersCreateInput{ProxyMode: "direct"}, func(t *testing.T, p kernel.BrowserProxyConfigParam) {
+			assert.Equal(t, kernel.BrowserProxyModeDirect, p.Mode)
+		}},
+		{"omitted", BrowsersCreateInput{}, func(t *testing.T, p kernel.BrowserProxyConfigParam) {
+			assert.False(t, p.ID.Valid())
+			assert.False(t, p.Name.Valid())
+			assert.Empty(t, p.Mode)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var captured kernel.BrowserNewParams
+			fake := &FakeBrowsersService{
+				NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+					captured = body
+					return &kernel.BrowserNewResponse{SessionID: "sess-new"}, nil
+				},
+			}
+			b := BrowsersCmd{browsers: fake}
+			require.NoError(t, b.Create(context.Background(), tc.in))
+			tc.assert(t, captured.Proxy)
+		})
+	}
+}
+
+func TestBrowsersCreate_ConflictingProxyFlags_Error(t *testing.T) {
+	setupStdoutCapture(t)
+	b := BrowsersCmd{browsers: &FakeBrowsersService{}}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{ProxyID: "proxy-123", ProxyMode: "direct"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "at most one")
+}
+
+func TestBrowsersCreate_UnknownProxyMode_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	b := BrowsersCmd{browsers: &FakeBrowsersService{}}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{ProxyMode: "bogus"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown proxy mode")
+}
+
 func TestBrowsersCreate_WithChromePolicy(t *testing.T) {
 	setupStdoutCapture(t)
 
@@ -972,7 +1031,7 @@ func TestBrowsersGet_PrintsDetails(t *testing.T) {
 				KioskMode:          false,
 				Viewport:           shared.BrowserViewport{Width: 1920, Height: 1080, RefreshRate: 25},
 				Profile:            kernel.Profile{ID: "prof-id", Name: "my-profile"},
-				ProxyID:            "proxy-123",
+				Proxy:              kernel.BrowserProxy{ID: "proxy-123", Name: "my-proxy"},
 			}, nil
 		},
 	}
@@ -988,7 +1047,7 @@ func TestBrowsersGet_PrintsDetails(t *testing.T) {
 	assert.Contains(t, out, "true")  // Stealth
 	assert.Contains(t, out, "1920x1080@25")
 	assert.Contains(t, out, "my-profile")
-	assert.Contains(t, out, "proxy-123")
+	assert.Contains(t, out, "my-proxy (proxy-123)")
 }
 
 func TestBrowsersGet_JSONOutput(t *testing.T) {
@@ -2154,23 +2213,71 @@ func TestBrowsersUpdate_WithViewportNoForce(t *testing.T) {
 	assert.False(t, captured.Viewport.Force.Valid())
 }
 
-func TestBrowsersUpdate_WithDisableDefaultProxy(t *testing.T) {
+// --disable-default-proxy and --clear-proxy are older spellings of a proxy mode
+// change, so both are sent as the mode the API now takes.
+func TestBrowsersUpdate_LegacyProxyFlagsMapToMode(t *testing.T) {
 	setupStdoutCapture(t)
-	var captured kernel.BrowserUpdateParams
-	fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
-		captured = body
-		return &kernel.BrowserUpdateResponse{SessionID: "session123"}, nil
-	}}
+	for _, tc := range []struct {
+		name string
+		in   BrowsersUpdateInput
+		want kernel.BrowserProxyMode
+	}{
+		{"disable default proxy", BrowsersUpdateInput{DisableDefaultProxy: BoolFlag{Set: true, Value: true}}, kernel.BrowserProxyModeDirect},
+		{"re-enable default proxy", BrowsersUpdateInput{DisableDefaultProxy: BoolFlag{Set: true, Value: false}}, kernel.BrowserProxyModeDefault},
+		{"clear proxy", BrowsersUpdateInput{ClearProxy: true}, kernel.BrowserProxyModeDefault},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, captured := captureUpdateParams(t)
+			b := BrowsersCmd{browsers: fake}
+
+			tc.in.Identifier = "session123"
+			require.NoError(t, b.Update(context.Background(), tc.in))
+			assert.Equal(t, tc.want, captured.Proxy.Mode)
+		})
+	}
+}
+
+// A selected proxy and a mode are two ways to say the same thing, so combining
+// them is a user error rather than a request the API has to reject.
+func TestBrowsersUpdate_ConflictingProxyFlags_Error(t *testing.T) {
+	setupStdoutCapture(t)
+	for _, tc := range []struct {
+		name string
+		in   BrowsersUpdateInput
+	}{
+		{"id and name", BrowsersUpdateInput{ProxyID: "proxy-123", ProxyName: "my-proxy"}},
+		{"id and mode", BrowsersUpdateInput{ProxyID: "proxy-123", ProxyMode: "direct"}},
+		{"id and clear", BrowsersUpdateInput{ProxyID: "proxy-123", ClearProxy: true}},
+		{"mode and disable default", BrowsersUpdateInput{ProxyMode: "direct", DisableDefaultProxy: BoolFlag{Set: true, Value: true}}},
+		{"clear and disable default", BrowsersUpdateInput{ClearProxy: true, DisableDefaultProxy: BoolFlag{Set: true, Value: true}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := BrowsersCmd{browsers: &FakeBrowsersService{}}
+			tc.in.Identifier = "session123"
+			assert.Error(t, b.Update(context.Background(), tc.in))
+		})
+	}
+}
+
+func TestBrowsersUpdate_UnknownProxyMode_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	b := BrowsersCmd{browsers: &FakeBrowsersService{}}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{Identifier: "session123", ProxyMode: "bogus"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown proxy mode")
+}
+
+func TestBrowsersUpdate_ProxyName_Forwarded(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
 	b := BrowsersCmd{browsers: fake}
 
-	err := b.Update(context.Background(), BrowsersUpdateInput{
-		Identifier:          "session123",
-		DisableDefaultProxy: BoolFlag{Set: true, Value: true},
-	})
+	err := b.Update(context.Background(), BrowsersUpdateInput{Identifier: "session123", ProxyName: "my-proxy"})
 
-	assert.NoError(t, err)
-	assert.True(t, captured.DisableDefaultProxy.Valid())
-	assert.True(t, captured.DisableDefaultProxy.Value)
+	require.NoError(t, err)
+	assert.Equal(t, "my-proxy", captured.Proxy.Name.Value)
 }
 
 func TestBrowsersUpdate_ForceWithoutViewport_Errors(t *testing.T) {
@@ -2365,7 +2472,7 @@ func TestBrowsersUpdate_NameAndTagsWithProxy_AllForwarded(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "combo", captured.Name.Value)
 	assert.Equal(t, "v", captured.Tags["k"])
-	assert.Equal(t, "proxy-123", captured.ProxyID.Value)
+	assert.Equal(t, "proxy-123", captured.Proxy.ID.Value)
 }
 
 // Regression guard: a non-name/non-tags update must omit both fields entirely

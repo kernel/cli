@@ -286,6 +286,8 @@ type BrowsersCreateInput struct {
 	ProfileName        string
 	ProfileSaveChanges BoolFlag
 	ProxyID            string
+	ProxyName          string
+	ProxyMode          string
 	StartURL           string
 	Extensions         []string
 	Viewport           string
@@ -316,6 +318,8 @@ type BrowsersGetInput struct {
 type BrowsersUpdateInput struct {
 	Identifier          string
 	ProxyID             string
+	ProxyName           string
+	ProxyMode           string
 	ClearProxy          bool
 	DisableDefaultProxy BoolFlag
 	ProfileID           string
@@ -500,9 +504,15 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		}
 	}
 
-	// Add proxy if specified
-	if in.ProxyID != "" {
-		params.ProxyID = kernel.Opt(in.ProxyID)
+	// Add proxy if specified. Omitting it lets the browser default apply:
+	// Kernel's default stealth proxy for stealth sessions, direct egress otherwise.
+	sel := proxySelection{ID: in.ProxyID, Name: in.ProxyName, Mode: in.ProxyMode}
+	if sel.set() {
+		proxy, err := buildProxyConfigParam(sel)
+		if err != nil {
+			return err
+		}
+		params.Proxy = proxy
 	}
 	if in.StartURL != "" {
 		params.StartURL = kernel.Opt(in.StartURL)
@@ -705,8 +715,8 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		}
 		tableData = append(tableData, []string{"Viewport", viewportStr})
 	}
-	if browser.ProxyID != "" {
-		tableData = append(tableData, []string{"Proxy ID", browser.ProxyID})
+	if proxy := formatBrowserProxy(browser.Proxy); proxy != "" {
+		tableData = append(tableData, []string{"Proxy", proxy})
 	}
 	if !browser.DeletedAt.IsZero() {
 		tableData = append(tableData, []string{"Deleted At", util.FormatLocal(browser.DeletedAt)})
@@ -714,6 +724,39 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 
 	PrintTableNoPad(tableData, true)
 	return nil
+}
+
+// browserUpdateProxySelection folds every proxy flag `browsers update` accepts
+// into the single proxy configuration the API takes. --clear-proxy drops a
+// selected proxy back to the browser default, and --disable-default-proxy
+// switches between direct and default egress, so both are mode changes.
+func browserUpdateProxySelection(in BrowsersUpdateInput) (proxySelection, error) {
+	sel := proxySelection{ID: in.ProxyID, Name: in.ProxyName, Mode: in.ProxyMode}
+
+	if !in.ClearProxy && !in.DisableDefaultProxy.Set {
+		return sel, nil
+	}
+	if in.ClearProxy && in.DisableDefaultProxy.Set {
+		return sel, fmt.Errorf("cannot specify both --clear-proxy and --disable-default-proxy")
+	}
+
+	// The legacy flags mean the same thing as --proxy-mode, so a selected proxy or
+	// an explicit mode alongside them is contradictory.
+	if sel.set() {
+		legacy := "--disable-default-proxy"
+		if in.ClearProxy {
+			legacy = "--clear-proxy"
+		}
+		return sel, fmt.Errorf("cannot combine %s with --proxy-id, --proxy-name, or --proxy-mode", legacy)
+	}
+
+	// --clear-proxy and --disable-default-proxy=false both ask for the browser
+	// default; only --disable-default-proxy=true forces direct egress.
+	sel.Mode = string(kernel.BrowserProxyModeDefault)
+	if in.DisableDefaultProxy.Value {
+		sel.Mode = string(kernel.BrowserProxyModeDirect)
+	}
+	return sel, nil
 }
 
 func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
@@ -726,9 +769,12 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("must specify at most one of --profile-id or --profile-name")
 	}
 
-	// Cannot specify both --proxy-id and --clear-proxy
-	if in.ProxyID != "" && in.ClearProxy {
-		return fmt.Errorf("cannot specify both --proxy-id and --clear-proxy")
+	// The API takes a single proxy configuration, so the flags that select one are
+	// mutually exclusive. --clear-proxy and --disable-default-proxy are older
+	// spellings of a mode change and are folded into it below.
+	proxySel, err := browserUpdateProxySelection(in)
+	if err != nil {
+		return err
 	}
 
 	// Cannot specify both --name and --clear-name
@@ -756,7 +802,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("--name requires a non-empty value; use --clear-name to clear the name")
 	}
 
-	hasProxyChange := in.ProxyID != "" || in.ClearProxy || in.DisableDefaultProxy.Set
+	hasProxyChange := proxySel.set()
 	hasProfileChange := in.ProfileID != "" || in.ProfileName != ""
 	hasViewportChange := in.Viewport != ""
 	// By this point a set name is guaranteed non-empty (the guard above rejects --name "").
@@ -775,7 +821,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 
 	// Validate that at least one update option is provided
 	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && !hasNameChange && !hasTagsChange {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --name, --clear-name, --tag, or --clear-tags")
+		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --name, --clear-name, --tag, or --clear-tags")
 	}
 
 	params := kernel.BrowserUpdateParams{}
@@ -796,13 +842,12 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	// Handle proxy changes
-	if in.ClearProxy {
-		params.ProxyID = kernel.Opt("")
-	} else if in.ProxyID != "" {
-		params.ProxyID = kernel.Opt(in.ProxyID)
-	}
-	if in.DisableDefaultProxy.Set {
-		params.DisableDefaultProxy = kernel.Opt(in.DisableDefaultProxy.Value)
+	if hasProxyChange {
+		proxy, err := buildProxyConfigParam(proxySel)
+		if err != nil {
+			return err
+		}
+		params.Proxy = proxy
 	}
 
 	// Handle profile changes
@@ -2462,8 +2507,8 @@ var browsersUpdateCmd = &cobra.Command{
 	Long: `Update a running browser session.
 
 Supported operations:
-  - Change or remove proxy (--proxy-id or --clear-proxy)
-  - Disable the default stealth proxy (--disable-default-proxy)
+  - Select a proxy by ID or name (--proxy-id or --proxy-name)
+  - Change proxy egress mode (--proxy-mode=direct or --proxy-mode=default)
   - Load a profile into a session that doesn't have one (--profile-id or --profile-name)
   - Change viewport dimensions (--viewport)
   - Force viewport resize during active live view or recording (--force with --viewport)
@@ -2504,9 +2549,11 @@ func init() {
 
 	// update flags
 	addJSONOutputFlag(browsersUpdateCmd)
-	browsersUpdateCmd.Flags().String("proxy-id", "", "ID of the proxy to use for the browser session")
-	browsersUpdateCmd.Flags().Bool("clear-proxy", false, "Remove the proxy from the browser session")
-	browsersUpdateCmd.Flags().Bool("disable-default-proxy", false, "Disable the default stealth proxy so the browser connects directly; use --disable-default-proxy=false to re-enable it")
+	browsersUpdateCmd.Flags().String("proxy-id", "", "ID of the proxy to use for the browser session (mutually exclusive with --proxy-name and --proxy-mode)")
+	browsersUpdateCmd.Flags().String("proxy-name", "", "Name of the proxy to use for the browser session; must match exactly one active proxy in the project (mutually exclusive with --proxy-id and --proxy-mode)")
+	browsersUpdateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' to restore the browser default (Kernel's stealth proxy when stealth is on, direct egress otherwise)")
+	browsersUpdateCmd.Flags().Bool("clear-proxy", false, "Drop the selected proxy and restore the browser default (same as --proxy-mode=default)")
+	browsersUpdateCmd.Flags().Bool("disable-default-proxy", false, "Connect directly instead of through the default stealth proxy (same as --proxy-mode=direct); use --disable-default-proxy=false to restore the default")
 	browsersUpdateCmd.Flags().String("profile-id", "", "Profile ID to load into the browser session (mutually exclusive with --profile-name)")
 	browsersUpdateCmd.Flags().String("profile-name", "", "Profile name to load into the browser session (mutually exclusive with --profile-id)")
 	browsersUpdateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
@@ -2781,7 +2828,9 @@ func init() {
 	browsersCreateCmd.Flags().String("profile-id", "", "Profile ID to load into the browser session (mutually exclusive with --profile-name)")
 	browsersCreateCmd.Flags().String("profile-name", "", "Profile name to load into the browser session (mutually exclusive with --profile-id)")
 	browsersCreateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
-	browsersCreateCmd.Flags().String("proxy-id", "", "Proxy ID to use for the browser session")
+	browsersCreateCmd.Flags().String("proxy-id", "", "Proxy ID to use for the browser session (mutually exclusive with --proxy-name and --proxy-mode)")
+	browsersCreateCmd.Flags().String("proxy-name", "", "Proxy name to use for the browser session; must match exactly one active proxy in the project (mutually exclusive with --proxy-id and --proxy-mode)")
+	browsersCreateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' for the browser default (Kernel's stealth proxy when --stealth is set, direct egress otherwise)")
 	browsersCreateCmd.Flags().String("start-url", "", "Initial page to open on launch")
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
 	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
@@ -2906,6 +2955,8 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	saveChanges, _ := cmd.Flags().GetBool("save-changes")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
+	proxyName, _ := cmd.Flags().GetString("proxy-name")
+	proxyMode, _ := cmd.Flags().GetString("proxy-mode")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
@@ -3031,6 +3082,8 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		ProfileName:        profileName,
 		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
 		ProxyID:            proxyID,
+		ProxyName:          proxyName,
+		ProxyMode:          proxyMode,
 		StartURL:           startURL,
 		Extensions:         extensions,
 		Viewport:           viewport,
@@ -3092,6 +3145,8 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	out, _ := cmd.Flags().GetString("output")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
+	proxyName, _ := cmd.Flags().GetString("proxy-name")
+	proxyMode, _ := cmd.Flags().GetString("proxy-mode")
 	clearProxy, _ := cmd.Flags().GetBool("clear-proxy")
 	disableDefaultProxy, _ := cmd.Flags().GetBool("disable-default-proxy")
 	profileID, _ := cmd.Flags().GetString("profile-id")
@@ -3110,6 +3165,8 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	return b.Update(cmd.Context(), BrowsersUpdateInput{
 		Identifier:          args[0],
 		ProxyID:             proxyID,
+		ProxyName:           proxyName,
+		ProxyMode:           proxyMode,
 		ClearProxy:          clearProxy,
 		DisableDefaultProxy: BoolFlag{Set: cmd.Flags().Changed("disable-default-proxy"), Value: disableDefaultProxy},
 		ProfileID:           profileID,

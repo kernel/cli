@@ -414,38 +414,38 @@ func TestBuildTelemetryParam_ExportWireEncoding(t *testing.T) {
 	// same request. Update and login refuse to supply one: doing so would replace
 	// the connection's current category selection.
 	t.Run("update requires an explicit --telemetry alongside a destination", func(t *testing.T) {
-		_, err := buildAuthConnectionUpdateTelemetryParam("", "my-collector")
+		_, err := buildManagedAuthTelemetryParam("", "my-collector", false)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "also requires --telemetry")
 	})
 	t.Run("login requires an explicit --telemetry alongside a destination", func(t *testing.T) {
-		_, err := buildAuthConnectionLoginTelemetryParam("", "my-collector")
+		_, err := buildManagedAuthTelemetryParam("", "my-collector", false)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "also requires --telemetry")
 	})
 	t.Run("update never implies capture when --telemetry is given", func(t *testing.T) {
-		p, err := buildAuthConnectionUpdateTelemetryParam("console", "my-collector")
+		p, err := buildManagedAuthTelemetryParam("console", "my-collector", false)
 		assert.NoError(t, err)
 		assert.False(t, p.Enabled.Valid(), "an opt-in selection must not be widened to the default set")
 		assert.True(t, p.Browser.Console.Enabled.Value)
 		assert.Equal(t, "my-collector", p.Export.Otlp.Destination.Name.Value)
 	})
 	t.Run("login never implies capture when --telemetry is given", func(t *testing.T) {
-		p, err := buildAuthConnectionLoginTelemetryParam("console", "my-collector")
+		p, err := buildManagedAuthTelemetryParam("console", "my-collector", false)
 		assert.NoError(t, err)
 		assert.False(t, p.Enabled.Valid())
 		assert.Equal(t, "my-collector", p.Export.Otlp.Destination.Name.Value)
 	})
 	t.Run("update and login allow export=off without --telemetry", func(t *testing.T) {
-		u, err := buildAuthConnectionUpdateTelemetryParam("", "off")
+		u, err := buildManagedAuthTelemetryParam("", "off", false)
 		assert.NoError(t, err)
 		assert.False(t, u.Export.Otlp.Enabled.Value)
-		l, err := buildAuthConnectionLoginTelemetryParam("", "off")
+		l, err := buildManagedAuthTelemetryParam("", "off", false)
 		assert.NoError(t, err)
 		assert.False(t, l.Export.Otlp.Enabled.Value)
 	})
 	t.Run("auth connection create implies capture", func(t *testing.T) {
-		p, err := buildAuthConnectionCreateTelemetryParam("", "my-collector")
+		p, err := buildManagedAuthTelemetryParam("", "my-collector", true)
 		assert.NoError(t, err)
 		assert.True(t, p.Enabled.Valid())
 		assert.True(t, p.Enabled.Value)
@@ -460,9 +460,8 @@ func TestBuildTelemetryParam_ExportWireEncoding(t *testing.T) {
 			fn   func() error
 		}{
 			{"create", func() error { _, e := buildNewTelemetryParam("off", "my-collector"); return e }},
-			{"auth create", func() error { _, e := buildAuthConnectionCreateTelemetryParam("off", "my-collector"); return e }},
-			{"auth update", func() error { _, e := buildAuthConnectionUpdateTelemetryParam("off", "my-collector"); return e }},
-			{"auth login", func() error { _, e := buildAuthConnectionLoginTelemetryParam("off", "my-collector"); return e }},
+			{"auth create", func() error { _, e := buildManagedAuthTelemetryParam("off", "my-collector", true); return e }},
+			{"auth update/login", func() error { _, e := buildManagedAuthTelemetryParam("off", "my-collector", false); return e }},
 		} {
 			err := tc.fn()
 			assert.Error(t, err, tc.name)

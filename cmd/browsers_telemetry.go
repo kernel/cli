@@ -212,12 +212,17 @@ func buildUpdateTelemetryParam(s string) (kernel.BrowserUpdateParamsTelemetry, e
 	return kernel.BrowserUpdateParamsTelemetry{Enabled: enabled, Browser: browser}, err
 }
 
-// buildAuthConnectionCreateTelemetryParam converts --telemetry and
-// --telemetry-export-otlp flag values to the browser telemetry default stored on a
-// new auth connection.
-func buildAuthConnectionCreateTelemetryParam(s, export string) (kernel.ManagedAuthCreateRequestBrowserTelemetryParam, error) {
+// buildManagedAuthTelemetryParam converts --telemetry and --telemetry-export-otlp
+// flag values to the browser telemetry config carried by an auth connection's
+// browser settings, shared by create, update, and login.
+//
+// canImply is true only on create, where there is no stored selection to clobber
+// and capture can safely be turned on for the user so a destination works on its
+// own. On update and login it is false: enabling capture there would replace the
+// connection's current category selection rather than merge onto it.
+func buildManagedAuthTelemetryParam(s, export string, canImply bool) (kernel.ManagedAuthBrowserConfigTelemetryParam, error) {
 	enabled, browser, err := resolveTelemetryFlag(s)
-	p := kernel.ManagedAuthCreateRequestBrowserTelemetryParam{Enabled: enabled, Browser: browser}
+	p := kernel.ManagedAuthBrowserConfigTelemetryParam{Enabled: enabled, Browser: browser}
 	if err != nil || export == "" {
 		return p, err
 	}
@@ -225,75 +230,16 @@ func buildAuthConnectionCreateTelemetryParam(s, export string) (kernel.ManagedAu
 	if err != nil {
 		return p, err
 	}
-	if err := validateTelemetryExportCombo(s, id, name, true); err != nil {
+	if err := validateTelemetryExportCombo(s, id, name, canImply); err != nil {
 		return p, err
 	}
-	if (id != "" || name != "") && !telemetryFlagEnablesCapture(s) {
+	if canImply && (id != "" || name != "") && !telemetryFlagEnablesCapture(s) {
 		p.Enabled = kernel.Opt(true)
 	}
-	p.Export = kernel.ManagedAuthCreateRequestBrowserTelemetryExportParam{
-		Otlp: kernel.ManagedAuthCreateRequestBrowserTelemetryExportOtlpParam{
+	p.Export = kernel.ManagedAuthBrowserConfigTelemetryExportParam{
+		Otlp: kernel.ManagedAuthBrowserConfigTelemetryExportOtlpParam{
 			Enabled: exEnabled,
-			Destination: kernel.ManagedAuthCreateRequestBrowserTelemetryExportOtlpDestinationParam{
-				ID:   optIfSet(id),
-				Name: optIfSet(name),
-			},
-		},
-	}
-	return p, nil
-}
-
-// buildAuthConnectionUpdateTelemetryParam converts --telemetry and
-// --telemetry-export-otlp flag values to the browser telemetry default for future
-// sessions of an existing auth connection. Unlike the create paths this never
-// implies capture: the connection already has a stored config, and enabled=true
-// would replace its category selection rather than merge onto it.
-func buildAuthConnectionUpdateTelemetryParam(s, export string) (kernel.ManagedAuthUpdateRequestBrowserTelemetryParam, error) {
-	enabled, browser, err := resolveTelemetryFlag(s)
-	p := kernel.ManagedAuthUpdateRequestBrowserTelemetryParam{Enabled: enabled, Browser: browser}
-	if err != nil || export == "" {
-		return p, err
-	}
-	exEnabled, id, name, err := resolveTelemetryExportFlag(export)
-	if err != nil {
-		return p, err
-	}
-	if err := validateTelemetryExportCombo(s, id, name, false); err != nil {
-		return p, err
-	}
-	p.Export = kernel.ManagedAuthUpdateRequestBrowserTelemetryExportParam{
-		Otlp: kernel.ManagedAuthUpdateRequestBrowserTelemetryExportOtlpParam{
-			Enabled: exEnabled,
-			Destination: kernel.ManagedAuthUpdateRequestBrowserTelemetryExportOtlpDestinationParam{
-				ID:   optIfSet(id),
-				Name: optIfSet(name),
-			},
-		},
-	}
-	return p, nil
-}
-
-// buildAuthConnectionLoginTelemetryParam converts --telemetry and
-// --telemetry-export-otlp flag values to the per-login browser telemetry override.
-// The override merges onto the connection's stored config, which may already
-// enable capture, so this does not imply it either.
-func buildAuthConnectionLoginTelemetryParam(s, export string) (kernel.AuthConnectionLoginParamsBrowserTelemetry, error) {
-	enabled, browser, err := resolveTelemetryFlag(s)
-	p := kernel.AuthConnectionLoginParamsBrowserTelemetry{Enabled: enabled, Browser: browser}
-	if err != nil || export == "" {
-		return p, err
-	}
-	exEnabled, id, name, err := resolveTelemetryExportFlag(export)
-	if err != nil {
-		return p, err
-	}
-	if err := validateTelemetryExportCombo(s, id, name, false); err != nil {
-		return p, err
-	}
-	p.Export = kernel.AuthConnectionLoginParamsBrowserTelemetryExport{
-		Otlp: kernel.AuthConnectionLoginParamsBrowserTelemetryExportOtlp{
-			Enabled: exEnabled,
-			Destination: kernel.AuthConnectionLoginParamsBrowserTelemetryExportOtlpDestination{
+			Destination: kernel.ManagedAuthBrowserConfigTelemetryExportOtlpDestinationParam{
 				ID:   optIfSet(id),
 				Name: optIfSet(name),
 			},
@@ -304,7 +250,7 @@ func buildAuthConnectionLoginTelemetryParam(s, export string) (kernel.AuthConnec
 
 // formatManagedAuthTelemetry renders an auth connection's default browser telemetry
 // config for the details table.
-func formatManagedAuthTelemetry(cfg kernel.ManagedAuthBrowserTelemetry) string {
+func formatManagedAuthTelemetry(cfg kernel.ManagedAuthBrowserConfigTelemetry) string {
 	base := func() string {
 		if on := telemetryEnabledCategories(kernel.BrowserTelemetryConfig{Browser: cfg.Browser}); len(on) > 0 {
 			return strings.Join(on, ", ")
@@ -325,7 +271,7 @@ func formatManagedAuthTelemetry(cfg kernel.ManagedAuthBrowserTelemetry) string {
 
 // managedAuthExportDestination returns the OTLP destination an auth connection's
 // sessions export to, or "" when export is off or unset.
-func managedAuthExportDestination(ex kernel.ManagedAuthBrowserTelemetryExport) string {
+func managedAuthExportDestination(ex kernel.ManagedAuthBrowserConfigTelemetryExport) string {
 	if !ex.Otlp.Enabled {
 		return ""
 	}

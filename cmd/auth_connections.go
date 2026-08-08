@@ -48,6 +48,8 @@ type AuthConnectionCreateInput struct {
 	CredentialAuto      bool
 	ProxyID             string
 	ProxyName           string
+	ProxyMode           string
+	Stealth             BoolFlag
 	SaveCredentials     bool
 	NoSaveCredentials   bool
 	HealthCheckInterval int
@@ -81,6 +83,8 @@ type AuthConnectionUpdateInput struct {
 	ProxyIDSet             bool
 	ProxyName              string
 	ProxyNameSet           bool
+	ProxyMode              string
+	Stealth                BoolFlag
 	SaveCredentials        BoolFlag
 	HealthCheckInterval    int
 	HealthCheckIntervalSet bool
@@ -110,6 +114,8 @@ type AuthConnectionLoginInput struct {
 	ID              string
 	ProxyID         string
 	ProxyName       string
+	ProxyMode       string
+	Stealth         BoolFlag
 	RecordSession   BoolFlag
 	Telemetry       string
 	TelemetryExport string
@@ -198,14 +204,17 @@ func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateIn
 		}
 	}
 
-	if in.ProxyID != "" || in.ProxyName != "" {
-		params.ManagedAuthCreateRequest.Proxy = kernel.ManagedAuthCreateRequestProxyParam{}
-		if in.ProxyID != "" {
-			params.ManagedAuthCreateRequest.Proxy.ID = kernel.Opt(in.ProxyID)
+	sel := proxySelection{ID: in.ProxyID, Name: in.ProxyName, Mode: in.ProxyMode}
+	if sel.set() {
+		proxy, err := buildProxyConfigParam(sel)
+		if err != nil {
+			return err
 		}
-		if in.ProxyName != "" {
-			params.ManagedAuthCreateRequest.Proxy.Name = kernel.Opt(in.ProxyName)
-		}
+		params.ManagedAuthCreateRequest.Browser.Proxy = proxy
+	}
+
+	if in.Stealth.Set {
+		params.ManagedAuthCreateRequest.Browser.Stealth = kernel.Opt(in.Stealth.Value)
 	}
 
 	if in.NoSaveCredentials {
@@ -225,11 +234,11 @@ func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateIn
 	}
 
 	if in.Telemetry != "" || in.TelemetryExport != "" {
-		t, err := buildAuthConnectionCreateTelemetryParam(in.Telemetry, in.TelemetryExport)
+		t, err := buildManagedAuthTelemetryParam(in.Telemetry, in.TelemetryExport, true)
 		if err != nil {
 			return err
 		}
-		params.ManagedAuthCreateRequest.BrowserTelemetry = t
+		params.ManagedAuthCreateRequest.Browser.Telemetry = t
 	}
 
 	if in.Output != "json" {
@@ -268,13 +277,25 @@ func printManagedAuthSummary(auth *kernel.ManagedAuth) {
 	if auth.Credential.Provider != "" {
 		tableData = append(tableData, []string{"Credential Provider", auth.Credential.Provider})
 	}
-	if auth.ProxyID != "" {
-		tableData = append(tableData, []string{"Proxy ID", auth.ProxyID})
-	}
-	if auth.BrowserTelemetry.Enabled || len(telemetryEnabledCategories(kernel.BrowserTelemetryConfig{Browser: auth.BrowserTelemetry.Browser})) > 0 {
-		tableData = append(tableData, []string{"Browser Telemetry", formatManagedAuthTelemetry(auth.BrowserTelemetry)})
-	}
+	tableData = append(tableData, managedAuthBrowserRows(auth.Browser)...)
 	PrintTableNoPad(tableData, true)
+}
+
+// managedAuthBrowserRows renders the browser configuration a connection applies to
+// its login, reauthentication, and health-check sessions.
+func managedAuthBrowserRows(cfg kernel.ManagedAuthBrowserConfig) pterm.TableData {
+	rows := pterm.TableData{}
+	if proxy := formatBrowserProxyConfig(cfg.Proxy); proxy != "" {
+		rows = append(rows, []string{"Browser Proxy", proxy})
+	}
+	// Stealth defaults to true when omitted, so only report what the API sent.
+	if cfg.JSON.Stealth.Valid() {
+		rows = append(rows, []string{"Browser Stealth", fmt.Sprintf("%t", cfg.Stealth)})
+	}
+	if cfg.Telemetry.Enabled || len(telemetryEnabledCategories(kernel.BrowserTelemetryConfig{Browser: cfg.Telemetry.Browser})) > 0 {
+		rows = append(rows, []string{"Browser Telemetry", formatManagedAuthTelemetry(cfg.Telemetry)})
+	}
+	return rows
 }
 
 func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateInput) error {
@@ -337,24 +358,33 @@ func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateIn
 		hasChanges = true
 	}
 
-	proxyChanged := in.ProxyIDSet || in.ProxyNameSet
-	if proxyChanged {
-		params.ManagedAuthUpdateRequest.Proxy = kernel.ManagedAuthUpdateRequestProxyParam{}
-		if in.ProxyIDSet {
-			params.ManagedAuthUpdateRequest.Proxy.ID = kernel.Opt(in.ProxyID)
+	// A proxy is selected by ID or name, so an empty value is not a way to clear it:
+	// dropping back to the connection's stealth-derived egress is a mode change.
+	if (in.ProxyIDSet && in.ProxyID == "") || (in.ProxyNameSet && in.ProxyName == "") {
+		return fmt.Errorf("proxy selection requires a non-empty value; use --proxy-mode=default to drop the selected proxy, or --proxy-mode=direct for direct egress")
+	}
+
+	sel := proxySelection{ID: in.ProxyID, Name: in.ProxyName, Mode: in.ProxyMode}
+	if sel.set() {
+		proxy, err := buildProxyConfigParam(sel)
+		if err != nil {
+			return err
 		}
-		if in.ProxyNameSet {
-			params.ManagedAuthUpdateRequest.Proxy.Name = kernel.Opt(in.ProxyName)
-		}
+		params.ManagedAuthUpdateRequest.Browser.Proxy = proxy
+		hasChanges = true
+	}
+
+	if in.Stealth.Set {
+		params.ManagedAuthUpdateRequest.Browser.Stealth = kernel.Opt(in.Stealth.Value)
 		hasChanges = true
 	}
 
 	if in.Telemetry != "" || in.TelemetryExport != "" {
-		t, err := buildAuthConnectionUpdateTelemetryParam(in.Telemetry, in.TelemetryExport)
+		t, err := buildManagedAuthTelemetryParam(in.Telemetry, in.TelemetryExport, false)
 		if err != nil {
 			return err
 		}
-		params.ManagedAuthUpdateRequest.BrowserTelemetry = t
+		params.ManagedAuthUpdateRequest.Browser.Telemetry = t
 		hasChanges = true
 	}
 
@@ -544,9 +574,7 @@ func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) e
 	if auth.BrowserSessionID != "" {
 		tableData = append(tableData, []string{"Browser Session ID", auth.BrowserSessionID})
 	}
-	if auth.BrowserTelemetry.Enabled || len(telemetryEnabledCategories(kernel.BrowserTelemetryConfig{Browser: auth.BrowserTelemetry.Browser})) > 0 {
-		tableData = append(tableData, []string{"Browser Telemetry", formatManagedAuthTelemetry(auth.BrowserTelemetry)})
-	}
+	tableData = append(tableData, managedAuthBrowserRows(auth.Browser)...)
 
 	PrintTableNoPad(tableData, true)
 	return nil
@@ -651,14 +679,17 @@ func (c AuthConnectionCmd) Login(ctx context.Context, in AuthConnectionLoginInpu
 	}
 
 	params := kernel.AuthConnectionLoginParams{}
-	if in.ProxyID != "" || in.ProxyName != "" {
-		params.Proxy = kernel.AuthConnectionLoginParamsProxy{}
-		if in.ProxyID != "" {
-			params.Proxy.ID = kernel.Opt(in.ProxyID)
+	sel := proxySelection{ID: in.ProxyID, Name: in.ProxyName, Mode: in.ProxyMode}
+	if sel.set() {
+		proxy, err := buildProxyConfigParam(sel)
+		if err != nil {
+			return err
 		}
-		if in.ProxyName != "" {
-			params.Proxy.Name = kernel.Opt(in.ProxyName)
-		}
+		params.Browser.Proxy = proxy
+	}
+
+	if in.Stealth.Set {
+		params.Browser.Stealth = kernel.Opt(in.Stealth.Value)
 	}
 
 	if in.RecordSession.Set {
@@ -666,11 +697,11 @@ func (c AuthConnectionCmd) Login(ctx context.Context, in AuthConnectionLoginInpu
 	}
 
 	if in.Telemetry != "" || in.TelemetryExport != "" {
-		t, err := buildAuthConnectionLoginTelemetryParam(in.Telemetry, in.TelemetryExport)
+		t, err := buildManagedAuthTelemetryParam(in.Telemetry, in.TelemetryExport, false)
 		if err != nil {
 			return err
 		}
-		params.BrowserTelemetry = t
+		params.Browser.Telemetry = t
 	}
 
 	if in.Output != "json" {
@@ -1103,8 +1134,10 @@ func init() {
 	authConnectionsCreateCmd.Flags().String("credential-provider", "", "External credential provider name")
 	authConnectionsCreateCmd.Flags().String("credential-path", "", "Provider-specific path (e.g., VaultName/ItemName)")
 	authConnectionsCreateCmd.Flags().Bool("credential-auto", false, "Lookup by domain from the specified provider (defaults to true when --credential-provider is set without --credential-path)")
-	authConnectionsCreateCmd.Flags().String("proxy-id", "", "Proxy ID to use")
-	authConnectionsCreateCmd.Flags().String("proxy-name", "", "Proxy name to use")
+	authConnectionsCreateCmd.Flags().String("proxy-id", "", "Proxy ID to use for this connection's browser sessions (mutually exclusive with --proxy-name and --proxy-mode)")
+	authConnectionsCreateCmd.Flags().String("proxy-name", "", "Proxy name to use for this connection's browser sessions (mutually exclusive with --proxy-id and --proxy-mode)")
+	authConnectionsCreateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' for the stealth-derived default")
+	authConnectionsCreateCmd.Flags().Bool("stealth", true, "Run this connection's browser sessions in stealth mode; use --stealth=false to disable")
 	authConnectionsCreateCmd.Flags().Bool("no-save-credentials", false, "Disable saving credentials after successful login")
 	authConnectionsCreateCmd.Flags().Int("health-check-interval", 0, "Interval in seconds between health checks (300-86400)")
 	authConnectionsCreateCmd.Flags().Bool("no-health-checks", false, "Disable periodic health checks (enabled by default)")
@@ -1127,8 +1160,10 @@ func init() {
 	authConnectionsUpdateCmd.Flags().String("credential-provider", "", "External credential provider name")
 	authConnectionsUpdateCmd.Flags().String("credential-path", "", "Provider-specific path (e.g., VaultName/ItemName)")
 	authConnectionsUpdateCmd.Flags().Bool("credential-auto", false, "Lookup by domain from the specified provider")
-	authConnectionsUpdateCmd.Flags().String("proxy-id", "", "Proxy ID to use")
-	authConnectionsUpdateCmd.Flags().String("proxy-name", "", "Proxy name to use")
+	authConnectionsUpdateCmd.Flags().String("proxy-id", "", "Proxy ID to use for future browser sessions (mutually exclusive with --proxy-name and --proxy-mode)")
+	authConnectionsUpdateCmd.Flags().String("proxy-name", "", "Proxy name to use for future browser sessions (mutually exclusive with --proxy-id and --proxy-mode)")
+	authConnectionsUpdateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' to drop a selected proxy and use the stealth-derived default")
+	authConnectionsUpdateCmd.Flags().Bool("stealth", true, "Set whether future browser sessions run in stealth mode; use --stealth=false to disable")
 	authConnectionsUpdateCmd.Flags().Bool("save-credentials", false, "Enable saving credentials after successful login")
 	authConnectionsUpdateCmd.Flags().Bool("no-save-credentials", false, "Disable saving credentials after successful login")
 	authConnectionsUpdateCmd.Flags().Int("health-check-interval", 0, "Interval in seconds between health checks")
@@ -1157,8 +1192,10 @@ func init() {
 
 	// Login flags
 	addJSONOutputFlag(authConnectionsLoginCmd)
-	authConnectionsLoginCmd.Flags().String("proxy-id", "", "Proxy ID to use for this login")
-	authConnectionsLoginCmd.Flags().String("proxy-name", "", "Proxy name to use for this login")
+	authConnectionsLoginCmd.Flags().String("proxy-id", "", "Proxy ID to use for this login (mutually exclusive with --proxy-name and --proxy-mode)")
+	authConnectionsLoginCmd.Flags().String("proxy-name", "", "Proxy name to use for this login (mutually exclusive with --proxy-id and --proxy-mode)")
+	authConnectionsLoginCmd.Flags().String("proxy-mode", "", "Proxy egress mode for this login instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' for the stealth-derived default")
+	authConnectionsLoginCmd.Flags().Bool("stealth", true, "Override stealth mode for this login's browser session; use --stealth=false to disable")
 	authConnectionsLoginCmd.Flags().Bool("record-session", false, "Override whether this login's browser session is recorded; use --record-session=false to disable")
 	authConnectionsLoginCmd.Flags().String("telemetry", "", "Telemetry override for this login only, merged onto the connection's config: --telemetry=all, --telemetry=off, or --telemetry=console,network")
 	authConnectionsLoginCmd.Flags().String("telemetry-export-otlp", "", "Export override for this login only: an OTLP destination ID or name; --telemetry-export-otlp=off disables export for this login. Naming a destination requires passing --telemetry in the same command, since export and capture are validated together")
@@ -1209,6 +1246,7 @@ func runAuthConnectionsCreate(cmd *cobra.Command, args []string) error {
 	credentialAuto, _ := cmd.Flags().GetBool("credential-auto")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
 	proxyName, _ := cmd.Flags().GetString("proxy-name")
+	proxyMode, _ := cmd.Flags().GetString("proxy-mode")
 	noSaveCredentials, _ := cmd.Flags().GetBool("no-save-credentials")
 	healthCheckInterval, _ := cmd.Flags().GetInt("health-check-interval")
 	noHealthChecks, _ := cmd.Flags().GetBool("no-health-checks")
@@ -1229,6 +1267,8 @@ func runAuthConnectionsCreate(cmd *cobra.Command, args []string) error {
 		CredentialAuto:      credentialAuto,
 		ProxyID:             proxyID,
 		ProxyName:           proxyName,
+		ProxyMode:           proxyMode,
+		Stealth:             readBoolFlag(cmd.Flags(), "stealth"),
 		NoSaveCredentials:   noSaveCredentials,
 		HealthCheckInterval: healthCheckInterval,
 		NoHealthChecks:      noHealthChecks,
@@ -1263,6 +1303,7 @@ func runAuthConnectionsUpdate(cmd *cobra.Command, args []string) error {
 	credentialAuto, _ := cmd.Flags().GetBool("credential-auto")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
 	proxyName, _ := cmd.Flags().GetString("proxy-name")
+	proxyMode, _ := cmd.Flags().GetString("proxy-mode")
 	saveCredentials, _ := cmd.Flags().GetBool("save-credentials")
 	noSaveCredentials, _ := cmd.Flags().GetBool("no-save-credentials")
 	healthCheckInterval, _ := cmd.Flags().GetInt("health-check-interval")
@@ -1311,6 +1352,8 @@ func runAuthConnectionsUpdate(cmd *cobra.Command, args []string) error {
 		ProxyIDSet:             cmd.Flags().Changed("proxy-id"),
 		ProxyName:              proxyName,
 		ProxyNameSet:           cmd.Flags().Changed("proxy-name"),
+		ProxyMode:              proxyMode,
+		Stealth:                readBoolFlag(cmd.Flags(), "stealth"),
 		SaveCredentials:        saveCredentialsFlag,
 		HealthCheckInterval:    healthCheckInterval,
 		HealthCheckIntervalSet: cmd.Flags().Changed("health-check-interval"),
@@ -1361,6 +1404,7 @@ func runAuthConnectionsLogin(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
 	proxyName, _ := cmd.Flags().GetString("proxy-name")
+	proxyMode, _ := cmd.Flags().GetString("proxy-mode")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 	telemetryExport, _ := cmd.Flags().GetString("telemetry-export-otlp")
 
@@ -1370,6 +1414,8 @@ func runAuthConnectionsLogin(cmd *cobra.Command, args []string) error {
 		ID:              args[0],
 		ProxyID:         proxyID,
 		ProxyName:       proxyName,
+		ProxyMode:       proxyMode,
+		Stealth:         readBoolFlag(cmd.Flags(), "stealth"),
 		RecordSession:   readBoolFlag(cmd.Flags(), "record-session"),
 		Telemetry:       telemetry,
 		TelemetryExport: telemetryExport,
