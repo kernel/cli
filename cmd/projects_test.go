@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"testing"
@@ -103,6 +104,36 @@ func TestProjectsList_ForwardsPaginationAndShowsAbsoluteIndexes(t *testing.T) {
 	assert.Contains(t, out, "21")
 }
 
+func TestProjectsList_JSONOutputEnvelope(t *testing.T) {
+	fakeProjects := &FakeProjectsService{
+		ListFunc: func(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error) {
+			return &pagination.OffsetPagination[kernel.Project]{
+				Items: []kernel.Project{
+					{ID: "proj_1", Name: "one", Status: kernel.ProjectStatusActive},
+					{ID: "proj_2", Name: "two", Status: kernel.ProjectStatusArchived},
+				},
+			}, nil
+		},
+	}
+	c := ProjectsCmd{projects: fakeProjects, limits: &FakeProjectLimitsService{}}
+
+	out := captureStdout(t, func() {
+		err := c.List(context.Background(), ProjectsListInput{Limit: 2, Offset: 0, Output: "json"})
+		assert.NoError(t, err)
+	})
+
+	var payload struct {
+		Projects   []kernel.Project `json:"projects"`
+		NextOffset string           `json:"next_offset"`
+	}
+	if !assert.NoError(t, json.Unmarshal([]byte(out), &payload)) {
+		return
+	}
+	assert.Len(t, payload.Projects, 2)
+	assert.Equal(t, "proj_1", payload.Projects[0].ID)
+	assert.Empty(t, payload.NextOffset)
+}
+
 func TestProjectsList_RejectsInvalidPagination(t *testing.T) {
 	fakeProjects := &FakeProjectsService{
 		ListFunc: func(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error) {
@@ -123,13 +154,16 @@ func TestProjectsList_RejectsInvalidPagination(t *testing.T) {
 
 func TestProjectListNextOffset(t *testing.T) {
 	response := &http.Response{Header: http.Header{"X-Next-Offset": []string{"120"}}}
-	nextOffset, ok := projectListNextOffset(response)
+	nextOffsetRaw := projectListNextOffsetRaw(response)
+	assert.Equal(t, "120", nextOffsetRaw)
+
+	nextOffset, ok := projectListNextOffset(nextOffsetRaw)
 	assert.True(t, ok)
 	assert.Equal(t, 120, nextOffset)
 
-	_, ok = projectListNextOffset(&http.Response{Header: http.Header{}})
+	_, ok = projectListNextOffset(projectListNextOffsetRaw(&http.Response{Header: http.Header{}}))
 	assert.False(t, ok)
-	_, ok = projectListNextOffset(nil)
+	_, ok = projectListNextOffset(projectListNextOffsetRaw(nil))
 	assert.False(t, ok)
 }
 
