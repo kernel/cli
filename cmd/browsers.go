@@ -290,6 +290,7 @@ type BrowsersCreateInput struct {
 	Extensions         []string
 	Viewport           string
 	Telemetry          string
+	TelemetryExport    string
 	ChromePolicy       string
 	ChromePolicyFile   string
 	Name               string
@@ -540,8 +541,8 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		}
 	}
 
-	if in.Telemetry != "" {
-		t, err := buildNewTelemetryParam(in.Telemetry)
+	if in.Telemetry != "" || in.TelemetryExport != "" {
+		t, err := buildNewTelemetryParam(in.Telemetry, in.TelemetryExport)
 		if err != nil {
 			return err
 		}
@@ -575,20 +576,20 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		return util.PrintPrettyJSON(browser)
 	}
 
-	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.StartURL, browser.Name, browser.Tags)
-	if in.Telemetry != "" {
+	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.ProfileSaveChanges, browser.StartURL, browser.Name, browser.Tags)
+	if in.Telemetry != "" || in.TelemetryExport != "" {
 		printTelemetrySummary(browser.Telemetry)
 	}
 	return nil
 }
 
-func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, startURL, name string, tags kernel.Tags) {
-	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, profile, startURL, name, tags)
+func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, profileSaveChanges bool, startURL, name string, tags kernel.Tags) {
+	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, profile, profileSaveChanges, startURL, name, tags)
 	PrintTableNoPad(tableData, true)
 }
 
 // buildBrowserTableData creates a base table with common browser session fields.
-func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, startURL, name string, tags kernel.Tags) pterm.TableData {
+func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, profileSaveChanges bool, startURL, name string, tags kernel.Tags) pterm.TableData {
 	tableData := pterm.TableData{
 		{"Property", "Value"},
 		{"Session ID", sessionID},
@@ -606,6 +607,7 @@ func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, profile kernel
 			profVal = profile.ID
 		}
 		tableData = append(tableData, []string{"Profile", profVal})
+		tableData = append(tableData, []string{"Profile Save Changes", fmt.Sprintf("%t", profileSaveChanges)})
 	}
 	if startURL != "" {
 		tableData = append(tableData, []string{"Start URL", startURL})
@@ -683,6 +685,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		browser.CdpWsURL,
 		browser.BrowserLiveViewURL,
 		browser.Profile,
+		browser.ProfileSaveChanges,
 		browser.StartURL,
 		browser.Name,
 		browser.Tags,
@@ -863,6 +866,9 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 	if hasTagsChange {
 		pterm.Info.Printf("Tags: %s\n", util.OrDash(formatTags(browser.Tags)))
+	}
+	if hasProfileChange {
+		pterm.Info.Printf("Profile save changes: %t\n", browser.ProfileSaveChanges)
 	}
 	if in.Telemetry != "" {
 		printTelemetrySummary(browser.Telemetry)
@@ -2783,6 +2789,7 @@ func init() {
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
 	browsersCreateCmd.Flags().String("telemetry", "", "Configure telemetry (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
+	browsersCreateCmd.Flags().String("telemetry-export-otlp", "", "Export captured telemetry over OTLP to one of the org's configured destinations, by ID or name; --telemetry-export-otlp=off disables export. Implies --telemetry=all when --telemetry is not set, since export requires capture")
 	browsersCreateCmd.Flags().String("name", "", "Optional unique name for the browser session (used to find it later; can be changed with 'browsers update --name')")
 	browsersCreateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the session (repeatable; up to 50 pairs)")
 	browsersCreateCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts")
@@ -2828,6 +2835,7 @@ followed automatically by Chromium.`,
 	telemetryEvents := &cobra.Command{Use: "events <id>", Short: "Read historical telemetry events (paged)", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryEvents}
 	telemetryEvents.Flags().Int64("limit", 0, "Maximum number of events per page (1-100, default 20)")
 	telemetryEvents.Flags().Int64("offset", 0, "Pagination cursor: pass the X-Next-Offset from a previous response")
+	telemetryEvents.Flags().String("order", "", "Read direction: asc (default) reads oldest first, desc reads newest first (cannot be combined with --since)")
 	telemetryEvents.Flags().String("since", "", "Window start: RFC-3339 timestamp or a duration like 5m (default 5m). Ignored when --offset is set")
 	telemetryEvents.Flags().String("until", "", "Window end (exclusive): RFC-3339 timestamp or a duration like 5m")
 	telemetryEvents.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,connection,system,screenshot,captcha,monitor)")
@@ -2873,6 +2881,7 @@ func poolLeaseAllowedFlags() map[string]bool {
 		"pool-name": true,
 		"timeout":   true,
 		"name":      true,
+		"start-url": true,
 		"tag":       true,
 		"telemetry": true,
 		"output":    true,
@@ -2904,6 +2913,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	poolID, _ := cmd.Flags().GetString("pool-id")
 	poolName, _ := cmd.Flags().GetString("pool-name")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
+	telemetryExport, _ := cmd.Flags().GetString("telemetry-export-otlp")
 	name, _ := cmd.Flags().GetString("name")
 	tags, _ := tagsFromFlag(cmd, "tag")
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
@@ -2918,7 +2928,8 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 
 	if poolID != "" || poolName != "" {
 		// When using a pool, configuration comes from the pool itself, but
-		// name, tags, and telemetry apply per-lease to the acquired session.
+		// name, start URL, tags, and telemetry apply per-lease to the acquired
+		// session — they mirror the fields BrowserPoolAcquireParams accepts.
 		allowedFlags := poolLeaseAllowedFlags()
 
 		// Check if any browser configuration flags were set (which would conflict).
@@ -2968,7 +2979,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("timeout") && timeout > 0 {
 			acquireTimeout = int64(timeout)
 		}
-		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry)
+		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry, startURL)
 		if err != nil {
 			return err
 		}
@@ -2988,7 +2999,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if output == "json" {
 			return util.PrintPrettyJSON(resp)
 		}
-		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.StartURL, resp.Name, resp.Tags)
+		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.ProfileSaveChanges, resp.StartURL, resp.Name, resp.Tags)
 		return nil
 	}
 
@@ -3024,6 +3035,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		Extensions:         extensions,
 		Viewport:           viewport,
 		Telemetry:          telemetry,
+		TelemetryExport:    telemetryExport,
 		ChromePolicy:       chromePolicy,
 		ChromePolicyFile:   chromePolicyFile,
 		Name:               name,

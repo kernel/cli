@@ -44,6 +44,7 @@ type BrowsersTelemetryEventsInput struct {
 	Identifier string
 	Limit      int64
 	Offset     int64
+	Order      string
 	Since      string
 	Until      string
 	Categories []string
@@ -107,10 +108,102 @@ func resolveTelemetryFlag(s string) (param.Opt[bool], kernel.BrowserTelemetryCat
 	}
 }
 
-// buildNewTelemetryParam converts a --telemetry flag value to the create API param.
-func buildNewTelemetryParam(s string) (kernel.BrowserNewParamsTelemetry, error) {
+// telemetryExportOff is the --telemetry-export-otlp value that turns export off
+// rather than naming a destination.
+const telemetryExportOff = "off"
+
+// resolveTelemetryExportFlag interprets a --telemetry-export-otlp flag value:
+// "off" disables OTLP export, and any other value selects a destination by ID or
+// name. Setting a destination implies enabled=true server-side, so enabled is only
+// sent for "off" (the API rejects enabled=false combined with a destination).
+// It returns the resolved (enabled, id, name) triple so each endpoint can assemble
+// its own param type.
+func resolveTelemetryExportFlag(s string) (enabled param.Opt[bool], id, name string, err error) {
+	val := strings.TrimSpace(s)
+	if val == telemetryExportOff {
+		return kernel.Opt(false), "", "", nil
+	}
+	if val == "" {
+		return param.Opt[bool]{}, "", "", fmt.Errorf("empty --telemetry-export-otlp value: pass an OTLP destination ID or name, or %q to disable export", telemetryExportOff)
+	}
+	// Destinations have no list endpoint to disambiguate against, so fall back to
+	// the same CUID shape test the CLI uses for other ID-or-name references.
+	if cuidRegex.MatchString(val) {
+		return param.Opt[bool]{}, val, "", nil
+	}
+	return param.Opt[bool]{}, "", val, nil
+}
+
+// telemetryFlagEnablesCapture reports whether a --telemetry value turns capture on.
+// A destination requires capture to be enabled, so the create paths use this to
+// decide whether to imply it.
+func telemetryFlagEnablesCapture(s string) bool {
+	return s != "" && s != "off"
+}
+
+// validateTelemetryExportCombo checks an export destination against the --telemetry
+// value in the same command. The API validates the request payload on its own — it
+// does not consult the stored config — so a destination is rejected unless that
+// same request also enables capture, whether via enabled=true or category settings.
+//
+// canImply is true on the create paths, where there is no stored selection to
+// clobber and capture can safely be turned on for the user. On update and login it
+// is false: enabling capture there would replace the connection's current category
+// selection, so the user has to say what to capture.
+//
+// Error messages never lead with a flag token — the error style title-cases the
+// first word and treats - and = as word boundaries inside it.
+func validateTelemetryExportCombo(telemetry, id, name string, canImply bool) error {
+	if id == "" && name == "" {
+		return nil
+	}
+	if telemetry == "off" {
+		return fmt.Errorf("cannot combine --telemetry=off with an export destination: export requires telemetry capture to be enabled")
+	}
+	if telemetry == "" && !canImply {
+		return fmt.Errorf("setting an export destination also requires --telemetry in the same command: use --telemetry=all for the default set, or --telemetry=console,network to select categories")
+	}
+	return nil
+}
+
+// buildNewTelemetryParam converts --telemetry and --telemetry-export-otlp flag
+// values to the create API param.
+func buildNewTelemetryParam(s, export string) (kernel.BrowserNewParamsTelemetry, error) {
 	enabled, browser, err := resolveTelemetryFlag(s)
-	return kernel.BrowserNewParamsTelemetry{Enabled: enabled, Browser: browser}, err
+	p := kernel.BrowserNewParamsTelemetry{Enabled: enabled, Browser: browser}
+	if err != nil || export == "" {
+		return p, err
+	}
+	exEnabled, id, name, err := resolveTelemetryExportFlag(export)
+	if err != nil {
+		return p, err
+	}
+	if err := validateTelemetryExportCombo(s, id, name, true); err != nil {
+		return p, err
+	}
+	// A destination needs capture on. Nothing exists yet to clobber on create, so
+	// imply the default set rather than making the user repeat --telemetry=all.
+	if (id != "" || name != "") && !telemetryFlagEnablesCapture(s) {
+		p.Enabled = kernel.Opt(true)
+	}
+	p.Export = kernel.BrowserNewParamsTelemetryExport{
+		Otlp: kernel.BrowserNewParamsTelemetryExportOtlp{
+			Enabled: exEnabled,
+			Destination: kernel.BrowserNewParamsTelemetryExportOtlpDestination{
+				ID:   optIfSet(id),
+				Name: optIfSet(name),
+			},
+		},
+	}
+	return p, nil
+}
+
+// optIfSet wraps a non-empty string as a set param, leaving it omitted otherwise.
+func optIfSet(s string) param.Opt[string] {
+	if s == "" {
+		return param.Opt[string]{}
+	}
+	return kernel.Opt(s)
 }
 
 // buildUpdateTelemetryParam converts a --telemetry flag value to the update API param.
@@ -119,40 +212,127 @@ func buildUpdateTelemetryParam(s string) (kernel.BrowserUpdateParamsTelemetry, e
 	return kernel.BrowserUpdateParamsTelemetry{Enabled: enabled, Browser: browser}, err
 }
 
-// buildAuthConnectionCreateTelemetryParam converts a --telemetry flag value to the
-// browser telemetry default stored on a new auth connection.
-func buildAuthConnectionCreateTelemetryParam(s string) (kernel.ManagedAuthCreateRequestBrowserTelemetryParam, error) {
+// buildAuthConnectionCreateTelemetryParam converts --telemetry and
+// --telemetry-export-otlp flag values to the browser telemetry default stored on a
+// new auth connection.
+func buildAuthConnectionCreateTelemetryParam(s, export string) (kernel.ManagedAuthCreateRequestBrowserTelemetryParam, error) {
 	enabled, browser, err := resolveTelemetryFlag(s)
-	return kernel.ManagedAuthCreateRequestBrowserTelemetryParam{Enabled: enabled, Browser: browser}, err
+	p := kernel.ManagedAuthCreateRequestBrowserTelemetryParam{Enabled: enabled, Browser: browser}
+	if err != nil || export == "" {
+		return p, err
+	}
+	exEnabled, id, name, err := resolveTelemetryExportFlag(export)
+	if err != nil {
+		return p, err
+	}
+	if err := validateTelemetryExportCombo(s, id, name, true); err != nil {
+		return p, err
+	}
+	if (id != "" || name != "") && !telemetryFlagEnablesCapture(s) {
+		p.Enabled = kernel.Opt(true)
+	}
+	p.Export = kernel.ManagedAuthCreateRequestBrowserTelemetryExportParam{
+		Otlp: kernel.ManagedAuthCreateRequestBrowserTelemetryExportOtlpParam{
+			Enabled: exEnabled,
+			Destination: kernel.ManagedAuthCreateRequestBrowserTelemetryExportOtlpDestinationParam{
+				ID:   optIfSet(id),
+				Name: optIfSet(name),
+			},
+		},
+	}
+	return p, nil
 }
 
-// buildAuthConnectionUpdateTelemetryParam converts a --telemetry flag value to the
-// browser telemetry default for future sessions of an existing auth connection.
-func buildAuthConnectionUpdateTelemetryParam(s string) (kernel.ManagedAuthUpdateRequestBrowserTelemetryParam, error) {
+// buildAuthConnectionUpdateTelemetryParam converts --telemetry and
+// --telemetry-export-otlp flag values to the browser telemetry default for future
+// sessions of an existing auth connection. Unlike the create paths this never
+// implies capture: the connection already has a stored config, and enabled=true
+// would replace its category selection rather than merge onto it.
+func buildAuthConnectionUpdateTelemetryParam(s, export string) (kernel.ManagedAuthUpdateRequestBrowserTelemetryParam, error) {
 	enabled, browser, err := resolveTelemetryFlag(s)
-	return kernel.ManagedAuthUpdateRequestBrowserTelemetryParam{Enabled: enabled, Browser: browser}, err
+	p := kernel.ManagedAuthUpdateRequestBrowserTelemetryParam{Enabled: enabled, Browser: browser}
+	if err != nil || export == "" {
+		return p, err
+	}
+	exEnabled, id, name, err := resolveTelemetryExportFlag(export)
+	if err != nil {
+		return p, err
+	}
+	if err := validateTelemetryExportCombo(s, id, name, false); err != nil {
+		return p, err
+	}
+	p.Export = kernel.ManagedAuthUpdateRequestBrowserTelemetryExportParam{
+		Otlp: kernel.ManagedAuthUpdateRequestBrowserTelemetryExportOtlpParam{
+			Enabled: exEnabled,
+			Destination: kernel.ManagedAuthUpdateRequestBrowserTelemetryExportOtlpDestinationParam{
+				ID:   optIfSet(id),
+				Name: optIfSet(name),
+			},
+		},
+	}
+	return p, nil
 }
 
-// buildAuthConnectionLoginTelemetryParam converts a --telemetry flag value to the
-// per-login browser telemetry override.
-func buildAuthConnectionLoginTelemetryParam(s string) (kernel.AuthConnectionLoginParamsBrowserTelemetry, error) {
+// buildAuthConnectionLoginTelemetryParam converts --telemetry and
+// --telemetry-export-otlp flag values to the per-login browser telemetry override.
+// The override merges onto the connection's stored config, which may already
+// enable capture, so this does not imply it either.
+func buildAuthConnectionLoginTelemetryParam(s, export string) (kernel.AuthConnectionLoginParamsBrowserTelemetry, error) {
 	enabled, browser, err := resolveTelemetryFlag(s)
-	return kernel.AuthConnectionLoginParamsBrowserTelemetry{Enabled: enabled, Browser: browser}, err
+	p := kernel.AuthConnectionLoginParamsBrowserTelemetry{Enabled: enabled, Browser: browser}
+	if err != nil || export == "" {
+		return p, err
+	}
+	exEnabled, id, name, err := resolveTelemetryExportFlag(export)
+	if err != nil {
+		return p, err
+	}
+	if err := validateTelemetryExportCombo(s, id, name, false); err != nil {
+		return p, err
+	}
+	p.Export = kernel.AuthConnectionLoginParamsBrowserTelemetryExport{
+		Otlp: kernel.AuthConnectionLoginParamsBrowserTelemetryExportOtlp{
+			Enabled: exEnabled,
+			Destination: kernel.AuthConnectionLoginParamsBrowserTelemetryExportOtlpDestination{
+				ID:   optIfSet(id),
+				Name: optIfSet(name),
+			},
+		},
+	}
+	return p, nil
 }
 
 // formatManagedAuthTelemetry renders an auth connection's default browser telemetry
 // config for the details table.
 func formatManagedAuthTelemetry(cfg kernel.ManagedAuthBrowserTelemetry) string {
-	if on := telemetryEnabledCategories(kernel.BrowserTelemetryConfig{Browser: cfg.Browser}); len(on) > 0 {
-		return strings.Join(on, ", ")
+	base := func() string {
+		if on := telemetryEnabledCategories(kernel.BrowserTelemetryConfig{Browser: cfg.Browser}); len(on) > 0 {
+			return strings.Join(on, ", ")
+		}
+		// The API preserves the create-browser config verbatim rather than resolving
+		// it, so `{"enabled": true}` with no per-category settings means the default
+		// set. Reporting that as "disabled" would invert the connection's state.
+		if cfg.Enabled {
+			return "enabled (default categories)"
+		}
+		return "disabled"
+	}()
+	if dest := managedAuthExportDestination(cfg.Export); dest != "" {
+		return base + " (exporting to " + dest + ")"
 	}
-	// The API preserves the create-browser config verbatim rather than resolving
-	// it, so `{"enabled": true}` with no per-category settings means the default
-	// set. Reporting that as "disabled" would invert the connection's state.
-	if cfg.Enabled {
-		return "enabled (default categories)"
+	return base
+}
+
+// managedAuthExportDestination returns the OTLP destination an auth connection's
+// sessions export to, or "" when export is off or unset.
+func managedAuthExportDestination(ex kernel.ManagedAuthBrowserTelemetryExport) string {
+	if !ex.Otlp.Enabled {
+		return ""
 	}
-	return "disabled"
+	if id := ex.Otlp.Destination.ID; id != "" {
+		return id
+	}
+	return ex.Otlp.Destination.Name
 }
 
 // settableCategories are the categories accepted by --telemetry=<categories>.
@@ -203,6 +383,15 @@ func printTelemetrySummary(cfg kernel.BrowserTelemetryConfig) {
 		return
 	}
 	pterm.Info.Printf("Telemetry capturing: %s\n", strings.Join(on, ", "))
+	if cfg.Export.Otlp.Enabled {
+		// The response reports the resolved destination by ID even when the request
+		// selected it by name.
+		if dest := cfg.Export.Otlp.Destination; dest != "" {
+			pterm.Info.Printf("Telemetry exporting over OTLP to: %s\n", dest)
+		} else {
+			pterm.Info.Println("Telemetry exporting over OTLP")
+		}
+	}
 }
 
 // shouldEmit applies client-side category/type filters to a telemetry event.
@@ -307,6 +496,14 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 			return fmt.Errorf("invalid --categories value %q: must be one of %s", c, strings.Join(streamFilterCategories, ", "))
 		}
 	}
+	if in.Order != "" && in.Order != "asc" && in.Order != "desc" {
+		return fmt.Errorf("invalid --order value %q: must be asc or desc", in.Order)
+	}
+	// The endpoint rejects desc combined with a window start, since desc pages
+	// backwards from --until (or the newest archived event) instead.
+	if in.Order == "desc" && in.Since != "" {
+		return fmt.Errorf("--order desc cannot be combined with --since; use --until to bound the window instead")
+	}
 
 	// Resolve a name to a session ID. The events archive outlives the session, so
 	// a 404 (ended or unknown session) is not fatal: fall back to the identifier
@@ -327,6 +524,9 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 	params := kernel.BrowserTelemetryEventsParams{}
 	if in.Limit > 0 {
 		params.Limit = kernel.Opt(in.Limit)
+	}
+	if in.Order != "" {
+		params.Order = kernel.Opt(in.Order)
 	}
 	if in.Offset > 0 && !fullScan {
 		params.Offset = kernel.Opt(in.Offset)
@@ -428,6 +628,7 @@ func runBrowsersTelemetryEvents(cmd *cobra.Command, args []string) error {
 	out, _ := cmd.Flags().GetString("output")
 	limit, _ := cmd.Flags().GetInt64("limit")
 	offset, _ := cmd.Flags().GetInt64("offset")
+	order, _ := cmd.Flags().GetString("order")
 	since, _ := cmd.Flags().GetString("since")
 	until, _ := cmd.Flags().GetString("until")
 	categories, _ := cmd.Flags().GetStringSlice("categories")
@@ -438,6 +639,7 @@ func runBrowsersTelemetryEvents(cmd *cobra.Command, args []string) error {
 		Identifier: args[0],
 		Limit:      limit,
 		Offset:     offset,
+		Order:      order,
 		Since:      since,
 		Until:      until,
 		Categories: categories,

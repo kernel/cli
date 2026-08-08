@@ -124,28 +124,32 @@ func TestBrowserPoolsList_ForwardsLimitOffset(t *testing.T) {
 	assert.Equal(t, int64(8), captured.Offset.Value)
 }
 
-// TestBuildAcquireParams covers the shared name/tags/timeout/telemetry forwarding
-// used by both `browser-pools acquire` and the `browsers create --pool-id` lease path.
+// TestBuildAcquireParams covers the shared name/tags/timeout/telemetry/start-url
+// forwarding used by both `browser-pools acquire` and the `browsers create
+// --pool-id` lease path.
 func TestBuildAcquireParams(t *testing.T) {
-	p, err := buildAcquireParams("lease", map[string]string{"env": "prod"}, 30, "console,network")
+	p, err := buildAcquireParams("lease", map[string]string{"env": "prod"}, 30, "console,network", "https://example.com")
 	assert.NoError(t, err)
 	assert.True(t, p.Name.Valid())
 	assert.Equal(t, "lease", p.Name.Value)
 	assert.Equal(t, "prod", p.Tags["env"])
 	assert.True(t, p.AcquireTimeoutSeconds.Valid())
 	assert.Equal(t, int64(30), p.AcquireTimeoutSeconds.Value)
+	assert.True(t, p.StartURL.Valid())
+	assert.Equal(t, "https://example.com", p.StartURL.Value)
 	assert.True(t, p.Telemetry.Browser.Console.Enabled.Value)
 	assert.True(t, p.Telemetry.Browser.Network.Enabled.Value)
 
 	// Unset inputs produce an empty params struct (nothing forwarded).
-	empty, err := buildAcquireParams("", nil, 0, "")
+	empty, err := buildAcquireParams("", nil, 0, "", "")
 	assert.NoError(t, err)
 	assert.False(t, empty.Name.Valid())
 	assert.Len(t, empty.Tags, 0)
 	assert.False(t, empty.AcquireTimeoutSeconds.Valid())
+	assert.False(t, empty.StartURL.Valid())
 
 	// An invalid category surfaces an error rather than a partial param.
-	_, err = buildAcquireParams("", nil, 0, "bogus")
+	_, err = buildAcquireParams("", nil, 0, "bogus", "")
 	assert.Error(t, err)
 }
 

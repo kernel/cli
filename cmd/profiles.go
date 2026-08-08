@@ -41,6 +41,7 @@ type ProfilesListInput struct {
 	Output  string
 	Page    int
 	PerPage int
+	Name    string
 	Query   string
 }
 
@@ -91,6 +92,9 @@ func (p ProfilesCmd) List(ctx context.Context, in ProfilesListInput) error {
 	}
 
 	params := kernel.ProfileListParams{}
+	if in.Name != "" {
+		params.Name = kernel.Opt(in.Name)
+	}
 	if in.Query != "" {
 		params.Query = kernel.Opt(in.Query)
 	}
@@ -144,7 +148,10 @@ func (p ProfilesCmd) List(ctx context.Context, in ProfilesListInput) error {
 	pterm.Printf("\nPage: %d  Per-page: %d  Items this page: %d  Has more: %s\n", page, perPage, itemsThisPage, lo.Ternary(hasMore, "yes", "no"))
 	if hasMore {
 		nextPage := page + 1
-		nextCmd := fmt.Sprintf("kernel profile list --page %d --per-page %d", nextPage, perPage)
+		nextCmd := fmt.Sprintf("kernel profiles list --page %d --per-page %d", nextPage, perPage)
+		if in.Name != "" {
+			nextCmd += fmt.Sprintf(" --name \"%s\"", in.Name)
+		}
 		if in.Query != "" {
 			nextCmd += fmt.Sprintf(" --query \"%s\"", in.Query)
 		}
@@ -451,6 +458,7 @@ func init() {
 	addJSONOutputFlag(profilesListCmd)
 	profilesListCmd.Flags().Int("per-page", 20, "Items per page (default 20)")
 	profilesListCmd.Flags().Int("page", 1, "Page number (1-based)")
+	profilesListCmd.Flags().String("name", "", "Exact-match filter on profile name")
 	profilesListCmd.Flags().String("query", "", "Search profiles by name or ID")
 	addJSONOutputFlag(profilesGetCmd)
 	addJSONOutputFlag(profilesCreateCmd)
@@ -469,6 +477,7 @@ func runProfilesList(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 	perPage, _ := cmd.Flags().GetInt("per-page")
 	page, _ := cmd.Flags().GetInt("page")
+	name, _ := cmd.Flags().GetString("name")
 	query, _ := cmd.Flags().GetString("query")
 
 	svc := client.Profiles
@@ -477,6 +486,7 @@ func runProfilesList(cmd *cobra.Command, args []string) error {
 		Output:  output,
 		Page:    page,
 		PerPage: perPage,
+		Name:    name,
 		Query:   query,
 	})
 }

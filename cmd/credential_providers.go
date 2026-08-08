@@ -32,6 +32,7 @@ type CredentialProvidersCmd struct {
 }
 
 type CredentialProvidersListInput struct {
+	Query  string
 	Limit  int
 	Offset int
 	Output string
@@ -81,6 +82,9 @@ func (c CredentialProvidersCmd) List(ctx context.Context, in CredentialProviders
 	}
 
 	params := kernel.CredentialProviderListParams{}
+	if in.Query != "" {
+		params.Query = kernel.String(in.Query)
+	}
 	if in.Limit > 0 {
 		params.Limit = kernel.Int(int64(in.Limit))
 	}
@@ -446,6 +450,7 @@ func init() {
 
 	// List flags
 	addJSONOutputFlag(credentialProvidersListCmd)
+	credentialProvidersListCmd.Flags().String("query", "", "Search credential providers by name (IDs match by exact value)")
 	credentialProvidersListCmd.Flags().Int("limit", 0, "Maximum number of credential providers to return")
 	credentialProvidersListCmd.Flags().Int("offset", 0, "Number of credential providers to skip (for pagination)")
 
@@ -483,12 +488,14 @@ func init() {
 func runCredentialProvidersList(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	output, _ := cmd.Flags().GetString("output")
+	query, _ := cmd.Flags().GetString("query")
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
 
 	svc := client.CredentialProviders
 	c := CredentialProvidersCmd{providers: &svc}
 	return c.List(cmd.Context(), CredentialProvidersListInput{
+		Query:  query,
 		Limit:  limit,
 		Offset: offset,
 		Output: output,

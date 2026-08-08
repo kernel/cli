@@ -224,6 +224,7 @@ Commands with JSON output support:
   - `--telemetry=all` - Enable telemetry for all categories
   - `--telemetry=off` - Disable telemetry
   - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`
+  - `--telemetry-export-otlp <id-or-name>` - Export captured telemetry over OTLP to one of the org's configured destinations. Implies `--telemetry=all` when `--telemetry` is not set, since export requires capture. Use `--telemetry-export-otlp=off` to disable export.
   - `--chrome-policy <json>` - Custom Chrome enterprise policy as a JSON object. Kernel-managed policies (extensions, proxy, automation) are rejected server-side.
   - `--chrome-policy-file <path>` - Read the Chrome enterprise policy from a file (use `-` for stdin). Mutually exclusive with `--chrome-policy`.
   - `--output json`, `-o json` - Output raw JSON object
@@ -320,6 +321,16 @@ Telemetry config is a sub-field of the browser session. Use `browsers create` or
 - Capture specific categories: `kernel browsers update <id> --telemetry=console,network` (any of: `console`, `network`, `page`, `interaction`, `control`, `connection`, `system`, `screenshot`, `captcha`)
 
 Per-category updates are partial — only categories you name are changed; others retain their current state. `--telemetry=all` and `--telemetry=off` reset the entire config.
+
+#### Exporting telemetry
+
+Captured telemetry can be exported over OTLP to one of the org's configured destinations with `--telemetry-export-otlp <id-or-name>`. A value that looks like an ID is sent as one; anything else is resolved as a destination name, which must match exactly one destination in the org.
+
+- Capture and export: `kernel browsers create --telemetry-export-otlp my-collector`
+- Capture without exporting: `kernel browsers create --telemetry=all`
+- Stop exporting: `--telemetry-export-otlp=off`
+
+Export is bound at session creation, so it is available on `browsers create` and on the managed-auth commands that create a browser (`auth connections create`, `update`, and `login`). A browser session keeps the destination it was created with — `browsers update` cannot change it — and browser pools do not support export.
 
 - `kernel browsers telemetry stream <id>` - Stream live telemetry events (NDJSON with `-o json`)
   - `--categories <list>` - Filter by event category (`console`, `network`, `page`, `interaction`, `control`, `connection`, `system`, `screenshot`, `captcha`, `monitor`)
@@ -529,6 +540,11 @@ Per-category updates are partial — only categories you name are changed; other
 - `kernel proxies delete <id>` - Delete a proxy configuration
   - `-y, --yes` - Skip confirmation prompt
 
+### Auth Context
+
+- `kernel auth context` - Show the identity and authorization context resolved for the current credentials: the authenticated principal, organization, credential scope, and the effective scope for the request. Credential secrets are never returned. Pass `--project <id>` to see the effective scope a project-scoped request would get.
+  - `--output json`, `-o json` - Output raw JSON object
+
 ### Auth Connections
 
 Managed auth connections (`kernel auth connections`). The commands below are new or gained new flags; run `kernel auth connections --help` for the full command list.
@@ -538,12 +554,15 @@ Managed auth connections (`kernel auth connections`). The commands below are new
   - `--page <n>` - Page number (1-based, default: 1)
   - `--per-page <n>` - Items per page (default: 20)
   - `--output json`, `-o json` - Output raw JSON array
-- `kernel auth connections create` - New flag:
+- `kernel auth connections create` - New flags:
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Default telemetry for this connection's browser sessions. Same semantics as `kernel browsers create`
-- `kernel auth connections update <id>` - New flag:
+  - `--telemetry-export-otlp <id-or-name>` - Export this connection's captured telemetry over OTLP to one of the org's configured destinations. Implies `--telemetry=all` when `--telemetry` is not set. Use `=off` to disable export.
+- `kernel auth connections update <id>` - New flags:
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Update telemetry for future browser sessions
-- `kernel auth connections login <id>` - New flag:
+  - `--telemetry-export-otlp <id-or-name>` - Update where future sessions export captured telemetry. Naming a destination requires passing `--telemetry` in the same command, since the API validates capture and export together and enabling capture here would replace the connection's current category selection. Use `=off` to disable export.
+- `kernel auth connections login <id>` - New flags:
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Telemetry override for this login only, merged onto the connection's config
+  - `--telemetry-export-otlp <id-or-name>` - Export override for this login only. Naming a destination requires passing `--telemetry` in the same command. Use `=off` to disable export.
 - `kernel auth connections submit <id>` - New flags:
   - `--field-value <id=value>` - Canonical field-id=value pair from the connection's `fields` list (repeatable); preferred over the legacy `--field`
   - `--choice-id <id>` - Canonical choice ID from the connection's `choices` list
