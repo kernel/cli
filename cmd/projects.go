@@ -117,10 +117,13 @@ func (c ProjectsCmd) List(ctx context.Context, in ProjectsListInput) error {
 	if projects != nil {
 		items = projects.Items
 	}
-	nextOffset, hasMore := projectListNextOffset(response)
+	pagination, err := parseProjectListPagination(response)
+	if err != nil {
+		return err
+	}
 
 	if in.Output == "json" {
-		data, err := marshalProjectsListJSON(items, nextOffset)
+		data, err := marshalProjectsListJSON(projects, pagination.NextOffset)
 		if err != nil {
 			return err
 		}
@@ -145,35 +148,54 @@ func (c ProjectsCmd) List(ctx context.Context, in ProjectsListInput) error {
 	}
 	PrintTableNoPad(table, true)
 
-	if hasMore {
+	if pagination.HasMore {
 		pterm.Warning.Printfln(
 			"Output truncated after index %d. Continue with: kernel projects list --limit %d --offset %d",
-			in.Offset+len(items)-1, in.Limit, nextOffset,
+			in.Offset+len(items)-1, in.Limit, pagination.NextOffset,
 		)
 	}
 	return nil
 }
 
-func projectListNextOffset(response *http.Response) (int, bool) {
-	if response == nil {
-		return 0, false
-	}
-	nextOffset, err := strconv.Atoi(response.Header.Get("X-Next-Offset"))
-	return nextOffset, err == nil && nextOffset > 0
+type projectListPagination struct {
+	HasMore    bool
+	NextOffset int
 }
 
-func marshalProjectsListJSON(projects []kernel.Project, nextOffset int) ([]byte, error) {
-	rawProjects := make([]json.RawMessage, 0, len(projects))
-	for _, project := range projects {
-		raw := project.RawJSON()
-		if raw == "" {
-			raw = "{}"
-		}
-		rawProjects = append(rawProjects, json.RawMessage(raw))
+func parseProjectListPagination(response *http.Response) (projectListPagination, error) {
+	if response == nil {
+		return projectListPagination{}, fmt.Errorf("project list response is missing pagination headers")
+	}
+
+	hasMoreValue := response.Header.Get("X-Has-More")
+	hasMore, err := strconv.ParseBool(hasMoreValue)
+	if err != nil {
+		return projectListPagination{}, fmt.Errorf("invalid X-Has-More header %q", hasMoreValue)
+	}
+
+	nextOffsetValue := response.Header.Get("X-Next-Offset")
+	nextOffset, err := strconv.Atoi(nextOffsetValue)
+	if err != nil || nextOffset < 0 {
+		return projectListPagination{}, fmt.Errorf("invalid X-Next-Offset header %q", nextOffsetValue)
+	}
+	if hasMore && nextOffset == 0 {
+		return projectListPagination{}, fmt.Errorf("X-Has-More is true but X-Next-Offset is not positive")
+	}
+	if !hasMore && nextOffset != 0 {
+		return projectListPagination{}, fmt.Errorf("X-Has-More is false but X-Next-Offset is %d", nextOffset)
+	}
+
+	return projectListPagination{HasMore: hasMore, NextOffset: nextOffset}, nil
+}
+
+func marshalProjectsListJSON(projects *pagination.OffsetPagination[kernel.Project], nextOffset int) ([]byte, error) {
+	rawProjects := json.RawMessage("[]")
+	if projects != nil && len(projects.Items) > 0 {
+		rawProjects = json.RawMessage(projects.RawJSON())
 	}
 	payload := struct {
-		Projects   []json.RawMessage `json:"projects"`
-		NextOffset int               `json:"next_offset,omitempty"`
+		Projects   json.RawMessage `json:"projects"`
+		NextOffset int             `json:"next_offset,omitempty"`
 	}{Projects: rawProjects, NextOffset: nextOffset}
 	return json.MarshalIndent(payload, "", "  ")
 }

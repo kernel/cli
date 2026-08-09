@@ -2,16 +2,18 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/kernel/kernel-go-sdk/packages/respjson"
+	"github.com/pterm/pterm"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type FakeProjectsService struct {
@@ -76,32 +78,39 @@ func (f *FakeProjectLimitsService) Update(ctx context.Context, id string, body k
 	return &kernel.ProjectLimits{}, nil
 }
 
-func TestProjectsList_ForwardsPaginationAndShowsAbsoluteIndexes(t *testing.T) {
-	buf := capturePtermOutput(t)
-	fakeProjects := &FakeProjectsService{
-		ListFunc: func(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error) {
-			assert.True(t, query.Limit.Valid())
-			assert.Equal(t, int64(2), query.Limit.Value)
-			assert.True(t, query.Offset.Valid())
-			assert.Equal(t, int64(20), query.Offset.Value)
-			return &pagination.OffsetPagination[kernel.Project]{
-				Items: []kernel.Project{
-					{ID: "proj_20", Name: "twenty", Status: kernel.ProjectStatusActive},
-					{ID: "proj_21", Name: "twenty-one", Status: kernel.ProjectStatusArchived},
-				},
-			}, nil
-		},
-	}
-	c := ProjectsCmd{projects: fakeProjects, limits: &FakeProjectLimitsService{}}
+func TestProjectsList_UsesSDKResponsePaginationMetadata(t *testing.T) {
+	const responseBody = `[
+		{"id":"project-alpha","name":"alpha","status":"active","created_at":"2026-08-08T12:00:00Z","updated_at":"2026-08-08T12:00:00Z"},
+		{"id":"project-beta","name":"beta","status":"archived","created_at":"2026-08-08T12:01:00Z","updated_at":"2026-08-08T12:01:00Z"}
+	]`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/org/projects", r.URL.Path)
+		assert.Equal(t, "2", r.URL.Query().Get("limit"))
+		assert.Equal(t, "20", r.URL.Query().Get("offset"))
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Has-More", "true")
+		w.Header().Set("X-Next-Offset", "22")
+		_, _ = w.Write([]byte(responseBody))
+	}))
+	defer server.Close()
 
+	client := kernel.NewClient(option.WithBaseURL(server.URL), option.WithAPIKey("test"))
+	c := ProjectsCmd{projects: &client.Projects, limits: &client.Projects.Limits}
+
+	buf := capturePtermOutput(t)
 	err := c.List(context.Background(), ProjectsListInput{Limit: 2, Offset: 20})
-	assert.NoError(t, err)
-	out := buf.String()
+	require.NoError(t, err)
+	out := pterm.RemoveColorFromString(buf.String())
 	assert.Contains(t, out, "idx")
-	assert.Contains(t, out, "proj_20")
-	assert.Contains(t, out, "20")
-	assert.Contains(t, out, "proj_21")
-	assert.Contains(t, out, "21")
+	assert.Regexp(t, `(?m)^project-alpha\s+\| alpha\s+\| active\s+\| [^|]+\| 20\s*$`, out)
+	assert.Regexp(t, `(?m)^project-beta\s+\| beta\s+\| archived\s+\| [^|]+\| 21\s*$`, out)
+	assert.Contains(t, out, "kernel projects list --limit 2 --offset 22")
+
+	jsonOutput := captureStdout(t, func() {
+		err = c.List(context.Background(), ProjectsListInput{Limit: 2, Offset: 20, Output: "json"})
+	})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"projects":`+responseBody+`,"next_offset":22}`, jsonOutput)
 }
 
 func TestProjectsList_RejectsInvalidPagination(t *testing.T) {
@@ -123,28 +132,67 @@ func TestProjectsList_RejectsInvalidPagination(t *testing.T) {
 	}
 }
 
-func TestProjectListNextOffset(t *testing.T) {
-	response := &http.Response{Header: http.Header{"X-Next-Offset": []string{"120"}}}
-	nextOffset, ok := projectListNextOffset(response)
-	assert.True(t, ok)
-	assert.Equal(t, 120, nextOffset)
+func TestParseProjectListPagination(t *testing.T) {
+	tests := []struct {
+		name     string
+		response *http.Response
+		want     projectListPagination
+		wantErr  string
+	}{
+		{
+			name:     "more results",
+			response: &http.Response{Header: http.Header{"X-Has-More": []string{"true"}, "X-Next-Offset": []string{"120"}}},
+			want:     projectListPagination{HasMore: true, NextOffset: 120},
+		},
+		{
+			name:     "terminal page",
+			response: &http.Response{Header: http.Header{"X-Has-More": []string{"false"}, "X-Next-Offset": []string{"0"}}},
+			want:     projectListPagination{},
+		},
+		{name: "missing response", wantErr: "missing pagination headers"},
+		{
+			name:     "missing has more",
+			response: &http.Response{Header: http.Header{"X-Next-Offset": []string{"120"}}},
+			wantErr:  "invalid X-Has-More",
+		},
+		{
+			name:     "has more with missing cursor",
+			response: &http.Response{Header: http.Header{"X-Has-More": []string{"true"}}},
+			wantErr:  "invalid X-Next-Offset",
+		},
+		{
+			name:     "has more with malformed cursor",
+			response: &http.Response{Header: http.Header{"X-Has-More": []string{"true"}, "X-Next-Offset": []string{"next"}}},
+			wantErr:  "invalid X-Next-Offset",
+		},
+		{
+			name:     "has more with terminal cursor",
+			response: &http.Response{Header: http.Header{"X-Has-More": []string{"true"}, "X-Next-Offset": []string{"0"}}},
+			wantErr:  "X-Next-Offset is not positive",
+		},
+		{
+			name:     "terminal page with cursor",
+			response: &http.Response{Header: http.Header{"X-Has-More": []string{"false"}, "X-Next-Offset": []string{"120"}}},
+			wantErr:  "X-Has-More is false",
+		},
+	}
 
-	_, ok = projectListNextOffset(&http.Response{Header: http.Header{}})
-	assert.False(t, ok)
-	_, ok = projectListNextOffset(nil)
-	assert.False(t, ok)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseProjectListPagination(tt.response)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
-func TestMarshalProjectsListJSON_IncludesNextOffset(t *testing.T) {
-	var project kernel.Project
-	assert.NoError(t, json.Unmarshal([]byte(`{"id":"proj_1","name":"one","status":"active","created_at":"2026-08-08T12:00:00Z","updated_at":"2026-08-08T12:00:00Z"}`), &project))
-
-	data, err := marshalProjectsListJSON([]kernel.Project{project}, 100)
-	assert.NoError(t, err)
-	assert.JSONEq(t, `{"projects":[{"id":"proj_1","name":"one","status":"active","created_at":"2026-08-08T12:00:00Z","updated_at":"2026-08-08T12:00:00Z"}],"next_offset":100}`, string(data))
-
-	data, err = marshalProjectsListJSON([]kernel.Project{}, 0)
-	assert.NoError(t, err)
+func TestMarshalProjectsListJSON_EmptyPage(t *testing.T) {
+	data, err := marshalProjectsListJSON(nil, 0)
+	require.NoError(t, err)
 	assert.JSONEq(t, `{"projects":[]}`, string(data))
 }
 
