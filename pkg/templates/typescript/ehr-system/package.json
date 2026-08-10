@@ -1,0 +1,19 @@
+{
+  "name": "ehr-system",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
+    "@onkernel/sdk": "^0.24.0",
+    "luxon": "^3.7.2"
+  },
+  "devDependencies": {
+    "@types/luxon": "^3.7.1",
+    "@types/node": "^22.15.17",
+    "typescript": "^5.9.3"
+  }
+}
