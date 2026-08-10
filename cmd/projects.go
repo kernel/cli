@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/kernel/cli/pkg/util"
@@ -37,7 +40,11 @@ type ProjectsCmd struct {
 	limits   ProjectLimitsService
 }
 
-type ProjectsListInput struct{}
+type ProjectsListInput struct {
+	Limit  int
+	Offset int
+	Output string
+}
 
 type ProjectsCreateInput struct {
 	Name string
@@ -87,22 +94,110 @@ func resolveProjectArg(ctx context.Context, projects ProjectListService, val str
 }
 
 func (c ProjectsCmd) List(ctx context.Context, in ProjectsListInput) error {
-	projects, err := c.projects.List(ctx, kernel.ProjectListParams{})
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+	if in.Limit < 1 || in.Limit > 100 {
+		return fmt.Errorf("--limit must be between 1 and 100")
+	}
+	if in.Offset < 0 {
+		return fmt.Errorf("--offset must be non-negative")
+	}
+
+	var response *http.Response
+	projects, err := c.projects.List(ctx, kernel.ProjectListParams{
+		Limit:  param.NewOpt(int64(in.Limit)),
+		Offset: param.NewOpt(int64(in.Offset)),
+	}, option.WithResponseInto(&response))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
-	if projects == nil || len(projects.Items) == 0 {
+	items := make([]kernel.Project, 0)
+	if projects != nil {
+		items = projects.Items
+	}
+	pagination, err := parseProjectListPagination(response)
+	if err != nil {
+		return err
+	}
+
+	if in.Output == "json" {
+		data, err := marshalProjectsListJSON(projects, pagination.NextOffset)
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
+	if len(items) == 0 {
 		pterm.Info.Println("No projects found")
 		return nil
 	}
 
-	table := pterm.TableData{{"ID", "Name", "Status", "Created At"}}
-	for _, p := range projects.Items {
-		table = append(table, []string{p.ID, p.Name, string(p.Status), util.FormatLocal(p.CreatedAt)})
+	table := pterm.TableData{{"ID", "Name", "Status", "Created At", "idx"}}
+	for i, p := range items {
+		table = append(table, []string{
+			p.ID,
+			p.Name,
+			string(p.Status),
+			util.FormatLocal(p.CreatedAt),
+			strconv.Itoa(in.Offset + i),
+		})
 	}
 	PrintTableNoPad(table, true)
+
+	if pagination.HasMore {
+		pterm.Warning.Printfln(
+			"Output truncated after index %d. Continue with: kernel projects list --limit %d --offset %d",
+			in.Offset+len(items)-1, in.Limit, pagination.NextOffset,
+		)
+	}
 	return nil
+}
+
+type projectListPagination struct {
+	HasMore    bool
+	NextOffset int
+}
+
+func parseProjectListPagination(response *http.Response) (projectListPagination, error) {
+	if response == nil {
+		return projectListPagination{}, fmt.Errorf("project list response is missing pagination headers")
+	}
+
+	hasMoreValue := response.Header.Get("X-Has-More")
+	hasMore, err := strconv.ParseBool(hasMoreValue)
+	if err != nil {
+		return projectListPagination{}, fmt.Errorf("invalid X-Has-More header %q", hasMoreValue)
+	}
+
+	nextOffsetValue := response.Header.Get("X-Next-Offset")
+	nextOffset, err := strconv.Atoi(nextOffsetValue)
+	if err != nil || nextOffset < 0 {
+		return projectListPagination{}, fmt.Errorf("invalid X-Next-Offset header %q", nextOffsetValue)
+	}
+	if hasMore && nextOffset == 0 {
+		return projectListPagination{}, fmt.Errorf("X-Has-More is true but X-Next-Offset is not positive")
+	}
+	if !hasMore && nextOffset != 0 {
+		return projectListPagination{}, fmt.Errorf("X-Has-More is false but X-Next-Offset is %d", nextOffset)
+	}
+
+	return projectListPagination{HasMore: hasMore, NextOffset: nextOffset}, nil
+}
+
+func marshalProjectsListJSON(projects *pagination.OffsetPagination[kernel.Project], nextOffset int) ([]byte, error) {
+	rawProjects := json.RawMessage("[]")
+	if projects != nil && len(projects.Items) > 0 {
+		rawProjects = json.RawMessage(projects.RawJSON())
+	}
+	payload := struct {
+		Projects   json.RawMessage `json:"projects"`
+		NextOffset int             `json:"next_offset,omitempty"`
+	}{Projects: rawProjects, NextOffset: nextOffset}
+	return json.MarshalIndent(payload, "", "  ")
 }
 
 func (c ProjectsCmd) Create(ctx context.Context, in ProjectsCreateInput) error {
@@ -323,7 +418,10 @@ func getProjectsHandler(cmd *cobra.Command) ProjectsCmd {
 
 func runProjectsList(cmd *cobra.Command, args []string) error {
 	c := getProjectsHandler(cmd)
-	return c.List(cmd.Context(), ProjectsListInput{})
+	limit, _ := cmd.Flags().GetInt("limit")
+	offset, _ := cmd.Flags().GetInt("offset")
+	output, _ := cmd.Flags().GetString("output")
+	return c.List(cmd.Context(), ProjectsListInput{Limit: limit, Offset: offset, Output: output})
 }
 
 func runProjectsCreate(cmd *cobra.Command, args []string) error {
@@ -477,6 +575,10 @@ var projectsSetLimitsCompatCmd = &cobra.Command{
 }
 
 func init() {
+	projectsListCmd.Flags().Int("limit", 100, "Maximum number of projects to return (1-100)")
+	projectsListCmd.Flags().Int("offset", 0, "Number of projects to skip (for pagination)")
+	addJSONOutputFlag(projectsListCmd)
+
 	projectsUpdateCmd.Flags().String("name", "", "New project name (1-255 characters)")
 	projectsUpdateCmd.Flags().String("status", "", "New project status: active or archived")
 	addJSONOutputFlag(projectsUpdateCmd)

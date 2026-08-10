@@ -3,13 +3,17 @@ package cmd
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/kernel/kernel-go-sdk/packages/respjson"
+	"github.com/pterm/pterm"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type FakeProjectsService struct {
@@ -72,6 +76,124 @@ func (f *FakeProjectLimitsService) Update(ctx context.Context, id string, body k
 		return f.UpdateFunc(ctx, id, body, opts...)
 	}
 	return &kernel.ProjectLimits{}, nil
+}
+
+func TestProjectsList_UsesSDKResponsePaginationMetadata(t *testing.T) {
+	const responseBody = `[
+		{"id":"project-alpha","name":"alpha","status":"active","created_at":"2026-08-08T12:00:00Z","updated_at":"2026-08-08T12:00:00Z"},
+		{"id":"project-beta","name":"beta","status":"archived","created_at":"2026-08-08T12:01:00Z","updated_at":"2026-08-08T12:01:00Z"}
+	]`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/org/projects", r.URL.Path)
+		assert.Equal(t, "2", r.URL.Query().Get("limit"))
+		assert.Equal(t, "20", r.URL.Query().Get("offset"))
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Has-More", "true")
+		w.Header().Set("X-Next-Offset", "22")
+		_, _ = w.Write([]byte(responseBody))
+	}))
+	defer server.Close()
+
+	client := kernel.NewClient(option.WithBaseURL(server.URL), option.WithAPIKey("test"))
+	c := ProjectsCmd{projects: &client.Projects, limits: &client.Projects.Limits}
+
+	buf := capturePtermOutput(t)
+	err := c.List(context.Background(), ProjectsListInput{Limit: 2, Offset: 20})
+	require.NoError(t, err)
+	out := pterm.RemoveColorFromString(buf.String())
+	assert.Contains(t, out, "idx")
+	assert.Regexp(t, `(?m)^project-alpha\s+\| alpha\s+\| active\s+\| [^|]+\| 20\s*$`, out)
+	assert.Regexp(t, `(?m)^project-beta\s+\| beta\s+\| archived\s+\| [^|]+\| 21\s*$`, out)
+	assert.Contains(t, out, "kernel projects list --limit 2 --offset 22")
+
+	jsonOutput := captureStdout(t, func() {
+		err = c.List(context.Background(), ProjectsListInput{Limit: 2, Offset: 20, Output: "json"})
+	})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"projects":`+responseBody+`,"next_offset":22}`, jsonOutput)
+}
+
+func TestProjectsList_RejectsInvalidPagination(t *testing.T) {
+	fakeProjects := &FakeProjectsService{
+		ListFunc: func(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error) {
+			t.Fatal("List should not be called")
+			return nil, nil
+		},
+	}
+	c := ProjectsCmd{projects: fakeProjects, limits: &FakeProjectLimitsService{}}
+
+	for _, in := range []ProjectsListInput{
+		{Limit: 0},
+		{Limit: 101},
+		{Limit: 100, Offset: -1},
+		{Limit: 100, Output: "yaml"},
+	} {
+		assert.Error(t, c.List(context.Background(), in))
+	}
+}
+
+func TestParseProjectListPagination(t *testing.T) {
+	tests := []struct {
+		name     string
+		response *http.Response
+		want     projectListPagination
+		wantErr  string
+	}{
+		{
+			name:     "more results",
+			response: &http.Response{Header: http.Header{"X-Has-More": []string{"true"}, "X-Next-Offset": []string{"120"}}},
+			want:     projectListPagination{HasMore: true, NextOffset: 120},
+		},
+		{
+			name:     "terminal page",
+			response: &http.Response{Header: http.Header{"X-Has-More": []string{"false"}, "X-Next-Offset": []string{"0"}}},
+			want:     projectListPagination{},
+		},
+		{name: "missing response", wantErr: "missing pagination headers"},
+		{
+			name:     "missing has more",
+			response: &http.Response{Header: http.Header{"X-Next-Offset": []string{"120"}}},
+			wantErr:  "invalid X-Has-More",
+		},
+		{
+			name:     "has more with missing cursor",
+			response: &http.Response{Header: http.Header{"X-Has-More": []string{"true"}}},
+			wantErr:  "invalid X-Next-Offset",
+		},
+		{
+			name:     "has more with malformed cursor",
+			response: &http.Response{Header: http.Header{"X-Has-More": []string{"true"}, "X-Next-Offset": []string{"next"}}},
+			wantErr:  "invalid X-Next-Offset",
+		},
+		{
+			name:     "has more with terminal cursor",
+			response: &http.Response{Header: http.Header{"X-Has-More": []string{"true"}, "X-Next-Offset": []string{"0"}}},
+			wantErr:  "X-Next-Offset is not positive",
+		},
+		{
+			name:     "terminal page with cursor",
+			response: &http.Response{Header: http.Header{"X-Has-More": []string{"false"}, "X-Next-Offset": []string{"120"}}},
+			wantErr:  "X-Has-More is false",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseProjectListPagination(tt.response)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestMarshalProjectsListJSON_EmptyPage(t *testing.T) {
+	data, err := marshalProjectsListJSON(nil, 0)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"projects":[]}`, string(data))
 }
 
 func TestProjectsLimitsGet_DefaultOutput(t *testing.T) {

@@ -185,9 +185,9 @@ func parseStringMapFlag(values []string, flagName string) (map[string]string, er
 // parseChromePolicy resolves the --chrome-policy / --chrome-policy-file inputs into a
 // custom Chrome enterprise policy object. The two inputs are mutually exclusive (enforced
 // by cobra); a file path of "-" reads stdin. It returns a nil map when neither input is
-// set or the content is empty. An explicit empty object ("{}") yields a non-nil empty map,
-// so callers must guard the SDK assignment with len>0: chrome_policy uses omitzero, which
-// drops only a nil map, not an empty one.
+// set or the content is empty. An explicit empty object ("{}") yields a non-nil empty map.
+// Generated chrome_policy params use omitzero, which drops empty maps; update callers that
+// need to send {} must use the SDK's extra-fields escape hatch.
 func parseChromePolicy(inline, file string) (map[string]any, error) {
 	data := strings.TrimSpace(inline)
 	if file != "" {
