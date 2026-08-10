@@ -113,6 +113,50 @@ func TestProjectsList_UsesSDKResponsePaginationMetadata(t *testing.T) {
 	assert.JSONEq(t, `{"projects":`+responseBody+`,"next_offset":22}`, jsonOutput)
 }
 
+func TestProjectsList_SendsNameAndQueryFilters(t *testing.T) {
+	const responseBody = `[
+		{"id":"project-alpha","name":"alpha","status":"active","created_at":"2026-08-08T12:00:00Z","updated_at":"2026-08-08T12:00:00Z"}
+	]`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/org/projects", r.URL.Path)
+		assert.Equal(t, "alpha", r.URL.Query().Get("name"))
+		assert.Equal(t, "alph", r.URL.Query().Get("query"))
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Has-More", "true")
+		w.Header().Set("X-Next-Offset", "1")
+		_, _ = w.Write([]byte(responseBody))
+	}))
+	defer server.Close()
+
+	client := kernel.NewClient(option.WithBaseURL(server.URL), option.WithAPIKey("test"))
+	c := ProjectsCmd{projects: &client.Projects, limits: &client.Projects.Limits}
+
+	buf := capturePtermOutput(t)
+	err := c.List(context.Background(), ProjectsListInput{Limit: 1, Name: "alpha", Query: "alph"})
+	require.NoError(t, err)
+	out := pterm.RemoveColorFromString(buf.String())
+	// The continuation hint preserves the filter flags.
+	assert.Contains(t, out, `kernel projects list --limit 1 --offset 1 --name "alpha" --query "alph"`)
+}
+
+func TestProjectsList_OmitsEmptyFilters(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.False(t, r.URL.Query().Has("name"))
+		assert.False(t, r.URL.Query().Has("query"))
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Has-More", "false")
+		w.Header().Set("X-Next-Offset", "0")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	client := kernel.NewClient(option.WithBaseURL(server.URL), option.WithAPIKey("test"))
+	c := ProjectsCmd{projects: &client.Projects, limits: &client.Projects.Limits}
+
+	capturePtermOutput(t)
+	require.NoError(t, c.List(context.Background(), ProjectsListInput{Limit: 10}))
+}
+
 func TestProjectsList_RejectsInvalidPagination(t *testing.T) {
 	fakeProjects := &FakeProjectsService{
 		ListFunc: func(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error) {

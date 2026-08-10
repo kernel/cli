@@ -43,6 +43,8 @@ type ProjectsCmd struct {
 type ProjectsListInput struct {
 	Limit  int
 	Offset int
+	Name   string
+	Query  string
 	Output string
 }
 
@@ -104,11 +106,19 @@ func (c ProjectsCmd) List(ctx context.Context, in ProjectsListInput) error {
 		return fmt.Errorf("--offset must be non-negative")
 	}
 
-	var response *http.Response
-	projects, err := c.projects.List(ctx, kernel.ProjectListParams{
+	params := kernel.ProjectListParams{
 		Limit:  param.NewOpt(int64(in.Limit)),
 		Offset: param.NewOpt(int64(in.Offset)),
-	}, option.WithResponseInto(&response))
+	}
+	if in.Name != "" {
+		params.Name = param.NewOpt(in.Name)
+	}
+	if in.Query != "" {
+		params.Query = param.NewOpt(in.Query)
+	}
+
+	var response *http.Response
+	projects, err := c.projects.List(ctx, params, option.WithResponseInto(&response))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -149,9 +159,16 @@ func (c ProjectsCmd) List(ctx context.Context, in ProjectsListInput) error {
 	PrintTableNoPad(table, true)
 
 	if pagination.HasMore {
+		filters := ""
+		if in.Name != "" {
+			filters += fmt.Sprintf(" --name %q", in.Name)
+		}
+		if in.Query != "" {
+			filters += fmt.Sprintf(" --query %q", in.Query)
+		}
 		pterm.Warning.Printfln(
-			"Output truncated after index %d. Continue with: kernel projects list --limit %d --offset %d",
-			in.Offset+len(items)-1, in.Limit, pagination.NextOffset,
+			"Output truncated after index %d. Continue with: kernel projects list --limit %d --offset %d%s",
+			in.Offset+len(items)-1, in.Limit, pagination.NextOffset, filters,
 		)
 	}
 	return nil
@@ -420,8 +437,16 @@ func runProjectsList(cmd *cobra.Command, args []string) error {
 	c := getProjectsHandler(cmd)
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
+	name, _ := cmd.Flags().GetString("name")
+	query, _ := cmd.Flags().GetString("query")
 	output, _ := cmd.Flags().GetString("output")
-	return c.List(cmd.Context(), ProjectsListInput{Limit: limit, Offset: offset, Output: output})
+	return c.List(cmd.Context(), ProjectsListInput{
+		Limit:  limit,
+		Offset: offset,
+		Name:   name,
+		Query:  query,
+		Output: output,
+	})
 }
 
 func runProjectsCreate(cmd *cobra.Command, args []string) error {
@@ -577,6 +602,8 @@ var projectsSetLimitsCompatCmd = &cobra.Command{
 func init() {
 	projectsListCmd.Flags().Int("limit", 100, "Maximum number of projects to return (1-100)")
 	projectsListCmd.Flags().Int("offset", 0, "Number of projects to skip (for pagination)")
+	projectsListCmd.Flags().String("name", "", "Filter by exact project name (case- and accent-insensitive)")
+	projectsListCmd.Flags().String("query", "", "Search projects by name substring (case-insensitive)")
 	addJSONOutputFlag(projectsListCmd)
 
 	projectsUpdateCmd.Flags().String("name", "", "New project name (1-255 characters)")
