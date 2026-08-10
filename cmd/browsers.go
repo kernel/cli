@@ -409,7 +409,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	}
 
 	// Prepare table data
-	headers := []string{"Browser ID", "Name", "Created At", "Profile", "Pool", "CDP WS URL", "Live View URL"}
+	headers := []string{"Browser ID", "Name", "Created At", "Profile", "Save Changes", "Pool", "CDP WS URL", "Live View URL"}
 	showDeletedAt := in.IncludeDeleted || in.Status == "deleted" || in.Status == "all"
 	if showDeletedAt {
 		headers = append(headers, "Deleted At")
@@ -436,6 +436,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 			util.OrDash(browser.Name),
 			util.FormatLocal(browser.CreatedAt),
 			profile,
+			util.OrDash(formatProfileSaveChanges(browser.ProfileSaveChanges, browser.JSON.ProfileSaveChanges.Valid())),
 			pool,
 			truncateURL(browser.CdpWsURL, 50),
 			truncateURL(browser.BrowserLiveViewURL, 50),
@@ -575,20 +576,41 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		return util.PrintPrettyJSON(browser)
 	}
 
-	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.StartURL, browser.Name, browser.Tags)
+	printBrowserSessionResult(
+		browser.SessionID,
+		browser.CdpWsURL,
+		browser.BrowserLiveViewURL,
+		browser.Profile,
+		formatProfileSaveChanges(browser.ProfileSaveChanges, browser.JSON.ProfileSaveChanges.Valid()),
+		browser.StartURL,
+		browser.Name,
+		browser.Tags,
+	)
 	if in.Telemetry != "" {
 		printTelemetrySummary(browser.Telemetry)
 	}
 	return nil
 }
 
-func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, startURL, name string, tags kernel.Tags) {
-	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, profile, startURL, name, tags)
+func printBrowserSessionResult(
+	sessionID, cdpURL, liveViewURL string,
+	profile kernel.Profile,
+	profileSaveChanges, startURL, name string,
+	tags kernel.Tags,
+) {
+	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, profile, profileSaveChanges, startURL, name, tags)
 	PrintTableNoPad(tableData, true)
 }
 
+func formatProfileSaveChanges(value, valid bool) string {
+	if !valid {
+		return ""
+	}
+	return strconv.FormatBool(value)
+}
+
 // buildBrowserTableData creates a base table with common browser session fields.
-func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, startURL, name string, tags kernel.Tags) pterm.TableData {
+func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, profileSaveChanges, startURL, name string, tags kernel.Tags) pterm.TableData {
 	tableData := pterm.TableData{
 		{"Property", "Value"},
 		{"Session ID", sessionID},
@@ -606,6 +628,9 @@ func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, profile kernel
 			profVal = profile.ID
 		}
 		tableData = append(tableData, []string{"Profile", profVal})
+	}
+	if profileSaveChanges != "" {
+		tableData = append(tableData, []string{"Save Changes", profileSaveChanges})
 	}
 	if startURL != "" {
 		tableData = append(tableData, []string{"Start URL", startURL})
@@ -683,6 +708,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		browser.CdpWsURL,
 		browser.BrowserLiveViewURL,
 		browser.Profile,
+		formatProfileSaveChanges(browser.ProfileSaveChanges, browser.JSON.ProfileSaveChanges.Valid()),
 		browser.StartURL,
 		browser.Name,
 		browser.Tags,
@@ -2988,7 +3014,16 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if output == "json" {
 			return util.PrintPrettyJSON(resp)
 		}
-		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.StartURL, resp.Name, resp.Tags)
+		printBrowserSessionResult(
+			resp.SessionID,
+			resp.CdpWsURL,
+			resp.BrowserLiveViewURL,
+			resp.Profile,
+			formatProfileSaveChanges(resp.ProfileSaveChanges, resp.JSON.ProfileSaveChanges.Valid()),
+			resp.StartURL,
+			resp.Name,
+			resp.Tags,
+		)
 		return nil
 	}
 

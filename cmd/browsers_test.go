@@ -415,6 +415,42 @@ func TestBrowsersList_PrintsTableWithRows(t *testing.T) {
 	assert.Contains(t, out, "sess-2")
 }
 
+func TestBrowsersList_PrintsProfileSaveChanges(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var writer kernel.BrowserListResponse
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"session_id": "writer",
+		"profile_save_changes": true
+	}`), &writer))
+	var reader kernel.BrowserListResponse
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"session_id": "reader",
+		"profile_save_changes": false
+	}`), &reader))
+
+	fake := &FakeBrowsersService{
+		ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
+			return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: []kernel.BrowserListResponse{writer, reader}}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+	require.NoError(t, b.List(context.Background(), BrowsersListInput{}))
+
+	out := outBuf.String()
+	assert.Contains(t, out, "Save Changes")
+	assert.Contains(t, out, "true")
+	assert.Contains(t, out, "false")
+}
+
+func TestBuildBrowserTableData_PrintsProfileSaveChangesWhenPresent(t *testing.T) {
+	tableData := buildBrowserTableData("session", "ws://cdp", "", kernel.Profile{}, "false", "", "", nil)
+	assert.Contains(t, tableData, []string{"Save Changes", "false"})
+
+	tableData = buildBrowserTableData("session", "ws://cdp", "", kernel.Profile{}, "", "", "", nil)
+	assert.NotContains(t, tableData, []string{"Save Changes", "false"})
+}
+
 func TestBrowsersList_PrintsErrorOnFailure(t *testing.T) {
 	setupStdoutCapture(t)
 
