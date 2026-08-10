@@ -15,7 +15,6 @@ import (
 	"github.com/kernel/kernel-go-sdk/packages/param"
 	"github.com/kernel/kernel-go-sdk/packages/respjson"
 	"github.com/pterm/pterm"
-	"github.com/samber/lo"
 	"github.com/spf13/cobra"
 )
 
