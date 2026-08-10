@@ -56,31 +56,46 @@ async function ensureStagehandExtension(): Promise<string> {
 async function discoverExtensionId(cdpUrl: string, timeoutMs = 20_000): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
     const ws = new WebSocket(cdpUrl);
-    const deadline = Date.now() + timeoutMs;
+    let settled = false;
     let messageId = 0;
 
-    const poll = () => ws.send(JSON.stringify({ id: ++messageId, method: "Target.getTargets" }));
+    const finish = (error: Error | null, id?: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearInterval(poller);
+      ws.close();
+      error ? reject(error) : resolve(id!);
+    };
+
+    const poll = () => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ id: ++messageId, method: "Target.getTargets" }));
+      }
+    };
+    const timer = setTimeout(
+      () => finish(new Error("Timed out waiting for the Stagehand extension service worker")),
+      timeoutMs,
+    );
+    const poller = setInterval(poll, 500);
 
     ws.on("open", poll);
-    ws.on("error", reject);
+    ws.on("error", (error: Error) => finish(error));
+    ws.on("close", () => finish(new Error("CDP socket closed before the Stagehand extension was found")));
     ws.on("message", (buf: Buffer) => {
-      const targets = JSON.parse(buf.toString()).result?.targetInfos;
-      if (!targets) return;
-      const worker = targets.find(
-        (t: { type: string; url: string }) =>
+      let targets: Array<{ type: string; url: string }> | undefined;
+      try {
+        targets = JSON.parse(buf.toString()).result?.targetInfos;
+      } catch {
+        return;
+      }
+      const worker = targets?.find(
+        (t) =>
           t.type === "service_worker" &&
           t.url.startsWith("chrome-extension://") &&
           t.url.includes("service-worker.js"),
       );
-      if (worker) {
-        ws.close();
-        resolve(worker.url.split("/")[2]);
-      } else if (Date.now() > deadline) {
-        ws.close();
-        reject(new Error("Timed out waiting for the Stagehand extension service worker"));
-      } else {
-        setTimeout(poll, 500);
-      }
+      if (worker) finish(null, worker.url.split("/")[2]);
     });
   });
 }
@@ -109,40 +124,44 @@ app.action<CompanyInput, TeamSizeOutput>(
 
     console.log("Kernel browser live view url: ", kernelBrowser.browser_live_view_url);
 
-    const extensionId = await discoverExtensionId(kernelBrowser.cdp_ws_url);
+    // Stagehand only closes browsers it launched, so we close the connection and
+    // delete the Kernel browser ourselves, even if the automation throws.
+    let stagehand: Awaited<ReturnType<typeof Stagehand.create>> | undefined;
+    let browser: Awaited<ReturnType<typeof localBrowser.connect>> | undefined;
+    try {
+      const extensionId = await discoverExtensionId(kernelBrowser.cdp_ws_url);
 
-    const browser = await localBrowser.connect({
-      cdpUrl: kernelBrowser.cdp_ws_url,
-      extensionId,
-    });
-    const stagehand = await Stagehand.create({
-      browser,
-      model: { modelName: MODEL, apiKey: MODEL_API_KEY },
-      logging: { level: "info" },
-    });
+      browser = await localBrowser.connect({
+        cdpUrl: kernelBrowser.cdp_ws_url,
+        extensionId,
+      });
+      stagehand = await Stagehand.create({
+        browser,
+        model: { modelName: MODEL, apiKey: MODEL_API_KEY },
+        logging: { level: "info" },
+      });
 
-    /////////////////////////////////////
-    // Your Stagehand implementation here
-    /////////////////////////////////////
-    const page = await browser.context.activePage();
-    if (!page) throw new Error("No active page in the Kernel browser");
-    await page.goto("https://www.ycombinator.com/companies");
+      /////////////////////////////////////
+      // Your Stagehand implementation here
+      /////////////////////////////////////
+      const page = await browser.context.activePage();
+      if (!page) throw new Error("No active page in the Kernel browser");
+      await page.goto("https://www.ycombinator.com/companies");
 
-    await stagehand.act(`Type in ${company} into the search box`);
-    await stagehand.act("Click on the first search result");
+      await stagehand.act(`Type in ${company} into the search box`);
+      await stagehand.act("Click on the first search result");
 
-    // Extract team size from the YC startup page. Every v4 primitive returns { data }.
-    const { data } = await stagehand.extract(
-      "Extract the team size (number of employees) shown on this Y Combinator company page.",
-      z.object({ teamSize: z.string() }),
-    );
+      // Extract team size from the YC startup page. Every v4 primitive returns { data }.
+      const { data } = await stagehand.extract(
+        "Extract the team size (number of employees) shown on this Y Combinator company page.",
+        z.object({ teamSize: z.string() }),
+      );
 
-    // Stagehand only closes browsers it launched, so close the connection and
-    // delete the Kernel browser ourselves.
-    await stagehand.close();
-    await browser.close();
-    await kernel.browsers.deleteByID(kernelBrowser.session_id);
-
-    return data;
+      return data;
+    } finally {
+      await stagehand?.close();
+      await browser?.close();
+      await kernel.browsers.deleteByID(kernelBrowser.session_id);
+    }
   },
 );
