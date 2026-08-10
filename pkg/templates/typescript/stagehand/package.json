@@ -4,12 +4,14 @@
   "type": "module",
   "private": true,
   "dependencies": {
-    "@browserbasehq/stagehand": "^3.5.0",
+    "@browserbasehq/stagehand": "^4.0.0",
     "@onkernel/sdk": "^0.23.0",
+    "ws": "^8.18.0",
     "zod": "^4.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.17",
+    "@types/ws": "^8.5.12",
     "typescript": "^5.9.3"
   }
 }
