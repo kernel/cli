@@ -14,36 +14,36 @@ import (
 )
 
 type FakeAuditLogsExportService struct {
-	CreateFunc func(ctx context.Context, body createAuditLogExportDestinationRequest) (*auditLogExportDestination, error)
-	ListFunc   func(ctx context.Context, limit, offset int) ([]auditLogExportDestination, auditLogExportListPageInfo, error)
-	GetFunc    func(ctx context.Context, id string) (*auditLogExportDestination, error)
-	UpdateFunc func(ctx context.Context, id string, body updateAuditLogExportDestinationRequest) (*auditLogExportDestination, error)
+	CreateFunc func(ctx context.Context, body kernel.AuditLogExportDestinationNewParams) (*kernel.AuditLogExportDestination, error)
+	ListFunc   func(ctx context.Context, query kernel.AuditLogExportDestinationListParams) ([]kernel.AuditLogExportDestination, auditLogExportListPageInfo, error)
+	GetFunc    func(ctx context.Context, id string) (*kernel.AuditLogExportDestination, error)
+	UpdateFunc func(ctx context.Context, id string, body kernel.AuditLogExportDestinationUpdateParams) (*kernel.AuditLogExportDestination, error)
 	DeleteFunc func(ctx context.Context, id string) error
-	TestFunc   func(ctx context.Context, id string) (*auditLogExportTestResult, error)
+	TestFunc   func(ctx context.Context, id string) (*kernel.AuditLogExportDestinationTestResult, error)
 }
 
-func (f *FakeAuditLogsExportService) Create(ctx context.Context, body createAuditLogExportDestinationRequest) (*auditLogExportDestination, error) {
+func (f *FakeAuditLogsExportService) Create(ctx context.Context, body kernel.AuditLogExportDestinationNewParams) (*kernel.AuditLogExportDestination, error) {
 	if f.CreateFunc != nil {
 		return f.CreateFunc(ctx, body)
 	}
 	return nil, errors.New("Create not implemented")
 }
 
-func (f *FakeAuditLogsExportService) List(ctx context.Context, limit, offset int) ([]auditLogExportDestination, auditLogExportListPageInfo, error) {
+func (f *FakeAuditLogsExportService) List(ctx context.Context, query kernel.AuditLogExportDestinationListParams) ([]kernel.AuditLogExportDestination, auditLogExportListPageInfo, error) {
 	if f.ListFunc != nil {
-		return f.ListFunc(ctx, limit, offset)
+		return f.ListFunc(ctx, query)
 	}
 	return nil, auditLogExportListPageInfo{}, errors.New("List not implemented")
 }
 
-func (f *FakeAuditLogsExportService) Get(ctx context.Context, id string) (*auditLogExportDestination, error) {
+func (f *FakeAuditLogsExportService) Get(ctx context.Context, id string) (*kernel.AuditLogExportDestination, error) {
 	if f.GetFunc != nil {
 		return f.GetFunc(ctx, id)
 	}
 	return nil, errors.New("Get not implemented")
 }
 
-func (f *FakeAuditLogsExportService) Update(ctx context.Context, id string, body updateAuditLogExportDestinationRequest) (*auditLogExportDestination, error) {
+func (f *FakeAuditLogsExportService) Update(ctx context.Context, id string, body kernel.AuditLogExportDestinationUpdateParams) (*kernel.AuditLogExportDestination, error) {
 	if f.UpdateFunc != nil {
 		return f.UpdateFunc(ctx, id, body)
 	}
@@ -57,7 +57,7 @@ func (f *FakeAuditLogsExportService) Delete(ctx context.Context, id string) erro
 	return errors.New("Delete not implemented")
 }
 
-func (f *FakeAuditLogsExportService) Test(ctx context.Context, id string) (*auditLogExportTestResult, error) {
+func (f *FakeAuditLogsExportService) Test(ctx context.Context, id string) (*kernel.AuditLogExportDestinationTestResult, error) {
 	if f.TestFunc != nil {
 		return f.TestFunc(ctx, id)
 	}
@@ -68,15 +68,15 @@ func stringPtr(s string) *string {
 	return &s
 }
 
-func auditLogExportDestinationFromJSON(raw string) auditLogExportDestination {
-	var d auditLogExportDestination
+func auditLogExportDestinationFromJSON(raw string) kernel.AuditLogExportDestination {
+	var d kernel.AuditLogExportDestination
 	if err := json.Unmarshal([]byte(raw), &d); err != nil {
 		panic(err)
 	}
 	return d
 }
 
-func sampleAuditLogExportDestination() auditLogExportDestination {
+func sampleAuditLogExportDestination() kernel.AuditLogExportDestination {
 	return auditLogExportDestinationFromJSON(`{
 		"id": "dest_123",
 		"type": "s3",
@@ -100,6 +100,14 @@ func sampleAuditLogExportDestination() auditLogExportDestination {
 	}`)
 }
 
+func auditLogExportTestResultFromJSON(raw string) kernel.AuditLogExportDestinationTestResult {
+	var result kernel.AuditLogExportDestinationTestResult
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		panic(err)
+	}
+	return result
+}
+
 func auditLogExportAPIError(status int) *kernel.Error {
 	return &kernel.Error{
 		StatusCode: status,
@@ -111,14 +119,15 @@ func auditLogExportAPIError(status int) *kernel.Error {
 func TestAuditLogsExportCreateBuildsRequestAndPrintsOnboarding(t *testing.T) {
 	buf := capturePtermOutput(t)
 	fake := &FakeAuditLogsExportService{
-		CreateFunc: func(ctx context.Context, body createAuditLogExportDestinationRequest) (*auditLogExportDestination, error) {
-			assert.Equal(t, "s3", body.Type)
-			assert.Equal(t, "jsonl.gz", body.Format)
-			assert.Equal(t, "us-east-1", body.Region)
-			assert.Equal(t, "acme-audit-logs", body.Bucket)
-			assert.Equal(t, "kernel/audit", body.Prefix)
-			assert.Equal(t, "arn:aws:iam::123456789012:role/audit-export", body.RoleARN)
-			assert.Nil(t, body.KMSKeyID)
+		CreateFunc: func(ctx context.Context, body kernel.AuditLogExportDestinationNewParams) (*kernel.AuditLogExportDestination, error) {
+			req := body.CreateAuditLogExportDestinationRequest
+			assert.Equal(t, kernel.CreateAuditLogExportDestinationRequestTypeS3, req.Type)
+			assert.Equal(t, kernel.CreateAuditLogExportDestinationRequestFormatJSONLGz, req.Format)
+			assert.Equal(t, "us-east-1", req.Region)
+			assert.Equal(t, "acme-audit-logs", req.Bucket)
+			assert.Equal(t, "kernel/audit", req.Prefix)
+			assert.Equal(t, "arn:aws:iam::123456789012:role/audit-export", req.RoleArn)
+			assert.False(t, req.KmsKeyID.Valid())
 			dest := sampleAuditLogExportDestination()
 			return &dest, nil
 		},
@@ -145,9 +154,10 @@ func TestAuditLogsExportCreateBuildsRequestAndPrintsOnboarding(t *testing.T) {
 func TestAuditLogsExportCreateIncludesKMSKeyWhenSet(t *testing.T) {
 	capturePtermOutput(t)
 	fake := &FakeAuditLogsExportService{
-		CreateFunc: func(ctx context.Context, body createAuditLogExportDestinationRequest) (*auditLogExportDestination, error) {
-			require.NotNil(t, body.KMSKeyID)
-			assert.Equal(t, "arn:aws:kms:us-east-1:123456789012:key/abc-def", *body.KMSKeyID)
+		CreateFunc: func(ctx context.Context, body kernel.AuditLogExportDestinationNewParams) (*kernel.AuditLogExportDestination, error) {
+			req := body.CreateAuditLogExportDestinationRequest
+			require.True(t, req.KmsKeyID.Valid())
+			assert.Equal(t, "arn:aws:kms:us-east-1:123456789012:key/abc-def", req.KmsKeyID.Value)
 			dest := sampleAuditLogExportDestination()
 			return &dest, nil
 		},
@@ -166,7 +176,7 @@ func TestAuditLogsExportCreateIncludesKMSKeyWhenSet(t *testing.T) {
 
 func TestAuditLogsExportCreateJSONPrintsObject(t *testing.T) {
 	fake := &FakeAuditLogsExportService{
-		CreateFunc: func(ctx context.Context, body createAuditLogExportDestinationRequest) (*auditLogExportDestination, error) {
+		CreateFunc: func(ctx context.Context, body kernel.AuditLogExportDestinationNewParams) (*kernel.AuditLogExportDestination, error) {
 			dest := sampleAuditLogExportDestination()
 			return &dest, nil
 		},
@@ -193,10 +203,11 @@ func TestAuditLogsExportCreateJSONPrintsObject(t *testing.T) {
 func TestAuditLogsExportListRendersTableAndPaginationHint(t *testing.T) {
 	buf := capturePtermOutput(t)
 	fake := &FakeAuditLogsExportService{
-		ListFunc: func(ctx context.Context, limit, offset int) ([]auditLogExportDestination, auditLogExportListPageInfo, error) {
-			assert.Equal(t, 20, limit)
-			assert.Equal(t, 0, offset)
-			return []auditLogExportDestination{sampleAuditLogExportDestination()}, auditLogExportListPageInfo{HasMore: true, NextOffset: 20}, nil
+		ListFunc: func(ctx context.Context, query kernel.AuditLogExportDestinationListParams) ([]kernel.AuditLogExportDestination, auditLogExportListPageInfo, error) {
+			require.True(t, query.Limit.Valid())
+			assert.Equal(t, int64(20), query.Limit.Value)
+			assert.False(t, query.Offset.Valid())
+			return []kernel.AuditLogExportDestination{sampleAuditLogExportDestination()}, auditLogExportListPageInfo{HasMore: true, NextOffset: 20}, nil
 		},
 	}
 	c := AuditLogsExportCmd{export: fake}
@@ -217,10 +228,12 @@ func TestAuditLogsExportListRendersTableAndPaginationHint(t *testing.T) {
 func TestAuditLogsExportListPassesLimitAndOffset(t *testing.T) {
 	capturePtermOutput(t)
 	fake := &FakeAuditLogsExportService{
-		ListFunc: func(ctx context.Context, limit, offset int) ([]auditLogExportDestination, auditLogExportListPageInfo, error) {
-			assert.Equal(t, 50, limit)
-			assert.Equal(t, 40, offset)
-			return []auditLogExportDestination{sampleAuditLogExportDestination()}, auditLogExportListPageInfo{}, nil
+		ListFunc: func(ctx context.Context, query kernel.AuditLogExportDestinationListParams) ([]kernel.AuditLogExportDestination, auditLogExportListPageInfo, error) {
+			require.True(t, query.Limit.Valid())
+			assert.Equal(t, int64(50), query.Limit.Value)
+			require.True(t, query.Offset.Valid())
+			assert.Equal(t, int64(40), query.Offset.Value)
+			return []kernel.AuditLogExportDestination{sampleAuditLogExportDestination()}, auditLogExportListPageInfo{}, nil
 		},
 	}
 	c := AuditLogsExportCmd{export: fake}
@@ -232,10 +245,10 @@ func TestAuditLogsExportListPassesLimitAndOffset(t *testing.T) {
 func TestAuditLogsExportListTruncatesLongLastError(t *testing.T) {
 	buf := capturePtermOutput(t)
 	fake := &FakeAuditLogsExportService{
-		ListFunc: func(ctx context.Context, limit, offset int) ([]auditLogExportDestination, auditLogExportListPageInfo, error) {
+		ListFunc: func(ctx context.Context, query kernel.AuditLogExportDestinationListParams) ([]kernel.AuditLogExportDestination, auditLogExportListPageInfo, error) {
 			dest := sampleAuditLogExportDestination()
 			dest.LastError = "AccessDenied: this is a very long error message that exceeds sixty characters and must be truncated"
-			return []auditLogExportDestination{dest}, auditLogExportListPageInfo{}, nil
+			return []kernel.AuditLogExportDestination{dest}, auditLogExportListPageInfo{}, nil
 		},
 	}
 	c := AuditLogsExportCmd{export: fake}
@@ -251,8 +264,8 @@ func TestAuditLogsExportListTruncatesLongLastError(t *testing.T) {
 func TestAuditLogsExportListPrintsEmptyMessage(t *testing.T) {
 	buf := capturePtermOutput(t)
 	fake := &FakeAuditLogsExportService{
-		ListFunc: func(ctx context.Context, limit, offset int) ([]auditLogExportDestination, auditLogExportListPageInfo, error) {
-			return []auditLogExportDestination{}, auditLogExportListPageInfo{}, nil
+		ListFunc: func(ctx context.Context, query kernel.AuditLogExportDestinationListParams) ([]kernel.AuditLogExportDestination, auditLogExportListPageInfo, error) {
+			return []kernel.AuditLogExportDestination{}, auditLogExportListPageInfo{}, nil
 		},
 	}
 	c := AuditLogsExportCmd{export: fake}
@@ -264,8 +277,8 @@ func TestAuditLogsExportListPrintsEmptyMessage(t *testing.T) {
 
 func TestAuditLogsExportListJSONEmptyPrintsEmptyArray(t *testing.T) {
 	fake := &FakeAuditLogsExportService{
-		ListFunc: func(ctx context.Context, limit, offset int) ([]auditLogExportDestination, auditLogExportListPageInfo, error) {
-			return []auditLogExportDestination{}, auditLogExportListPageInfo{}, nil
+		ListFunc: func(ctx context.Context, query kernel.AuditLogExportDestinationListParams) ([]kernel.AuditLogExportDestination, auditLogExportListPageInfo, error) {
+			return []kernel.AuditLogExportDestination{}, auditLogExportListPageInfo{}, nil
 		},
 	}
 	c := AuditLogsExportCmd{export: fake}
@@ -297,7 +310,7 @@ func TestAuditLogsExportListRejectsInvalidLimitAndOffset(t *testing.T) {
 func TestAuditLogsExportGetRendersDeliveryStatus(t *testing.T) {
 	buf := capturePtermOutput(t)
 	fake := &FakeAuditLogsExportService{
-		GetFunc: func(ctx context.Context, id string) (*auditLogExportDestination, error) {
+		GetFunc: func(ctx context.Context, id string) (*kernel.AuditLogExportDestination, error) {
 			assert.Equal(t, "dest_123", id)
 			dest := sampleAuditLogExportDestination()
 			return &dest, nil
@@ -322,8 +335,8 @@ func TestAuditLogsExportGetRendersDeliveryStatus(t *testing.T) {
 func TestAuditLogsExportGetRendersDashWhenNeverDelivered(t *testing.T) {
 	buf := capturePtermOutput(t)
 	fake := &FakeAuditLogsExportService{
-		GetFunc: func(ctx context.Context, id string) (*auditLogExportDestination, error) {
-			return &auditLogExportDestination{ID: id, Type: "s3", Status: "paused"}, nil
+		GetFunc: func(ctx context.Context, id string) (*kernel.AuditLogExportDestination, error) {
+			return &kernel.AuditLogExportDestination{ID: id, Type: "s3", Status: "paused"}, nil
 		},
 	}
 	c := AuditLogsExportCmd{export: fake}
@@ -339,7 +352,7 @@ func TestAuditLogsExportGetRendersDashWhenNeverDelivered(t *testing.T) {
 
 func TestAuditLogsExportGetJSONPrintsObject(t *testing.T) {
 	fake := &FakeAuditLogsExportService{
-		GetFunc: func(ctx context.Context, id string) (*auditLogExportDestination, error) {
+		GetFunc: func(ctx context.Context, id string) (*kernel.AuditLogExportDestination, error) {
 			dest := sampleAuditLogExportDestination()
 			return &dest, nil
 		},
@@ -360,16 +373,17 @@ func TestAuditLogsExportGetJSONPrintsObject(t *testing.T) {
 func TestAuditLogsExportUpdateBuildsPartialRequest(t *testing.T) {
 	buf := capturePtermOutput(t)
 	fake := &FakeAuditLogsExportService{
-		UpdateFunc: func(ctx context.Context, id string, body updateAuditLogExportDestinationRequest) (*auditLogExportDestination, error) {
+		UpdateFunc: func(ctx context.Context, id string, body kernel.AuditLogExportDestinationUpdateParams) (*kernel.AuditLogExportDestination, error) {
+			req := body.UpdateAuditLogExportDestinationRequest
 			assert.Equal(t, "dest_123", id)
-			require.NotNil(t, body.Bucket)
-			assert.Equal(t, "new-bucket", *body.Bucket)
-			require.NotNil(t, body.Prefix)
-			assert.Equal(t, "new/prefix", *body.Prefix)
-			assert.Nil(t, body.Region)
-			assert.Nil(t, body.RoleARN)
-			assert.Nil(t, body.KMSKeyID)
-			assert.Nil(t, body.Status)
+			require.True(t, req.Bucket.Valid())
+			assert.Equal(t, "new-bucket", req.Bucket.Value)
+			require.True(t, req.Prefix.Valid())
+			assert.Equal(t, "new/prefix", req.Prefix.Value)
+			assert.False(t, req.Region.Valid())
+			assert.False(t, req.RoleArn.Valid())
+			assert.False(t, req.KmsKeyID.Valid())
+			assert.Empty(t, req.Status)
 			dest := sampleAuditLogExportDestination()
 			return &dest, nil
 		},
@@ -388,9 +402,10 @@ func TestAuditLogsExportUpdateBuildsPartialRequest(t *testing.T) {
 func TestAuditLogsExportUpdateClearKMSKeySendsEmptyString(t *testing.T) {
 	capturePtermOutput(t)
 	fake := &FakeAuditLogsExportService{
-		UpdateFunc: func(ctx context.Context, id string, body updateAuditLogExportDestinationRequest) (*auditLogExportDestination, error) {
-			require.NotNil(t, body.KMSKeyID)
-			assert.Equal(t, "", *body.KMSKeyID)
+		UpdateFunc: func(ctx context.Context, id string, body kernel.AuditLogExportDestinationUpdateParams) (*kernel.AuditLogExportDestination, error) {
+			req := body.UpdateAuditLogExportDestinationRequest
+			require.True(t, req.KmsKeyID.Valid())
+			assert.Equal(t, "", req.KmsKeyID.Value)
 			dest := sampleAuditLogExportDestination()
 			return &dest, nil
 		},
@@ -423,22 +438,22 @@ func TestAuditLogsExportUpdateRequiresAChange(t *testing.T) {
 }
 
 func TestAuditLogsExportUpdateRequestSerialization(t *testing.T) {
-	raw, err := json.Marshal(updateAuditLogExportDestinationRequest{KMSKeyID: stringPtr("")})
+	raw, err := json.Marshal(kernel.UpdateAuditLogExportDestinationRequestParam{KmsKeyID: kernel.String("")})
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"kms_key_id":""}`, string(raw))
 
-	raw, err = json.Marshal(updateAuditLogExportDestinationRequest{})
+	raw, err = json.Marshal(kernel.UpdateAuditLogExportDestinationRequestParam{})
 	require.NoError(t, err)
 	assert.JSONEq(t, `{}`, string(raw))
 
-	raw, err = json.Marshal(updateAuditLogExportDestinationRequest{Status: stringPtr("paused")})
+	raw, err = json.Marshal(kernel.UpdateAuditLogExportDestinationRequestParam{Status: kernel.UpdateAuditLogExportDestinationRequestStatusPaused})
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"status":"paused"}`, string(raw))
 }
 
 func TestAuditLogsExportUpdateHintsOnConflict(t *testing.T) {
 	fake := &FakeAuditLogsExportService{
-		UpdateFunc: func(ctx context.Context, id string, body updateAuditLogExportDestinationRequest) (*auditLogExportDestination, error) {
+		UpdateFunc: func(ctx context.Context, id string, body kernel.AuditLogExportDestinationUpdateParams) (*kernel.AuditLogExportDestination, error) {
 			return nil, auditLogExportAPIError(http.StatusConflict)
 		},
 	}
@@ -452,15 +467,15 @@ func TestAuditLogsExportUpdateHintsOnConflict(t *testing.T) {
 func TestAuditLogsExportPauseSendsStatusPaused(t *testing.T) {
 	buf := capturePtermOutput(t)
 	fake := &FakeAuditLogsExportService{
-		UpdateFunc: func(ctx context.Context, id string, body updateAuditLogExportDestinationRequest) (*auditLogExportDestination, error) {
+		UpdateFunc: func(ctx context.Context, id string, body kernel.AuditLogExportDestinationUpdateParams) (*kernel.AuditLogExportDestination, error) {
+			req := body.UpdateAuditLogExportDestinationRequest
 			assert.Equal(t, "dest_123", id)
-			require.NotNil(t, body.Status)
-			assert.Equal(t, "paused", *body.Status)
-			assert.Nil(t, body.Region)
-			assert.Nil(t, body.Bucket)
-			assert.Nil(t, body.Prefix)
-			assert.Nil(t, body.RoleARN)
-			assert.Nil(t, body.KMSKeyID)
+			assert.Equal(t, kernel.UpdateAuditLogExportDestinationRequestStatusPaused, req.Status)
+			assert.False(t, req.Region.Valid())
+			assert.False(t, req.Bucket.Valid())
+			assert.False(t, req.Prefix.Valid())
+			assert.False(t, req.RoleArn.Valid())
+			assert.False(t, req.KmsKeyID.Valid())
 			dest := sampleAuditLogExportDestination()
 			dest.Status = "paused"
 			return &dest, nil
@@ -479,9 +494,9 @@ func TestAuditLogsExportPauseSendsStatusPaused(t *testing.T) {
 func TestAuditLogsExportResumeSendsStatusActive(t *testing.T) {
 	buf := capturePtermOutput(t)
 	fake := &FakeAuditLogsExportService{
-		UpdateFunc: func(ctx context.Context, id string, body updateAuditLogExportDestinationRequest) (*auditLogExportDestination, error) {
-			require.NotNil(t, body.Status)
-			assert.Equal(t, "active", *body.Status)
+		UpdateFunc: func(ctx context.Context, id string, body kernel.AuditLogExportDestinationUpdateParams) (*kernel.AuditLogExportDestination, error) {
+			req := body.UpdateAuditLogExportDestinationRequest
+			assert.Equal(t, kernel.UpdateAuditLogExportDestinationRequestStatusActive, req.Status)
 			dest := sampleAuditLogExportDestination()
 			return &dest, nil
 		},
@@ -522,9 +537,10 @@ func TestAuditLogsExportDeletePrintsSuccess(t *testing.T) {
 func TestAuditLogsExportTestPassesPrintsSuccess(t *testing.T) {
 	buf := capturePtermOutput(t)
 	fake := &FakeAuditLogsExportService{
-		TestFunc: func(ctx context.Context, id string) (*auditLogExportTestResult, error) {
+		TestFunc: func(ctx context.Context, id string) (*kernel.AuditLogExportDestinationTestResult, error) {
 			assert.Equal(t, "dest_123", id)
-			return &auditLogExportTestResult{Success: true, Stage: "complete"}, nil
+			result := auditLogExportTestResultFromJSON(`{"success":true,"stage":"complete"}`)
+			return &result, nil
 		},
 	}
 	c := AuditLogsExportCmd{export: fake}
@@ -537,12 +553,9 @@ func TestAuditLogsExportTestPassesPrintsSuccess(t *testing.T) {
 func TestAuditLogsExportTestFailurePrintsDetailsAndReturnsError(t *testing.T) {
 	buf := capturePtermOutput(t)
 	fake := &FakeAuditLogsExportService{
-		TestFunc: func(ctx context.Context, id string) (*auditLogExportTestResult, error) {
-			return &auditLogExportTestResult{
-				Success: false,
-				Stage:   "assume_role",
-				Error:   &auditLogExportTestResultError{Code: "assume_role_failed", Message: "AccessDenied: not authorized to perform sts:AssumeRole"},
-			}, nil
+		TestFunc: func(ctx context.Context, id string) (*kernel.AuditLogExportDestinationTestResult, error) {
+			result := auditLogExportTestResultFromJSON(`{"success":false,"stage":"assume_role","error":{"code":"assume_role_failed","message":"AccessDenied: not authorized to perform sts:AssumeRole"}}`)
+			return &result, nil
 		},
 	}
 	c := AuditLogsExportCmd{export: fake}
@@ -559,12 +572,9 @@ func TestAuditLogsExportTestFailurePrintsDetailsAndReturnsError(t *testing.T) {
 
 func TestAuditLogsExportTestJSONFailurePrintsResultAndReturnsError(t *testing.T) {
 	fake := &FakeAuditLogsExportService{
-		TestFunc: func(ctx context.Context, id string) (*auditLogExportTestResult, error) {
-			return &auditLogExportTestResult{
-				Success: false,
-				Stage:   "put_object",
-				Error:   &auditLogExportTestResultError{Code: "put_object_failed", Message: "NoSuchBucket"},
-			}, nil
+		TestFunc: func(ctx context.Context, id string) (*kernel.AuditLogExportDestinationTestResult, error) {
+			result := auditLogExportTestResultFromJSON(`{"success":false,"stage":"put_object","error":{"code":"put_object_failed","message":"NoSuchBucket"}}`)
+			return &result, nil
 		},
 	}
 	c := AuditLogsExportCmd{export: fake}
@@ -601,22 +611,22 @@ func TestAuditLogsExportRejectsInvalidJSONOutput(t *testing.T) {
 func TestAuditLogsExportPropagatesAPIErrors(t *testing.T) {
 	boom := errors.New("boom")
 	c := AuditLogsExportCmd{export: &FakeAuditLogsExportService{
-		CreateFunc: func(ctx context.Context, body createAuditLogExportDestinationRequest) (*auditLogExportDestination, error) {
+		CreateFunc: func(ctx context.Context, body kernel.AuditLogExportDestinationNewParams) (*kernel.AuditLogExportDestination, error) {
 			return nil, boom
 		},
-		ListFunc: func(ctx context.Context, limit, offset int) ([]auditLogExportDestination, auditLogExportListPageInfo, error) {
+		ListFunc: func(ctx context.Context, query kernel.AuditLogExportDestinationListParams) ([]kernel.AuditLogExportDestination, auditLogExportListPageInfo, error) {
 			return nil, auditLogExportListPageInfo{}, boom
 		},
-		GetFunc: func(ctx context.Context, id string) (*auditLogExportDestination, error) {
+		GetFunc: func(ctx context.Context, id string) (*kernel.AuditLogExportDestination, error) {
 			return nil, boom
 		},
-		UpdateFunc: func(ctx context.Context, id string, body updateAuditLogExportDestinationRequest) (*auditLogExportDestination, error) {
+		UpdateFunc: func(ctx context.Context, id string, body kernel.AuditLogExportDestinationUpdateParams) (*kernel.AuditLogExportDestination, error) {
 			return nil, boom
 		},
 		DeleteFunc: func(ctx context.Context, id string) error {
 			return boom
 		},
-		TestFunc: func(ctx context.Context, id string) (*auditLogExportTestResult, error) {
+		TestFunc: func(ctx context.Context, id string) (*kernel.AuditLogExportDestinationTestResult, error) {
 			return nil, boom
 		},
 	}}

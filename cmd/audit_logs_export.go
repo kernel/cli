@@ -2,11 +2,9 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -18,86 +16,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const auditLogsExportBasePath = "audit-logs/export/destinations"
-
 const (
 	auditLogExportStatusActive = "active"
 	auditLogExportStatusPaused = "paused"
 )
-
-// The SDK has no generated types for the audit log export destination
-// endpoints, so the CLI defines its own and calls them through the raw
-// request methods on kernel.Client.
-
-type auditLogExportDestination struct {
-	ID                  string     `json:"id"`
-	Type                string     `json:"type"`
-	Region              string     `json:"region"`
-	Bucket              string     `json:"bucket"`
-	Prefix              string     `json:"prefix"`
-	RoleARN             string     `json:"role_arn"`
-	ExternalID          string     `json:"external_id"`
-	KernelRoleARN       string     `json:"kernel_role_arn"`
-	KMSKeyID            string     `json:"kms_key_id,omitempty"`
-	Format              string     `json:"format"`
-	Status              string     `json:"status"`
-	LastExportedCursor  string     `json:"last_exported_cursor,omitempty"`
-	LastSuccessAt       *time.Time `json:"last_success_at,omitempty"`
-	LastError           string     `json:"last_error,omitempty"`
-	LastErrorAt         *time.Time `json:"last_error_at,omitempty"`
-	ConsecutiveFailures int64      `json:"consecutive_failures"`
-	NextAttemptAt       *time.Time `json:"next_attempt_at,omitempty"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
-}
-
-func (d auditLogExportDestination) RawJSON() string {
-	raw, err := json.Marshal(d)
-	if err != nil {
-		return ""
-	}
-	return string(raw)
-}
-
-type createAuditLogExportDestinationRequest struct {
-	Type     string  `json:"type"`
-	Region   string  `json:"region"`
-	Bucket   string  `json:"bucket"`
-	Prefix   string  `json:"prefix"`
-	RoleARN  string  `json:"role_arn"`
-	KMSKeyID *string `json:"kms_key_id,omitempty"`
-	Format   string  `json:"format"`
-}
-
-// updateAuditLogExportDestinationRequest is a partial update: nil fields are
-// omitted, and a KMSKeyID pointing at "" clears the configured key.
-type updateAuditLogExportDestinationRequest struct {
-	Region   *string `json:"region,omitempty"`
-	Bucket   *string `json:"bucket,omitempty"`
-	Prefix   *string `json:"prefix,omitempty"`
-	RoleARN  *string `json:"role_arn,omitempty"`
-	KMSKeyID *string `json:"kms_key_id,omitempty"`
-	Status   *string `json:"status,omitempty"`
-}
-
-type auditLogExportTestResultError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
-
-type auditLogExportTestResult struct {
-	Success bool                           `json:"success"`
-	Stage   string                         `json:"stage"`
-	Error   *auditLogExportTestResultError `json:"error,omitempty"`
-}
-
-func (r auditLogExportTestResult) RawJSON() string {
-	raw, err := json.Marshal(r)
-	if err != nil {
-		return ""
-	}
-	return string(raw)
-}
 
 type auditLogExportListPageInfo struct {
 	HasMore    bool
@@ -105,43 +27,29 @@ type auditLogExportListPageInfo struct {
 }
 
 type AuditLogsExportService interface {
-	Create(ctx context.Context, body createAuditLogExportDestinationRequest) (*auditLogExportDestination, error)
-	List(ctx context.Context, limit, offset int) ([]auditLogExportDestination, auditLogExportListPageInfo, error)
-	Get(ctx context.Context, id string) (*auditLogExportDestination, error)
-	Update(ctx context.Context, id string, body updateAuditLogExportDestinationRequest) (*auditLogExportDestination, error)
+	Create(ctx context.Context, body kernel.AuditLogExportDestinationNewParams) (*kernel.AuditLogExportDestination, error)
+	List(ctx context.Context, query kernel.AuditLogExportDestinationListParams) ([]kernel.AuditLogExportDestination, auditLogExportListPageInfo, error)
+	Get(ctx context.Context, id string) (*kernel.AuditLogExportDestination, error)
+	Update(ctx context.Context, id string, body kernel.AuditLogExportDestinationUpdateParams) (*kernel.AuditLogExportDestination, error)
 	Delete(ctx context.Context, id string) error
-	Test(ctx context.Context, id string) (*auditLogExportTestResult, error)
+	Test(ctx context.Context, id string) (*kernel.AuditLogExportDestinationTestResult, error)
 }
 
 type auditLogsExportClient struct {
-	client *kernel.Client
+	svc *kernel.AuditLogExportDestinationService
 }
 
-func (s *auditLogsExportClient) Create(ctx context.Context, body createAuditLogExportDestinationRequest) (*auditLogExportDestination, error) {
-	var res auditLogExportDestination
-	if err := s.client.Post(ctx, auditLogsExportBasePath, body, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
+func (s *auditLogsExportClient) Create(ctx context.Context, body kernel.AuditLogExportDestinationNewParams) (*kernel.AuditLogExportDestination, error) {
+	return s.svc.New(ctx, body)
 }
 
-func (s *auditLogsExportClient) List(ctx context.Context, limit, offset int) ([]auditLogExportDestination, auditLogExportListPageInfo, error) {
-	query := url.Values{}
-	if limit > 0 {
-		query.Set("limit", strconv.Itoa(limit))
-	}
-	if offset > 0 {
-		query.Set("offset", strconv.Itoa(offset))
-	}
-	path := auditLogsExportBasePath
-	if encoded := query.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
+func (s *auditLogsExportClient) List(ctx context.Context, query kernel.AuditLogExportDestinationListParams) ([]kernel.AuditLogExportDestination, auditLogExportListPageInfo, error) {
 	var httpRes *http.Response
-	destinations := make([]auditLogExportDestination, 0)
-	if err := s.client.Get(ctx, path, nil, &destinations, option.WithResponseInto(&httpRes)); err != nil {
+	page, err := s.svc.List(ctx, query, option.WithResponseInto(&httpRes))
+	if err != nil {
 		return nil, auditLogExportListPageInfo{}, err
 	}
+
 	info := auditLogExportListPageInfo{}
 	if httpRes != nil {
 		info.HasMore = strings.EqualFold(httpRes.Header.Get("X-Has-More"), "true")
@@ -151,35 +59,26 @@ func (s *auditLogsExportClient) List(ctx context.Context, limit, offset int) ([]
 			}
 		}
 	}
-	return destinations, info, nil
+	if page == nil {
+		return nil, info, nil
+	}
+	return page.Items, info, nil
 }
 
-func (s *auditLogsExportClient) Get(ctx context.Context, id string) (*auditLogExportDestination, error) {
-	var res auditLogExportDestination
-	if err := s.client.Get(ctx, auditLogsExportBasePath+"/"+url.PathEscape(id), nil, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
+func (s *auditLogsExportClient) Get(ctx context.Context, id string) (*kernel.AuditLogExportDestination, error) {
+	return s.svc.Get(ctx, id)
 }
 
-func (s *auditLogsExportClient) Update(ctx context.Context, id string, body updateAuditLogExportDestinationRequest) (*auditLogExportDestination, error) {
-	var res auditLogExportDestination
-	if err := s.client.Patch(ctx, auditLogsExportBasePath+"/"+url.PathEscape(id), body, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
+func (s *auditLogsExportClient) Update(ctx context.Context, id string, body kernel.AuditLogExportDestinationUpdateParams) (*kernel.AuditLogExportDestination, error) {
+	return s.svc.Update(ctx, id, body)
 }
 
 func (s *auditLogsExportClient) Delete(ctx context.Context, id string) error {
-	return s.client.Delete(ctx, auditLogsExportBasePath+"/"+url.PathEscape(id), nil, nil)
+	return s.svc.Delete(ctx, id)
 }
 
-func (s *auditLogsExportClient) Test(ctx context.Context, id string) (*auditLogExportTestResult, error) {
-	var res auditLogExportTestResult
-	if err := s.client.Post(ctx, auditLogsExportBasePath+"/"+url.PathEscape(id)+"/test", nil, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
+func (s *auditLogsExportClient) Test(ctx context.Context, id string) (*kernel.AuditLogExportDestinationTestResult, error) {
+	return s.svc.Test(ctx, id)
 }
 
 type AuditLogsExportCmd struct {
@@ -200,16 +99,18 @@ func (c AuditLogsExportCmd) Create(ctx context.Context, in AuditLogsExportCreate
 		return err
 	}
 
-	req := createAuditLogExportDestinationRequest{
-		Type:    "s3",
-		Format:  "jsonl.gz",
-		Region:  in.Region,
-		Bucket:  in.Bucket,
-		Prefix:  in.Prefix,
-		RoleARN: in.RoleARN,
+	req := kernel.AuditLogExportDestinationNewParams{
+		CreateAuditLogExportDestinationRequest: kernel.CreateAuditLogExportDestinationRequestParam{
+			Type:    kernel.CreateAuditLogExportDestinationRequestTypeS3,
+			Format:  kernel.CreateAuditLogExportDestinationRequestFormatJSONLGz,
+			Region:  in.Region,
+			Bucket:  in.Bucket,
+			Prefix:  in.Prefix,
+			RoleArn: in.RoleARN,
+		},
 	}
 	if in.KMSKeyID != "" {
-		req.KMSKeyID = &in.KMSKeyID
+		req.CreateAuditLogExportDestinationRequest.KmsKeyID = kernel.String(in.KMSKeyID)
 	}
 
 	dest, err := c.export.Create(ctx, req)
@@ -223,7 +124,7 @@ func (c AuditLogsExportCmd) Create(ctx context.Context, in AuditLogsExportCreate
 
 	pterm.Success.Printf("Created audit log export destination %s (paused)\n", dest.ID)
 	printAuditLogExportDestinationDetail(dest)
-	pterm.Info.Printf("To activate this destination:\n  1. Update the trust policy of %s to allow %s as a principal, requiring sts:ExternalId = %s\n  2. Run: kernel audit-logs export test %s\n  3. Activate: kernel audit-logs export resume %s\n", dest.RoleARN, dest.KernelRoleARN, dest.ExternalID, dest.ID, dest.ID)
+	pterm.Info.Printf("To activate this destination:\n  1. Update the trust policy of %s to allow %s as a principal, requiring sts:ExternalId = %s\n  2. Run: kernel audit-logs export test %s\n  3. Activate: kernel audit-logs export resume %s\n", dest.RoleArn, dest.KernelRoleArn, dest.ExternalID, dest.ID, dest.ID)
 	return nil
 }
 
@@ -244,7 +145,14 @@ func (c AuditLogsExportCmd) List(ctx context.Context, in AuditLogsExportListInpu
 		return fmt.Errorf("--offset must be non-negative")
 	}
 
-	destinations, pageInfo, err := c.export.List(ctx, in.Limit, in.Offset)
+	query := kernel.AuditLogExportDestinationListParams{}
+	if in.Limit > 0 {
+		query.Limit = kernel.Opt(int64(in.Limit))
+	}
+	if in.Offset > 0 {
+		query.Offset = kernel.Opt(int64(in.Offset))
+	}
+	destinations, pageInfo, err := c.export.List(ctx, query)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -265,7 +173,7 @@ func (c AuditLogsExportCmd) List(ctx context.Context, in AuditLogsExportListInpu
 			d.Bucket,
 			util.OrDash(d.Prefix),
 			d.Region,
-			d.Status,
+			string(d.Status),
 			formatAuditLogExportTime(d.LastSuccessAt),
 			strconv.FormatInt(d.ConsecutiveFailures, 10),
 			truncateAuditLogExportError(d.LastError),
@@ -321,21 +229,30 @@ func (c AuditLogsExportCmd) Update(ctx context.Context, in AuditLogsExportUpdate
 		return fmt.Errorf("cannot specify both --kms-key-id and --clear-kms-key")
 	}
 
-	req := updateAuditLogExportDestinationRequest{
-		Region:   in.Region,
-		Bucket:   in.Bucket,
-		Prefix:   in.Prefix,
-		RoleARN:  in.RoleARN,
-		KMSKeyID: in.KMSKeyID,
+	req := kernel.UpdateAuditLogExportDestinationRequestParam{}
+	if in.Region != nil {
+		req.Region = kernel.String(*in.Region)
+	}
+	if in.Bucket != nil {
+		req.Bucket = kernel.String(*in.Bucket)
+	}
+	if in.Prefix != nil {
+		req.Prefix = kernel.String(*in.Prefix)
+	}
+	if in.RoleARN != nil {
+		req.RoleArn = kernel.String(*in.RoleARN)
+	}
+	if in.KMSKeyID != nil {
+		req.KmsKeyID = kernel.String(*in.KMSKeyID)
 	}
 	if in.ClearKMSKey {
-		req.KMSKeyID = new(string)
+		req.KmsKeyID = kernel.String("")
 	}
-	if req.Region == nil && req.Bucket == nil && req.Prefix == nil && req.RoleARN == nil && req.KMSKeyID == nil {
+	if !req.Region.Valid() && !req.Bucket.Valid() && !req.Prefix.Valid() && !req.RoleArn.Valid() && !req.KmsKeyID.Valid() {
 		return fmt.Errorf("nothing to update: pass at least one of --region, --bucket, --prefix, --role-arn, --kms-key-id, or --clear-kms-key")
 	}
 
-	dest, err := c.export.Update(ctx, in.ID, req)
+	dest, err := c.export.Update(ctx, in.ID, kernel.AuditLogExportDestinationUpdateParams{UpdateAuditLogExportDestinationRequest: req})
 	if err != nil {
 		return cleanedUpAuditLogExportUpdateError(err)
 	}
@@ -363,7 +280,11 @@ func (c AuditLogsExportCmd) SetStatus(ctx context.Context, in AuditLogsExportSta
 		return fmt.Errorf("invalid status %q", in.Status)
 	}
 
-	dest, err := c.export.Update(ctx, in.ID, updateAuditLogExportDestinationRequest{Status: &in.Status})
+	dest, err := c.export.Update(ctx, in.ID, kernel.AuditLogExportDestinationUpdateParams{
+		UpdateAuditLogExportDestinationRequest: kernel.UpdateAuditLogExportDestinationRequestParam{
+			Status: kernel.UpdateAuditLogExportDestinationRequestStatus(in.Status),
+		},
+	})
 	if err != nil {
 		return cleanedUpAuditLogExportUpdateError(err)
 	}
@@ -417,7 +338,7 @@ func (c AuditLogsExportCmd) Test(ctx context.Context, in AuditLogsExportTestInpu
 		}
 	} else if res.Success {
 		pterm.Success.Printf("Test passed (stage: %s)\n", res.Stage)
-	} else if res.Error != nil {
+	} else if res.Error.Code != "" || res.Error.Message != "" {
 		pterm.Error.Printf("Test failed at stage %s: %s: %s\n", res.Stage, res.Error.Code, res.Error.Message)
 	} else {
 		pterm.Error.Printf("Test failed at stage %s\n", res.Stage)
@@ -437,20 +358,20 @@ func cleanedUpAuditLogExportUpdateError(err error) error {
 	return util.CleanedUpSdkError{Err: err}
 }
 
-func printAuditLogExportDestinationDetail(d *auditLogExportDestination) {
+func printAuditLogExportDestinationDetail(d *kernel.AuditLogExportDestination) {
 	rows := pterm.TableData{
 		{"Property", "Value"},
 		{"ID", d.ID},
-		{"Type", d.Type},
+		{"Type", string(d.Type)},
 		{"Region", d.Region},
 		{"Bucket", d.Bucket},
 		{"Prefix", util.OrDash(d.Prefix)},
-		{"Role ARN", d.RoleARN},
-		{"Kernel Role ARN", d.KernelRoleARN},
+		{"Role ARN", d.RoleArn},
+		{"Kernel Role ARN", d.KernelRoleArn},
 		{"External ID", d.ExternalID},
-		{"KMS Key ID", util.OrDash(d.KMSKeyID)},
-		{"Format", d.Format},
-		{"Status", d.Status},
+		{"KMS Key ID", util.OrDash(d.KmsKeyID)},
+		{"Format", string(d.Format)},
+		{"Status", string(d.Status)},
 		{"Last Exported Cursor", util.OrDash(d.LastExportedCursor)},
 		{"Last Success", formatAuditLogExportLastSuccess(d.LastSuccessAt)},
 		{"Last Error", util.OrDash(d.LastError)},
@@ -463,19 +384,19 @@ func printAuditLogExportDestinationDetail(d *auditLogExportDestination) {
 	PrintTableNoPad(rows, true)
 }
 
-func formatAuditLogExportTime(t *time.Time) string {
-	if t == nil {
+func formatAuditLogExportTime(t time.Time) string {
+	if t.IsZero() {
 		return "-"
 	}
-	return util.FormatLocal(*t)
+	return util.FormatLocal(t)
 }
 
-func formatAuditLogExportLastSuccess(t *time.Time) string {
-	if t == nil {
+func formatAuditLogExportLastSuccess(t time.Time) string {
+	if t.IsZero() {
 		return "-"
 	}
-	lag := max(time.Since(*t).Round(time.Second), 0)
-	return fmt.Sprintf("%s (%s ago)", util.FormatLocal(*t), lag)
+	lag := max(time.Since(t).Round(time.Second), 0)
+	return fmt.Sprintf("%s (%s ago)", util.FormatLocal(t), lag)
 }
 
 func truncateAuditLogExportError(s string) string {
@@ -488,7 +409,7 @@ func truncateAuditLogExportError(s string) string {
 
 func getAuditLogsExportHandler(cmd *cobra.Command) AuditLogsExportCmd {
 	client := getKernelClient(cmd)
-	return AuditLogsExportCmd{export: &auditLogsExportClient{client: &client}}
+	return AuditLogsExportCmd{export: &auditLogsExportClient{svc: &client.AuditLogs.ExportDestinations}}
 }
 
 func runAuditLogsExportCreate(cmd *cobra.Command, args []string) error {
