@@ -448,7 +448,11 @@ func TestBuildBrowserTableData_PrintsProfileSaveChangesWhenPresent(t *testing.T)
 	assert.Contains(t, tableData, []string{"Save Changes", "false"})
 
 	tableData = buildBrowserTableData("session", "ws://cdp", "", kernel.Profile{}, "", "", "", nil)
-	assert.NotContains(t, tableData, []string{"Save Changes", "false"})
+	for _, row := range tableData {
+		if len(row) > 0 {
+			assert.NotEqual(t, "Save Changes", row[0])
+		}
+	}
 }
 
 func TestBrowsersList_PrintsErrorOnFailure(t *testing.T) {
