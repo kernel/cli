@@ -275,7 +275,7 @@ func TestAuditLogsExportListPrintsEmptyMessage(t *testing.T) {
 	assert.Contains(t, buf.String(), "No audit log export destinations found")
 }
 
-func TestAuditLogsExportListJSONEmptyPrintsEmptyArray(t *testing.T) {
+func TestAuditLogsExportListJSONEmptyPrintsEnvelope(t *testing.T) {
 	fake := &FakeAuditLogsExportService{
 		ListFunc: func(ctx context.Context, query kernel.AuditLogExportDestinationListParams) ([]kernel.AuditLogExportDestination, auditLogExportListPageInfo, error) {
 			return []kernel.AuditLogExportDestination{}, auditLogExportListPageInfo{}, nil
@@ -288,7 +288,90 @@ func TestAuditLogsExportListJSONEmptyPrintsEmptyArray(t *testing.T) {
 		err = c.List(context.Background(), AuditLogsExportListInput{Limit: 20, Output: "json"})
 	})
 	require.NoError(t, err)
-	assert.Contains(t, out, "[]")
+	assert.JSONEq(t, `{"destinations":[]}`, out)
+}
+
+func TestAuditLogsExportListJSONIncludesNextOffset(t *testing.T) {
+	destination := sampleAuditLogExportDestination()
+	fake := &FakeAuditLogsExportService{
+		ListFunc: func(ctx context.Context, query kernel.AuditLogExportDestinationListParams) ([]kernel.AuditLogExportDestination, auditLogExportListPageInfo, error) {
+			return []kernel.AuditLogExportDestination{destination}, auditLogExportListPageInfo{HasMore: true, NextOffset: 20}, nil
+		},
+	}
+	c := AuditLogsExportCmd{export: fake}
+
+	var err error
+	out := captureStdout(t, func() {
+		err = c.List(context.Background(), AuditLogsExportListInput{Limit: 20, Output: "json"})
+	})
+	require.NoError(t, err)
+
+	var payload struct {
+		Destinations []json.RawMessage `json:"destinations"`
+		NextOffset   int               `json:"next_offset"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &payload))
+	require.Len(t, payload.Destinations, 1)
+	assert.JSONEq(t, destination.RawJSON(), string(payload.Destinations[0]))
+	assert.Equal(t, 20, payload.NextOffset)
+}
+
+func TestParseAuditLogExportListPagination(t *testing.T) {
+	tests := []struct {
+		name     string
+		response *http.Response
+		want     auditLogExportListPageInfo
+		wantErr  string
+	}{
+		{
+			name:     "more results",
+			response: &http.Response{Header: http.Header{"X-Has-More": []string{"true"}, "X-Next-Offset": []string{"120"}}},
+			want:     auditLogExportListPageInfo{HasMore: true, NextOffset: 120},
+		},
+		{
+			name:     "terminal page",
+			response: &http.Response{Header: http.Header{"X-Has-More": []string{"false"}, "X-Next-Offset": []string{"0"}}},
+			want:     auditLogExportListPageInfo{},
+		},
+		{name: "missing response", wantErr: "missing pagination headers"},
+		{
+			name:     "missing has more",
+			response: &http.Response{Header: http.Header{"X-Next-Offset": []string{"120"}}},
+			wantErr:  "invalid X-Has-More",
+		},
+		{
+			name:     "has more with missing offset",
+			response: &http.Response{Header: http.Header{"X-Has-More": []string{"true"}}},
+			wantErr:  "invalid X-Next-Offset",
+		},
+		{
+			name:     "has more with malformed offset",
+			response: &http.Response{Header: http.Header{"X-Has-More": []string{"true"}, "X-Next-Offset": []string{"next"}}},
+			wantErr:  "invalid X-Next-Offset",
+		},
+		{
+			name:     "has more with terminal offset",
+			response: &http.Response{Header: http.Header{"X-Has-More": []string{"true"}, "X-Next-Offset": []string{"0"}}},
+			wantErr:  "X-Next-Offset is not positive",
+		},
+		{
+			name:     "terminal page with offset",
+			response: &http.Response{Header: http.Header{"X-Has-More": []string{"false"}, "X-Next-Offset": []string{"120"}}},
+			wantErr:  "X-Has-More is false",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseAuditLogExportListPagination(tt.response)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestAuditLogsExportListRejectsInvalidLimitAndOffset(t *testing.T) {

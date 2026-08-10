@@ -2,11 +2,11 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/kernel/cli/pkg/util"
@@ -50,19 +50,40 @@ func (s *auditLogsExportClient) List(ctx context.Context, query kernel.AuditLogE
 		return nil, auditLogExportListPageInfo{}, err
 	}
 
-	info := auditLogExportListPageInfo{}
-	if httpRes != nil {
-		info.HasMore = strings.EqualFold(httpRes.Header.Get("X-Has-More"), "true")
-		if v := httpRes.Header.Get("X-Next-Offset"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil {
-				info.NextOffset = n
-			}
-		}
+	info, err := parseAuditLogExportListPagination(httpRes)
+	if err != nil {
+		return nil, auditLogExportListPageInfo{}, err
 	}
 	if page == nil {
 		return nil, info, nil
 	}
 	return page.Items, info, nil
+}
+
+func parseAuditLogExportListPagination(response *http.Response) (auditLogExportListPageInfo, error) {
+	if response == nil {
+		return auditLogExportListPageInfo{}, fmt.Errorf("audit log export list response is missing pagination headers")
+	}
+
+	hasMoreValue := response.Header.Get("X-Has-More")
+	hasMore, err := strconv.ParseBool(hasMoreValue)
+	if err != nil {
+		return auditLogExportListPageInfo{}, fmt.Errorf("invalid X-Has-More header %q", hasMoreValue)
+	}
+
+	nextOffsetValue := response.Header.Get("X-Next-Offset")
+	nextOffset, err := strconv.Atoi(nextOffsetValue)
+	if err != nil || nextOffset < 0 {
+		return auditLogExportListPageInfo{}, fmt.Errorf("invalid X-Next-Offset header %q", nextOffsetValue)
+	}
+	if hasMore && nextOffset == 0 {
+		return auditLogExportListPageInfo{}, fmt.Errorf("X-Has-More is true but X-Next-Offset is not positive")
+	}
+	if !hasMore && nextOffset != 0 {
+		return auditLogExportListPageInfo{}, fmt.Errorf("X-Has-More is false but X-Next-Offset is %d", nextOffset)
+	}
+
+	return auditLogExportListPageInfo{HasMore: hasMore, NextOffset: nextOffset}, nil
 }
 
 func (s *auditLogsExportClient) Get(ctx context.Context, id string) (*kernel.AuditLogExportDestination, error) {
@@ -158,7 +179,12 @@ func (c AuditLogsExportCmd) List(ctx context.Context, in AuditLogsExportListInpu
 	}
 
 	if in.Output == "json" {
-		return util.PrintPrettyJSONSlice(destinations)
+		data, err := marshalAuditLogExportListJSON(destinations, pageInfo.NextOffset)
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
 	}
 
 	if len(destinations) == 0 {
@@ -185,6 +211,22 @@ func (c AuditLogsExportCmd) List(ctx context.Context, in AuditLogsExportListInpu
 		pterm.Info.Printf("More destinations available; re-run with --offset %d\n", pageInfo.NextOffset)
 	}
 	return nil
+}
+
+func marshalAuditLogExportListJSON(destinations []kernel.AuditLogExportDestination, nextOffset int) ([]byte, error) {
+	items := make([]json.RawMessage, 0, len(destinations))
+	for _, destination := range destinations {
+		raw := destination.RawJSON()
+		if raw == "" {
+			raw = "{}"
+		}
+		items = append(items, json.RawMessage(raw))
+	}
+	payload := struct {
+		Destinations []json.RawMessage `json:"destinations"`
+		NextOffset   int               `json:"next_offset,omitempty"`
+	}{Destinations: items, NextOffset: nextOffset}
+	return json.MarshalIndent(payload, "", "  ")
 }
 
 type AuditLogsExportGetInput struct {
