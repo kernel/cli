@@ -443,10 +443,11 @@ func formatAuditLogExportLastSuccess(t time.Time) string {
 
 func truncateAuditLogExportError(s string) string {
 	const maxLen = 60
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return util.OrDash(s)
 	}
-	return s[:maxLen-3] + "..."
+	return string(runes[:maxLen-3]) + "..."
 }
 
 func getAuditLogsExportHandler(cmd *cobra.Command) AuditLogsExportCmd {

@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -261,6 +265,15 @@ func TestAuditLogsExportListTruncatesLongLastError(t *testing.T) {
 	assert.NotContains(t, out, "must be truncated")
 }
 
+func TestTruncateAuditLogExportErrorPreservesUTF8(t *testing.T) {
+	input := strings.Repeat("a", 56) + "界" + strings.Repeat("b", 10)
+	got := truncateAuditLogExportError(input)
+
+	assert.True(t, utf8.ValidString(got))
+	assert.Equal(t, strings.Repeat("a", 56)+"界...", got)
+	assert.Len(t, []rune(got), 60)
+}
+
 func TestAuditLogsExportListPrintsEmptyMessage(t *testing.T) {
 	buf := capturePtermOutput(t)
 	fake := &FakeAuditLogsExportService{
@@ -314,6 +327,32 @@ func TestAuditLogsExportListJSONIncludesNextOffset(t *testing.T) {
 	require.Len(t, payload.Destinations, 1)
 	assert.JSONEq(t, destination.RawJSON(), string(payload.Destinations[0]))
 	assert.Equal(t, 20, payload.NextOffset)
+}
+
+func TestAuditLogsExportClientListCapturesPaginationHeaders(t *testing.T) {
+	destination := sampleAuditLogExportDestination()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/audit-logs/export/destinations", r.URL.Path)
+		assert.Equal(t, "2", r.URL.Query().Get("limit"))
+		assert.Equal(t, "40", r.URL.Query().Get("offset"))
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Has-More", "true")
+		w.Header().Set("X-Next-Offset", "42")
+		_, _ = w.Write([]byte("[" + destination.RawJSON() + "]"))
+	}))
+	defer server.Close()
+
+	client := kernel.NewClient(option.WithBaseURL(server.URL), option.WithAPIKey("test"))
+	export := auditLogsExportClient{svc: &client.AuditLogs.ExportDestinations}
+	items, pageInfo, err := export.List(context.Background(), kernel.AuditLogExportDestinationListParams{
+		Limit:  kernel.Opt(int64(2)),
+		Offset: kernel.Opt(int64(40)),
+	})
+
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, destination.ID, items[0].ID)
+	assert.Equal(t, auditLogExportListPageInfo{HasMore: true, NextOffset: 42}, pageInfo)
 }
 
 func TestParseAuditLogExportListPagination(t *testing.T) {
