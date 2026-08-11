@@ -21,6 +21,8 @@ type TokenStorage struct {
 	RefreshToken  string    `json:"refresh_token"`
 	ExpiresAt     time.Time `json:"expires_at"`
 	OrgID         string    `json:"org_id"`
+	AccessScope   string    `json:"access_scope,omitempty"`
+	ProjectID     string    `json:"project_id,omitempty"`
 	AuthBaseURL   string    `json:"auth_base_url,omitempty"`
 	OAuthClientID string    `json:"oauth_client_id,omitempty"`
 }
