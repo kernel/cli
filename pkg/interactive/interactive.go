@@ -150,13 +150,21 @@ func ErrInputsRequired(problems []string) error {
 // reports the choice. When the Prompter cannot prompt it fails fast with
 // ErrConfirmationRequired(action) instead.
 func (p Prompter) Confirm(action, promptText string) (bool, error) {
+	return p.ConfirmDefault(action, promptText, false)
+}
+
+// ConfirmDefault shows a yes/no confirmation with the requested default.
+func (p Prompter) ConfirmDefault(action, promptText string, defaultValue bool) (bool, error) {
 	if !p.CanPrompt() {
 		return false, ErrConfirmationRequired(action)
 	}
+	return newConfirmPrinter(promptText, defaultValue).Show()
+}
+
+func newConfirmPrinter(promptText string, defaultValue bool) *pterm.InteractiveConfirmPrinter {
 	return pterm.DefaultInteractiveConfirm.
 		WithDefaultText(promptText).
-		WithDefaultValue(false).
-		Show()
+		WithDefaultValue(defaultValue)
 }
 
 // Select shows a select prompt over options and returns the chosen option.
