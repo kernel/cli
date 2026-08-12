@@ -50,8 +50,17 @@ type ProfilesImportLocalCmd struct {
 }
 
 type pendingManagedAuth struct {
+	providers []pendingProviderLogins
+}
+
+type pendingProviderLogins struct {
 	provider   passwordmanager.Provider
 	candidates []passwordmanager.Candidate
+}
+
+type sourcedPasswordManagerCandidate struct {
+	provider  passwordmanager.Provider
+	candidate passwordmanager.Candidate
 }
 
 func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalInput) error {
@@ -229,13 +238,16 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	profileID := status.Applied.Profiles[0].ProfileID
 	connectionIDs := make([]string, 0)
 	approvedLogins := make([]passwordmanager.Record, 0)
-	if pendingLogins.provider != nil && len(pendingLogins.candidates) > 0 {
+	if len(pendingLogins.providers) > 0 {
 		phaseStarted = time.Now()
-		approvedLogins, err = pendingLogins.provider.Reveal(ctx, pendingLogins.candidates)
-		timings["password_manager_reveal"] = time.Since(phaseStarted)
-		if err != nil {
-			return fmt.Errorf("profile %s is ready, but approved password-manager items could not be read: %w", targetName, err)
+		for _, pendingProvider := range pendingLogins.providers {
+			records, revealErr := pendingProvider.provider.Reveal(ctx, pendingProvider.candidates)
+			if revealErr != nil {
+				return fmt.Errorf("profile %s is ready, but approved %s items could not be read: %w", targetName, pendingProvider.provider.Name(), revealErr)
+			}
+			approvedLogins = append(approvedLogins, records...)
 		}
+		timings["password_manager_reveal"] = time.Since(phaseStarted)
 	}
 	if len(approvedLogins) > 0 {
 		if c.provisioner == nil {
@@ -331,7 +343,7 @@ func (c ProfilesImportLocalCmd) offerAgentSkills(home string, installRequested, 
 }
 
 func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, sites []string, requested string, nonInteractive, humanOutput bool) (pendingManagedAuth, error) {
-	if requested == "none" || (requested == "" && nonInteractive) {
+	if strings.EqualFold(strings.TrimSpace(requested), "none") || (requested == "" && nonInteractive) {
 		return pendingManagedAuth{}, nil
 	}
 	if c.providers == nil {
@@ -347,84 +359,107 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, sit
 		}
 		return pendingManagedAuth{}, nil
 	}
-	chosen := requested
-	if chosen == "" {
-		options := []string{"Skip passwords for now"}
+	chosenProviders := make([]passwordmanager.Provider, 0, len(providers))
+	if requested == "" {
+		options := make([]string, 0, len(providers))
+		byName := make(map[string]passwordmanager.Provider, len(providers))
 		for _, provider := range providers {
 			options = append(options, provider.Name())
+			byName[provider.Name()] = provider
 		}
-		selection, err := c.prompter.Select("password manager", "pass --password-manager", "Bring matching logins into Managed Auth?", options)
+		selected, err := c.prompter.MultiSelect("password managers", "pass --password-manager", "Choose password managers to search", options, options)
 		if err != nil {
 			return pendingManagedAuth{}, err
 		}
-		if selection == options[0] {
-			return pendingManagedAuth{}, nil
+		for _, name := range selected {
+			chosenProviders = append(chosenProviders, byName[name])
 		}
-		chosen = strings.ToLower(strings.ReplaceAll(selection, "Password", "password"))
-	}
-	var provider passwordmanager.Provider
-	for _, candidate := range providers {
-		id := strings.ToLower(strings.ReplaceAll(candidate.Name(), "Password", "password"))
-		if strings.EqualFold(chosen, id) || (chosen == "1password" && candidate.Name() == "1Password") || (chosen == "bitwarden" && candidate.Name() == "Bitwarden") {
-			provider = candidate
-			break
-		}
-	}
-	if provider == nil {
-		return pendingManagedAuth{}, fmt.Errorf("password manager %q is unavailable; use bitwarden, 1password, or none", requested)
-	}
-	if authorizer, ok := provider.(passwordmanager.InteractiveAuthorizer); ok {
-		required, err := authorizer.AuthorizationRequired(ctx)
-		if err != nil {
-			return pendingManagedAuth{}, err
-		}
-		if required {
-			if nonInteractive {
-				return pendingManagedAuth{}, fmt.Errorf("Bitwarden is locked; unlock it with `export BW_SESSION=$(bw unlock --raw)`, then retry")
-			}
-			approved, err := c.prompter.Confirm("unlock Bitwarden", "Bitwarden is locked. Unlock it locally to find matching logins?")
-			if err != nil {
-				return pendingManagedAuth{}, err
-			}
-			if !approved {
-				return pendingManagedAuth{}, nil
-			}
-			if err := authorizer.Authorize(ctx); err != nil {
-				return pendingManagedAuth{}, err
-			}
-			if humanOutput {
-				pterm.Success.Println("Bitwarden unlocked for this import")
+	} else {
+		requestedNames := strings.Split(requested, ",")
+		if strings.EqualFold(strings.TrimSpace(requested), "all") {
+			chosenProviders = append(chosenProviders, providers...)
+		} else {
+			for _, name := range requestedNames {
+				provider := findPasswordManager(providers, strings.TrimSpace(name))
+				if provider == nil {
+					return pendingManagedAuth{}, fmt.Errorf("password manager %q is unavailable; use bitwarden, 1password, all, or none", strings.TrimSpace(name))
+				}
+				chosenProviders = append(chosenProviders, provider)
 			}
 		}
 	}
-	if humanOutput {
-		pterm.Info.Printf("Find matching %s logins...\n", provider.Name())
-	}
-	candidates, err := provider.Candidates(ctx, sites)
-	if err != nil {
-		return pendingManagedAuth{}, err
-	}
-	if len(candidates) == 0 {
-		if humanOutput {
-			pterm.Info.Printf("No %s logins matched the selected websites\n", provider.Name())
-		}
+	if len(chosenProviders) == 0 {
 		return pendingManagedAuth{}, nil
 	}
-	labels := make([]string, 0, len(candidates))
-	byLabel := make(map[string]passwordmanager.Candidate, len(candidates))
+	chosenProviders = deduplicatePasswordManagers(chosenProviders)
+	allCandidates := make([]sourcedPasswordManagerCandidate, 0)
+	for _, provider := range chosenProviders {
+		if authorizer, ok := provider.(passwordmanager.InteractiveAuthorizer); ok {
+			required, err := authorizer.AuthorizationRequired(ctx)
+			if err != nil {
+				if nonInteractive {
+					return pendingManagedAuth{}, err
+				}
+				if humanOutput {
+					pterm.Warning.Printf("Skipping %s: %v\n", provider.Name(), err)
+				}
+				continue
+			}
+			if required {
+				if nonInteractive {
+					return pendingManagedAuth{}, fmt.Errorf("Bitwarden is locked; unlock it with `export BW_SESSION=$(bw unlock --raw)`, then retry")
+				}
+				approved, err := c.prompter.Confirm("unlock Bitwarden", "Bitwarden is locked. Unlock it locally to find matching logins?")
+				if err != nil {
+					return pendingManagedAuth{}, err
+				}
+				if !approved {
+					continue
+				}
+				if err := authorizer.Authorize(ctx); err != nil {
+					if humanOutput {
+						pterm.Warning.Printf("Skipping %s: %v\n", provider.Name(), err)
+					}
+					continue
+				}
+				if humanOutput {
+					pterm.Success.Println("Bitwarden unlocked for this import")
+				}
+			}
+		}
+		if humanOutput {
+			pterm.Info.Printf("Find matching %s logins...\n", provider.Name())
+		}
+		candidates, err := discoverProviderCandidates(ctx, provider, sites, nonInteractive, humanOutput)
+		if err != nil {
+			return pendingManagedAuth{}, err
+		}
+		if len(candidates) == 0 && humanOutput {
+			pterm.Info.Printf("No %s logins matched the selected websites\n", provider.Name())
+		}
+		for _, candidate := range candidates {
+			allCandidates = append(allCandidates, sourcedPasswordManagerCandidate{provider: provider, candidate: candidate})
+		}
+	}
+	if len(allCandidates) == 0 {
+		return pendingManagedAuth{}, nil
+	}
+	labels := make([]string, 0, len(allCandidates))
+	byLabel := make(map[string]sourcedPasswordManagerCandidate, len(allCandidates))
 	defaultLabels := make([]string, 0, len(sites))
 	domainCounts := make(map[string]int, len(sites))
-	for _, candidate := range candidates {
-		domainCounts[candidate.Domain]++
+	for _, sourced := range allCandidates {
+		domainCounts[sourced.candidate.Domain]++
 	}
-	for index, candidate := range candidates {
+	for index, sourced := range allCandidates {
+		candidate := sourced.candidate
 		idSuffix := candidate.ID
 		if len(idSuffix) > 6 {
 			idSuffix = idSuffix[len(idSuffix)-6:]
 		}
-		label := loginCandidateLabel(index, candidate, idSuffix)
+		label := loginCandidateLabel(index, sourced.provider.Name(), candidate, idSuffix)
 		labels = append(labels, label)
-		byLabel[label] = candidate
+		byLabel[label] = sourced
 		if domainCounts[candidate.Domain] == 1 {
 			defaultLabels = append(defaultLabels, label)
 		}
@@ -438,22 +473,89 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, sit
 	}
 	chosenLabels := defaultLabels
 	if !nonInteractive {
-		chosenLabels, err = c.prompter.MultiSelect("logins", "pass --yes to approve suggested matches", "Choose logins to create in Managed Auth", labels, defaultLabels)
-		if err != nil {
-			return pendingManagedAuth{}, err
+		for {
+			selected, promptErr := c.prompter.MultiSelect("logins", "pass --yes to approve suggested matches", "Choose at most one login per website", labels, chosenLabels)
+			if promptErr != nil {
+				return pendingManagedAuth{}, promptErr
+			}
+			if duplicateDomain := duplicateSelectedDomain(selected, byLabel); duplicateDomain != "" {
+				pterm.Warning.Printf("Choose only one login for %s; your selections are preserved\n", duplicateDomain)
+				chosenLabels = selected
+				continue
+			}
+			chosenLabels = selected
+			break
 		}
 	}
-	approved := make([]passwordmanager.Candidate, 0, len(chosenLabels))
+	approvedByProvider := make(map[string][]passwordmanager.Candidate, len(chosenProviders))
 	selectedDomains := make(map[string]struct{}, len(chosenLabels))
 	for _, label := range chosenLabels {
-		candidate := byLabel[label]
+		sourced := byLabel[label]
+		candidate := sourced.candidate
 		if _, exists := selectedDomains[candidate.Domain]; exists {
 			return pendingManagedAuth{}, fmt.Errorf("select at most one login for %s", candidate.Domain)
 		}
 		selectedDomains[candidate.Domain] = struct{}{}
-		approved = append(approved, candidate)
+		approvedByProvider[sourced.provider.Name()] = append(approvedByProvider[sourced.provider.Name()], candidate)
 	}
-	return pendingManagedAuth{provider: provider, candidates: approved}, nil
+	pending := pendingManagedAuth{providers: make([]pendingProviderLogins, 0, len(approvedByProvider))}
+	for _, provider := range chosenProviders {
+		if candidates := approvedByProvider[provider.Name()]; len(candidates) > 0 {
+			pending.providers = append(pending.providers, pendingProviderLogins{provider: provider, candidates: candidates})
+		}
+	}
+	return pending, nil
+}
+
+func discoverProviderCandidates(ctx context.Context, provider passwordmanager.Provider, sites []string, nonInteractive, humanOutput bool) ([]passwordmanager.Candidate, error) {
+	candidates, err := provider.Candidates(ctx, sites)
+	if err == nil {
+		return candidates, nil
+	}
+	if nonInteractive {
+		return nil, err
+	}
+	if humanOutput {
+		pterm.Warning.Printf("Skipping %s: %v\n", provider.Name(), err)
+	}
+	return nil, nil
+}
+
+func duplicateSelectedDomain(selected []string, candidates map[string]sourcedPasswordManagerCandidate) string {
+	seen := make(map[string]struct{}, len(selected))
+	for _, label := range selected {
+		domain := candidates[label].candidate.Domain
+		if _, exists := seen[domain]; exists {
+			return domain
+		}
+		seen[domain] = struct{}{}
+	}
+	return ""
+}
+
+func findPasswordManager(providers []passwordmanager.Provider, requested string) passwordmanager.Provider {
+	for _, provider := range providers {
+		if strings.EqualFold(requested, strings.ToLower(strings.ReplaceAll(provider.Name(), "Password", "password"))) ||
+			(strings.EqualFold(requested, "1password") && provider.Name() == "1Password") ||
+			(strings.EqualFold(requested, "bitwarden") && provider.Name() == "Bitwarden") {
+			return provider
+		}
+	}
+	return nil
+}
+
+func deduplicatePasswordManagers(providers []passwordmanager.Provider) []passwordmanager.Provider {
+	result := make([]passwordmanager.Provider, 0, len(providers))
+	seen := make(map[string]struct{}, len(providers))
+	for _, provider := range providers {
+		key := strings.ToLower(provider.Name())
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, provider)
+	}
+	return result
 }
 
 func browserImportProgressError(importID, phase string, elapsed time.Duration, err error) error {
@@ -661,7 +763,7 @@ func compactField(value string, limit int) string {
 	return ansi.Truncate(strings.Join(strings.Fields(value), " "), limit, "…")
 }
 
-func loginCandidateLabel(index int, candidate passwordmanager.Candidate, idSuffix string) string {
+func loginCandidateLabel(index int, provider string, candidate passwordmanager.Candidate, idSuffix string) string {
 	identity := candidate.Username
 	if identity == "" {
 		identity = "no username"
@@ -669,7 +771,17 @@ func loginCandidateLabel(index int, candidate passwordmanager.Candidate, idSuffi
 	indexLabel := fmt.Sprintf("%d", index+1)
 	indexWidth := max(2, ansi.StringWidth(indexLabel))
 	nameWidth := max(8, 16-(indexWidth-2))
-	return fmt.Sprintf("%*s  %s  %s  %s · %s", indexWidth, indexLabel, compactField(candidate.Domain, 18), compactField(identity, 20), compactField(candidate.Name, nameWidth), idSuffix)
+	return fmt.Sprintf("%*s  %s  %s  %s  %s · %s", indexWidth, indexLabel, passwordManagerAbbreviation(provider), compactField(candidate.Domain, 15), compactField(identity, 18), compactField(candidate.Name, nameWidth), idSuffix)
+}
+
+func passwordManagerAbbreviation(provider string) string {
+	if strings.EqualFold(provider, "Bitwarden") {
+		return "BW"
+	}
+	if strings.EqualFold(provider, "1Password") {
+		return "1P"
+	}
+	return compactField(provider, 2)
 }
 
 func projectOptionLabel(index int, project kernel.Project) string {
@@ -751,7 +863,7 @@ func init() {
 	profilesImportLocalCmd.Flags().Int("days", 30, "Rank websites used during the last number of days (1-90)")
 	profilesImportLocalCmd.Flags().Duration("wait-timeout", 30*time.Minute, "Maximum time to wait for the import to complete")
 	profilesImportLocalCmd.Flags().BoolP("yes", "y", false, "Use suggested websites and skip confirmation")
-	profilesImportLocalCmd.Flags().String("password-manager", "", "Import matching logins into Managed Auth: bitwarden, 1password, or none")
+	profilesImportLocalCmd.Flags().String("password-manager", "", "Password managers to search: bitwarden, 1password, both comma-separated, all, or none")
 	profilesImportLocalCmd.Flags().Bool("install-agent-skills", false, "Install the Kernel Managed Auth skill into detected agent directories")
 	addJSONOutputFlag(profilesImportLocalCmd)
 	addJSONOutputFlag(profilesImportStatusCmd)

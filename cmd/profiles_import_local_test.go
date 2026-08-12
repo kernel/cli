@@ -50,7 +50,7 @@ func TestCompactFieldPreventsLoginRowsFromWrapping(t *testing.T) {
 	assert.LessOrEqual(t, ansi.StringWidth(compactField("界界界界界", 6)), 6)
 	assert.Equal(t, "safe fake", compactField("\x1b[31msafe\x1b[0m\n\x1b]8;;https://example.com\x07fake\x1b]8;;\x07", 20))
 
-	label := loginCandidateLabel(1, passwordmanager.Candidate{
+	label := loginCandidateLabel(1, "Bitwarden", passwordmanager.Candidate{
 		Domain:   "accounts.google.com",
 		Username: "same-account@example.com",
 		Name:     "personal google account",
@@ -58,7 +58,7 @@ func TestCompactFieldPreventsLoginRowsFromWrapping(t *testing.T) {
 	assert.LessOrEqual(t, ansi.StringWidth(label), 72)
 	assert.Contains(t, label, "personal google")
 
-	withoutUsername := loginCandidateLabel(2, passwordmanager.Candidate{
+	withoutUsername := loginCandidateLabel(2, "1Password", passwordmanager.Candidate{
 		Domain: "example.com",
 		Name:   "personal account",
 	}, "def456")
@@ -66,7 +66,7 @@ func TestCompactFieldPreventsLoginRowsFromWrapping(t *testing.T) {
 	assert.Contains(t, withoutUsername, "personal account")
 
 	for _, index := range []int{999, 9999} {
-		label := loginCandidateLabel(index, passwordmanager.Candidate{
+		label := loginCandidateLabel(index, "Bitwarden", passwordmanager.Candidate{
 			Domain:   "accounts.google.com",
 			Username: "same-account@example.com",
 			Name:     "personal google account",
@@ -81,11 +81,20 @@ func TestProjectOptionLabelsAreUniqueForDuplicateNames(t *testing.T) {
 	assert.NotEqual(t, first, second)
 }
 
-type fakePasswordManager struct{ candidates []passwordmanager.Candidate }
+type fakePasswordManager struct {
+	name       string
+	candidates []passwordmanager.Candidate
+	err        error
+}
 
-func (fakePasswordManager) Name() string { return "Bitwarden" }
+func (f fakePasswordManager) Name() string {
+	if f.name != "" {
+		return f.name
+	}
+	return "Bitwarden"
+}
 func (f fakePasswordManager) Candidates(context.Context, []string) ([]passwordmanager.Candidate, error) {
-	return f.candidates, nil
+	return f.candidates, f.err
 }
 func (f fakePasswordManager) Reveal(_ context.Context, candidates []passwordmanager.Candidate) ([]passwordmanager.Record, error) {
 	records := make([]passwordmanager.Record, 0, len(candidates))
@@ -106,8 +115,59 @@ func TestChooseManagedAuthLoginsRequiresChoiceForAmbiguousSite(t *testing.T) {
 	}}
 	selected, err := command.chooseManagedAuthLogins(context.Background(), []string{"github.com", "example.com"}, "bitwarden", true, false)
 	require.Error(t, err)
-	assert.Empty(t, selected.candidates)
+	assert.Empty(t, selected.providers)
 	assert.Contains(t, err.Error(), "github.com has 2 matching logins")
+}
+
+func TestChooseManagedAuthLoginsCombinesSelectedProviders(t *testing.T) {
+	command := ProfilesImportLocalCmd{prompter: interactive.NewPrompterWithTerminal(false), providers: func() []passwordmanager.Provider {
+		return []passwordmanager.Provider{
+			fakePasswordManager{name: "Bitwarden", candidates: []passwordmanager.Candidate{{ID: "bw", Domain: "github.com", Name: "GitHub personal"}}},
+			fakePasswordManager{name: "1Password", candidates: []passwordmanager.Candidate{{ID: "op", Domain: "example.com", Name: "Example work"}}},
+		}
+	}}
+
+	selected, err := command.chooseManagedAuthLogins(context.Background(), []string{"github.com", "example.com"}, "bitwarden,1password", true, false)
+	require.NoError(t, err)
+	require.Len(t, selected.providers, 2)
+	assert.Equal(t, "Bitwarden", selected.providers[0].provider.Name())
+	assert.Equal(t, "github.com", selected.providers[0].candidates[0].Domain)
+	assert.Equal(t, "1Password", selected.providers[1].provider.Name())
+	assert.Equal(t, "example.com", selected.providers[1].candidates[0].Domain)
+}
+
+func TestChooseManagedAuthLoginsDeduplicatesRequestedProviders(t *testing.T) {
+	command := ProfilesImportLocalCmd{prompter: interactive.NewPrompterWithTerminal(false), providers: func() []passwordmanager.Provider {
+		return []passwordmanager.Provider{
+			fakePasswordManager{name: "Bitwarden", candidates: []passwordmanager.Candidate{{ID: "bw", Domain: "github.com", Name: "GitHub personal"}}},
+		}
+	}}
+
+	selected, err := command.chooseManagedAuthLogins(context.Background(), []string{"github.com"}, "bitwarden,bitwarden", true, false)
+	require.NoError(t, err)
+	require.Len(t, selected.providers, 1)
+	require.Len(t, selected.providers[0].candidates, 1)
+}
+
+func TestChooseManagedAuthLoginsSkipsBrokenInteractiveProvider(t *testing.T) {
+	broken, err := discoverProviderCandidates(t.Context(), fakePasswordManager{name: "Bitwarden", err: assert.AnError}, []string{"example.com"}, false, false)
+	require.NoError(t, err)
+	assert.Empty(t, broken)
+
+	healthy, err := discoverProviderCandidates(t.Context(), fakePasswordManager{name: "1Password", candidates: []passwordmanager.Candidate{{ID: "op", Domain: "example.com"}}}, []string{"example.com"}, false, false)
+	require.NoError(t, err)
+	require.Len(t, healthy, 1)
+}
+
+func TestDuplicateSelectedDomainAcrossProviders(t *testing.T) {
+	provider := fakePasswordManager{name: "Bitwarden"}
+	candidates := map[string]sourcedPasswordManagerCandidate{
+		"bitwarden": {provider: provider, candidate: passwordmanager.Candidate{Domain: "google.com"}},
+		"1password": {provider: fakePasswordManager{name: "1Password"}, candidate: passwordmanager.Candidate{Domain: "google.com"}},
+	}
+
+	assert.Equal(t, "google.com", duplicateSelectedDomain([]string{"bitwarden", "1password"}, candidates))
+	assert.Empty(t, duplicateSelectedDomain([]string{"bitwarden"}, candidates))
 }
 
 func TestChooseSitesUsesRequestedDomainsWithoutPrompting(t *testing.T) {
