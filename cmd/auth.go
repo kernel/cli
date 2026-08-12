@@ -108,6 +108,11 @@ func runAuth(cmd *cobra.Command, args []string) error {
 	pterm.Info.Printf("API URL: %s\n", util.GetBaseURL())
 	pterm.Info.Printf("Auth URL: %s\n", tokenAuthBaseURLForDisplay(tokens))
 	pterm.Info.Printf("OAuth client ID: %s\n", maskClientID(tokenOAuthClientIDForDisplay(tokens)))
+	if tokens.AccessScope == "project" && tokens.ProjectID != "" {
+		pterm.Info.Printf("Access scope: project %s\n", tokens.ProjectID)
+	} else {
+		pterm.Info.Println("Access scope: organization-wide")
+	}
 
 	// Extract info from JWT token
 	if claims, err := parseJWT(tokens.AccessToken); err == nil && claims != nil {

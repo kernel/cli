@@ -67,12 +67,16 @@ type TokenResponse struct {
 	ExpiresIn    int    `json:"expires_in"`
 	TokenType    string `json:"token_type"`
 	OrgID        string `json:"org_id"`
+	AccessScope  string `json:"access_scope"`
+	ProjectID    string `json:"project_id"`
 }
 
 // AuthResult represents the result data passed through the callback channel
 type AuthResult struct {
-	Code  string `json:"code"`
-	OrgID string `json:"org_id,omitempty"`
+	Code        string `json:"code"`
+	OrgID       string `json:"org_id,omitempty"`
+	AccessScope string `json:"access_scope,omitempty"`
+	ProjectID   string `json:"project_id,omitempty"`
 }
 
 // CurrentAuthBaseURL returns the OAuth server base URL for new login flows.
@@ -210,7 +214,7 @@ func (oc *OAuthConfig) StartOAuthFlow(ctx context.Context) (*TokenStorage, error
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
 		// Extract and decode state parameter to get CSRF token and org_id
 		encodedState := r.URL.Query().Get("state")
-		var csrfToken, orgID string
+		var csrfToken, orgID, accessScope, projectID string
 
 		if encodedState != "" {
 			// Try to decode the state parameter
@@ -219,6 +223,8 @@ func (oc *OAuthConfig) StartOAuthFlow(ctx context.Context) (*TokenStorage, error
 				if json.Unmarshal(decodedBytes, &stateData) == nil {
 					csrfToken = stateData["csrf"]
 					orgID = stateData["org_id"]
+					accessScope = stateData["access_scope"]
+					projectID = stateData["project_id"]
 				}
 			}
 
@@ -258,8 +264,10 @@ func (oc *OAuthConfig) StartOAuthFlow(ctx context.Context) (*TokenStorage, error
 
 		// Pass both code and org_id to the channel using JSON encoding
 		result := AuthResult{
-			Code:  code,
-			OrgID: orgID,
+			Code:        code,
+			OrgID:       orgID,
+			AccessScope: accessScope,
+			ProjectID:   projectID,
 		}
 		resultJSON, err := json.Marshal(result)
 		if err != nil {
@@ -279,7 +287,7 @@ func (oc *OAuthConfig) StartOAuthFlow(ctx context.Context) (*TokenStorage, error
 	}()
 
 	// Wait for callback or timeout
-	var authCode, orgID string
+	var authCode, orgID, accessScope, projectID string
 	select {
 	case resultJSON := <-codeChan:
 		// Success - shutdown server
@@ -291,6 +299,8 @@ func (oc *OAuthConfig) StartOAuthFlow(ctx context.Context) (*TokenStorage, error
 		}
 		authCode = result.Code
 		orgID = result.OrgID
+		accessScope = result.AccessScope
+		projectID = result.ProjectID
 	case err := <-errChan:
 		server.Shutdown(context.Background())
 		return nil, err
@@ -303,11 +313,11 @@ func (oc *OAuthConfig) StartOAuthFlow(ctx context.Context) (*TokenStorage, error
 	}
 
 	// Exchange authorization code for tokens
-	return oc.exchangeCodeForTokens(ctx, authCode, orgID)
+	return oc.exchangeCodeForTokens(ctx, authCode, orgID, accessScope, projectID)
 }
 
 // exchangeCodeForTokens exchanges the authorization code for access and refresh tokens
-func (oc *OAuthConfig) exchangeCodeForTokens(ctx context.Context, code, orgID string) (*TokenStorage, error) {
+func (oc *OAuthConfig) exchangeCodeForTokens(ctx context.Context, code, orgID, accessScope, projectID string) (*TokenStorage, error) {
 	// Use PKCE verifier in token exchange, and include org_id if available
 	var opts []oauth2.AuthCodeOption
 	opts = append(opts, oauth2.SetAuthURLParam("code_verifier", oc.Verifier))
@@ -323,11 +333,29 @@ func (oc *OAuthConfig) exchangeCodeForTokens(ctx context.Context, code, orgID st
 		return nil, fmt.Errorf("failed to exchange code for token: %w", err)
 	}
 
+	if value, ok := token.Extra("org_id").(string); ok && value != "" {
+		orgID = value
+	}
+	if value, ok := token.Extra("access_scope").(string); ok && value != "" {
+		accessScope = value
+	}
+	if value, ok := token.Extra("project_id").(string); ok {
+		projectID = value
+	}
+	if accessScope == "" {
+		accessScope = "organization"
+	}
+	if accessScope == "organization" {
+		projectID = ""
+	}
+
 	return &TokenStorage{
 		AccessToken:   token.AccessToken,
 		RefreshToken:  token.RefreshToken,
 		ExpiresAt:     token.Expiry,
 		OrgID:         orgID,
+		AccessScope:   accessScope,
+		ProjectID:     projectID,
 		AuthBaseURL:   oc.AuthBaseURL,
 		OAuthClientID: oc.OAuthClientID,
 	}, nil
@@ -388,11 +416,32 @@ func RefreshTokens(ctx context.Context, tokens *TokenStorage) (*TokenStorage, er
 	// Add extra fields
 	newToken = newToken.WithExtra(tokenResponse)
 
+	orgID := tokens.OrgID
+	if value, ok := tokenResponse["org_id"].(string); ok && value != "" {
+		orgID = value
+	}
+	accessScope := tokens.AccessScope
+	if value, ok := tokenResponse["access_scope"].(string); ok && value != "" {
+		accessScope = value
+	}
+	if accessScope == "" {
+		accessScope = "organization"
+	}
+	projectID := tokens.ProjectID
+	if value, ok := tokenResponse["project_id"].(string); ok {
+		projectID = value
+	}
+	if accessScope == "organization" {
+		projectID = ""
+	}
+
 	return &TokenStorage{
 		AccessToken:   newToken.AccessToken,
 		RefreshToken:  newToken.RefreshToken,
 		ExpiresAt:     newToken.Expiry,
-		OrgID:         tokens.OrgID,
+		OrgID:         orgID,
+		AccessScope:   accessScope,
+		ProjectID:     projectID,
 		AuthBaseURL:   tokenAuthBaseURL(tokens),
 		OAuthClientID: tokenOAuthClientID(tokens),
 	}, nil
