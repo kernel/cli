@@ -3,6 +3,7 @@ module github.com/kernel/cli
 go 1.25.0
 
 require (
+	atomicgo.dev/keyboard v0.2.9
 	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/boyter/gocodewalker v1.4.0
 	github.com/charmbracelet/fang v0.2.0
@@ -29,7 +30,6 @@ require (
 require (
 	al.essio.dev/pkg/shellescape v1.5.1 // indirect
 	atomicgo.dev/cursor v0.2.0 // indirect
-	atomicgo.dev/keyboard v0.2.9 // indirect
 	atomicgo.dev/schedule v0.1.0 // indirect
 	github.com/charmbracelet/colorprofile v0.3.0 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.13 // indirect
