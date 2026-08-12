@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"atomicgo.dev/keyboard/keys"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -109,4 +110,13 @@ func TestPromptPrimitivesFailFastWhenNonInteractive(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "widget name")
 	assert.Contains(t, err.Error(), "pass --name")
+}
+
+func TestMultiSelectUsesConventionalKeys(t *testing.T) {
+	t.Parallel()
+	printer := newMultiSelectPrinter("Choose websites", []string{"example.com"}, nil)
+
+	assert.False(t, printer.Filter)
+	assert.Equal(t, keys.Space, printer.KeySelect)
+	assert.Equal(t, keys.Enter, printer.KeyConfirm)
 }

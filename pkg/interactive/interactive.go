@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 
+	"atomicgo.dev/keyboard/keys"
 	"github.com/pterm/pterm"
 	"golang.org/x/term"
 )
@@ -177,13 +178,18 @@ func (p Prompter) MultiSelect(what, hint, promptText string, options, defaults [
 	if !p.CanPrompt() {
 		return nil, ErrInputRequired(what, hint)
 	}
+	return newMultiSelectPrinter(promptText, options, defaults).Show()
+}
+
+func newMultiSelectPrinter(promptText string, options, defaults []string) *pterm.InteractiveMultiselectPrinter {
 	return pterm.DefaultInteractiveMultiselect.
 		WithOptions(options).
 		WithDefaultOptions(defaults).
 		WithDefaultText(promptText).
-		WithFilter(true).
-		WithMaxHeight(min(len(options), 12)).
-		Show()
+		WithFilter(false).
+		WithKeySelect(keys.Space).
+		WithKeyConfirm(keys.Enter).
+		WithMaxHeight(min(len(options), 12))
 }
 
 // TextInput shows a free-text prompt and returns the entered text. When the
