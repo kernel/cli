@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 )
 
-type bitwardenProvider struct{ path string }
+type bitwardenProvider struct {
+	path    string
+	session string
+}
 
 func (*bitwardenProvider) Name() string { return "Bitwarden" }
 
@@ -140,19 +144,72 @@ func (p *bitwardenProvider) Reveal(ctx context.Context, selected []Candidate) ([
 
 func (p *bitwardenProvider) authorizedEnvironment(ctx context.Context) (map[string]string, error) {
 	environment := map[string]string(nil)
-	if session := os.Getenv("BW_SESSION"); session != "" {
+	if p.session != "" {
+		environment = map[string]string{"BW_SESSION": p.session}
+	} else if session := os.Getenv("BW_SESSION"); session != "" {
 		environment = map[string]string{"BW_SESSION": session}
 	}
-	output, err := command(ctx, p.path, environment, "status")
+	status, err := p.status(ctx, environment)
 	if err != nil {
 		return nil, err
 	}
-	var status bitwardenStatus
-	if err := json.Unmarshal(output, &status); err != nil {
-		return nil, fmt.Errorf("decode Bitwarden status: %w", err)
-	}
 	if status.Status != "unlocked" {
-		return nil, fmt.Errorf("unlock Bitwarden for this terminal with `export BW_SESSION=$(bw unlock --raw)`, then retry")
+		return nil, fmt.Errorf("Bitwarden is locked")
 	}
 	return environment, nil
+}
+
+// AuthorizationRequired reports whether Bitwarden needs a local unlock.
+func (p *bitwardenProvider) AuthorizationRequired(ctx context.Context) (bool, error) {
+	environment := map[string]string(nil)
+	if p.session != "" {
+		environment = map[string]string{"BW_SESSION": p.session}
+	} else if session := os.Getenv("BW_SESSION"); session != "" {
+		environment = map[string]string{"BW_SESSION": session}
+	}
+	status, err := p.status(ctx, environment)
+	if err != nil {
+		return false, err
+	}
+	switch status.Status {
+	case "unlocked":
+		return false, nil
+	case "locked":
+		return true, nil
+	case "unauthenticated":
+		return false, fmt.Errorf("sign in to Bitwarden with `bw login`, then retry")
+	default:
+		return false, fmt.Errorf("unsupported Bitwarden status %q", status.Status)
+	}
+}
+
+// Authorize asks Bitwarden to unlock through its own terminal prompt and keeps
+// the resulting session key only in this process.
+func (p *bitwardenProvider) Authorize(ctx context.Context) error {
+	output, err := command(ctx, p.path, map[string]string{"BW_SESSION": ""}, "unlock", "--raw")
+	if err != nil {
+		return fmt.Errorf("unlock Bitwarden: %w", err)
+	}
+	session := strings.TrimSpace(string(output))
+	if session == "" || strings.ContainsAny(session, "\r\n\t ") {
+		return fmt.Errorf("Bitwarden returned an invalid session key")
+	}
+	p.session = session
+	if _, err := p.authorizedEnvironment(ctx); err != nil {
+		p.session = ""
+		return fmt.Errorf("verify Bitwarden unlock: %w", err)
+	}
+	return nil
+}
+
+func (p *bitwardenProvider) status(ctx context.Context, environment map[string]string) (bitwardenStatus, error) {
+	output, err := command(ctx, p.path, environment, "status")
+	if err != nil {
+		return bitwardenStatus{}, err
+	}
+	var status bitwardenStatus
+	if err := json.Unmarshal(output, &status); err != nil {
+		return bitwardenStatus{}, fmt.Errorf("decode Bitwarden status: %w", err)
+	}
+	return status, nil
 }
