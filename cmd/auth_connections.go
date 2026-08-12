@@ -410,6 +410,94 @@ func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateIn
 	return nil
 }
 
+// managedAuthInputField is the shared shape of a canonical input field. The SDK
+// models the one on `get` and the one on the `follow` event stream as two
+// identical but distinct types, so both are converted to this before rendering.
+type managedAuthInputField struct {
+	ID              string
+	Label           string
+	Type            string
+	Ref             string
+	Hint            string
+	Required        bool
+	ReplaceExisting bool
+}
+
+// managedAuthInputChoice is the choice counterpart of managedAuthInputField.
+type managedAuthInputChoice struct {
+	ID                string
+	Label             string
+	DisplayText       string
+	Type              string
+	MfaType           string
+	MaskedDestination string
+}
+
+// formatManagedAuthField renders one canonical input field as
+// `id (Label) [type, ref=…, required, hint="…"]`. The hint carries the API's
+// context for the field, such as the masked destination a one-time code was
+// sent to, so it is often what tells the user which value to supply.
+func formatManagedAuthField(f managedAuthInputField) string {
+	meta := make([]string, 0, 5)
+	if f.Type != "" {
+		meta = append(meta, f.Type)
+	}
+	if f.Ref != "" {
+		meta = append(meta, "ref="+f.Ref)
+	}
+	if f.Required {
+		meta = append(meta, "required")
+	}
+	if f.ReplaceExisting {
+		meta = append(meta, "replace-existing")
+	}
+	if f.Hint != "" {
+		meta = append(meta, fmt.Sprintf("hint=%q", f.Hint))
+	}
+
+	entry := f.ID
+	if f.Label != "" {
+		entry = fmt.Sprintf("%s (%s)", f.ID, f.Label)
+	}
+	if len(meta) > 0 {
+		entry = fmt.Sprintf("%s [%s]", entry, strings.Join(meta, ", "))
+	}
+	return entry
+}
+
+// formatManagedAuthChoice renders one canonical choice as
+// `id (Label) [type, sms, to=+1 ••• 1234]`. The MFA type and masked destination
+// are what distinguish otherwise identical-looking options, so both are shown
+// when the API captured them.
+func formatManagedAuthChoice(c managedAuthInputChoice) string {
+	meta := make([]string, 0, 3)
+	if c.Type != "" {
+		meta = append(meta, c.Type)
+	}
+	if c.MfaType != "" {
+		meta = append(meta, c.MfaType)
+	}
+	if c.MaskedDestination != "" {
+		meta = append(meta, "to="+c.MaskedDestination)
+	}
+
+	// display_text is the text as it appeared on the page; it stands in when the
+	// API did not derive a separate label.
+	label := c.Label
+	if label == "" {
+		label = c.DisplayText
+	}
+
+	entry := c.ID
+	if label != "" {
+		entry = fmt.Sprintf("%s (%s)", c.ID, label)
+	}
+	if len(meta) > 0 {
+		entry = fmt.Sprintf("%s [%s]", entry, strings.Join(meta, ", "))
+	}
+	return entry
+}
+
 func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) error {
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
@@ -453,41 +541,29 @@ func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) e
 	if len(auth.Fields) > 0 {
 		fields := make([]string, 0, len(auth.Fields))
 		for _, f := range auth.Fields {
-			meta := make([]string, 0, 3)
-			if f.Type != "" {
-				meta = append(meta, f.Type)
-			}
-			if f.Ref != "" {
-				meta = append(meta, "ref="+f.Ref)
-			}
-			if f.Required {
-				meta = append(meta, "required")
-			}
-			if f.ReplaceExisting {
-				meta = append(meta, "replace-existing")
-			}
-			entry := f.ID
-			if f.Label != "" {
-				entry = fmt.Sprintf("%s (%s)", f.ID, f.Label)
-			}
-			if len(meta) > 0 {
-				entry = fmt.Sprintf("%s [%s]", entry, strings.Join(meta, ", "))
-			}
-			fields = append(fields, entry)
+			fields = append(fields, formatManagedAuthField(managedAuthInputField{
+				ID:              f.ID,
+				Label:           f.Label,
+				Type:            f.Type,
+				Ref:             f.Ref,
+				Hint:            f.Hint,
+				Required:        f.Required,
+				ReplaceExisting: f.ReplaceExisting,
+			}))
 		}
 		tableData = append(tableData, []string{"Fields", strings.Join(fields, "; ")})
 	}
 	if len(auth.Choices) > 0 {
 		choices := make([]string, 0, len(auth.Choices))
 		for _, ch := range auth.Choices {
-			entry := ch.ID
-			if ch.Label != "" {
-				entry = fmt.Sprintf("%s (%s)", ch.ID, ch.Label)
-			}
-			if ch.Type != "" {
-				entry = fmt.Sprintf("%s [%s]", entry, ch.Type)
-			}
-			choices = append(choices, entry)
+			choices = append(choices, formatManagedAuthChoice(managedAuthInputChoice{
+				ID:                ch.ID,
+				Label:             ch.Label,
+				DisplayText:       ch.DisplayText,
+				Type:              ch.Type,
+				MfaType:           ch.MfaType,
+				MaskedDestination: ch.MaskedDestination,
+			}))
 		}
 		tableData = append(tableData, []string{"Choices", strings.Join(choices, "; ")})
 	}
@@ -988,22 +1064,33 @@ func (c AuthConnectionCmd) Follow(ctx context.Context, in AuthConnectionFollowIn
 				state.FlowStatus,
 				state.FlowStep)
 			if len(state.Fields) > 0 {
-				fieldIDs := make([]string, 0, len(state.Fields))
+				fields := make([]string, 0, len(state.Fields))
 				for _, f := range state.Fields {
-					id := f.ID
-					if f.ReplaceExisting {
-						id += " (replace-existing)"
-					}
-					fieldIDs = append(fieldIDs, id)
+					fields = append(fields, formatManagedAuthField(managedAuthInputField{
+						ID:              f.ID,
+						Label:           f.Label,
+						Type:            f.Type,
+						Ref:             f.Ref,
+						Hint:            f.Hint,
+						Required:        f.Required,
+						ReplaceExisting: f.ReplaceExisting,
+					}))
 				}
-				pterm.Info.Printf("  Fields: %s\n", strings.Join(fieldIDs, ", "))
+				pterm.Info.Printf("  Fields: %s\n", strings.Join(fields, ", "))
 			}
 			if len(state.Choices) > 0 {
-				choiceIDs := make([]string, 0, len(state.Choices))
+				choices := make([]string, 0, len(state.Choices))
 				for _, ch := range state.Choices {
-					choiceIDs = append(choiceIDs, ch.ID)
+					choices = append(choices, formatManagedAuthChoice(managedAuthInputChoice{
+						ID:                ch.ID,
+						Label:             ch.Label,
+						DisplayText:       ch.DisplayText,
+						Type:              ch.Type,
+						MfaType:           ch.MfaType,
+						MaskedDestination: ch.MaskedDestination,
+					}))
 				}
-				pterm.Info.Printf("  Choices: %s\n", strings.Join(choiceIDs, ", "))
+				pterm.Info.Printf("  Choices: %s\n", strings.Join(choices, ", "))
 			}
 			if len(state.DiscoveredFields) > 0 {
 				var fieldNames []string

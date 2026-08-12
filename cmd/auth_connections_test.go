@@ -132,6 +132,64 @@ func TestAuthConnectionsGet_PrintsSubmissionHints(t *testing.T) {
 	assert.Contains(t, out, "Continue with Google")
 }
 
+// TestAuthConnectionsGet_PrintsCanonicalInputMetadata covers the metadata the
+// API preserves on canonical fields and choices: the field hint naming a masked
+// code destination, and the MFA type and masked destination that distinguish
+// otherwise identical-looking choices.
+func TestAuthConnectionsGet_PrintsCanonicalInputMetadata(t *testing.T) {
+	setupStdoutCapture(t)
+
+	fake := &FakeAuthConnectionService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			return &kernel.ManagedAuth{
+				ID:         id,
+				Domain:     "auth.example.com",
+				Status:     kernel.ManagedAuthStatusNeedsAuth,
+				FlowStatus: kernel.ManagedAuthFlowStatusInProgress,
+				FlowStep:   kernel.ManagedAuthFlowStepAwaitingInput,
+				Fields: []kernel.ManagedAuthField{
+					{
+						ID:       "otp",
+						Label:    "One-time code",
+						Type:     "code",
+						Ref:      "totp_code",
+						Hint:     "Enter the code sent to +1 ••• ••• 1234",
+						Required: true,
+					},
+				},
+				Choices: []kernel.ManagedAuthChoice{
+					{
+						ID:                "mfa_sms",
+						Label:             "Text message",
+						Type:              "mfa_method",
+						MfaType:           "sms",
+						MaskedDestination: "+1 ••• ••• 1234",
+					},
+					{
+						// No label, so the captured display text stands in for it.
+						ID:          "mfa_app",
+						DisplayText: "Use your authenticator app",
+						Type:        "mfa_method",
+						MfaType:     "totp",
+					},
+				},
+			}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+
+	require.NoError(t, c.Get(context.Background(), AuthConnectionGetInput{ID: "e0x3vbw4z66kpwny3k5k46tj"}))
+
+	out := outBuf.String()
+	assert.Contains(t, out, `otp (One-time code)`)
+	assert.Contains(t, out, `code, ref=totp_code, required`)
+	assert.Contains(t, out, `hint="Enter the code sent to +1 ••• ••• 1234"`)
+	assert.Contains(t, out, `mfa_sms (Text message)`)
+	assert.Contains(t, out, `mfa_method, sms, to=+1 ••• ••• 1234`)
+	assert.Contains(t, out, `mfa_app (Use your authenticator app)`)
+	assert.Contains(t, out, `mfa_method, totp`)
+}
+
 func TestAuthConnectionsGet_JSONOutputIncludesDiscoveredFields(t *testing.T) {
 	setupStdoutCapture(t)
 	oldStdout := os.Stdout

@@ -599,6 +599,8 @@ Managed auth connections (`kernel auth connections`). The commands below are new
   - `--field-value <id=value>` - Canonical field-id=value pair from the connection's `fields` list (repeatable); preferred over the legacy `--field`
   - `--choice-id <id>` - Canonical choice ID from the connection's `choices` list
 
+`kernel auth connections get` and `follow` list those IDs alongside the metadata the API captured for them, so you can tell the options apart before submitting. Fields show their type, ref, and any hint (which names the masked destination a one-time code was sent to); choices show their type, semantic MFA method (`sms`, `totp`, `push`, …), and masked destination.
+
 ### Agent Auth
 
 Automated authentication for web services. The `run` command orchestrates the full auth flow automatically.
