@@ -409,7 +409,7 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, sit
 				if nonInteractive {
 					return pendingManagedAuth{}, fmt.Errorf("Bitwarden is locked; unlock it with `export BW_SESSION=$(bw unlock --raw)`, then retry")
 				}
-				approved, err := c.prompter.Confirm("unlock Bitwarden", "Bitwarden is locked. Unlock it locally to find matching logins?")
+				approved, err := c.prompter.ConfirmDefault("unlock Bitwarden", "Bitwarden is locked. Unlock it locally to find matching logins?", true)
 				if err != nil {
 					return pendingManagedAuth{}, err
 				}

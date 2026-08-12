@@ -120,3 +120,9 @@ func TestMultiSelectUsesConventionalKeys(t *testing.T) {
 	assert.Equal(t, keys.Space, printer.KeySelect)
 	assert.Equal(t, keys.Enter, printer.KeyConfirm)
 }
+
+func TestConfirmPrinterUsesRequestedDefault(t *testing.T) {
+	t.Parallel()
+	assert.False(t, newConfirmPrinter("Delete it?", false).DefaultValue)
+	assert.True(t, newConfirmPrinter("Unlock it?", true).DefaultValue)
+}
