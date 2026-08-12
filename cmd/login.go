@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -12,6 +13,8 @@ import (
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
+
+var errLoginCanceled = errors.New("Kernel login canceled")
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
@@ -28,7 +31,18 @@ func init() {
 
 func runLogin(cmd *cobra.Command, args []string) error {
 	force, _ := cmd.Flags().GetBool("force")
+	err := runLoginFlow(cmd, force, false)
+	if errors.Is(err, errLoginCanceled) {
+		return nil
+	}
+	return err
+}
 
+func runLoginWithForce(cmd *cobra.Command, force bool) error {
+	return runLoginFlow(cmd, force, true)
+}
+
+func runLoginFlow(cmd *cobra.Command, force, requireSavedTokens bool) error {
 	// Check if already logged in (unless force flag is used)
 	if !force {
 		if tokens, err := auth.LoadTokens(); err == nil && !tokens.IsExpired() {
@@ -64,7 +78,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		// Handle common error cases with helpful messages
 		if ctx.Err() == context.Canceled {
 			pterm.Info.Println("Authentication cancelled by user")
-			return nil
+			return errLoginCanceled
 		}
 
 		return fmt.Errorf("authentication failed: %w", err)
@@ -73,14 +87,23 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	spinner.Success("Authentication successful!")
 
 	// Save tokens securely
-	if err := auth.SaveTokens(tokens); err != nil {
-		pterm.Warning.Printf("Authentication succeeded but failed to save credentials: %v\n", err)
-		pterm.Warning.Println("You may need to re-authenticate on your next CLI usage")
-		return nil
+	if err := saveLoginTokens(tokens, requireSavedTokens, auth.SaveTokens); err != nil {
+		return err
 	}
 
 	pterm.Success.Println("✓ Successfully authenticated with Kernel!")
 	pterm.Info.Println("You can now use other Kernel CLI commands without setting KERNEL_API_KEY")
 
+	return nil
+}
+
+func saveLoginTokens(tokens *auth.TokenStorage, required bool, save func(*auth.TokenStorage) error) error {
+	if err := save(tokens); err != nil {
+		pterm.Warning.Printf("Authentication succeeded but failed to save credentials: %v\n", err)
+		if required {
+			return fmt.Errorf("save authenticated session: %w", err)
+		}
+		pterm.Warning.Println("You may need to re-authenticate on your next CLI usage")
+	}
 	return nil
 }

@@ -42,6 +42,7 @@ type ProfilesImportLocalInput struct {
 	PasswordManager    string
 	InstallAgentSkills bool
 	DashboardLaunch    bool
+	Project            *kernel.Project
 }
 
 type ProfilesImportLocalCmd struct {
@@ -69,8 +70,12 @@ type sourcedPasswordManagerCandidate struct {
 var errRequestedProjectUnavailable = errors.New("requested Kernel project is not active or available")
 
 func dashboardProjectAuthRecovery(err error) bool {
+	return errors.Is(err, errRequestedProjectUnavailable) || dashboardProjectUnauthorized(err)
+}
+
+func dashboardProjectUnauthorized(err error) bool {
 	var apiError *kernel.Error
-	return errors.Is(err, errRequestedProjectUnavailable) || (errors.As(err, &apiError) && apiError.StatusCode == http.StatusUnauthorized)
+	return errors.As(err, &apiError) && apiError.StatusCode == http.StatusUnauthorized
 }
 
 func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalInput) error {
@@ -911,12 +916,18 @@ func runProfilesImportLocal(cmd *cobra.Command, _ []string) error {
 
 func runProfilesImportLocalWithInput(cmd *cobra.Command, input ProfilesImportLocalInput) error {
 	client := getKernelClient(cmd)
-	project, err := chooseImportProject(cmd.Context(), &client.Projects, interactive.NewPrompter(), input.ProjectID, input.SkipConfirm || input.Output == "json")
-	if err != nil {
-		if input.DashboardLaunch && dashboardProjectAuthRecovery(err) {
-			return fmt.Errorf("validate dashboard project: %w; if this is the wrong account, run `kernel login --force` (and unset KERNEL_API_KEY if set), then open the import again", err)
+	var project kernel.Project
+	if input.Project != nil {
+		project = *input.Project
+	} else {
+		var err error
+		project, err = chooseImportProject(cmd.Context(), &client.Projects, interactive.NewPrompter(), input.ProjectID, input.SkipConfirm || input.Output == "json")
+		if err != nil {
+			if input.DashboardLaunch && dashboardProjectAuthRecovery(err) {
+				return fmt.Errorf("validate dashboard project: %w; if this is the wrong account, run `kernel login --force` (and unset KERNEL_API_KEY if set), then open the import again", err)
+			}
+			return err
 		}
-		return err
 	}
 	if input.DashboardLaunch && input.Output != "json" {
 		pterm.Success.Printf("Connected to Kernel project %s\n", compactField(project.Name, 48))

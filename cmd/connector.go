@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,7 +11,9 @@ import (
 
 	"github.com/kernel/cli/internal/connector"
 	"github.com/kernel/cli/pkg/auth"
+	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
+	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -50,24 +53,114 @@ func runConnectorOpen(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	pterm.Info.Println("Browser import requested from a kernel:// link")
-	return runProfilesImportLocalWithInput(cmd, ProfilesImportLocalInput{
+	input := ProfilesImportLocalInput{
 		Count:           5,
 		Days:            30,
 		ProjectID:       link.ProjectID,
 		Version:         metadata.Version,
 		WaitTimeout:     30 * time.Minute,
 		DashboardLaunch: true,
-	})
+	}
+	project, err := validateConnectorProject(cmd, input.ProjectID)
+	if err != nil {
+		recovered, recoveryErr := recoverConnectorAuthentication(
+			cmd,
+			err,
+			interactive.NewPrompter().ConfirmDefault,
+			runLoginWithForce,
+		)
+		if recoveryErr != nil {
+			return recoveryErr
+		}
+		if !recovered {
+			return err
+		}
+		if err := authenticateConnector(cmd); err != nil {
+			return err
+		}
+		project, err = validateConnectorProject(cmd, input.ProjectID)
+		if err != nil {
+			return err
+		}
+	}
+	input.Project = &project
+	return runProfilesImportLocalWithInput(cmd, input)
+}
+
+type connectorConfirm func(action, prompt string, defaultValue bool) (bool, error)
+type connectorLogin func(*cobra.Command, bool) error
+type connectorClientFactory func(...option.RequestOption) (*kernel.Client, error)
+
+func recoverConnectorAuthentication(cmd *cobra.Command, cause error, confirm connectorConfirm, login connectorLogin) (bool, error) {
+	if !dashboardProjectAuthRecovery(cause) {
+		return false, nil
+	}
+	hasAPIKey := os.Getenv("KERNEL_API_KEY") != ""
+	prompt := "The current Kernel account cannot access this project. Switch accounts with browser sign-in?"
+	if hasAPIKey {
+		prompt = "Kernel API key is invalid, disabled, or cannot access this project. Continue with browser sign-in instead?"
+	}
+	proceed, err := confirm(
+		"continue with browser sign-in",
+		prompt,
+		true,
+	)
+	if err != nil {
+		return false, err
+	}
+	if !proceed {
+		if !hasAPIKey {
+			return false, fmt.Errorf("account switch declined; run `kernel login --force` when you are ready to switch accounts, then open the import again")
+		}
+		return false, fmt.Errorf("browser sign-in declined; unset KERNEL_API_KEY or replace it with a valid key, then open the import again")
+	}
+	if hasAPIKey {
+		if err := os.Unsetenv("KERNEL_API_KEY"); err != nil {
+			return false, fmt.Errorf("ignore invalid KERNEL_API_KEY for this import: %w", err)
+		}
+	}
+	pterm.Info.Println("Using browser sign-in for this import; your shell environment was not changed")
+	if err := login(cmd, true); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func validateConnectorProject(cmd *cobra.Command, projectID string) (kernel.Project, error) {
+	client := getKernelClient(cmd)
+	return chooseImportProject(cmd.Context(), &client.Projects, interactive.NewPrompter(), projectID, true)
 }
 
 func authenticateConnector(cmd *cobra.Command) error {
-	client, err := auth.GetAuthenticatedClient(option.WithHeader("X-Kernel-Cli-Version", metadata.Version))
+	return authenticateConnectorWith(
+		cmd,
+		interactive.NewPrompter().ConfirmDefault,
+		runLoginWithForce,
+		auth.GetAuthenticatedClient,
+	)
+}
+
+func authenticateConnectorWith(cmd *cobra.Command, confirm connectorConfirm, login connectorLogin, getClient connectorClientFactory) error {
+	client, err := getClient(option.WithHeader("X-Kernel-Cli-Version", metadata.Version))
 	if err != nil {
-		pterm.Info.Println("Sign in to continue this browser import")
-		if err := runLogin(cmd, nil); err != nil {
+		if !errors.Is(err, auth.ErrAuthenticationRequired) {
 			return err
 		}
-		client, err = auth.GetAuthenticatedClient(option.WithHeader("X-Kernel-Cli-Version", metadata.Version))
+		proceed, promptErr := confirm(
+			"sign in to continue this browser import",
+			"Sign in to Kernel to continue this browser import?",
+			true,
+		)
+		if promptErr != nil {
+			return promptErr
+		}
+		if !proceed {
+			return fmt.Errorf("Kernel sign-in is required to continue this browser import")
+		}
+		if err := login(cmd, false); err != nil {
+			return err
+		}
+		client, err = getClient(option.WithHeader("X-Kernel-Cli-Version", metadata.Version))
 		if err != nil {
 			return fmt.Errorf("authentication required: %w", err)
 		}

@@ -79,6 +79,16 @@ type AuthResult struct {
 	ProjectID   string `json:"project_id,omitempty"`
 }
 
+// TokenRefreshError reports an OAuth refresh response rejected by the auth
+// server. Transport and decoding failures remain their original error types.
+type TokenRefreshError struct {
+	StatusCode int
+}
+
+func (e *TokenRefreshError) Error() string {
+	return fmt.Sprintf("refresh request failed with status %d", e.StatusCode)
+}
+
 // CurrentAuthBaseURL returns the OAuth server base URL for new login flows.
 func CurrentAuthBaseURL() string {
 	return authBaseURLFromEnv()
@@ -392,8 +402,8 @@ func RefreshTokens(ctx context.Context, tokens *TokenStorage) (*TokenStorage, er
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("refresh request failed with status %d: %s", resp.StatusCode, string(body))
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil, &TokenRefreshError{StatusCode: resp.StatusCode}
 	}
 
 	// Parse the response
