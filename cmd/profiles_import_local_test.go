@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
@@ -14,6 +16,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestDashboardProjectAuthRecovery(t *testing.T) {
+	t.Parallel()
+	assert.True(t, dashboardProjectAuthRecovery(errRequestedProjectUnavailable))
+	assert.True(t, dashboardProjectAuthRecovery(&kernel.Error{StatusCode: http.StatusUnauthorized}))
+	assert.False(t, dashboardProjectAuthRecovery(&kernel.Error{StatusCode: http.StatusInternalServerError}))
+	assert.False(t, dashboardProjectAuthRecovery(errors.New("network unavailable")))
+}
 
 type fakeProjectListService struct{ projects []kernel.Project }
 
@@ -33,7 +43,22 @@ func TestChooseImportProjectUsesOnlyActiveProject(t *testing.T) {
 		{ID: "active", Name: "Default", Status: kernel.ProjectStatusActive},
 	}}, interactive.NewPrompterWithTerminal(false), "", false)
 	require.NoError(t, err)
-	assert.Equal(t, "active", project)
+	assert.Equal(t, "active", project.ID)
+}
+
+func TestChooseImportProjectValidatesRequestedProject(t *testing.T) {
+	projects := fakeProjectListService{projects: []kernel.Project{
+		{ID: "active", Name: "Available", Status: kernel.ProjectStatusActive},
+		{ID: "archived", Name: "Archived", Status: kernel.ProjectStatusArchived},
+	}}
+	project, err := chooseImportProject(t.Context(), projects, interactive.NewPrompterWithTerminal(false), "active", true)
+	require.NoError(t, err)
+	assert.Equal(t, "Available", project.Name)
+
+	_, err = chooseImportProject(t.Context(), projects, interactive.NewPrompterWithTerminal(false), "archived", true)
+	require.ErrorIs(t, err, errRequestedProjectUnavailable)
+	_, err = chooseImportProject(t.Context(), projects, interactive.NewPrompterWithTerminal(false), "missing", true)
+	require.ErrorIs(t, err, errRequestedProjectUnavailable)
 }
 
 func TestChooseImportProjectRequiresFlagForMultipleNonInteractiveProjects(t *testing.T) {

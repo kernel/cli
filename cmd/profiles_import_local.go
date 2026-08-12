@@ -3,7 +3,9 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"regexp"
 	"runtime"
@@ -39,6 +41,7 @@ type ProfilesImportLocalInput struct {
 	WaitTimeout        time.Duration
 	PasswordManager    string
 	InstallAgentSkills bool
+	DashboardLaunch    bool
 }
 
 type ProfilesImportLocalCmd struct {
@@ -61,6 +64,13 @@ type pendingProviderLogins struct {
 type sourcedPasswordManagerCandidate struct {
 	provider  passwordmanager.Provider
 	candidate passwordmanager.Candidate
+}
+
+var errRequestedProjectUnavailable = errors.New("requested Kernel project is not active or available")
+
+func dashboardProjectAuthRecovery(err error) bool {
+	var apiError *kernel.Error
+	return errors.Is(err, errRequestedProjectUnavailable) || (errors.As(err, &apiError) && apiError.StatusCode == http.StatusUnauthorized)
 }
 
 func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalInput) error {
@@ -794,16 +804,13 @@ func projectOptionLabel(index int, project kernel.Project) string {
 	return fmt.Sprintf("%2d  %s", index+1, compactField(project.Name, 48))
 }
 
-func chooseImportProject(ctx context.Context, projects ProjectListService, prompter interactive.Prompter, requested string, nonInteractive bool) (string, error) {
-	if requested != "" {
-		return requested, nil
-	}
+func chooseImportProject(ctx context.Context, projects ProjectListService, prompter interactive.Prompter, requested string, nonInteractive bool) (kernel.Project, error) {
 	const pageSize int64 = 100
 	active := make([]kernel.Project, 0)
 	for offset := int64(0); ; {
 		page, err := projects.List(ctx, kernel.ProjectListParams{Limit: param.NewOpt(pageSize), Offset: param.NewOpt(offset)})
 		if err != nil {
-			return "", fmt.Errorf("list Kernel projects: %w", err)
+			return kernel.Project{}, fmt.Errorf("list Kernel projects: %w", err)
 		}
 		if page == nil || len(page.Items) == 0 {
 			break
@@ -818,25 +825,33 @@ func chooseImportProject(ctx context.Context, projects ProjectListService, promp
 		}
 		offset += int64(len(page.Items))
 	}
+	if requested != "" {
+		for _, project := range active {
+			if project.ID == requested {
+				return project, nil
+			}
+		}
+		return kernel.Project{}, fmt.Errorf("%w: %q", errRequestedProjectUnavailable, requested)
+	}
 	if len(active) == 0 {
-		return "", fmt.Errorf("no active Kernel projects were found")
+		return kernel.Project{}, fmt.Errorf("no active Kernel projects were found")
 	}
 	if len(active) == 1 {
-		return active[0].ID, nil
+		return active[0], nil
 	}
 	if nonInteractive {
-		return "", fmt.Errorf("multiple Kernel projects are available; pass --project")
+		return kernel.Project{}, fmt.Errorf("multiple Kernel projects are available; pass --project")
 	}
 	options := make([]string, 0, len(active))
-	byOption := make(map[string]string, len(active))
+	byOption := make(map[string]kernel.Project, len(active))
 	for index, project := range active {
 		label := projectOptionLabel(index, project)
 		options = append(options, label)
-		byOption[label] = project.ID
+		byOption[label] = project
 	}
 	chosen, err := prompter.Select("Kernel project", "pass --project", "Choose the Kernel project for this import", options)
 	if err != nil {
-		return "", err
+		return kernel.Project{}, err
 	}
 	return byOption[chosen], nil
 }
@@ -887,14 +902,27 @@ func runProfilesImportLocal(cmd *cobra.Command, _ []string) error {
 	installAgentSkills, _ := cmd.Flags().GetBool("install-agent-skills")
 	output, _ := cmd.Flags().GetString("output")
 	project, _ := cmd.Flags().GetString("project")
-	project = resolveProjectSelection(project)
+	return runProfilesImportLocalWithInput(cmd, ProfilesImportLocalInput{
+		BrowserProfile: browserProfile, ProfileName: profileName, Sites: sites, Count: count, Days: days,
+		SkipConfirm: skipConfirm, Output: output, ProjectID: resolveProjectSelection(project), Version: metadata.Version,
+		WaitTimeout: waitTimeout, PasswordManager: passwordManager, InstallAgentSkills: installAgentSkills,
+	})
+}
+
+func runProfilesImportLocalWithInput(cmd *cobra.Command, input ProfilesImportLocalInput) error {
 	client := getKernelClient(cmd)
-	project, err := chooseImportProject(cmd.Context(), &client.Projects, interactive.NewPrompter(), project, skipConfirm || output == "json")
+	project, err := chooseImportProject(cmd.Context(), &client.Projects, interactive.NewPrompter(), input.ProjectID, input.SkipConfirm || input.Output == "json")
 	if err != nil {
+		if input.DashboardLaunch && dashboardProjectAuthRecovery(err) {
+			return fmt.Errorf("validate dashboard project: %w; if this is the wrong account, run `kernel login --force` (and unset KERNEL_API_KEY if set), then open the import again", err)
+		}
 		return err
 	}
+	if input.DashboardLaunch && input.Output != "json" {
+		pterm.Success.Printf("Connected to Kernel project %s\n", compactField(project.Name, 48))
+	}
 	projectClient, err := auth.GetAuthenticatedClient(
-		option.WithProjectID(project),
+		option.WithProjectID(project.ID),
 		option.WithHeader("X-Kernel-Cli-Version", metadata.Version),
 	)
 	if err != nil {
@@ -903,5 +931,9 @@ func runProfilesImportLocal(cmd *cobra.Command, _ []string) error {
 	credentials := projectClient.Credentials
 	connections := projectClient.Auth.Connections
 	c := ProfilesImportLocalCmd{prompter: interactive.NewPrompter(), providers: passwordmanager.Detect, provisioner: kernelManagedAuthProvisioner{credentials: &credentials, connections: &connections}}
-	return c.Run(cmd.Context(), ProfilesImportLocalInput{BrowserProfile: browserProfile, ProfileName: profileName, Sites: sites, Count: count, Days: days, SkipConfirm: skipConfirm, Output: output, ProjectID: project, Version: metadata.Version, WaitTimeout: waitTimeout, PasswordManager: passwordManager, InstallAgentSkills: installAgentSkills})
+	input.ProjectID = project.ID
+	if input.Version == "" {
+		input.Version = metadata.Version
+	}
+	return c.Run(cmd.Context(), input)
 }

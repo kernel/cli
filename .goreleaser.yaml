@@ -35,6 +35,12 @@ brews:
     directory: Formula
     description: "Kernel CLI"
     homepage: "https://github.com/kernel/cli"
+    post_install: |
+      if OS.mac?
+        unless quiet_system bin/"kernel", "connector", "install"
+          opoo "Kernel CLI installed, but kernel:// registration failed. Run `kernel connector install` to retry."
+        end
+      end
     test: |
       system "#{bin}/kernel", "--version"
 
