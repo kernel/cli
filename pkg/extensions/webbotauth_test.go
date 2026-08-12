@@ -2,6 +2,8 @@ package extensions
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -10,20 +12,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	// GitHub builds archives on demand and is sometimes slow to start responding,
+	// so allow a generous budget per attempt and retry before giving up
+	downloadAttemptTimeout = 60 * time.Second
+	downloadAttempts       = 3
+)
+
+// skipIfNetworkUnavailable skips the test when err comes from transient network trouble
+// rather than a problem with web-bot-auth itself. These tests reach github.com, which is
+// not always reachable from CI.
+func skipIfNetworkUnavailable(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		return
+	}
+	var netErr net.Error
+	if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &netErr) {
+		t.Skipf("Skipping: github.com is unreachable: %v", err)
+	}
+}
+
 // TestWebBotAuthDownloadable verifies that the web-bot-auth package can be downloaded from GitHub
 func TestWebBotAuthDownloadable(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	client := &http.Client{
-		Timeout: 30 * time.Second,
+	if testing.Short() {
+		t.Skip("Skipping download test in short mode")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, webBotAuthDownloadURL, nil)
-	require.NoError(t, err, "Failed to create request")
-
-	resp, err := client.Do(req)
-	require.NoError(t, err, "Failed to download web-bot-auth")
+	resp := getWebBotAuthArchive(t)
 	defer resp.Body.Close()
 
 	require.Equal(t, http.StatusOK, resp.StatusCode, "Expected status 200")
@@ -45,6 +61,36 @@ func TestWebBotAuthDownloadable(t *testing.T) {
 	t.Logf("Content-Length: %d bytes", contentLength)
 }
 
+// getWebBotAuthArchive requests the archive, retrying while github.com fails to respond
+func getWebBotAuthArchive(t *testing.T) *http.Response {
+	t.Helper()
+
+	client := &http.Client{Timeout: downloadAttemptTimeout}
+
+	var lastErr error
+	for attempt := 1; attempt <= downloadAttempts; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), downloadAttemptTimeout)
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, webBotAuthDownloadURL, nil)
+		require.NoError(t, err, "Failed to create request")
+
+		resp, err := client.Do(req)
+		if err == nil {
+			// The context has to stay alive while the caller reads the response
+			t.Cleanup(cancel)
+			return resp
+		}
+
+		cancel()
+		lastErr = err
+		t.Logf("Attempt %d of %d failed to download web-bot-auth: %v", attempt, downloadAttempts, err)
+	}
+
+	skipIfNetworkUnavailable(t, lastErr)
+	require.NoError(t, lastErr, "Failed to download web-bot-auth")
+	return nil
+}
+
 // TestDownloadAndExtractWebBotAuth tests the full download and extraction process
 func TestDownloadAndExtractWebBotAuth(t *testing.T) {
 	if testing.Short() {
@@ -57,6 +103,7 @@ func TestDownloadAndExtractWebBotAuth(t *testing.T) {
 	browserExtDir, cleanup, err := downloadAndExtractWebBotAuth(ctx)
 	defer cleanup()
 
+	skipIfNetworkUnavailable(t, err)
 	require.NoError(t, err, "Failed to download and extract web-bot-auth")
 	require.NotEmpty(t, browserExtDir, "Expected non-empty browser extension directory path")
 
