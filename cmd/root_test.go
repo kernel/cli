@@ -34,6 +34,16 @@ func TestIsAuthExempt(t *testing.T) {
 			expected: true,
 		},
 		{
+			name:     "connector install is exempt",
+			cmd:      connectorInstallCmd,
+			expected: true,
+		},
+		{
+			name:     "connector open handles login on demand",
+			cmd:      connectorOpenCmd,
+			expected: true,
+		},
+		{
 			name:     "browser-pools create subcommand requires auth",
 			cmd:      browserPoolsCreateCmd,
 			expected: false,
