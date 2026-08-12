@@ -162,6 +162,14 @@ func parseViewport(viewport string) (width, height, refreshRate int64, err error
 	return w, h, refreshRate, nil
 }
 
+func setPrivateHosts(network *kernel.BrowserNetworkConfigParam, privateHosts []string, disabled bool) {
+	if disabled {
+		network.SetExtraFields(map[string]any{"private_hosts": []string{}})
+		return
+	}
+	network.PrivateHosts = privateHosts
+}
+
 // parseStringMapFlag parses repeated KEY=value flag values into a map. It returns a nil
 // map when no values were given, so callers can distinguish "flag absent" from "flag set
 // to an empty map".
@@ -292,6 +300,8 @@ type BrowsersCreateInput struct {
 	Telemetry          string
 	ChromePolicy       string
 	ChromePolicyFile   string
+	PrivateHosts       []string
+	PrivateHostsOff    bool
 	Name               string
 	Tags               map[string]string
 	Output             string
@@ -463,6 +473,9 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	if err := validateStartURLFlag(in.StartURL); err != nil {
 		return err
 	}
+	if len(in.PrivateHosts) > 0 && in.PrivateHostsOff {
+		return fmt.Errorf("cannot specify both --private-host and --disable-private-hosts")
+	}
 
 	params := kernel.BrowserNewParams{}
 	if in.TimeoutSeconds > 0 {
@@ -554,6 +567,9 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 	if len(chromePolicy) > 0 {
 		params.ChromePolicy = chromePolicy
+	}
+	if len(in.PrivateHosts) > 0 || in.PrivateHostsOff {
+		setPrivateHosts(&params.Network, in.PrivateHosts, in.PrivateHostsOff)
 	}
 
 	if in.Name != "" {
@@ -2788,7 +2804,10 @@ func init() {
 	browsersCreateCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts")
 	browsersCreateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
 	browsersCreateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
+	browsersCreateCmd.Flags().StringSlice("private-host", nil, "Private hostname, IP, or CIDR to route through the session network (repeatable or comma-separated; replaces defaults)")
+	browsersCreateCmd.Flags().Bool("disable-private-hosts", false, "Disable direct routing for the default private IP ranges")
 	browsersCreateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
+	browsersCreateCmd.MarkFlagsMutuallyExclusive("private-host", "disable-private-hosts")
 
 	// curl
 	curlCmd := &cobra.Command{
@@ -2908,6 +2927,8 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	tags, _ := tagsFromFlag(cmd, "tag")
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
 	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
+	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
+	disablePrivateHosts, _ := cmd.Flags().GetBool("disable-private-hosts")
 	output, _ := cmd.Flags().GetString("output")
 	skipConfirm, _ := cmd.Flags().GetBool("yes")
 
@@ -3026,6 +3047,8 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		Telemetry:          telemetry,
 		ChromePolicy:       chromePolicy,
 		ChromePolicyFile:   chromePolicyFile,
+		PrivateHosts:       privateHosts,
+		PrivateHostsOff:    disablePrivateHosts,
 		Name:               name,
 		Tags:               tags,
 		Output:             output,

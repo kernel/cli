@@ -486,6 +486,62 @@ func TestBrowsersCreate_WithNameAndTags(t *testing.T) {
 	assert.Contains(t, out, "env=staging, team=backend")
 }
 
+func TestBrowsersCreate_WithPrivateHosts(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-network"}, nil
+		},
+	}
+
+	err := (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
+		PrivateHosts: []string{"*.example.ts.net", "100.64.0.0/10"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"*.example.ts.net", "100.64.0.0/10"}, captured.Network.PrivateHosts)
+
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"private_hosts":["*.example.ts.net","100.64.0.0/10"]`)
+}
+
+func TestBrowsersCreate_PrivateHostsOffSendsExplicitEmptyList(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-network"}, nil
+		},
+	}
+
+	err := (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{PrivateHostsOff: true})
+	require.NoError(t, err)
+
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"network":{"private_hosts":[]}`)
+}
+
+func TestBrowsersCreate_RejectsConflictingPrivateHostModes(t *testing.T) {
+	fake := &FakeBrowsersService{
+		NewFunc: func(context.Context, kernel.BrowserNewParams, ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			t.Fatal("New should not be called for conflicting private-host flags")
+			return nil, nil
+		},
+	}
+
+	err := (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
+		PrivateHosts:    []string{"internal.example"},
+		PrivateHostsOff: true,
+	})
+	require.EqualError(t, err, "cannot specify both --private-host and --disable-private-hosts")
+}
+
 func TestBrowsersCreate_WithChromePolicy(t *testing.T) {
 	setupStdoutCapture(t)
 
