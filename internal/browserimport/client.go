@@ -20,6 +20,18 @@ type Client struct {
 	http      *http.Client
 }
 
+type responseError struct {
+	status  int
+	message string
+}
+
+func (e *responseError) Error() string {
+	if e.message != "" {
+		return fmt.Sprintf("Kernel API returned %d: %s", e.status, e.message)
+	}
+	return fmt.Sprintf("Kernel API returned %d", e.status)
+}
+
 func NewClient(baseURL, token, projectID string) (*Client, error) {
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
@@ -34,7 +46,10 @@ func NewClient(baseURL, token, projectID string) (*Client, error) {
 		return nil, fmt.Errorf("Kernel API URL must use HTTPS or local development")
 	}
 	parsed.Path = ""
-	return &Client{baseURL: strings.TrimRight(parsed.String(), "/"), token: token, projectID: projectID, http: &http.Client{Timeout: 15 * time.Minute}}, nil
+	return &Client{baseURL: strings.TrimRight(parsed.String(), "/"), token: token, projectID: projectID, http: &http.Client{
+		Timeout:       15 * time.Minute,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
+	}}, nil
 }
 
 func (c *Client) Create(ctx context.Context) (CreateResponse, error) {
@@ -105,19 +120,25 @@ func (c *Client) Wait(ctx context.Context, id string, interval time.Duration) (S
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	consecutiveErrors := 0
 	for {
 		status, err := c.Status(ctx, id)
 		if err != nil {
-			return Status{}, err
-		}
-		switch status.Phase {
-		case "completed":
-			return status, nil
-		case "failed":
-			if status.Applied != nil && status.Applied.Failure != nil {
-				return status, fmt.Errorf("browser import failed during %s: %s", status.Applied.Failure.Stage, status.Applied.Failure.Message)
+			consecutiveErrors++
+			if !transientStatusError(err) || consecutiveErrors >= 3 {
+				return Status{}, err
 			}
-			return status, fmt.Errorf("browser import failed")
+		} else {
+			consecutiveErrors = 0
+			switch status.Phase {
+			case "completed":
+				return status, nil
+			case "failed":
+				if status.Applied != nil && status.Applied.Failure != nil {
+					return status, fmt.Errorf("browser import failed during %s: %s", status.Applied.Failure.Stage, status.Applied.Failure.Message)
+				}
+				return status, fmt.Errorf("browser import failed")
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -125,6 +146,14 @@ func (c *Client) Wait(ctx context.Context, id string, interval time.Duration) (S
 		case <-ticker.C:
 		}
 	}
+}
+
+func transientStatusError(err error) bool {
+	var responseErr *responseError
+	if !errors.As(err, &responseErr) {
+		return true
+	}
+	return responseErr.status == http.StatusRequestTimeout || responseErr.status == http.StatusTooManyRequests || responseErr.status >= 500
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path, token string, body any, output any) error {
@@ -169,9 +198,9 @@ func decodeResponse(response *http.Response, output any) error {
 			Message string `json:"message"`
 		}
 		if json.Unmarshal(data, &apiError) == nil && apiError.Message != "" {
-			return fmt.Errorf("Kernel API returned %d: %s", response.StatusCode, apiError.Message)
+			return &responseError{status: response.StatusCode, message: apiError.Message}
 		}
-		return fmt.Errorf("Kernel API returned %d", response.StatusCode)
+		return &responseError{status: response.StatusCode}
 	}
 	if output == nil || len(bytes.TrimSpace(data)) == 0 {
 		return nil
