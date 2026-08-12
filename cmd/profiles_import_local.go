@@ -11,7 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kernel/cli/internal/agentskills"
 	localbrowser "github.com/kernel/cli/internal/browserimport"
+	"github.com/kernel/cli/internal/passwordmanager"
 	"github.com/kernel/cli/pkg/auth"
 	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
@@ -20,22 +22,31 @@ import (
 )
 
 type ProfilesImportLocalInput struct {
-	BrowserProfile string
-	ProfileName    string
-	Sites          []string
-	Count          int
-	Days           int
-	SkipConfirm    bool
-	Output         string
-	ProjectID      string
-	Version        string
-	WaitTimeout    time.Duration
+	BrowserProfile     string
+	ProfileName        string
+	Sites              []string
+	Count              int
+	Days               int
+	SkipConfirm        bool
+	Output             string
+	ProjectID          string
+	Version            string
+	WaitTimeout        time.Duration
+	PasswordManager    string
+	InstallAgentSkills bool
 }
 
 type ProfilesImportLocalCmd struct {
-	prompter interactive.Prompter
-	homeDir  func() (string, error)
-	now      func() time.Time
+	prompter    interactive.Prompter
+	homeDir     func() (string, error)
+	now         func() time.Time
+	providers   func() []passwordmanager.Provider
+	provisioner managedAuthProvisioner
+}
+
+type pendingManagedAuth struct {
+	provider   passwordmanager.Provider
+	candidates []passwordmanager.Candidate
 }
 
 func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalInput) error {
@@ -71,6 +82,7 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		return err
 	}
 	humanOutput := in.Output != "json"
+	nonInteractive := in.SkipConfirm || !humanOutput
 	if humanOutput {
 		pterm.Info.Println("Looking for local Chrome profiles...")
 	}
@@ -110,12 +122,18 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 			return fmt.Errorf("no websites were visited in this profile during the last %d days", in.Days)
 		}
 	}
-	selected, err := c.chooseSites(recent, in.Sites, in.Count, in.SkipConfirm)
+	selected, err := c.chooseSites(recent, in.Sites, in.Count, nonInteractive)
 	if err != nil {
 		return err
 	}
 	if len(selected) == 0 {
 		return fmt.Errorf("select at least one website")
+	}
+	phaseStarted = time.Now()
+	pendingLogins, err := c.chooseManagedAuthLogins(ctx, selected, in.PasswordManager, nonInteractive, humanOutput)
+	timings["password_manager_discovery"] = time.Since(phaseStarted)
+	if err != nil {
+		return err
 	}
 
 	if humanOutput {
@@ -136,7 +154,7 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		printSelectedSites(selectedSites)
 	}
 
-	if !in.SkipConfirm {
+	if !nonInteractive {
 		ok, err := c.prompter.Confirm("import browser data", fmt.Sprintf("Import %d cookies into Kernel profile %q?", len(cookies), targetName))
 		if err != nil {
 			return err
@@ -204,8 +222,42 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		return fmt.Errorf("browser import completed without a profile")
 	}
 	profileID := status.Applied.Profiles[0].ProfileID
+	connectionIDs := make([]string, 0)
+	approvedLogins := make([]passwordmanager.Record, 0)
+	if pendingLogins.provider != nil && len(pendingLogins.candidates) > 0 {
+		phaseStarted = time.Now()
+		approvedLogins, err = pendingLogins.provider.Reveal(ctx, pendingLogins.candidates)
+		timings["password_manager_reveal"] = time.Since(phaseStarted)
+		if err != nil {
+			return fmt.Errorf("profile %s is ready, but approved password-manager items could not be read: %w", targetName, err)
+		}
+	}
+	if len(approvedLogins) > 0 {
+		if c.provisioner == nil {
+			return fmt.Errorf("managed auth importer is unavailable")
+		}
+		if humanOutput {
+			pterm.Info.Printf("Creating %d Managed Auth connections...\n", len(approvedLogins))
+		}
+		phaseStarted = time.Now()
+		connectionIDs, err = c.provisioner.Provision(ctx, targetName, approvedLogins)
+		timings["managed_auth"] = time.Since(phaseStarted)
+		if err != nil {
+			return fmt.Errorf("profile %s is ready, but Managed Auth setup stopped: %w", targetName, err)
+		}
+	}
+	installedSkills := 0
+	skillWarning := ""
+	if len(connectionIDs) > 0 {
+		phaseStarted = time.Now()
+		installedSkills, err = c.offerAgentSkills(home, in.InstallAgentSkills, nonInteractive, humanOutput)
+		timings["agent_skills"] = time.Since(phaseStarted)
+		if err != nil {
+			skillWarning = err.Error()
+		}
+	}
 	if in.Output == "json" {
-		data, err := json.MarshalIndent(map[string]any{"profile_id": profileID, "profile_name": targetName, "sites": selected, "cookies_imported": len(cookies), "duration_ms": time.Since(startedAt).Milliseconds(), "timings_ms": durationMilliseconds(timings)}, "", "  ")
+		data, err := json.MarshalIndent(map[string]any{"profile_id": profileID, "profile_name": targetName, "sites": selected, "cookies_imported": len(cookies), "managed_auth_connections": connectionIDs, "agent_skills_installed": installedSkills, "agent_skill_warning": skillWarning, "duration_ms": time.Since(startedAt).Milliseconds(), "timings_ms": durationMilliseconds(timings)}, "", "  ")
 		if err != nil {
 			return err
 		}
@@ -214,9 +266,165 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	}
 	pterm.Success.Printf("%s is ready for agents\n", targetName)
 	pterm.Printf("Imported %d cookies from %d websites\n", len(cookies), len(selected))
+	if len(connectionIDs) > 0 {
+		pterm.Printf("Created %d Managed Auth connections with credentials and supported TOTP secrets\n", len(connectionIDs))
+	}
+	if skillWarning != "" {
+		pterm.Warning.Printf("Managed Auth is ready, but agent skill installation was skipped: %s\n", skillWarning)
+	}
 	pterm.Printf("Completed in %s (local read %s, upload and apply %s)\n", time.Since(startedAt).Round(time.Millisecond), (timings["history"] + timings["cookies"]).Round(time.Millisecond), timings["upload_and_apply"].Round(time.Millisecond))
+	if len(connectionIDs) > 0 {
+		pterm.Printf("Password manager %s, Managed Auth %s\n", (timings["password_manager_discovery"] + timings["password_manager_reveal"]).Round(time.Millisecond), timings["managed_auth"].Round(time.Millisecond))
+	}
 	pterm.Printf("Next: kernel browsers create --profile %s\n", targetName)
 	return nil
+}
+
+func (c ProfilesImportLocalCmd) offerAgentSkills(home string, installRequested, nonInteractive, humanOutput bool) (int, error) {
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		return 0, err
+	}
+	targets := agentskills.Detect(workingDirectory, home)
+	if len(targets) == 0 {
+		return 0, nil
+	}
+	if !installRequested {
+		if nonInteractive {
+			return 0, nil
+		}
+		approved, err := c.prompter.Confirm("install agent skill", "Install the Kernel Managed Auth skill for your local agents?")
+		if err != nil || !approved {
+			return 0, err
+		}
+	}
+	labels := make([]string, 0, len(targets))
+	byLabel := make(map[string]agentskills.Target, len(targets))
+	for _, target := range targets {
+		label := fmt.Sprintf("%-10s %s", target.Agent, target.Path)
+		labels = append(labels, label)
+		byLabel[label] = target
+	}
+	selectedLabels := labels
+	if !nonInteractive {
+		selectedLabels, err = c.prompter.MultiSelect("agent skills", "pass --install-agent-skills", "Choose agents that should learn Managed Auth", labels, labels)
+		if err != nil {
+			return 0, err
+		}
+	}
+	selected := make([]agentskills.Target, 0, len(selectedLabels))
+	for _, label := range selectedLabels {
+		selected = append(selected, byLabel[label])
+	}
+	if err := agentskills.Install(selected); err != nil {
+		return 0, err
+	}
+	if humanOutput {
+		pterm.Success.Printf("Installed the Kernel Managed Auth skill for %d agent environments\n", len(selected))
+	}
+	return len(selected), nil
+}
+
+func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, sites []string, requested string, nonInteractive, humanOutput bool) (pendingManagedAuth, error) {
+	if requested == "none" || (requested == "" && nonInteractive) {
+		return pendingManagedAuth{}, nil
+	}
+	if c.providers == nil {
+		c.providers = passwordmanager.Detect
+	}
+	providers := c.providers()
+	if len(providers) == 0 {
+		if requested != "" {
+			return pendingManagedAuth{}, fmt.Errorf("no supported password-manager CLI was found; install `bw` or `op`, then retry")
+		}
+		if humanOutput {
+			pterm.Info.Println("No Bitwarden or 1Password CLI found; continuing with cookies")
+		}
+		return pendingManagedAuth{}, nil
+	}
+	chosen := requested
+	if chosen == "" {
+		options := []string{"Skip passwords for now"}
+		for _, provider := range providers {
+			options = append(options, provider.Name())
+		}
+		selection, err := c.prompter.Select("password manager", "pass --password-manager", "Bring matching logins into Managed Auth?", options)
+		if err != nil {
+			return pendingManagedAuth{}, err
+		}
+		if selection == options[0] {
+			return pendingManagedAuth{}, nil
+		}
+		chosen = strings.ToLower(strings.ReplaceAll(selection, "Password", "password"))
+	}
+	var provider passwordmanager.Provider
+	for _, candidate := range providers {
+		id := strings.ToLower(strings.ReplaceAll(candidate.Name(), "Password", "password"))
+		if strings.EqualFold(chosen, id) || (chosen == "1password" && candidate.Name() == "1Password") || (chosen == "bitwarden" && candidate.Name() == "Bitwarden") {
+			provider = candidate
+			break
+		}
+	}
+	if provider == nil {
+		return pendingManagedAuth{}, fmt.Errorf("password manager %q is unavailable; use bitwarden, 1password, or none", requested)
+	}
+	if humanOutput {
+		pterm.Info.Printf("Authorize %s locally to find matching logins...\n", provider.Name())
+	}
+	candidates, err := provider.Candidates(ctx, sites)
+	if err != nil {
+		return pendingManagedAuth{}, err
+	}
+	if len(candidates) == 0 {
+		if humanOutput {
+			pterm.Info.Printf("No %s logins matched the selected websites\n", provider.Name())
+		}
+		return pendingManagedAuth{}, nil
+	}
+	labels := make([]string, 0, len(candidates))
+	byLabel := make(map[string]passwordmanager.Candidate, len(candidates))
+	defaultLabels := make([]string, 0, len(sites))
+	domainCounts := make(map[string]int, len(sites))
+	for _, candidate := range candidates {
+		domainCounts[candidate.Domain]++
+	}
+	for index, candidate := range candidates {
+		idSuffix := candidate.ID
+		if len(idSuffix) > 6 {
+			idSuffix = idSuffix[len(idSuffix)-6:]
+		}
+		label := fmt.Sprintf("%2d  %-28s %-28s %s · %s", index+1, candidate.Domain, candidate.Username, candidate.Name, idSuffix)
+		labels = append(labels, label)
+		byLabel[label] = candidate
+		if domainCounts[candidate.Domain] == 1 {
+			defaultLabels = append(defaultLabels, label)
+		}
+	}
+	if nonInteractive {
+		for domain, count := range domainCounts {
+			if count > 1 {
+				return pendingManagedAuth{}, fmt.Errorf("%s has %d matching logins; rerun interactively to choose one", domain, count)
+			}
+		}
+	}
+	chosenLabels := defaultLabels
+	if !nonInteractive {
+		chosenLabels, err = c.prompter.MultiSelect("logins", "pass --yes to approve suggested matches", "Choose logins to create in Managed Auth", labels, defaultLabels)
+		if err != nil {
+			return pendingManagedAuth{}, err
+		}
+	}
+	approved := make([]passwordmanager.Candidate, 0, len(chosenLabels))
+	selectedDomains := make(map[string]struct{}, len(chosenLabels))
+	for _, label := range chosenLabels {
+		candidate := byLabel[label]
+		if _, exists := selectedDomains[candidate.Domain]; exists {
+			return pendingManagedAuth{}, fmt.Errorf("select at most one login for %s", candidate.Domain)
+		}
+		selectedDomains[candidate.Domain] = struct{}{}
+		approved = append(approved, candidate)
+	}
+	return pendingManagedAuth{provider: provider, candidates: approved}, nil
 }
 
 func browserImportProgressError(importID, phase string, elapsed time.Duration, err error) error {
@@ -438,6 +646,8 @@ func init() {
 	profilesImportLocalCmd.Flags().Int("days", 30, "Rank websites used during the last number of days (1-90)")
 	profilesImportLocalCmd.Flags().Duration("wait-timeout", 30*time.Minute, "Maximum time to wait for the import to complete")
 	profilesImportLocalCmd.Flags().BoolP("yes", "y", false, "Use suggested websites and skip confirmation")
+	profilesImportLocalCmd.Flags().String("password-manager", "", "Import matching logins into Managed Auth: bitwarden, 1password, or none")
+	profilesImportLocalCmd.Flags().Bool("install-agent-skills", false, "Install the Kernel Managed Auth skill into detected agent directories")
 	addJSONOutputFlag(profilesImportLocalCmd)
 	addJSONOutputFlag(profilesImportStatusCmd)
 }
@@ -450,9 +660,14 @@ func runProfilesImportLocal(cmd *cobra.Command, _ []string) error {
 	days, _ := cmd.Flags().GetInt("days")
 	waitTimeout, _ := cmd.Flags().GetDuration("wait-timeout")
 	skipConfirm, _ := cmd.Flags().GetBool("yes")
+	passwordManager, _ := cmd.Flags().GetString("password-manager")
+	installAgentSkills, _ := cmd.Flags().GetBool("install-agent-skills")
 	output, _ := cmd.Flags().GetString("output")
 	project, _ := cmd.Flags().GetString("project")
 	project = resolveProjectSelection(project)
-	c := ProfilesImportLocalCmd{prompter: interactive.NewPrompter()}
-	return c.Run(cmd.Context(), ProfilesImportLocalInput{BrowserProfile: browserProfile, ProfileName: profileName, Sites: sites, Count: count, Days: days, SkipConfirm: skipConfirm, Output: output, ProjectID: project, Version: metadata.Version, WaitTimeout: waitTimeout})
+	client := getKernelClient(cmd)
+	credentials := client.Credentials
+	connections := client.Auth.Connections
+	c := ProfilesImportLocalCmd{prompter: interactive.NewPrompter(), providers: passwordmanager.Detect, provisioner: kernelManagedAuthProvisioner{credentials: &credentials, connections: &connections}}
+	return c.Run(cmd.Context(), ProfilesImportLocalInput{BrowserProfile: browserProfile, ProfileName: profileName, Sites: sites, Count: count, Days: days, SkipConfirm: skipConfirm, Output: output, ProjectID: project, Version: metadata.Version, WaitTimeout: waitTimeout, PasswordManager: passwordManager, InstallAgentSkills: installAgentSkills})
 }
