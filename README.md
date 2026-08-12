@@ -103,7 +103,7 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
 - `--version`, `-v` - Print the CLI version
 - `--no-color` - Disable color output
 - `--log-level <level>` - Set log level (trace, debug, info, warn, error, fatal, print)
-- `--project <project-id>` - Scope requests to a project ID (or set `KERNEL_PROJECT` to a project ID). Project-scoped OAuth tokens cannot switch projects.
+- `--project <id-or-name>` - Scope requests to a project by ID or exact name (or set `KERNEL_PROJECT`). Project-scoped OAuth tokens cannot switch projects.
 
 ## JSON Output
 
@@ -502,10 +502,22 @@ Export is bound at session creation, so it is available on `browsers create` and
   - `--offset <n>` - Number of projects to skip; table indexes match this offset
   - `--output json`, `-o json` - Output `{ "projects": [...], "next_offset": <n> }`; `next_offset` is omitted on the last page
   - When more projects are available, the CLI prints the exact command to fetch the next page
+- `kernel projects get <id-or-name>` - Show a project's details
 - `kernel projects update <id-or-name>` - Update a project's name or status
-  - `--name <name>` - New project name (1-255 characters)
+  - `--name <name>` - New project name (1-255 characters; cannot contain `/` or `%`)
   - `--status <status>` - New project status: `active` or `archived`
   - `--output json`, `-o json` - Output raw JSON object
+- `kernel projects delete <id-or-name>` - Soft-delete a project (must have no active resources)
+- `kernel projects limits get <id-or-name>` - Show a project's resource limit overrides
+  - `--output json`, `-o json` - Output raw JSON object
+- `kernel projects limits set <id-or-name>` - Update a project's resource limit overrides
+  - `--max-concurrent-sessions <n>` - Cap on concurrent browser sessions (0 removes the cap)
+  - `--max-concurrent-invocations <n>` - Cap on concurrent invocations (0 removes the cap)
+  - `--max-pooled-sessions <n>` - Cap on pooled browser sessions (0 removes the cap)
+  - `--output json`, `-o json` - Output raw JSON object
+
+Every `<id-or-name>` above is resolved by the API, so a project name works
+anywhere a project ID does.
 
 ### Extension Management
 

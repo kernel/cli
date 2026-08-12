@@ -337,36 +337,61 @@ func TestProjectsLimitsSet_Success(t *testing.T) {
 	assert.Contains(t, out, "7")
 }
 
-func TestResolveProjectByName_PaginatesAcrossResults(t *testing.T) {
-	var seenOffsets []int64
+// The API resolves project path parameters by ID or by name, so every project
+// subcommand must forward the identifier verbatim instead of listing projects
+// to translate a name into an ID first.
+func TestProjectsSubcommands_PassIdentifierThroughWithoutListing(t *testing.T) {
+	capturePtermOutput(t)
+
+	listCalls := 0
+	var getID, updateID, deleteID, limitsGetID, limitsSetID string
 	fakeProjects := &FakeProjectsService{
 		ListFunc: func(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error) {
-			seenOffsets = append(seenOffsets, query.Offset.Value)
-			assert.True(t, query.Limit.Valid())
-			assert.Equal(t, int64(100), query.Limit.Value)
-
-			if query.Offset.Value == 0 {
-				page := make([]kernel.Project, 100)
-				for i := range page {
-					page[i] = kernel.Project{ID: "proj_a", Name: "first-page"}
-				}
-				return &pagination.OffsetPagination[kernel.Project]{Items: page}, nil
-			}
-
-			if query.Offset.Value == 100 {
-				return &pagination.OffsetPagination[kernel.Project]{
-					Items: []kernel.Project{{ID: "proj_target", Name: "Target Name"}},
-				}, nil
-			}
-
-			return nil, errors.New("unexpected offset")
+			listCalls++
+			return nil, errors.New("project subcommands must not resolve names client-side")
+		},
+		GetFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*kernel.Project, error) {
+			getID = idOrName
+			return &kernel.Project{ID: "proj_target", Name: idOrName, Status: kernel.ProjectStatusActive}, nil
+		},
+		UpdateFunc: func(ctx context.Context, idOrName string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (*kernel.Project, error) {
+			updateID = idOrName
+			return &kernel.Project{ID: "proj_target", Name: idOrName, Status: kernel.ProjectStatusArchived}, nil
+		},
+		DeleteFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) error {
+			deleteID = idOrName
+			return nil
+		},
+	}
+	fakeLimits := &FakeProjectLimitsService{
+		GetFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*kernel.ProjectLimits, error) {
+			limitsGetID = idOrName
+			return &kernel.ProjectLimits{}, nil
+		},
+		UpdateFunc: func(ctx context.Context, idOrName string, body kernel.ProjectLimitUpdateParams, opts ...option.RequestOption) (*kernel.ProjectLimits, error) {
+			limitsSetID = idOrName
+			return &kernel.ProjectLimits{}, nil
 		},
 	}
 
-	id, err := resolveProjectByName(context.Background(), fakeProjects, "target name")
-	assert.NoError(t, err)
-	assert.Equal(t, "proj_target", id)
-	assert.Equal(t, []int64{0, 100}, seenOffsets)
+	c := ProjectsCmd{projects: fakeProjects, limits: fakeLimits}
+	const name = "my-project"
+
+	assert.NoError(t, c.Get(context.Background(), ProjectsGetInput{Identifier: name}))
+	assert.NoError(t, c.Update(context.Background(), ProjectsUpdateInput{Identifier: name, Status: "archived"}))
+	assert.NoError(t, c.Delete(context.Background(), ProjectsDeleteInput{Identifier: name}))
+	assert.NoError(t, c.LimitsGet(context.Background(), ProjectsLimitsGetInput{Identifier: name}))
+	assert.NoError(t, c.LimitsSet(context.Background(), ProjectsLimitsSetInput{
+		Identifier:            name,
+		MaxConcurrentSessions: Int64Flag{Set: true, Value: 5},
+	}))
+
+	assert.Equal(t, 0, listCalls)
+	assert.Equal(t, name, getID)
+	assert.Equal(t, name, updateID)
+	assert.Equal(t, name, deleteID)
+	assert.Equal(t, name, limitsGetID)
+	assert.Equal(t, name, limitsSetID)
 }
 
 func TestProjectsUpdate_RenamesByID(t *testing.T) {
@@ -391,26 +416,6 @@ func TestProjectsUpdate_RenamesByID(t *testing.T) {
 	assert.True(t, capturedBody.UpdateProjectRequest.Name.Valid())
 	assert.Equal(t, "renamed", capturedBody.UpdateProjectRequest.Name.Value)
 	assert.Contains(t, buf.String(), "Updated project: renamed")
-}
-
-func TestProjectsUpdate_ResolvesNameToID(t *testing.T) {
-	capturePtermOutput(t)
-	var capturedID string
-	fakeProjects := &FakeProjectsService{
-		ListFunc: func(ctx context.Context, query kernel.ProjectListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error) {
-			return &pagination.OffsetPagination[kernel.Project]{
-				Items: []kernel.Project{{ID: "proj_target", Name: "my-project"}},
-			}, nil
-		},
-		UpdateFunc: func(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (*kernel.Project, error) {
-			capturedID = id
-			return &kernel.Project{ID: id, Name: "my-project", Status: kernel.ProjectStatusArchived}, nil
-		},
-	}
-	c := ProjectsCmd{projects: fakeProjects, limits: &FakeProjectLimitsService{}}
-	err := c.Update(context.Background(), ProjectsUpdateInput{Identifier: "my-project", Status: "archived"})
-	assert.NoError(t, err)
-	assert.Equal(t, "proj_target", capturedID)
 }
 
 func TestProjectsUpdate_SetsStatus(t *testing.T) {
