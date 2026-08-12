@@ -188,6 +188,25 @@ func TestChooseSitesUsesTopFiveWithYes(t *testing.T) {
 	assert.Equal(t, []string{"one.com", "two.com", "three.com", "four.com", "five.com"}, selected)
 }
 
+func TestCookieSiteLabelShowsRankingAndCookieCount(t *testing.T) {
+	label := cookieSiteLabel(localbrowser.Site{Domain: "google.com", Visits: 2347, CookieCount: 64})
+	assert.Contains(t, label, "google.com")
+	assert.Contains(t, label, "2347 visits")
+	assert.Contains(t, label, "64 cookies")
+	assert.LessOrEqual(t, ansi.StringWidth(label), 64)
+	assert.LessOrEqual(t, ansi.StringWidth(cookieSiteLabel(localbrowser.Site{Domain: "界界界界界界界界界界界界界界界界", Visits: int(^uint(0) >> 1), CookieCount: int(^uint(0) >> 1)})), 64)
+	assert.Equal(t, "1.00e+09", boundedCount(1_000_000_000))
+}
+
+func TestSitesWithCookiesOmitsEmptySitesAndPreservesRanking(t *testing.T) {
+	sites := sitesWithCookies([]localbrowser.Site{
+		{Domain: "first.com", Visits: 10, CookieCount: 2},
+		{Domain: "empty.com", Visits: 9},
+		{Domain: "second.com", Visits: 8, CookieCount: 1},
+	})
+	assert.Equal(t, []string{"first.com", "second.com"}, []string{sites[0].Domain, sites[1].Domain})
+}
+
 func TestChooseSitesFailsFastWithoutTTYOrFlags(t *testing.T) {
 	command := ProfilesImportLocalCmd{prompter: interactive.NewPrompterWithTerminal(false)}
 	_, err := command.chooseSites([]localbrowser.Site{{Domain: "example.com"}}, nil, 5, false)

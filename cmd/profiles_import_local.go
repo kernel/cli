@@ -136,20 +136,35 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 			return fmt.Errorf("no websites were visited in this profile during the last %d days", in.Days)
 		}
 	}
-	selected, err := c.chooseSites(recent, in.Sites, in.Count, nonInteractive)
+	explicitSites := in.Sites
+	if len(explicitSites) > 0 {
+		explicitSites, err = normalizeSites(explicitSites)
+		if err != nil {
+			return err
+		}
+	}
+	if len(explicitSites) == 0 {
+		if humanOutput {
+			pterm.Info.Printf("Counting cookies for %d recent websites...\n", len(recent))
+		}
+		phaseStarted = time.Now()
+		recent, err = localbrowser.CountCookiesForSites(ctx, profile, recent)
+		timings["cookie_counts"] = time.Since(phaseStarted)
+		if err != nil {
+			return err
+		}
+		recent = sitesWithCookies(recent)
+		if len(recent) == 0 {
+			return fmt.Errorf("the recent websites have no importable cookies")
+		}
+	}
+	selected, err := c.chooseSites(recent, explicitSites, in.Count, nonInteractive)
 	if err != nil {
 		return err
 	}
 	if len(selected) == 0 {
 		return fmt.Errorf("select at least one website")
 	}
-	phaseStarted = time.Now()
-	pendingLogins, err := c.chooseManagedAuthLogins(ctx, selected, in.PasswordManager, nonInteractive, humanOutput)
-	timings["password_manager_discovery"] = time.Since(phaseStarted)
-	if err != nil {
-		return err
-	}
-
 	if humanOutput {
 		pterm.Info.Printf("Reading cookies for %d selected websites...\n", len(selected))
 	}
@@ -162,21 +177,11 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	if len(cookies) == 0 {
 		return fmt.Errorf("the selected websites have no importable cookies")
 	}
-	selectedSites := selectedSiteDetails(recent, selected)
-	selectedSites = localbrowser.CountCookiesBySite(cookies, selectedSites)
-	if humanOutput {
-		printSelectedSites(selectedSites)
-	}
-
-	if !nonInteractive {
-		ok, err := c.prompter.Confirm("import browser data", fmt.Sprintf("Import %d cookies into Kernel profile %q?", len(cookies), targetName))
-		if err != nil {
-			return err
-		}
-		if !ok {
-			pterm.Info.Println("Import cancelled")
-			return nil
-		}
+	phaseStarted = time.Now()
+	pendingLogins, err := c.chooseManagedAuthLogins(ctx, selected, in.PasswordManager, nonInteractive, humanOutput)
+	timings["password_manager_discovery"] = time.Since(phaseStarted)
+	if err != nil {
+		return err
 	}
 
 	version := in.Version
@@ -674,14 +679,14 @@ func (c ProfilesImportLocalCmd) chooseSites(recent []localbrowser.Site, requeste
 	byLabel := make(map[string]string, len(recent))
 	defaultLabels := make([]string, 0, count)
 	for index, site := range recent {
-		label := fmt.Sprintf("%-32s %d visits", site.Domain, site.Visits)
+		label := cookieSiteLabel(site)
 		labels = append(labels, label)
 		byLabel[label] = site.Domain
 		if index < count {
 			defaultLabels = append(defaultLabels, label)
 		}
 	}
-	chosen, err := c.prompter.MultiSelect("websites", "pass --sites or --yes", "Choose websites to bring to Kernel", labels, defaultLabels)
+	chosen, err := c.prompter.MultiSelect("websites", "pass --sites or --yes", "Choose websites whose cookies should be imported", labels, defaultLabels)
 	if err != nil {
 		return nil, err
 	}
@@ -690,6 +695,29 @@ func (c ProfilesImportLocalCmd) chooseSites(recent []localbrowser.Site, requeste
 		result = append(result, byLabel[label])
 	}
 	return result, nil
+}
+
+func cookieSiteLabel(site localbrowser.Site) string {
+	label := fmt.Sprintf("%-28s %s visits · %s cookies", compactField(site.Domain, 28), boundedCount(site.Visits), boundedCount(site.CookieCount))
+	return ansi.Truncate(label, 64, "…")
+}
+
+func boundedCount(value int) string {
+	text := fmt.Sprintf("%d", value)
+	if len(text) <= 9 {
+		return text
+	}
+	return fmt.Sprintf("%.2e", float64(value))
+}
+
+func sitesWithCookies(sites []localbrowser.Site) []localbrowser.Site {
+	result := make([]localbrowser.Site, 0, len(sites))
+	for _, site := range sites {
+		if site.CookieCount > 0 {
+			result = append(result, site)
+		}
+	}
+	return result
 }
 
 func normalizeSites(values []string) ([]string, error) {
@@ -716,28 +744,6 @@ func normalizeSites(values []string) ([]string, error) {
 	}
 	sort.Strings(result)
 	return result, nil
-}
-
-func selectedSiteDetails(recent []localbrowser.Site, selected []string) []localbrowser.Site {
-	byDomain := make(map[string]localbrowser.Site, len(recent))
-	for _, site := range recent {
-		byDomain[site.Domain] = site
-	}
-	result := make([]localbrowser.Site, 0, len(selected))
-	for _, domain := range selected {
-		site := byDomain[domain]
-		site.Domain = domain
-		result = append(result, site)
-	}
-	return result
-}
-
-func printSelectedSites(sites []localbrowser.Site) {
-	rows := pterm.TableData{{"Website", "Recent visits", "Cookies"}}
-	for _, site := range sites {
-		rows = append(rows, []string{site.Domain, fmt.Sprintf("%d", site.Visits), fmt.Sprintf("%d", site.CookieCount)})
-	}
-	PrintTableNoPad(rows, true)
 }
 
 func defaultImportedProfileName(profile localbrowser.Profile) string {
