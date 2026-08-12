@@ -124,6 +124,50 @@ func TestBrowserPoolsList_ForwardsLimitOffset(t *testing.T) {
 	assert.Equal(t, int64(8), captured.Offset.Value)
 }
 
+func TestBrowserPoolsList_ForwardsRegion(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolListParams
+	fake := &FakeBrowserPoolsService{
+		ListFunc: func(ctx context.Context, query kernel.BrowserPoolListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserPool], error) {
+			captured = query
+			return &pagination.OffsetPagination[kernel.BrowserPool]{Items: []kernel.BrowserPool{}}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.List(context.Background(), BrowserPoolsListInput{Region: "eu-west"})
+
+	assert.NoError(t, err)
+	assert.Equal(t, kernel.BrowserPoolListParamsRegionEuWest, captured.Region)
+
+	// An unknown region is rejected before the request is made.
+	err = c.List(context.Background(), BrowserPoolsListInput{Region: "emea"})
+	assert.Error(t, err)
+}
+
+func TestBrowserPoolsCreate_WithRegion(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolNewParams
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: "pool-1", Region: kernel.BrowserPoolRegionEuWest}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Region: "eu-west"}))
+	assert.Equal(t, kernel.BrowserPoolNewParamsRegionEuWest, captured.Region)
+
+	// Omitting the flag leaves the region unset so the API default applies.
+	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1}))
+	assert.Empty(t, string(captured.Region))
+
+	assert.Error(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Region: "emea"}))
+}
+
 // TestBuildAcquireParams covers the shared name/tags/timeout/telemetry/start-url
 // forwarding used by both `browser-pools acquire` and the `browsers create
 // --pool-id` lease path.

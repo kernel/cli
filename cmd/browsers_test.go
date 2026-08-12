@@ -486,6 +486,47 @@ func TestBrowsersCreate_WithNameAndTags(t *testing.T) {
 	assert.Contains(t, out, "env=staging, team=backend")
 }
 
+func TestBrowsersCreate_WithRegion(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-new", Region: kernel.BrowserNewResponseRegionEuWest}, nil
+		},
+	}
+
+	b := BrowsersCmd{browsers: fake}
+	require.NoError(t, b.Create(context.Background(), BrowsersCreateInput{Region: "eu-west"}))
+	assert.Equal(t, kernel.BrowserNewParamsRegionEuWest, captured.Region)
+
+	// Omitting the flag leaves the region unset so the API default applies.
+	require.NoError(t, b.Create(context.Background(), BrowsersCreateInput{}))
+	assert.Empty(t, string(captured.Region))
+
+	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{Region: "us-west"}))
+}
+
+func TestBrowsersList_ForwardsRegion(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserListParams
+	fake := &FakeBrowsersService{
+		ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
+			captured = query
+			return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: []kernel.BrowserListResponse{}}, nil
+		},
+	}
+
+	b := BrowsersCmd{browsers: fake}
+	require.NoError(t, b.List(context.Background(), BrowsersListInput{Region: "us-east"}))
+	assert.Equal(t, kernel.BrowserListParamsRegionUsEast, captured.Region)
+
+	// An unknown region is rejected before the request is made.
+	assert.Error(t, b.List(context.Background(), BrowsersListInput{Region: "us-west"}))
+}
+
 // The API takes a proxy object rather than the deprecated proxy_id field, and
 // accepts exactly one of id, name, or mode.
 func TestBrowsersCreate_ProxySelection(t *testing.T) {

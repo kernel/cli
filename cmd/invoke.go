@@ -584,7 +584,7 @@ func runInvocationBrowsers(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	table := pterm.TableData{{"Session ID", "Created At", "Headless", "Stealth", "Timeout", "CDP WS URL", "Live View URL"}}
+	table := pterm.TableData{{"Session ID", "Created At", "Region", "Headless", "Stealth", "Timeout", "CDP WS URL", "Live View URL"}}
 
 	for _, browser := range resp.Browsers {
 		created := util.FormatLocal(browser.CreatedAt)
@@ -596,6 +596,7 @@ func runInvocationBrowsers(cmd *cobra.Command, args []string) error {
 		table = append(table, []string{
 			browser.SessionID,
 			created,
+			util.OrDash(browser.Region),
 			fmt.Sprintf("%v", browser.Headless),
 			fmt.Sprintf("%v", browser.Stealth),
 			fmt.Sprintf("%d", browser.TimeoutSeconds),

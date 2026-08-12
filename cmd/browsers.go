@@ -162,6 +162,27 @@ func parseViewport(viewport string) (width, height, refreshRate int64, err error
 	return w, h, refreshRate, nil
 }
 
+// availableRegions returns the geographic regions the API accepts for browser
+// sessions and pools.
+func availableRegions() []string {
+	return []string{"us-east", "eu-west"}
+}
+
+// parseRegionFlag validates a --region value. An empty value means the flag was
+// not set, which lets the API apply its default (us-east) on create and means
+// "all regions" when filtering a list.
+func parseRegionFlag(region string) (string, error) {
+	if region == "" {
+		return "", nil
+	}
+	for _, r := range availableRegions() {
+		if region == r {
+			return region, nil
+		}
+	}
+	return "", fmt.Errorf("invalid --region value: %s (must be one of %s)", region, strings.Join(availableRegions(), ", "))
+}
+
 // parseStringMapFlag parses repeated KEY=value flag values into a map. It returns a nil
 // map when no values were given, so callers can distinguish "flag absent" from "flag set
 // to an empty map".
@@ -288,6 +309,7 @@ type BrowsersCreateInput struct {
 	ProxyID            string
 	ProxyName          string
 	ProxyMode          string
+	Region             string
 	StartURL           string
 	Extensions         []string
 	Viewport           string
@@ -357,6 +379,7 @@ type BrowsersListInput struct {
 	Limit          int
 	Offset         int
 	Query          string
+	Region         string
 	Tags           map[string]string
 }
 
@@ -390,6 +413,13 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	if in.Query != "" {
 		params.Query = kernel.Opt(in.Query)
 	}
+	region, err := parseRegionFlag(in.Region)
+	if err != nil {
+		return err
+	}
+	if region != "" {
+		params.Region = kernel.BrowserListParamsRegion(region)
+	}
 	if len(in.Tags) > 0 {
 		params.Tags = in.Tags
 	}
@@ -414,7 +444,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	}
 
 	// Prepare table data
-	headers := []string{"Browser ID", "Name", "Created At", "Profile", "Pool", "CDP WS URL", "Live View URL"}
+	headers := []string{"Browser ID", "Name", "Created At", "Region", "Profile", "Pool", "CDP WS URL", "Live View URL"}
 	showDeletedAt := in.IncludeDeleted || in.Status == "deleted" || in.Status == "all"
 	if showDeletedAt {
 		headers = append(headers, "Deleted At")
@@ -440,6 +470,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 			browser.SessionID,
 			util.OrDash(browser.Name),
 			util.FormatLocal(browser.CreatedAt),
+			util.OrDash(string(browser.Region)),
 			profile,
 			pool,
 			truncateURL(browser.CdpWsURL, 50),
@@ -516,6 +547,14 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 	if in.StartURL != "" {
 		params.StartURL = kernel.Opt(in.StartURL)
+	}
+
+	region, err := parseRegionFlag(in.Region)
+	if err != nil {
+		return err
+	}
+	if region != "" {
+		params.Region = kernel.BrowserNewParamsRegion(region)
 	}
 
 	// Map extensions (IDs or names) into params.Extensions
@@ -703,6 +742,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 
 	// Append additional detailed fields
 	tableData = append(tableData, []string{"Created At", util.FormatLocal(browser.CreatedAt)})
+	tableData = append(tableData, []string{"Region", util.OrDash(string(browser.Region))})
 	tableData = append(tableData, []string{"Timeout (seconds)", fmt.Sprintf("%d", browser.TimeoutSeconds)})
 	tableData = append(tableData, []string{"Headless", fmt.Sprintf("%t", browser.Headless)})
 	tableData = append(tableData, []string{"Stealth", fmt.Sprintf("%t", browser.Stealth)})
@@ -2538,6 +2578,7 @@ func init() {
 	browsersListCmd.Flags().Int("limit", 0, "Maximum number of results to return (default 20, max 100)")
 	browsersListCmd.Flags().Int("offset", 0, "Number of results to skip (for pagination)")
 	browsersListCmd.Flags().String("query", "", "Search browsers by name, session ID, profile ID, proxy ID, or pool name")
+	browsersListCmd.Flags().String("region", "", "Filter by geographic region: 'us-east' or 'eu-west' (omit to list sessions in all regions)")
 	browsersListCmd.Flags().StringArray("tag", nil, "Filter by tag KEY=VALUE (repeatable; a session must match every pair)")
 
 	// get flags
@@ -2831,6 +2872,7 @@ func init() {
 	browsersCreateCmd.Flags().String("proxy-id", "", "Proxy ID to use for the browser session (mutually exclusive with --proxy-name and --proxy-mode)")
 	browsersCreateCmd.Flags().String("proxy-name", "", "Proxy name to use for the browser session; must match exactly one active proxy in the project (mutually exclusive with --proxy-id and --proxy-mode)")
 	browsersCreateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' for the browser default (Kernel's stealth proxy when --stealth is set, direct egress otherwise)")
+	browsersCreateCmd.Flags().String("region", "", "Geographic region for the session: 'us-east' or 'eu-west'. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to us-east")
 	browsersCreateCmd.Flags().String("start-url", "", "Initial page to open on launch")
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
 	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
@@ -2907,6 +2949,7 @@ func runBrowsersList(cmd *cobra.Command, args []string) error {
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
 	query, _ := cmd.Flags().GetString("query")
+	region, _ := cmd.Flags().GetString("region")
 	tags, _ := tagsFromFlag(cmd, "tag")
 	return b.List(cmd.Context(), BrowsersListInput{
 		Output:         out,
@@ -2915,6 +2958,7 @@ func runBrowsersList(cmd *cobra.Command, args []string) error {
 		Limit:          limit,
 		Offset:         offset,
 		Query:          query,
+		Region:         region,
 		Tags:           tags,
 	})
 }
@@ -2957,6 +3001,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
 	proxyName, _ := cmd.Flags().GetString("proxy-name")
 	proxyMode, _ := cmd.Flags().GetString("proxy-mode")
+	region, _ := cmd.Flags().GetString("region")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
@@ -3084,6 +3129,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		ProxyID:            proxyID,
 		ProxyName:          proxyName,
 		ProxyMode:          proxyMode,
+		Region:             region,
 		StartURL:           startURL,
 		Extensions:         extensions,
 		Viewport:           viewport,
