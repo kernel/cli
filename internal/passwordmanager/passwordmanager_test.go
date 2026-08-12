@@ -1,6 +1,8 @@
 package passwordmanager
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -60,6 +62,37 @@ func TestBitwardenCandidateWireTypeCannotRetainSecrets(t *testing.T) {
 	_, hasTOTP := loginType.FieldByName("TOTP")
 	assert.False(t, hasPassword)
 	assert.False(t, hasTOTP)
+}
+
+func TestBitwardenUnlockKeepsSessionInProviderMemory(t *testing.T) {
+	t.Setenv("BW_SESSION", "")
+	path := filepath.Join(t.TempDir(), "bw")
+	script := `#!/bin/sh
+case "$1" in
+  status)
+    if [ "$BW_SESSION" = "temporary-session" ]; then
+      printf '{"status":"unlocked"}'
+    else
+      printf '{"status":"locked"}'
+    fi
+    ;;
+  unlock)
+    printf 'temporary-session'
+    ;;
+  *) exit 1 ;;
+esac
+`
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o700))
+	provider := &bitwardenProvider{path: path}
+
+	required, err := provider.AuthorizationRequired(t.Context())
+	require.NoError(t, err)
+	require.True(t, required)
+	require.NoError(t, provider.Authorize(t.Context()))
+	required, err = provider.AuthorizationRequired(t.Context())
+	require.NoError(t, err)
+	assert.False(t, required)
+	assert.Empty(t, os.Getenv("BW_SESSION"))
 }
 
 func TestOnePasswordLongSummaryCanMatchWithoutItemReveal(t *testing.T) {

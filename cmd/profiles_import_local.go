@@ -368,8 +368,32 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, sit
 	if provider == nil {
 		return pendingManagedAuth{}, fmt.Errorf("password manager %q is unavailable; use bitwarden, 1password, or none", requested)
 	}
+	if authorizer, ok := provider.(passwordmanager.InteractiveAuthorizer); ok {
+		required, err := authorizer.AuthorizationRequired(ctx)
+		if err != nil {
+			return pendingManagedAuth{}, err
+		}
+		if required {
+			if nonInteractive {
+				return pendingManagedAuth{}, fmt.Errorf("Bitwarden is locked; unlock it with `export BW_SESSION=$(bw unlock --raw)`, then retry")
+			}
+			approved, err := c.prompter.Confirm("unlock Bitwarden", "Bitwarden is locked. Unlock it locally to find matching logins?")
+			if err != nil {
+				return pendingManagedAuth{}, err
+			}
+			if !approved {
+				return pendingManagedAuth{}, nil
+			}
+			if err := authorizer.Authorize(ctx); err != nil {
+				return pendingManagedAuth{}, err
+			}
+			if humanOutput {
+				pterm.Success.Println("Bitwarden unlocked for this import")
+			}
+		}
+	}
 	if humanOutput {
-		pterm.Info.Printf("Authorize %s locally to find matching logins...\n", provider.Name())
+		pterm.Info.Printf("Find matching %s logins...\n", provider.Name())
 	}
 	candidates, err := provider.Candidates(ctx, sites)
 	if err != nil {

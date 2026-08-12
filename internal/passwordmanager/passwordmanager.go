@@ -40,6 +40,12 @@ type Provider interface {
 	Reveal(context.Context, []Candidate) ([]Record, error)
 }
 
+// InteractiveAuthorizer lets the CLI prepare a provider after local user consent.
+type InteractiveAuthorizer interface {
+	AuthorizationRequired(context.Context) (bool, error)
+	Authorize(context.Context) error
+}
+
 const maxCommandOutput = 16 << 20
 
 // Detect returns supported password-manager CLIs installed on this machine.
