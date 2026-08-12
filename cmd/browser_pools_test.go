@@ -403,7 +403,7 @@ func TestBrowserPoolsUpdate_RejectsInvalidDurableInputs(t *testing.T) {
 		{
 			name:    "conflicting private host modes",
 			input:   BrowserPoolsUpdateInput{PrivateHosts: []string{"internal.example"}, ClearPrivateHosts: true},
-			wantErr: "cannot combine --private-host, --disable-private-hosts, and --clear-private-hosts",
+			wantErr: "cannot specify both --private-host and --clear-private-hosts",
 		},
 	}
 
@@ -442,25 +442,6 @@ func TestBrowserPoolsCreate_WithPrivateHosts(t *testing.T) {
 	assert.Equal(t, []string{"*.example.ts.net", "100.64.0.0/10"}, captured.Network.PrivateHosts)
 }
 
-func TestBrowserPoolsCreate_DisablePrivateHostsSendsExplicitEmptyList(t *testing.T) {
-	setupStdoutCapture(t)
-
-	var captured kernel.BrowserPoolNewParams
-	fake := &FakeBrowserPoolsService{
-		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
-			captured = body
-			return &kernel.BrowserPool{ID: "pool-network"}, nil
-		},
-	}
-
-	err := (BrowserPoolsCmd{client: fake}).Create(context.Background(), BrowserPoolsCreateInput{Size: 1, DisablePrivateHosts: true})
-	require.NoError(t, err)
-
-	raw, err := captured.MarshalJSON()
-	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"network":{"private_hosts":[]}`)
-}
-
 func TestBrowserPoolsUpdate_PrivateHostModes(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -471,11 +452,6 @@ func TestBrowserPoolsUpdate_PrivateHostModes(t *testing.T) {
 			name:     "replace",
 			input:    BrowserPoolsUpdateInput{PrivateHosts: []string{"*.example.ts.net"}},
 			wantJSON: `"network":{"private_hosts":["*.example.ts.net"]}`,
-		},
-		{
-			name:     "disable",
-			input:    BrowserPoolsUpdateInput{DisablePrivateHosts: true},
-			wantJSON: `"network":{"private_hosts":[]}`,
 		},
 		{
 			name:     "restore defaults",
