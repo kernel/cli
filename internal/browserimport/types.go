@@ -17,10 +17,11 @@ type KeychainIdentity struct {
 }
 
 type Profile struct {
-	ID      string
-	Name    string
-	Browser Browser
-	Path    string
+	ID        string
+	Name      string
+	Browser   Browser
+	Path      string
+	Directory string
 }
 
 func (p Profile) DisplayName() string {
