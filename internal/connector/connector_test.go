@@ -133,6 +133,8 @@ func TestMacOSAppleScriptShellQuotesURLAtRuntime(t *testing.T) {
 	assert.Contains(t, script, `" connector open "`)
 	assert.Contains(t, script, `/usr/bin/open -a Terminal`)
 	assert.Contains(t, script, `/bin/zsh -lic`)
+	assert.Contains(t, script, `/usr/bin/mktemp /tmp/kernel-connector.XXXXXX`)
+	assert.NotContains(t, script, `XXXXXX.command`)
 	assert.Contains(t, script, `Kernel CLI was removed`)
 	assert.Contains(t, script, `«event GURLGURL»`)
 	assert.NotContains(t, script, `tell application "Terminal"`)

@@ -224,7 +224,7 @@ func macOSAppleScript(executable string) string {
 	return `on «event GURLGURL» incomingURL
 set kernelExecutable to "` + appleScriptString(executable) + `"
 set commandText to quoted form of kernelExecutable & " connector open " & quoted form of incomingURL
-set scriptPath to «event sysoexec» "/usr/bin/mktemp /tmp/kernel-connector.XXXXXX.command"
+set scriptPath to «event sysoexec» "/usr/bin/mktemp /tmp/kernel-connector.XXXXXX"
 set scriptFile to «event rdwropen» POSIX file scriptPath with «class perm»
 «event rdwrwrit» "#!/bin/zsh" & linefeed & "rm -f " & quoted form of scriptPath & linefeed & "if [[ ! -x " & quoted form of kernelExecutable & " ]]; then echo 'Kernel CLI was removed. Reinstall it with: brew install kernel/tap/kernel'; read -k 1 '?Press any key to close'; exit 1; fi" & linefeed & "exec /bin/zsh -lic " & quoted form of commandText & linefeed given «class refn»:scriptFile
 «event rdwrclos» scriptFile
