@@ -100,6 +100,11 @@ func TestPromptPrimitivesFailFastWhenNonInteractive(t *testing.T) {
 	assert.Contains(t, err.Error(), "widget selection")
 	assert.Contains(t, err.Error(), "pass --widget")
 
+	_, err = p.MultiSelect("websites", "pass --sites", "Choose websites", []string{"example.com"}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "websites")
+	assert.Contains(t, err.Error(), "pass --sites")
+
 	_, err = p.TextInput("widget name", "pass --name", "Name?")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "widget name")
