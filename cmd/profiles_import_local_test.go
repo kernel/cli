@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"context"
 	"testing"
 
 	localbrowser "github.com/kernel/cli/internal/browserimport"
+	"github.com/kernel/cli/internal/passwordmanager"
 	"github.com/kernel/cli/pkg/interactive"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,6 +15,35 @@ func TestNormalizeSitesFlattensDeduplicatesAndSorts(t *testing.T) {
 	sites, err := normalizeSites([]string{" GitHub.com,example.com ", "github.com"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"example.com", "github.com"}, sites)
+}
+
+type fakePasswordManager struct{ candidates []passwordmanager.Candidate }
+
+func (fakePasswordManager) Name() string { return "Bitwarden" }
+func (f fakePasswordManager) Candidates(context.Context, []string) ([]passwordmanager.Candidate, error) {
+	return f.candidates, nil
+}
+func (f fakePasswordManager) Reveal(_ context.Context, candidates []passwordmanager.Candidate) ([]passwordmanager.Record, error) {
+	records := make([]passwordmanager.Record, 0, len(candidates))
+	for _, candidate := range candidates {
+		records = append(records, passwordmanager.Record{Provider: candidate.Provider, ID: candidate.ID, Domain: candidate.Domain, Username: candidate.Username, Name: candidate.Name})
+	}
+	return records, nil
+}
+
+func TestChooseManagedAuthLoginsRequiresChoiceForAmbiguousSite(t *testing.T) {
+	records := []passwordmanager.Candidate{
+		{ID: "one", Domain: "github.com", Username: "one", Name: "One"},
+		{ID: "two", Domain: "github.com", Username: "two", Name: "Two"},
+		{ID: "three", Domain: "example.com", Username: "three", Name: "Three"},
+	}
+	command := ProfilesImportLocalCmd{prompter: interactive.NewPrompterWithTerminal(false), providers: func() []passwordmanager.Provider {
+		return []passwordmanager.Provider{fakePasswordManager{candidates: records}}
+	}}
+	selected, err := command.chooseManagedAuthLogins(context.Background(), []string{"github.com", "example.com"}, "bitwarden", true, false)
+	require.Error(t, err)
+	assert.Empty(t, selected.candidates)
+	assert.Contains(t, err.Error(), "github.com has 2 matching logins")
 }
 
 func TestChooseSitesUsesRequestedDomainsWithoutPrompting(t *testing.T) {
