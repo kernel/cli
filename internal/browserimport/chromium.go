@@ -178,35 +178,11 @@ func ExportCookies(ctx context.Context, profile Profile, selectedSites []string)
 		}
 	}
 	selectedSites = canonicalSites
-	path := filepath.Join(profile.Path, "Network/Cookies")
-	if _, err := os.Stat(path); err != nil {
-		path = filepath.Join(profile.Path, "Cookies")
-	}
-	snapshot, cleanup, err := sqliteSnapshot(ctx, path)
+	snapshot, whereClause, cleanup, err := cookieDatabaseSnapshot(ctx, profile)
 	if err != nil {
-		return nil, fmt.Errorf("snapshot cookie database: %w", err)
+		return nil, err
 	}
 	defer cleanup()
-	columnsData, err := sqliteJSON(ctx, snapshot, `SELECT name FROM pragma_table_info('cookies')`)
-	if err != nil {
-		return nil, fmt.Errorf("inspect cookie database: %w", err)
-	}
-	var columns []struct {
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal(columnsData, &columns); err != nil {
-		return nil, fmt.Errorf("decode cookie schema: %w", err)
-	}
-	partitionPredicates := []string{"(expires_utc = 0 OR expires_utc > " + fmt.Sprintf("%d", time.Now().UnixMicro()+11_644_473_600_000_000) + ")"}
-	for _, column := range columns {
-		switch column.Name {
-		case "top_frame_site_key":
-			partitionPredicates = append(partitionPredicates, "top_frame_site_key = ''")
-		case "is_partitioned":
-			partitionPredicates = append(partitionPredicates, "is_partitioned = 0")
-		}
-	}
-	whereClause := " WHERE " + strings.Join(partitionPredicates, " AND ")
 	siteClause := selectedCookieClause(selectedSites, true)
 	query := `SELECT host_key, path, name, value, hex(encrypted_value) AS encrypted_value, expires_utc, is_httponly, is_secure, samesite FROM cookies` + whereClause + siteClause + ` ORDER BY host_key, name`
 	data, err := sqliteJSON(ctx, snapshot, query)
@@ -263,16 +239,71 @@ func ExportCookies(ctx context.Context, profile Profile, selectedSites []string)
 	return cookies, nil
 }
 
-func CountCookiesBySite(cookies []Cookie, sites []Site) []Site {
+// CountCookiesForSites counts importable cookies without reading or decrypting their values.
+func CountCookiesForSites(ctx context.Context, profile Profile, sites []Site) ([]Site, error) {
+	selected := make([]string, 0, len(sites))
+	for _, site := range sites {
+		selected = append(selected, site.Domain)
+	}
+	snapshot, whereClause, cleanup, err := cookieDatabaseSnapshot(ctx, profile)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	data, err := sqliteJSON(ctx, snapshot, `SELECT host_key FROM cookies`+whereClause+selectedCookieClause(selected, true))
+	if err != nil {
+		return nil, fmt.Errorf("count browser cookies: %w", err)
+	}
+	var rows []struct {
+		Domain string `json:"host_key"`
+	}
+	if len(bytes.TrimSpace(data)) != 0 {
+		if err := json.Unmarshal(data, &rows); err != nil {
+			return nil, fmt.Errorf("decode browser cookie counts: %w", err)
+		}
+	}
 	result := append([]Site(nil), sites...)
 	for i := range result {
-		for _, cookie := range cookies {
-			if domainMatchesSite(cookie.Domain, result[i].Domain) {
+		for _, row := range rows {
+			if domainMatchesSite(row.Domain, result[i].Domain) {
 				result[i].CookieCount++
 			}
 		}
 	}
-	return result
+	return result, nil
+}
+
+func cookieDatabaseSnapshot(ctx context.Context, profile Profile) (string, string, func(), error) {
+	path := filepath.Join(profile.Path, "Network/Cookies")
+	if _, err := os.Stat(path); err != nil {
+		path = filepath.Join(profile.Path, "Cookies")
+	}
+	snapshot, cleanup, err := sqliteSnapshot(ctx, path)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("snapshot cookie database: %w", err)
+	}
+	columnsData, err := sqliteJSON(ctx, snapshot, `SELECT name FROM pragma_table_info('cookies')`)
+	if err != nil {
+		cleanup()
+		return "", "", nil, fmt.Errorf("inspect cookie database: %w", err)
+	}
+	var columns []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(columnsData, &columns); err != nil {
+		cleanup()
+		return "", "", nil, fmt.Errorf("decode cookie schema: %w", err)
+	}
+	predicates := []string{"(expires_utc = 0 OR expires_utc > " + fmt.Sprintf("%d", time.Now().UnixMicro()+11_644_473_600_000_000) + ")"}
+	for _, column := range columns {
+		switch column.Name {
+		case "top_frame_site_key":
+			predicates = append(predicates, "top_frame_site_key = ''")
+		case "is_partitioned":
+			predicates = append(predicates, "is_partitioned = 0")
+		}
+	}
+	return snapshot, " WHERE " + strings.Join(predicates, " AND "), cleanup, nil
 }
 
 func sqliteJSON(ctx context.Context, databasePath, query string) ([]byte, error) {
