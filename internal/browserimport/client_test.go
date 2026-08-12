@@ -107,3 +107,53 @@ func TestSubmitInventoryReconcilesAcceptedResponseLoss(t *testing.T) {
 	assert.Equal(t, "awaiting_selection", status.Phase)
 	assert.EqualValues(t, 1, requests.Load())
 }
+
+func TestClientDoesNotFollowRedirects(t *testing.T) {
+	redirected := atomic.Bool{}
+	destination := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		redirected.Store(true)
+	}))
+	defer destination.Close()
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Location", destination.URL)
+		response.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, "secret-token", "")
+	require.NoError(t, err)
+	_, err = client.Create(context.Background())
+	require.ErrorContains(t, err, "Kernel API returned 307")
+	assert.False(t, redirected.Load())
+}
+
+func TestWaitRetriesTransientStatusFailures(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			http.Error(response, `{"message":"try again"}`, http.StatusServiceUnavailable)
+			return
+		}
+		fmt.Fprint(response, `{"id":"imp_1","phase":"completed"}`)
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, "token", "")
+	require.NoError(t, err)
+	status, err := client.Wait(context.Background(), "imp_1", time.Millisecond)
+	require.NoError(t, err)
+	assert.Equal(t, "completed", status.Phase)
+	assert.EqualValues(t, 2, calls.Load())
+}
+
+func TestWaitFailsPermanentStatusErrorImmediately(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		http.Error(response, `{"message":"not found"}`, http.StatusNotFound)
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, "token", "")
+	require.NoError(t, err)
+	_, err = client.Wait(context.Background(), "imp_1", time.Millisecond)
+	require.ErrorContains(t, err, "404")
+	assert.EqualValues(t, 1, calls.Load())
+}
