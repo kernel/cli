@@ -198,29 +198,18 @@ func normalizePrivateHosts(hosts []string) []string {
 	return out
 }
 
-// buildNetworkParam folds --private-host and --no-private-hosts into the API's
-// network configuration. The API distinguishes an omitted private_hosts list
-// ("keep the default private ranges") from an explicit empty list ("send all
-// traffic through Kernel-managed egress"), and the SDK's omitzero encoder drops
-// empty collections, so the empty case is returned as an extra field for the
-// caller to merge into the request body.
-func buildNetworkParam(privateHosts []string, noPrivateHosts bool) (kernel.BrowserNetworkConfigParam, map[string]any, error) {
+// buildNetworkParam folds --private-host into the API's network configuration.
+// Omitting the list keeps the API's default private ranges, so an empty result
+// leaves the network field off the request entirely.
+func buildNetworkParam(privateHosts []string) (kernel.BrowserNetworkConfigParam, error) {
 	network := kernel.BrowserNetworkConfigParam{}
 	hosts := normalizePrivateHosts(privateHosts)
 
-	if len(hosts) > 0 && noPrivateHosts {
-		return network, nil, fmt.Errorf("cannot specify both --private-host and --no-private-hosts")
-	}
 	if len(hosts) > maxPrivateHosts {
-		return network, nil, fmt.Errorf("too many --private-host entries: %d (maximum %d)", len(hosts), maxPrivateHosts)
+		return network, fmt.Errorf("too many --private-host entries: %d (maximum %d)", len(hosts), maxPrivateHosts)
 	}
-	if noPrivateHosts {
-		return network, map[string]any{"network": map[string]any{"private_hosts": []string{}}}, nil
-	}
-	if len(hosts) > 0 {
-		network.PrivateHosts = hosts
-	}
-	return network, nil, nil
+	network.PrivateHosts = hosts
+	return network, nil
 }
 
 // formatPrivateHosts renders a network configuration for table output. A missing
@@ -364,7 +353,6 @@ type BrowsersCreateInput struct {
 	ProxyMode          string
 	Region             string
 	PrivateHosts       []string
-	NoPrivateHosts     bool
 	StartURL           string
 	Extensions         []string
 	Viewport           string
@@ -372,7 +360,6 @@ type BrowsersCreateInput struct {
 	TelemetryExport    string
 	ChromePolicy       string
 	ChromePolicyFile   string
-	PrivateHosts       []string
 	Name               string
 	Tags               map[string]string
 	Output             string
@@ -612,15 +599,12 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		params.Region = kernel.BrowserNewParamsRegion(region)
 	}
 
-	network, networkExtra, err := buildNetworkParam(in.PrivateHosts, in.NoPrivateHosts)
+	network, err := buildNetworkParam(in.PrivateHosts)
 	if err != nil {
 		return err
 	}
 	if len(network.PrivateHosts) > 0 {
 		params.Network = network
-	}
-	if networkExtra != nil {
-		params.SetExtraFields(networkExtra)
 	}
 
 	// Map extensions (IDs or names) into params.Extensions
@@ -670,9 +654,6 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 	if len(chromePolicy) > 0 {
 		params.ChromePolicy = chromePolicy
-	}
-	if len(in.PrivateHosts) > 0 {
-		params.Network.PrivateHosts = in.PrivateHosts
 	}
 
 	if in.Name != "" {
@@ -2944,7 +2925,6 @@ func init() {
 	browsersCreateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' for the browser default (Kernel's stealth proxy when --stealth is set, direct egress otherwise)")
 	browsersCreateCmd.Flags().String("region", "", "Geographic region for the session: 'us-east' or 'eu-west'. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to us-east")
 	browsersCreateCmd.Flags().StringSlice("private-host", nil, "Destination(s) the browser reaches directly through its own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel the session joins (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Replaces the default private ranges (RFC1918, 100.64.0.0/10, fc00::/7); omit to keep them. Fixed once the session is created")
-	browsersCreateCmd.Flags().Bool("no-private-hosts", false, "Disable the default private ranges so all traffic uses Kernel-managed egress (mutually exclusive with --private-host)")
 	browsersCreateCmd.Flags().String("start-url", "", "Initial page to open on launch")
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
 	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
@@ -2958,7 +2938,6 @@ func init() {
 	browsersCreateCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts")
 	browsersCreateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
 	browsersCreateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
-	browsersCreateCmd.Flags().StringSlice("private-host", nil, "Private hostname, IP, or CIDR to route through the session network (repeatable or comma-separated; replaces defaults)")
 	browsersCreateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
 
 	// curl
@@ -3076,7 +3055,6 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	proxyMode, _ := cmd.Flags().GetString("proxy-mode")
 	region, _ := cmd.Flags().GetString("region")
 	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
-	noPrivateHosts, _ := cmd.Flags().GetBool("no-private-hosts")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
@@ -3089,7 +3067,6 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	tags, _ := tagsFromFlag(cmd, "tag")
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
 	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
-	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
 	output, _ := cmd.Flags().GetString("output")
 	skipConfirm, _ := cmd.Flags().GetBool("yes")
 
@@ -3207,7 +3184,6 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		ProxyMode:          proxyMode,
 		Region:             region,
 		PrivateHosts:       privateHosts,
-		NoPrivateHosts:     noPrivateHosts,
 		StartURL:           startURL,
 		Extensions:         extensions,
 		Viewport:           viewport,
@@ -3215,7 +3191,6 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		TelemetryExport:    telemetryExport,
 		ChromePolicy:       chromePolicy,
 		ChromePolicyFile:   chromePolicyFile,
-		PrivateHosts:       privateHosts,
 		Name:               name,
 		Tags:               tags,
 		Output:             output,

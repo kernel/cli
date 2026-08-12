@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -168,7 +169,7 @@ func TestBrowserPoolsCreate_WithRegion(t *testing.T) {
 	assert.Error(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Region: "emea"}))
 }
 
-func TestBrowserPoolsCreate_WithPrivateHosts(t *testing.T) {
+func TestBrowserPoolsCreate_PrivateHostNormalization(t *testing.T) {
 	setupStdoutCapture(t)
 
 	var gotJSON []byte
@@ -181,6 +182,7 @@ func TestBrowserPoolsCreate_WithPrivateHosts(t *testing.T) {
 	}
 	c := BrowserPoolsCmd{client: fake}
 
+	// Blank entries from a trailing comma are dropped before the request.
 	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{
 		Size:         1,
 		PrivateHosts: []string{"*.example.ts.net", " "},
@@ -188,21 +190,18 @@ func TestBrowserPoolsCreate_WithPrivateHosts(t *testing.T) {
 	require.NoError(t, marshalErr)
 	assert.Contains(t, string(gotJSON), `"network":{"private_hosts":["*.example.ts.net"]}`)
 
-	// --no-private-hosts sends an explicit empty list.
-	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, NoPrivateHosts: true}))
-	require.NoError(t, marshalErr)
-	assert.Contains(t, string(gotJSON), `"network":{"private_hosts":[]}`)
-
-	// Omitting both flags leaves network out of the request entirely.
+	// Omitting the flag leaves network out of the request entirely, so the API
+	// keeps its default private ranges.
 	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1}))
 	require.NoError(t, marshalErr)
 	assert.NotContains(t, string(gotJSON), "network")
 
-	assert.Error(t, c.Create(context.Background(), BrowserPoolsCreateInput{
-		Size:           1,
-		PrivateHosts:   []string{"preview.internal"},
-		NoPrivateHosts: true,
-	}))
+	// The API's 32-entry cap is enforced client-side.
+	tooMany := make([]string, maxPrivateHosts+1)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("host-%d.internal", i)
+	}
+	assert.Error(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, PrivateHosts: tooMany}))
 }
 
 // TestBuildAcquireParams covers the shared name/tags/timeout/telemetry/start-url
@@ -421,20 +420,11 @@ func TestBrowserPoolsUpdate_DurableClearAndZeroStates(t *testing.T) {
 			wantJSON: `{"network":{"private_hosts":["preview.internal","10.0.0.0/8"]}}`,
 		},
 		{
-			// An explicit empty list keeps the configuration but sends everything
-			// through Kernel-managed egress.
-			name: "disable private hosts",
-			input: BrowserPoolsUpdateInput{
-				NoPrivateHosts: true,
-			},
-			wantJSON: `{"network":{"private_hosts":[]}}`,
-		},
-		{
 			// An empty object removes the network configuration entirely, so the
 			// default private ranges come back.
-			name: "clear network",
+			name: "clear private hosts",
 			input: BrowserPoolsUpdateInput{
-				ClearNetwork: true,
+				ClearPrivateHosts: true,
 			},
 			wantJSON: `{"network":{}}`,
 		},
@@ -447,7 +437,7 @@ func TestBrowserPoolsUpdate_DurableClearAndZeroStates(t *testing.T) {
 				ClearStartURL:     true,
 				ClearExtensions:   true,
 				ClearChromePolicy: true,
-				ClearNetwork:      true,
+				ClearPrivateHosts: true,
 			},
 			wantJSON: `{"fill_rate_per_minute":0,"profile":{"id":""},"proxy_id":"","start_url":"","extensions":[],"chrome_policy":{},"network":{}}`,
 		},

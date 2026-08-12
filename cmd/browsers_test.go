@@ -507,6 +507,27 @@ func TestBrowsersCreate_WithPrivateHosts(t *testing.T) {
 	raw, err := captured.MarshalJSON()
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"private_hosts":["*.example.ts.net","100.64.0.0/10"]`)
+
+	// Blank entries from a trailing comma are dropped rather than sent through.
+	require.NoError(t, (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
+		PrivateHosts: []string{" preview.internal ", ""},
+	}))
+	assert.Equal(t, []string{"preview.internal"}, captured.Network.PrivateHosts)
+
+	// Omitting the flag leaves network off the request, keeping the API defaults.
+	require.NoError(t, (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{}))
+	raw, err = captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "network")
+
+	// The API's 32-entry cap is enforced client-side.
+	tooMany := make([]string, maxPrivateHosts+1)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("host-%d.internal", i)
+	}
+	assert.Error(t, (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
+		PrivateHosts: tooMany,
+	}))
 }
 
 func TestBrowsersCreate_WithChromePolicy(t *testing.T) {
