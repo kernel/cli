@@ -1,9 +1,9 @@
 import { Stagehand, localBrowser, type ModelName } from "@browserbasehq/stagehand";
 import { Kernel, type KernelContext } from "@onkernel/sdk";
+import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { WebSocket } from "ws";
 // Stagehand v4 uses zod v4 schema types.
 import { z } from "zod";
 
@@ -38,66 +38,33 @@ const STAGEHAND_EXTENSION_NAME = "stagehand-runtime";
 const stagehandDist = dirname(fileURLToPath(import.meta.resolve("@browserbasehq/stagehand")));
 const STAGEHAND_EXTENSION_ZIP = join(stagehandDist, "assets/stagehand-extension.zip");
 
-// Upload the Stagehand extension to the project once and reuse it thereafter.
+// Upload the Stagehand extension to the project once and reuse it thereafter,
+// returning the Kernel extension id.
 async function ensureStagehandExtension(): Promise<string> {
   const existing = await kernel.extensions.list();
-  for (const ext of existing) {
-    if (ext.name === STAGEHAND_EXTENSION_NAME) return STAGEHAND_EXTENSION_NAME;
-  }
-  await kernel.extensions.upload({
+  const extension = existing.find((ext) => ext.name === STAGEHAND_EXTENSION_NAME);
+  if (extension) return extension.id;
+
+  const uploaded = await kernel.extensions.upload({
     file: createReadStream(STAGEHAND_EXTENSION_ZIP),
     name: STAGEHAND_EXTENSION_NAME,
   });
-  return STAGEHAND_EXTENSION_NAME;
+  return uploaded.id;
 }
 
-// Chrome assigns the preloaded extension a runtime id. Read it off the extension's
-// service worker target so we can attach Stagehand to it.
-async function discoverExtensionId(cdpUrl: string, timeoutMs = 20_000): Promise<string> {
-  return await new Promise<string>((resolve, reject) => {
-    const ws = new WebSocket(cdpUrl);
-    let settled = false;
-    let messageId = 0;
-
-    const finish = (error: Error | null, id?: string) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      clearInterval(poller);
-      ws.close();
-      error ? reject(error) : resolve(id!);
-    };
-
-    const poll = () => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ id: ++messageId, method: "Target.getTargets" }));
-      }
-    };
-    const timer = setTimeout(
-      () => finish(new Error("Timed out waiting for the Stagehand extension service worker")),
-      timeoutMs,
-    );
-    const poller = setInterval(poll, 500);
-
-    ws.on("open", poll);
-    ws.on("error", (error: Error) => finish(error));
-    ws.on("close", () => finish(new Error("CDP socket closed before the Stagehand extension was found")));
-    ws.on("message", (buf: Buffer) => {
-      let targets: Array<{ type: string; url: string }> | undefined;
-      try {
-        targets = JSON.parse(buf.toString()).result?.targetInfos;
-      } catch {
-        return;
-      }
-      const worker = targets?.find(
-        (t) =>
-          t.type === "service_worker" &&
-          t.url.startsWith("chrome-extension://") &&
-          t.url.includes("service-worker.js"),
-      );
-      if (worker) finish(null, worker.url.split("/")[2]);
-    });
-  });
+// Chrome derives an unpacked extension's runtime id from the absolute path it is
+// loaded from. Kernel extracts a preloaded extension to
+// `/home/kernel/extensions/<kernel-extension-id>`, so we can compute the runtime
+// id directly instead of discovering it over CDP: SHA-256 the path, take the
+// first 16 bytes, and map each nibble to a..p. This holds because the Stagehand
+// extension ships without a manifest `key` (a keyed manifest would pin the id).
+function chromeExtensionId(kernelExtensionId: string): string {
+  const extensionPath = `/home/kernel/extensions/${kernelExtensionId}`;
+  const digest = createHash("sha256").update(extensionPath).digest().subarray(0, 16);
+  return [...digest]
+    .flatMap((byte) => [byte >> 4, byte & 0xf])
+    .map((nibble) => String.fromCharCode("a".charCodeAt(0) + nibble))
+    .join("");
 }
 
 app.action<CompanyInput, TeamSizeOutput>(
@@ -114,12 +81,13 @@ app.action<CompanyInput, TeamSizeOutput>(
 
     const company = payload?.company || "kernel";
 
-    const extensionName = await ensureStagehandExtension();
+    const kernelExtensionId = await ensureStagehandExtension();
+    const extensionId = chromeExtensionId(kernelExtensionId);
 
     const kernelBrowser = await kernel.browsers.create({
       invocation_id: ctx.invocation_id,
       stealth: true,
-      extensions: [{ name: extensionName }],
+      extensions: [{ id: kernelExtensionId }],
     });
 
     console.log("Kernel browser live view url: ", kernelBrowser.browser_live_view_url);
@@ -129,8 +97,6 @@ app.action<CompanyInput, TeamSizeOutput>(
     let stagehand: Awaited<ReturnType<typeof Stagehand.create>> | undefined;
     let browser: Awaited<ReturnType<typeof localBrowser.connect>> | undefined;
     try {
-      const extensionId = await discoverExtensionId(kernelBrowser.cdp_ws_url);
-
       browser = await localBrowser.connect({
         cdpUrl: kernelBrowser.cdp_ws_url,
         extensionId,

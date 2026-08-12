@@ -11,8 +11,8 @@ The `teamsize-task` searches for a startup on Y Combinator's company directory a
 Stagehand v4 no longer drives the browser purely over CDP — it runs as a **Chrome extension** next to the browser. To use it with a remote Kernel browser, this template:
 
 1. Uploads the Stagehand extension (shipped inside the `@browserbasehq/stagehand` package) to your Kernel project once.
-2. Creates the Kernel browser with that extension preloaded (`extensions: [{ name }]`).
-3. Reads the extension's runtime id off its service worker over CDP.
+2. Creates the Kernel browser with that extension preloaded (`extensions: [{ id }]`).
+3. Derives the extension's Chrome runtime id from the Kernel extension id (Chrome computes it from the load path).
 4. Connects with `localBrowser.connect({ cdpUrl, extensionId })` and `Stagehand.create({ browser })`.
 
 ## Input
