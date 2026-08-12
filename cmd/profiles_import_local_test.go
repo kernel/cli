@@ -4,17 +4,81 @@ import (
 	"context"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	localbrowser "github.com/kernel/cli/internal/browserimport"
 	"github.com/kernel/cli/internal/passwordmanager"
 	"github.com/kernel/cli/pkg/interactive"
+	"github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type fakeProjectListService struct{ projects []kernel.Project }
+
+func (f fakeProjectListService) List(context.Context, kernel.ProjectListParams, ...option.RequestOption) (*pagination.OffsetPagination[kernel.Project], error) {
+	return &pagination.OffsetPagination[kernel.Project]{Items: f.projects}, nil
+}
 
 func TestNormalizeSitesFlattensDeduplicatesAndSorts(t *testing.T) {
 	sites, err := normalizeSites([]string{" GitHub.com,example.com ", "github.com"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"example.com", "github.com"}, sites)
+}
+
+func TestChooseImportProjectUsesOnlyActiveProject(t *testing.T) {
+	project, err := chooseImportProject(t.Context(), fakeProjectListService{projects: []kernel.Project{
+		{ID: "archived", Name: "Old", Status: kernel.ProjectStatusArchived},
+		{ID: "active", Name: "Default", Status: kernel.ProjectStatusActive},
+	}}, interactive.NewPrompterWithTerminal(false), "", false)
+	require.NoError(t, err)
+	assert.Equal(t, "active", project)
+}
+
+func TestChooseImportProjectRequiresFlagForMultipleNonInteractiveProjects(t *testing.T) {
+	_, err := chooseImportProject(t.Context(), fakeProjectListService{projects: []kernel.Project{
+		{ID: "one", Name: "One", Status: kernel.ProjectStatusActive},
+		{ID: "two", Name: "Two", Status: kernel.ProjectStatusActive},
+	}}, interactive.NewPrompterWithTerminal(false), "", true)
+	require.ErrorContains(t, err, "pass --project")
+}
+
+func TestCompactFieldPreventsLoginRowsFromWrapping(t *testing.T) {
+	assert.Equal(t, "short", compactField("short", 8))
+	assert.Equal(t, "very-lo…", compactField("very-long-value", 8))
+	assert.LessOrEqual(t, ansi.StringWidth(compactField("界界界界界", 6)), 6)
+	assert.Equal(t, "safe fake", compactField("\x1b[31msafe\x1b[0m\n\x1b]8;;https://example.com\x07fake\x1b]8;;\x07", 20))
+
+	label := loginCandidateLabel(1, passwordmanager.Candidate{
+		Domain:   "accounts.google.com",
+		Username: "same-account@example.com",
+		Name:     "personal google account",
+	}, "abc123")
+	assert.LessOrEqual(t, ansi.StringWidth(label), 72)
+	assert.Contains(t, label, "personal google")
+
+	withoutUsername := loginCandidateLabel(2, passwordmanager.Candidate{
+		Domain: "example.com",
+		Name:   "personal account",
+	}, "def456")
+	assert.Contains(t, withoutUsername, "no username")
+	assert.Contains(t, withoutUsername, "personal account")
+
+	for _, index := range []int{999, 9999} {
+		label := loginCandidateLabel(index, passwordmanager.Candidate{
+			Domain:   "accounts.google.com",
+			Username: "same-account@example.com",
+			Name:     "personal google account",
+		}, "abc123")
+		assert.LessOrEqual(t, ansi.StringWidth(label), 72)
+	}
+}
+
+func TestProjectOptionLabelsAreUniqueForDuplicateNames(t *testing.T) {
+	first := projectOptionLabel(0, kernel.Project{Name: "Duplicate"})
+	second := projectOptionLabel(1, kernel.Project{Name: "Duplicate"})
+	assert.NotEqual(t, first, second)
 }
 
 type fakePasswordManager struct{ candidates []passwordmanager.Candidate }
