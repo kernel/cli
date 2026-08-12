@@ -168,6 +168,43 @@ func TestBrowserPoolsCreate_WithRegion(t *testing.T) {
 	assert.Error(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Region: "emea"}))
 }
 
+func TestBrowserPoolsCreate_WithPrivateHosts(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var gotJSON []byte
+	var marshalErr error
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			gotJSON, marshalErr = json.Marshal(body)
+			return &kernel.BrowserPool{ID: "pool-1"}, nil
+		},
+	}
+	c := BrowserPoolsCmd{client: fake}
+
+	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{
+		Size:         1,
+		PrivateHosts: []string{"*.example.ts.net", " "},
+	}))
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(gotJSON), `"network":{"private_hosts":["*.example.ts.net"]}`)
+
+	// --no-private-hosts sends an explicit empty list.
+	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, NoPrivateHosts: true}))
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(gotJSON), `"network":{"private_hosts":[]}`)
+
+	// Omitting both flags leaves network out of the request entirely.
+	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1}))
+	require.NoError(t, marshalErr)
+	assert.NotContains(t, string(gotJSON), "network")
+
+	assert.Error(t, c.Create(context.Background(), BrowserPoolsCreateInput{
+		Size:           1,
+		PrivateHosts:   []string{"preview.internal"},
+		NoPrivateHosts: true,
+	}))
+}
+
 // TestBuildAcquireParams covers the shared name/tags/timeout/telemetry/start-url
 // forwarding used by both `browser-pools acquire` and the `browsers create
 // --pool-id` lease path.
@@ -377,6 +414,31 @@ func TestBrowserPoolsUpdate_DurableClearAndZeroStates(t *testing.T) {
 			wantJSON: `{}`,
 		},
 		{
+			name: "replace private hosts",
+			input: BrowserPoolsUpdateInput{
+				PrivateHosts: []string{" preview.internal ", "", "10.0.0.0/8"},
+			},
+			wantJSON: `{"network":{"private_hosts":["preview.internal","10.0.0.0/8"]}}`,
+		},
+		{
+			// An explicit empty list keeps the configuration but sends everything
+			// through Kernel-managed egress.
+			name: "disable private hosts",
+			input: BrowserPoolsUpdateInput{
+				NoPrivateHosts: true,
+			},
+			wantJSON: `{"network":{"private_hosts":[]}}`,
+		},
+		{
+			// An empty object removes the network configuration entirely, so the
+			// default private ranges come back.
+			name: "clear network",
+			input: BrowserPoolsUpdateInput{
+				ClearNetwork: true,
+			},
+			wantJSON: `{"network":{}}`,
+		},
+		{
 			name: "all durable clear states",
 			input: BrowserPoolsUpdateInput{
 				FillRate:          Int64Flag{Set: true, Value: 0},
@@ -385,8 +447,9 @@ func TestBrowserPoolsUpdate_DurableClearAndZeroStates(t *testing.T) {
 				ClearStartURL:     true,
 				ClearExtensions:   true,
 				ClearChromePolicy: true,
+				ClearNetwork:      true,
 			},
-			wantJSON: `{"fill_rate_per_minute":0,"profile":{"id":""},"proxy_id":"","start_url":"","extensions":[],"chrome_policy":{}}`,
+			wantJSON: `{"fill_rate_per_minute":0,"profile":{"id":""},"proxy_id":"","start_url":"","extensions":[],"chrome_policy":{},"network":{}}`,
 		},
 	}
 
@@ -447,6 +510,16 @@ func TestBrowserPoolsUpdate_RejectsInvalidDurableInputs(t *testing.T) {
 			name:    "negative fill rate",
 			input:   BrowserPoolsUpdateInput{FillRate: Int64Flag{Set: true, Value: -1}},
 			wantErr: "--fill-rate must be zero or greater",
+		},
+		{
+			name:    "conflicting network flags",
+			input:   BrowserPoolsUpdateInput{PrivateHosts: []string{"preview.internal"}, ClearNetwork: true},
+			wantErr: "cannot specify --clear-network with --private-host or --no-private-hosts",
+		},
+		{
+			name:    "conflicting private host flags",
+			input:   BrowserPoolsUpdateInput{PrivateHosts: []string{"preview.internal"}, NoPrivateHosts: true},
+			wantErr: "cannot specify both --private-host and --no-private-hosts",
 		},
 	}
 

@@ -183,6 +183,59 @@ func parseRegionFlag(region string) (string, error) {
 	return "", fmt.Errorf("invalid --region value: %s (must be one of %s)", region, strings.Join(availableRegions(), ", "))
 }
 
+// maxPrivateHosts mirrors the API's cap on network.private_hosts entries.
+const maxPrivateHosts = 32
+
+// normalizePrivateHosts trims --private-host values and drops empty ones, so a
+// trailing comma or a quoted empty value never reaches the API.
+func normalizePrivateHosts(hosts []string) []string {
+	out := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		if v := strings.TrimSpace(h); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// buildNetworkParam folds --private-host and --no-private-hosts into the API's
+// network configuration. The API distinguishes an omitted private_hosts list
+// ("keep the default private ranges") from an explicit empty list ("send all
+// traffic through Kernel-managed egress"), and the SDK's omitzero encoder drops
+// empty collections, so the empty case is returned as an extra field for the
+// caller to merge into the request body.
+func buildNetworkParam(privateHosts []string, noPrivateHosts bool) (kernel.BrowserNetworkConfigParam, map[string]any, error) {
+	network := kernel.BrowserNetworkConfigParam{}
+	hosts := normalizePrivateHosts(privateHosts)
+
+	if len(hosts) > 0 && noPrivateHosts {
+		return network, nil, fmt.Errorf("cannot specify both --private-host and --no-private-hosts")
+	}
+	if len(hosts) > maxPrivateHosts {
+		return network, nil, fmt.Errorf("too many --private-host entries: %d (maximum %d)", len(hosts), maxPrivateHosts)
+	}
+	if noPrivateHosts {
+		return network, map[string]any{"network": map[string]any{"private_hosts": []string{}}}, nil
+	}
+	if len(hosts) > 0 {
+		network.PrivateHosts = hosts
+	}
+	return network, nil, nil
+}
+
+// formatPrivateHosts renders a network configuration for table output. A missing
+// private_hosts list means the API's default private ranges apply; an explicit
+// empty list means nothing routes around Kernel-managed egress.
+func formatPrivateHosts(network kernel.BrowserNetworkConfig) string {
+	if !network.JSON.PrivateHosts.Valid() {
+		return "-"
+	}
+	if len(network.PrivateHosts) == 0 {
+		return "none (all traffic uses Kernel-managed egress)"
+	}
+	return strings.Join(network.PrivateHosts, ", ")
+}
+
 // parseStringMapFlag parses repeated KEY=value flag values into a map. It returns a nil
 // map when no values were given, so callers can distinguish "flag absent" from "flag set
 // to an empty map".
@@ -310,6 +363,8 @@ type BrowsersCreateInput struct {
 	ProxyName          string
 	ProxyMode          string
 	Region             string
+	PrivateHosts       []string
+	NoPrivateHosts     bool
 	StartURL           string
 	Extensions         []string
 	Viewport           string
@@ -557,6 +612,17 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		params.Region = kernel.BrowserNewParamsRegion(region)
 	}
 
+	network, networkExtra, err := buildNetworkParam(in.PrivateHosts, in.NoPrivateHosts)
+	if err != nil {
+		return err
+	}
+	if len(network.PrivateHosts) > 0 {
+		params.Network = network
+	}
+	if networkExtra != nil {
+		params.SetExtraFields(networkExtra)
+	}
+
 	// Map extensions (IDs or names) into params.Extensions
 	if len(in.Extensions) > 0 {
 		for _, ext := range in.Extensions {
@@ -758,6 +824,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	if proxy := formatBrowserProxy(browser.Proxy); proxy != "" {
 		tableData = append(tableData, []string{"Proxy", proxy})
 	}
+	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)})
 	if !browser.DeletedAt.IsZero() {
 		tableData = append(tableData, []string{"Deleted At", util.FormatLocal(browser.DeletedAt)})
 	}
@@ -2873,6 +2940,8 @@ func init() {
 	browsersCreateCmd.Flags().String("proxy-name", "", "Proxy name to use for the browser session; must match exactly one active proxy in the project (mutually exclusive with --proxy-id and --proxy-mode)")
 	browsersCreateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' for the browser default (Kernel's stealth proxy when --stealth is set, direct egress otherwise)")
 	browsersCreateCmd.Flags().String("region", "", "Geographic region for the session: 'us-east' or 'eu-west'. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to us-east")
+	browsersCreateCmd.Flags().StringSlice("private-host", nil, "Destination(s) the browser reaches directly through its own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel the session joins (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Replaces the default private ranges (RFC1918, 100.64.0.0/10, fc00::/7); omit to keep them. Fixed once the session is created")
+	browsersCreateCmd.Flags().Bool("no-private-hosts", false, "Disable the default private ranges so all traffic uses Kernel-managed egress (mutually exclusive with --private-host)")
 	browsersCreateCmd.Flags().String("start-url", "", "Initial page to open on launch")
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
 	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
@@ -3002,6 +3071,8 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	proxyName, _ := cmd.Flags().GetString("proxy-name")
 	proxyMode, _ := cmd.Flags().GetString("proxy-mode")
 	region, _ := cmd.Flags().GetString("region")
+	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
+	noPrivateHosts, _ := cmd.Flags().GetBool("no-private-hosts")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
@@ -3130,6 +3201,8 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		ProxyName:          proxyName,
 		ProxyMode:          proxyMode,
 		Region:             region,
+		PrivateHosts:       privateHosts,
+		NoPrivateHosts:     noPrivateHosts,
 		StartURL:           startURL,
 		Extensions:         extensions,
 		Viewport:           viewport,

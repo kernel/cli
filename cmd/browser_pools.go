@@ -148,6 +148,8 @@ type BrowserPoolsCreateInput struct {
 	ProfileName            string
 	ProxyID                string
 	Region                 string
+	PrivateHosts           []string
+	NoPrivateHosts         bool
 	StartURL               string
 	Extensions             []string
 	Viewport               string
@@ -217,6 +219,17 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 	}
 	if region != "" {
 		params.Region = kernel.BrowserPoolNewParamsRegion(region)
+	}
+
+	network, networkExtra, err := buildNetworkParam(in.PrivateHosts, in.NoPrivateHosts)
+	if err != nil {
+		return err
+	}
+	if len(network.PrivateHosts) > 0 {
+		params.Network = network
+	}
+	if networkExtra != nil {
+		params.SetExtraFields(networkExtra)
 	}
 
 	params.Extensions = buildExtensionsParam(in.Extensions)
@@ -307,6 +320,7 @@ func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error
 		{"Start URL", util.OrDash(cfg.StartURL)},
 		{"Extensions", formatExtensions(cfg.Extensions)},
 		{"Viewport", formatViewport(cfg.Viewport)},
+		{"Private Hosts", formatPrivateHosts(cfg.Network)},
 		{"Telemetry", formatPoolTelemetry(cfg.Telemetry)},
 	}
 
@@ -333,6 +347,9 @@ type BrowserPoolsUpdateInput struct {
 	ClearStartURL          bool
 	Extensions             []string
 	ClearExtensions        bool
+	PrivateHosts           []string
+	NoPrivateHosts         bool
+	ClearNetwork           bool
 	Viewport               string
 	ChromePolicy           string
 	ChromePolicyFile       string
@@ -357,6 +374,9 @@ func validateBrowserPoolUpdateInput(in BrowserPoolsUpdateInput) error {
 	}
 	if len(in.Extensions) > 0 && in.ClearExtensions {
 		return fmt.Errorf("cannot specify both --extension and --clear-extensions")
+	}
+	if in.ClearNetwork && (len(normalizePrivateHosts(in.PrivateHosts)) > 0 || in.NoPrivateHosts) {
+		return fmt.Errorf("cannot specify --clear-network with --private-host or --no-private-hosts")
 	}
 	if (in.ChromePolicy != "" || in.ChromePolicyFile != "") && in.ClearChromePolicy {
 		return fmt.Errorf("cannot specify --clear-chrome-policy with --chrome-policy or --chrome-policy-file")
@@ -450,6 +470,14 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 		params.ChromePolicy = chromePolicy
 	}
 
+	network, networkExtra, err := buildNetworkParam(in.PrivateHosts, in.NoPrivateHosts)
+	if err != nil {
+		return err
+	}
+	if len(network.PrivateHosts) > 0 {
+		params.Network = network
+	}
+
 	extraFields := map[string]any{}
 	// The SDK's omitzero encoder drops empty collections, so explicit clears use
 	// its extra-fields escape hatch to preserve {} and [] on the wire.
@@ -458,6 +486,15 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 	}
 	if in.ClearChromePolicy || (chromePolicy != nil && len(chromePolicy) == 0) {
 		extraFields["chrome_policy"] = map[string]any{}
+	}
+	// An empty network object removes the pool's network configuration, while an
+	// empty private_hosts list keeps the configuration but routes everything
+	// through Kernel-managed egress.
+	if in.ClearNetwork {
+		extraFields["network"] = map[string]any{}
+	}
+	for k, v := range networkExtra {
+		extraFields[k] = v
 	}
 	if len(extraFields) > 0 {
 		params.SetExtraFields(extraFields)
@@ -717,6 +754,8 @@ func init() {
 	browserPoolsCreateCmd.Flags().String("profile-name", "", "Profile name")
 	browserPoolsCreateCmd.Flags().String("proxy-id", "", "Proxy ID")
 	browserPoolsCreateCmd.Flags().String("region", "", "Geographic region for the pool: 'us-east' or 'eu-west'. Fixed once the pool is created; requires a Start-Up or Enterprise plan and defaults to us-east")
+	browserPoolsCreateCmd.Flags().StringSlice("private-host", nil, "Destination(s) browsers in the pool reach directly through their own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel they join (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Replaces the default private ranges (RFC1918, 100.64.0.0/10, fc00::/7); omit to keep them")
+	browserPoolsCreateCmd.Flags().Bool("no-private-hosts", false, "Disable the default private ranges so all traffic uses Kernel-managed egress (mutually exclusive with --private-host)")
 	browserPoolsCreateCmd.Flags().String("start-url", "", "Initial page to open for new browsers")
 	browserPoolsCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsCreateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
@@ -744,6 +783,9 @@ func init() {
 	browserPoolsUpdateCmd.Flags().Bool("clear-start-url", false, "Clear the pool start URL")
 	browserPoolsUpdateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsUpdateCmd.Flags().Bool("clear-extensions", false, "Remove all pool extensions")
+	browserPoolsUpdateCmd.Flags().StringSlice("private-host", nil, "Replace the destinations browsers in the pool reach directly through their own network instead of Kernel-managed egress (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Only applies to browsers created after the update")
+	browserPoolsUpdateCmd.Flags().Bool("no-private-hosts", false, "Disable the default private ranges so all traffic uses Kernel-managed egress (mutually exclusive with --private-host)")
+	browserPoolsUpdateCmd.Flags().Bool("clear-network", false, "Remove the pool's network configuration, restoring the default private ranges")
 	browserPoolsUpdateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
 	browserPoolsUpdateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
 	browserPoolsUpdateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
@@ -809,6 +851,8 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
 	region, _ := cmd.Flags().GetString("region")
+	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
+	noPrivateHosts, _ := cmd.Flags().GetBool("no-private-hosts")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
@@ -830,6 +874,8 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 		ProfileName:            profileName,
 		ProxyID:                proxyID,
 		Region:                 region,
+		PrivateHosts:           privateHosts,
+		NoPrivateHosts:         noPrivateHosts,
 		StartURL:               startURL,
 		Extensions:             extensions,
 		Viewport:               viewport,
@@ -870,6 +916,9 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 	clearStartURL, _ := cmd.Flags().GetBool("clear-start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	clearExtensions, _ := cmd.Flags().GetBool("clear-extensions")
+	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
+	noPrivateHosts, _ := cmd.Flags().GetBool("no-private-hosts")
+	clearNetwork, _ := cmd.Flags().GetBool("clear-network")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
 	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
@@ -897,6 +946,9 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 		ClearStartURL:          clearStartURL,
 		Extensions:             extensions,
 		ClearExtensions:        clearExtensions,
+		PrivateHosts:           privateHosts,
+		NoPrivateHosts:         noPrivateHosts,
+		ClearNetwork:           clearNetwork,
 		Viewport:               viewport,
 		ChromePolicy:           chromePolicy,
 		ChromePolicyFile:       chromePolicyFile,

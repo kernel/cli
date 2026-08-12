@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -525,6 +526,79 @@ func TestBrowsersList_ForwardsRegion(t *testing.T) {
 
 	// An unknown region is rejected before the request is made.
 	assert.Error(t, b.List(context.Background(), BrowsersListInput{Region: "us-west"}))
+}
+
+// The API distinguishes an omitted private_hosts list ("keep the default private
+// ranges") from an explicit empty one ("everything goes through Kernel-managed
+// egress"), so the CLI has to keep [] on the wire.
+func TestBrowsersCreate_WithPrivateHosts(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-new"}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+
+	// Entries are trimmed and blanks dropped.
+	require.NoError(t, b.Create(context.Background(), BrowsersCreateInput{
+		PrivateHosts: []string{" *.example.ts.net ", "", "100.64.0.0/10"},
+	}))
+	assert.Equal(t, []string{"*.example.ts.net", "100.64.0.0/10"}, captured.Network.PrivateHosts)
+	body, err := json.Marshal(captured)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), `"network":{"private_hosts":["*.example.ts.net","100.64.0.0/10"]}`)
+
+	// Omitting both flags leaves network out of the request entirely.
+	require.NoError(t, b.Create(context.Background(), BrowsersCreateInput{}))
+	assert.Empty(t, captured.Network.PrivateHosts)
+	body, err = json.Marshal(captured)
+	require.NoError(t, err)
+	assert.NotContains(t, string(body), "network")
+
+	// --no-private-hosts sends an explicit empty list.
+	require.NoError(t, b.Create(context.Background(), BrowsersCreateInput{NoPrivateHosts: true}))
+	body, err = json.Marshal(captured)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), `"network":{"private_hosts":[]}`)
+}
+
+func TestBrowsersCreate_PrivateHostsValidation(t *testing.T) {
+	setupStdoutCapture(t)
+
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			return &kernel.BrowserNewResponse{SessionID: "sess-new"}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+
+	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{
+		PrivateHosts:   []string{"preview.internal"},
+		NoPrivateHosts: true,
+	}))
+
+	tooMany := make([]string, maxPrivateHosts+1)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("host-%d.internal", i)
+	}
+	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{PrivateHosts: tooMany}))
+}
+
+func TestFormatPrivateHosts(t *testing.T) {
+	// Absent list: the API's default private ranges apply.
+	assert.Equal(t, "-", formatPrivateHosts(kernel.BrowserNetworkConfig{}))
+
+	var explicitEmpty kernel.BrowserNetworkConfig
+	require.NoError(t, explicitEmpty.UnmarshalJSON([]byte(`{"private_hosts":[]}`)))
+	assert.Equal(t, "none (all traffic uses Kernel-managed egress)", formatPrivateHosts(explicitEmpty))
+
+	var populated kernel.BrowserNetworkConfig
+	require.NoError(t, populated.UnmarshalJSON([]byte(`{"private_hosts":["*.example.ts.net","10.1.30.63"]}`)))
+	assert.Equal(t, "*.example.ts.net, 10.1.30.63", formatPrivateHosts(populated))
 }
 
 // The API takes a proxy object rather than the deprecated proxy_id field, and
