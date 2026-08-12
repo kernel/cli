@@ -10,7 +10,9 @@ import (
 )
 
 func TestNormalizeSitesFlattensDeduplicatesAndSorts(t *testing.T) {
-	assert.Equal(t, []string{"example.com", "github.com"}, normalizeSites([]string{" GitHub.com,example.com ", "github.com"}))
+	sites, err := normalizeSites([]string{" GitHub.com,example.com ", "github.com"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"example.com", "github.com"}, sites)
 }
 
 func TestChooseSitesUsesRequestedDomainsWithoutPrompting(t *testing.T) {
@@ -48,4 +50,21 @@ func TestProfilesImportLocalRejectsUnsupportedOutputBeforeDiscovery(t *testing.T
 	command := ProfilesImportLocalCmd{prompter: interactive.NewPrompterWithTerminal(false)}
 	err := command.Run(t.Context(), ProfilesImportLocalInput{Output: "yaml", Count: 5, Days: 30})
 	assert.EqualError(t, err, `unsupported --output value "yaml"; use "json" or omit --output for human-readable output`)
+}
+
+func TestProfilesImportStatusRejectsUnsupportedOutputBeforeAuthentication(t *testing.T) {
+	profilesImportStatusCmd.Flags().Set("output", "yaml")
+	t.Cleanup(func() { _ = profilesImportStatusCmd.Flags().Set("output", "") })
+	err := runProfilesImportStatus(profilesImportStatusCmd, []string{"imp_test"})
+	assert.EqualError(t, err, `unsupported --output value "yaml"; use "json" or omit --output for human-readable output`)
+}
+
+func TestChooseProfileRejectsDuplicateFriendlyName(t *testing.T) {
+	profiles := []localbrowser.Profile{
+		{ID: "one", Name: "Personal", Browser: localbrowser.Browser{Name: "Google Chrome"}},
+		{ID: "two", Name: "Personal", Browser: localbrowser.Browser{Name: "Google Chrome"}},
+	}
+	command := ProfilesImportLocalCmd{prompter: interactive.NewPrompterWithTerminal(false)}
+	_, err := command.chooseProfile(profiles, "Google Chrome / Personal")
+	assert.EqualError(t, err, `browser profile "Google Chrome / Personal" is ambiguous; use its profile ID`)
 }

@@ -28,6 +28,7 @@ import (
 const (
 	maxDocumentBytes = 16 << 20
 	maxSQLiteOutput  = 64 << 20
+	maxSQLiteBytes   = 2 << 30
 )
 
 var profileIDCharacters = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
@@ -92,10 +93,10 @@ func discoverProfiles(browser Browser) ([]Profile, error) {
 	profiles := make([]Profile, 0, len(directories))
 	for _, directory := range directories {
 		path := filepath.Join(browser.Root, directory)
-		if _, err := os.Stat(filepath.Join(path, "History")); err != nil {
+		if !fileExists(filepath.Join(path, "History")) && !fileExists(filepath.Join(path, "Network/Cookies")) && !fileExists(filepath.Join(path, "Cookies")) {
 			continue
 		}
-		profiles = append(profiles, Profile{ID: profileID(browser.ID, directory), Name: names[directory], Browser: browser, Path: path})
+		profiles = append(profiles, Profile{ID: profileID(browser.ID, directory), Name: names[directory], Browser: browser, Path: path, Directory: directory})
 	}
 	return profiles, nil
 }
@@ -113,7 +114,7 @@ func RecentSites(ctx context.Context, profile Profile, since time.Time, limit in
 	const chromeEpochMicros = int64(11_644_473_600_000_000)
 	cutoff := since.UnixMicro() + chromeEpochMicros
 	query := fmt.Sprintf(`SELECT u.url, COUNT(*) AS visits, MAX(v.visit_time) AS last_visit FROM visits v JOIN urls u ON u.id = v.url WHERE v.visit_time >= %d AND (u.url LIKE 'http://%%' OR u.url LIKE 'https://%%') GROUP BY u.url ORDER BY visits DESC, last_visit DESC LIMIT 10000`, cutoff)
-	data, err := sqliteJSON(ctx, filepath.Join(profile.Path, "History"), query)
+	data, err := sqliteSnapshotJSON(ctx, filepath.Join(profile.Path, "History"), query)
 	if err != nil {
 		return nil, fmt.Errorf("read recent browser history: %w", err)
 	}
@@ -134,7 +135,10 @@ func RecentSites(ctx context.Context, profile Profile, since time.Time, limit in
 		if err != nil || parsed.Hostname() == "" {
 			continue
 		}
-		domain := registrableDomain(parsed.Hostname())
+		domain, err := CanonicalSite(parsed.Hostname())
+		if err != nil {
+			continue
+		}
 		site := byDomain[domain]
 		site.Domain = domain
 		site.Visits += row.Visits
@@ -161,11 +165,29 @@ func RecentSites(ctx context.Context, profile Profile, since time.Time, limit in
 }
 
 func ExportCookies(ctx context.Context, profile Profile, selectedSites []string) ([]Cookie, error) {
+	canonicalSites := make([]string, 0, len(selectedSites))
+	seenSites := make(map[string]struct{}, len(selectedSites))
+	for _, selected := range selectedSites {
+		site, err := CanonicalSite(selected)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := seenSites[site]; !exists {
+			seenSites[site] = struct{}{}
+			canonicalSites = append(canonicalSites, site)
+		}
+	}
+	selectedSites = canonicalSites
 	path := filepath.Join(profile.Path, "Network/Cookies")
 	if _, err := os.Stat(path); err != nil {
 		path = filepath.Join(profile.Path, "Cookies")
 	}
-	columnsData, err := sqliteJSON(ctx, path, `SELECT name FROM pragma_table_info('cookies')`)
+	snapshot, cleanup, err := sqliteSnapshot(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot cookie database: %w", err)
+	}
+	defer cleanup()
+	columnsData, err := sqliteJSON(ctx, snapshot, `SELECT name FROM pragma_table_info('cookies')`)
 	if err != nil {
 		return nil, fmt.Errorf("inspect cookie database: %w", err)
 	}
@@ -175,19 +197,19 @@ func ExportCookies(ctx context.Context, profile Profile, selectedSites []string)
 	if err := json.Unmarshal(columnsData, &columns); err != nil {
 		return nil, fmt.Errorf("decode cookie schema: %w", err)
 	}
-	partitionClause := ""
+	partitionPredicates := []string{"(expires_utc = 0 OR expires_utc > " + fmt.Sprintf("%d", time.Now().UnixMicro()+11_644_473_600_000_000) + ")"}
 	for _, column := range columns {
 		switch column.Name {
 		case "top_frame_site_key":
-			partitionClause = " WHERE top_frame_site_key = ''"
+			partitionPredicates = append(partitionPredicates, "top_frame_site_key = ''")
 		case "is_partitioned":
-			if partitionClause == "" {
-				partitionClause = " WHERE is_partitioned = 0"
-			}
+			partitionPredicates = append(partitionPredicates, "is_partitioned = 0")
 		}
 	}
-	query := `SELECT host_key, path, name, value, hex(encrypted_value) AS encrypted_value, expires_utc, is_httponly, is_secure, samesite FROM cookies` + partitionClause + ` ORDER BY host_key, name`
-	data, err := sqliteJSON(ctx, path, query)
+	whereClause := " WHERE " + strings.Join(partitionPredicates, " AND ")
+	siteClause := selectedCookieClause(selectedSites, true)
+	query := `SELECT host_key, path, name, value, hex(encrypted_value) AS encrypted_value, expires_utc, is_httponly, is_secure, samesite FROM cookies` + whereClause + siteClause + ` ORDER BY host_key, name`
+	data, err := sqliteJSON(ctx, snapshot, query)
 	if err != nil {
 		return nil, fmt.Errorf("read browser cookies: %w", err)
 	}
@@ -254,19 +276,183 @@ func CountCookiesBySite(cookies []Cookie, sites []Site) []Site {
 }
 
 func sqliteJSON(ctx context.Context, databasePath, query string) ([]byte, error) {
-	command := exec.CommandContext(ctx, "/usr/bin/sqlite3", "-readonly", "-json", databasePath, query)
-	output, err := command.Output()
+	command := exec.CommandContext(ctx, "/usr/bin/sqlite3", "-json", databasePath, query)
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	stdout, err := command.StdoutPipe()
 	if err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
-			return nil, fmt.Errorf("sqlite3: %s", strings.TrimSpace(string(exit.Stderr)))
-		}
 		return nil, err
 	}
-	if len(output) > maxSQLiteOutput {
+	if err := command.Start(); err != nil {
+		return nil, err
+	}
+	output, readErr := io.ReadAll(io.LimitReader(stdout, maxSQLiteOutput+1))
+	if int64(len(output)) > maxSQLiteOutput {
+		_ = command.Process.Kill()
+		_ = command.Wait()
 		return nil, fmt.Errorf("sqlite output exceeds 64 MiB")
 	}
+	waitErr := command.Wait()
+	if readErr != nil {
+		return nil, readErr
+	}
+	err = waitErr
+	if err != nil {
+		return nil, fmt.Errorf("sqlite3: %s", strings.TrimSpace(stderr.String()))
+	}
 	return output, nil
+}
+
+func sqliteSnapshotJSON(ctx context.Context, databasePath, query string) ([]byte, error) {
+	snapshot, cleanup, err := sqliteSnapshot(ctx, databasePath)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	return sqliteJSON(ctx, snapshot, query)
+}
+
+type fileFingerprint struct {
+	exists   bool
+	size     int64
+	modified time.Time
+}
+
+func sqliteSnapshot(ctx context.Context, databasePath string) (string, func(), error) {
+	if !fileExists(databasePath) {
+		return "", nil, fmt.Errorf("browser database %q was not found", filepath.Base(databasePath))
+	}
+	paths := []string{databasePath, databasePath + "-wal", databasePath + "-journal"}
+	for attempt := 0; attempt < 3; attempt++ {
+		before, err := fingerprintFiles(paths)
+		if err != nil {
+			return "", nil, err
+		}
+		var totalBytes int64
+		for _, fingerprint := range before {
+			totalBytes += fingerprint.size
+		}
+		if totalBytes > maxSQLiteBytes {
+			return "", nil, fmt.Errorf("browser database snapshot exceeds %d bytes", maxSQLiteBytes)
+		}
+		temporaryDirectory, err := os.MkdirTemp("", "kernel-browser-import-sqlite-")
+		if err != nil {
+			return "", nil, err
+		}
+		snapshot := filepath.Join(temporaryDirectory, filepath.Base(databasePath))
+		copyChanged := false
+		for index, source := range paths {
+			if !before[index].exists {
+				continue
+			}
+			if err := copyFileBounded(ctx, source, snapshot+strings.TrimPrefix(source, databasePath), before[index].size); err != nil {
+				os.RemoveAll(temporaryDirectory)
+				if errors.Is(err, os.ErrNotExist) || errors.Is(err, errFileGrew) {
+					copyChanged = true
+					break
+				}
+				return "", nil, fmt.Errorf("copy %s: %w", filepath.Base(source), err)
+			}
+		}
+		after, err := fingerprintFiles(paths)
+		if !copyChanged && err == nil && fingerprintsEqual(before, after) {
+			return snapshot, func() { _ = os.RemoveAll(temporaryDirectory) }, nil
+		}
+		os.RemoveAll(temporaryDirectory)
+	}
+	return "", nil, fmt.Errorf("browser database changed while it was being read; try again")
+}
+
+func fingerprintFiles(paths []string) ([]fileFingerprint, error) {
+	result := make([]fileFingerprint, len(paths))
+	for index, path := range paths {
+		info, err := os.Stat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		result[index] = fileFingerprint{exists: true, size: info.Size(), modified: info.ModTime()}
+	}
+	return result, nil
+}
+
+func fingerprintsEqual(left, right []fileFingerprint) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func copyFileBounded(ctx context.Context, source, destination string, limit int64) error {
+	input, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+
+	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer output.Close()
+
+	buffer := make([]byte, 256<<10)
+	var copied int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		read, readErr := input.Read(buffer)
+		if read > 0 {
+			copied += int64(read)
+			if copied > limit {
+				return errFileGrew
+			}
+			if _, err := output.Write(buffer[:read]); err != nil {
+				return err
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			return output.Close()
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
+}
+
+var errFileGrew = errors.New("file grew while being copied")
+
+func selectedCookieClause(sites []string, hasWhere bool) string {
+	if len(sites) == 0 {
+		return ""
+	}
+	predicates := make([]string, 0, len(sites))
+	for _, site := range sites {
+		site = strings.TrimPrefix(strings.ToLower(site), ".")
+		predicates = append(predicates, "(host_key = "+sqliteLiteral(site)+" OR host_key = "+sqliteLiteral("."+site)+" OR host_key LIKE "+sqliteLiteral("%."+site)+")")
+	}
+	prefix := " WHERE "
+	if hasWhere {
+		prefix = " AND "
+	}
+	return prefix + "(" + strings.Join(predicates, " OR ") + ")"
+}
+
+func sqliteLiteral(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func chromiumSafeStorageKey(ctx context.Context, browser Browser) ([]byte, error) {
@@ -309,13 +495,17 @@ func decryptChromiumValue(key []byte, domain string, encrypted []byte) ([]byte, 
 	return plaintext, nil
 }
 
-func registrableDomain(host string) string {
-	host = strings.TrimSuffix(strings.ToLower(host), ".")
-	domain, err := publicsuffix.EffectiveTLDPlusOne(host)
-	if err == nil {
-		return domain
+// CanonicalSite validates a website hostname and returns its registrable domain.
+func CanonicalSite(value string) (string, error) {
+	value = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(value)), ".")
+	if value == "" || strings.ContainsAny(value, "/:*@?#[] ") {
+		return "", fmt.Errorf("%q is not a website domain", value)
 	}
-	return host
+	domain, err := publicsuffix.EffectiveTLDPlusOne(value)
+	if err != nil {
+		return "", fmt.Errorf("%q is not a registrable website domain", value)
+	}
+	return domain, nil
 }
 
 func matchesAnySite(cookieDomain string, sites []string) bool {

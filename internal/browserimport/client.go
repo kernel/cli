@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,9 +25,15 @@ func NewClient(baseURL, token, projectID string) (*Client, error) {
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return nil, fmt.Errorf("invalid Kernel API URL")
 	}
-	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && (parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1")) {
+	if parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, fmt.Errorf("Kernel API URL must not contain credentials, a path, query, or fragment")
+	}
+	local := parsed.Scheme == "http" && (parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1")
+	official := parsed.Scheme == "https" && (parsed.Hostname() == "api.onkernel.com" || strings.HasSuffix(parsed.Hostname(), ".onkernel.com"))
+	if !local && !official {
 		return nil, fmt.Errorf("Kernel API URL must use HTTPS or local development")
 	}
+	parsed.Path = ""
 	return &Client{baseURL: strings.TrimRight(parsed.String(), "/"), token: token, projectID: projectID, http: &http.Client{Timeout: 15 * time.Minute}}, nil
 }
 
@@ -39,12 +46,18 @@ func (c *Client) Create(ctx context.Context) (CreateResponse, error) {
 func (c *Client) SubmitInventory(ctx context.Context, id, helperToken string, inventory Inventory) (Status, error) {
 	var result Status
 	err := c.doJSON(ctx, http.MethodPost, "/browser-imports/"+url.PathEscape(id)+"/inventory", helperToken, inventory, &result)
+	if err != nil {
+		return c.reconcile(ctx, id, err, "awaiting_selection", "awaiting_bundle", "staged", "applying", "completed")
+	}
 	return result, err
 }
 
 func (c *Client) SubmitSelection(ctx context.Context, id string, selection Selection) (Status, error) {
 	var result Status
 	err := c.doJSON(ctx, http.MethodPost, "/browser-imports/"+url.PathEscape(id)+"/selection", c.token, selection, &result)
+	if err != nil {
+		return c.reconcile(ctx, id, err, "awaiting_bundle", "staged", "applying", "completed")
+	}
 	return result, err
 }
 
@@ -57,14 +70,27 @@ func (c *Client) Upload(ctx context.Context, id, helperToken string, bundle []by
 	request.Header.Set("Content-Type", "application/octet-stream")
 	response, err := c.http.Do(request)
 	if err != nil {
-		return Status{}, err
+		return c.reconcile(ctx, id, err, "staged", "applying", "completed", "failed")
 	}
 	defer response.Body.Close()
 	var result Status
 	if err := decodeResponse(response, &result); err != nil {
-		return Status{}, err
+		return c.reconcile(ctx, id, err, "staged", "applying", "completed", "failed")
 	}
 	return result, nil
+}
+
+func (c *Client) reconcile(ctx context.Context, id string, requestErr error, advancedPhases ...string) (Status, error) {
+	status, statusErr := c.Status(ctx, id)
+	if statusErr != nil {
+		return Status{}, errors.Join(requestErr, fmt.Errorf("check browser import %s after request failure: %w", id, statusErr))
+	}
+	for _, phase := range advancedPhases {
+		if status.Phase == phase {
+			return status, nil
+		}
+	}
+	return status, requestErr
 }
 
 func (c *Client) Status(ctx context.Context, id string) (Status, error) {
