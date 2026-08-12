@@ -486,6 +486,28 @@ func TestBrowsersCreate_WithNameAndTags(t *testing.T) {
 	assert.Contains(t, out, "env=staging, team=backend")
 }
 
+func TestBrowsersCreate_WithPrivateHosts(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-network"}, nil
+		},
+	}
+
+	err := (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
+		PrivateHosts: []string{"*.example.ts.net", "100.64.0.0/10"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"*.example.ts.net", "100.64.0.0/10"}, captured.Network.PrivateHosts)
+
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"private_hosts":["*.example.ts.net","100.64.0.0/10"]`)
+}
+
 func TestBrowsersCreate_WithChromePolicy(t *testing.T) {
 	setupStdoutCapture(t)
 
