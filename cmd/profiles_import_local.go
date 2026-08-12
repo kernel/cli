@@ -10,13 +10,18 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/kernel/cli/internal/agentskills"
 	localbrowser "github.com/kernel/cli/internal/browserimport"
 	"github.com/kernel/cli/internal/passwordmanager"
 	"github.com/kernel/cli/pkg/auth"
 	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
+	"github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/param"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -417,7 +422,7 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, sit
 		if len(idSuffix) > 6 {
 			idSuffix = idSuffix[len(idSuffix)-6:]
 		}
-		label := fmt.Sprintf("%2d  %-28s %-28s %s · %s", index+1, candidate.Domain, candidate.Username, candidate.Name, idSuffix)
+		label := loginCandidateLabel(index, candidate, idSuffix)
 		labels = append(labels, label)
 		byLabel[label] = candidate
 		if domainCounts[candidate.Domain] == 1 {
@@ -642,6 +647,82 @@ func defaultImportedProfileName(profile localbrowser.Profile) string {
 	return name
 }
 
+func compactField(value string, limit int) string {
+	value = ansi.Strip(value)
+	value = strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return ' '
+		}
+		if !unicode.IsPrint(r) {
+			return -1
+		}
+		return r
+	}, value)
+	return ansi.Truncate(strings.Join(strings.Fields(value), " "), limit, "…")
+}
+
+func loginCandidateLabel(index int, candidate passwordmanager.Candidate, idSuffix string) string {
+	identity := candidate.Username
+	if identity == "" {
+		identity = "no username"
+	}
+	indexLabel := fmt.Sprintf("%d", index+1)
+	indexWidth := max(2, ansi.StringWidth(indexLabel))
+	nameWidth := max(8, 16-(indexWidth-2))
+	return fmt.Sprintf("%*s  %s  %s  %s · %s", indexWidth, indexLabel, compactField(candidate.Domain, 18), compactField(identity, 20), compactField(candidate.Name, nameWidth), idSuffix)
+}
+
+func projectOptionLabel(index int, project kernel.Project) string {
+	return fmt.Sprintf("%2d  %s", index+1, compactField(project.Name, 48))
+}
+
+func chooseImportProject(ctx context.Context, projects ProjectListService, prompter interactive.Prompter, requested string, nonInteractive bool) (string, error) {
+	if requested != "" {
+		return requested, nil
+	}
+	const pageSize int64 = 100
+	active := make([]kernel.Project, 0)
+	for offset := int64(0); ; {
+		page, err := projects.List(ctx, kernel.ProjectListParams{Limit: param.NewOpt(pageSize), Offset: param.NewOpt(offset)})
+		if err != nil {
+			return "", fmt.Errorf("list Kernel projects: %w", err)
+		}
+		if page == nil || len(page.Items) == 0 {
+			break
+		}
+		for _, project := range page.Items {
+			if project.Status == kernel.ProjectStatusActive {
+				active = append(active, project)
+			}
+		}
+		if int64(len(page.Items)) < pageSize {
+			break
+		}
+		offset += int64(len(page.Items))
+	}
+	if len(active) == 0 {
+		return "", fmt.Errorf("no active Kernel projects were found")
+	}
+	if len(active) == 1 {
+		return active[0].ID, nil
+	}
+	if nonInteractive {
+		return "", fmt.Errorf("multiple Kernel projects are available; pass --project")
+	}
+	options := make([]string, 0, len(active))
+	byOption := make(map[string]string, len(active))
+	for index, project := range active {
+		label := projectOptionLabel(index, project)
+		options = append(options, label)
+		byOption[label] = project.ID
+	}
+	chosen, err := prompter.Select("Kernel project", "pass --project", "Choose the Kernel project for this import", options)
+	if err != nil {
+		return "", err
+	}
+	return byOption[chosen], nil
+}
+
 var profileIDNameCharacters = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 var cuidLikeProfileName = regexp.MustCompile(`^[a-z0-9]{24}$`)
 
@@ -690,8 +771,19 @@ func runProfilesImportLocal(cmd *cobra.Command, _ []string) error {
 	project, _ := cmd.Flags().GetString("project")
 	project = resolveProjectSelection(project)
 	client := getKernelClient(cmd)
-	credentials := client.Credentials
-	connections := client.Auth.Connections
+	project, err := chooseImportProject(cmd.Context(), &client.Projects, interactive.NewPrompter(), project, skipConfirm || output == "json")
+	if err != nil {
+		return err
+	}
+	projectClient, err := auth.GetAuthenticatedClient(
+		option.WithProjectID(project),
+		option.WithHeader("X-Kernel-Cli-Version", metadata.Version),
+	)
+	if err != nil {
+		return fmt.Errorf("create project-scoped client: %w", err)
+	}
+	credentials := projectClient.Credentials
+	connections := projectClient.Auth.Connections
 	c := ProfilesImportLocalCmd{prompter: interactive.NewPrompter(), providers: passwordmanager.Detect, provisioner: kernelManagedAuthProvisioner{credentials: &credentials, connections: &connections}}
 	return c.Run(cmd.Context(), ProfilesImportLocalInput{BrowserProfile: browserProfile, ProfileName: profileName, Sites: sites, Count: count, Days: days, SkipConfirm: skipConfirm, Output: output, ProjectID: project, Version: metadata.Version, WaitTimeout: waitTimeout, PasswordManager: passwordManager, InstallAgentSkills: installAgentSkills})
 }
