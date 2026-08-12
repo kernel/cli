@@ -512,14 +512,9 @@ func TestBrowserPoolsUpdate_RejectsInvalidDurableInputs(t *testing.T) {
 			wantErr: "--fill-rate must be zero or greater",
 		},
 		{
-			name:    "conflicting network flags",
-			input:   BrowserPoolsUpdateInput{PrivateHosts: []string{"preview.internal"}, ClearNetwork: true},
-			wantErr: "cannot specify --clear-network with --private-host or --no-private-hosts",
-		},
-		{
-			name:    "conflicting private host flags",
-			input:   BrowserPoolsUpdateInput{PrivateHosts: []string{"preview.internal"}, NoPrivateHosts: true},
-			wantErr: "cannot specify both --private-host and --no-private-hosts",
+			name:    "conflicting private host modes",
+			input:   BrowserPoolsUpdateInput{PrivateHosts: []string{"internal.example"}, ClearPrivateHosts: true},
+			wantErr: "cannot specify both --private-host and --clear-private-hosts",
 		},
 	}
 
@@ -535,6 +530,62 @@ func TestBrowserPoolsUpdate_RejectsInvalidDurableInputs(t *testing.T) {
 			tt.input.IDOrName = "pool-1"
 			err := (BrowserPoolsCmd{client: fake}).Update(context.Background(), tt.input)
 			require.EqualError(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestBrowserPoolsCreate_WithPrivateHosts(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolNewParams
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: "pool-network"}, nil
+		},
+	}
+
+	err := (BrowserPoolsCmd{client: fake}).Create(context.Background(), BrowserPoolsCreateInput{
+		Size:         1,
+		PrivateHosts: []string{"*.example.ts.net", "100.64.0.0/10"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"*.example.ts.net", "100.64.0.0/10"}, captured.Network.PrivateHosts)
+}
+
+func TestBrowserPoolsUpdate_PrivateHostModes(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    BrowserPoolsUpdateInput
+		wantJSON string
+	}{
+		{
+			name:     "replace",
+			input:    BrowserPoolsUpdateInput{PrivateHosts: []string{"*.example.ts.net"}},
+			wantJSON: `"network":{"private_hosts":["*.example.ts.net"]}`,
+		},
+		{
+			name:     "restore defaults",
+			input:    BrowserPoolsUpdateInput{ClearPrivateHosts: true},
+			wantJSON: `"network":{}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupStdoutCapture(t)
+			var captured kernel.BrowserPoolUpdateParams
+			fake := &FakeBrowserPoolsService{
+				UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+					captured = body
+					return &kernel.BrowserPool{ID: id}, nil
+				},
+			}
+			tt.input.IDOrName = "pool-network"
+			require.NoError(t, (BrowserPoolsCmd{client: fake}).Update(context.Background(), tt.input))
+			raw, err := captured.MarshalJSON()
+			require.NoError(t, err)
+			assert.Contains(t, string(raw), tt.wantJSON)
 		})
 	}
 }

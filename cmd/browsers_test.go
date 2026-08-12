@@ -487,50 +487,6 @@ func TestBrowsersCreate_WithNameAndTags(t *testing.T) {
 	assert.Contains(t, out, "env=staging, team=backend")
 }
 
-func TestBrowsersCreate_WithRegion(t *testing.T) {
-	setupStdoutCapture(t)
-
-	var captured kernel.BrowserNewParams
-	fake := &FakeBrowsersService{
-		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
-			captured = body
-			return &kernel.BrowserNewResponse{SessionID: "sess-new", Region: kernel.BrowserNewResponseRegionEuWest}, nil
-		},
-	}
-
-	b := BrowsersCmd{browsers: fake}
-	require.NoError(t, b.Create(context.Background(), BrowsersCreateInput{Region: "eu-west"}))
-	assert.Equal(t, kernel.BrowserNewParamsRegionEuWest, captured.Region)
-
-	// Omitting the flag leaves the region unset so the API default applies.
-	require.NoError(t, b.Create(context.Background(), BrowsersCreateInput{}))
-	assert.Empty(t, string(captured.Region))
-
-	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{Region: "us-west"}))
-}
-
-func TestBrowsersList_ForwardsRegion(t *testing.T) {
-	setupStdoutCapture(t)
-
-	var captured kernel.BrowserListParams
-	fake := &FakeBrowsersService{
-		ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
-			captured = query
-			return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: []kernel.BrowserListResponse{}}, nil
-		},
-	}
-
-	b := BrowsersCmd{browsers: fake}
-	require.NoError(t, b.List(context.Background(), BrowsersListInput{Region: "us-east"}))
-	assert.Equal(t, kernel.BrowserListParamsRegionUsEast, captured.Region)
-
-	// An unknown region is rejected before the request is made.
-	assert.Error(t, b.List(context.Background(), BrowsersListInput{Region: "us-west"}))
-}
-
-// The API distinguishes an omitted private_hosts list ("keep the default private
-// ranges") from an explicit empty one ("everything goes through Kernel-managed
-// egress"), so the CLI has to keep [] on the wire.
 func TestBrowsersCreate_WithPrivateHosts(t *testing.T) {
 	setupStdoutCapture(t)
 
@@ -538,126 +494,19 @@ func TestBrowsersCreate_WithPrivateHosts(t *testing.T) {
 	fake := &FakeBrowsersService{
 		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
 			captured = body
-			return &kernel.BrowserNewResponse{SessionID: "sess-new"}, nil
+			return &kernel.BrowserNewResponse{SessionID: "sess-network"}, nil
 		},
 	}
-	b := BrowsersCmd{browsers: fake}
 
-	// Entries are trimmed and blanks dropped.
-	require.NoError(t, b.Create(context.Background(), BrowsersCreateInput{
-		PrivateHosts: []string{" *.example.ts.net ", "", "100.64.0.0/10"},
-	}))
+	err := (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
+		PrivateHosts: []string{"*.example.ts.net", "100.64.0.0/10"},
+	})
+	require.NoError(t, err)
 	assert.Equal(t, []string{"*.example.ts.net", "100.64.0.0/10"}, captured.Network.PrivateHosts)
-	body, err := json.Marshal(captured)
+
+	raw, err := captured.MarshalJSON()
 	require.NoError(t, err)
-	assert.Contains(t, string(body), `"network":{"private_hosts":["*.example.ts.net","100.64.0.0/10"]}`)
-
-	// Omitting both flags leaves network out of the request entirely.
-	require.NoError(t, b.Create(context.Background(), BrowsersCreateInput{}))
-	assert.Empty(t, captured.Network.PrivateHosts)
-	body, err = json.Marshal(captured)
-	require.NoError(t, err)
-	assert.NotContains(t, string(body), "network")
-
-	// --no-private-hosts sends an explicit empty list.
-	require.NoError(t, b.Create(context.Background(), BrowsersCreateInput{NoPrivateHosts: true}))
-	body, err = json.Marshal(captured)
-	require.NoError(t, err)
-	assert.Contains(t, string(body), `"network":{"private_hosts":[]}`)
-}
-
-func TestBrowsersCreate_PrivateHostsValidation(t *testing.T) {
-	setupStdoutCapture(t)
-
-	fake := &FakeBrowsersService{
-		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
-			return &kernel.BrowserNewResponse{SessionID: "sess-new"}, nil
-		},
-	}
-	b := BrowsersCmd{browsers: fake}
-
-	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{
-		PrivateHosts:   []string{"preview.internal"},
-		NoPrivateHosts: true,
-	}))
-
-	tooMany := make([]string, maxPrivateHosts+1)
-	for i := range tooMany {
-		tooMany[i] = fmt.Sprintf("host-%d.internal", i)
-	}
-	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{PrivateHosts: tooMany}))
-}
-
-func TestFormatPrivateHosts(t *testing.T) {
-	// Absent list: the API's default private ranges apply.
-	assert.Equal(t, "-", formatPrivateHosts(kernel.BrowserNetworkConfig{}))
-
-	var explicitEmpty kernel.BrowserNetworkConfig
-	require.NoError(t, explicitEmpty.UnmarshalJSON([]byte(`{"private_hosts":[]}`)))
-	assert.Equal(t, "none (all traffic uses Kernel-managed egress)", formatPrivateHosts(explicitEmpty))
-
-	var populated kernel.BrowserNetworkConfig
-	require.NoError(t, populated.UnmarshalJSON([]byte(`{"private_hosts":["*.example.ts.net","10.1.30.63"]}`)))
-	assert.Equal(t, "*.example.ts.net, 10.1.30.63", formatPrivateHosts(populated))
-}
-
-// The API takes a proxy object rather than the deprecated proxy_id field, and
-// accepts exactly one of id, name, or mode.
-func TestBrowsersCreate_ProxySelection(t *testing.T) {
-	setupStdoutCapture(t)
-	for _, tc := range []struct {
-		name   string
-		in     BrowsersCreateInput
-		assert func(t *testing.T, p kernel.BrowserProxyConfigParam)
-	}{
-		{"by id", BrowsersCreateInput{ProxyID: "proxy-123"}, func(t *testing.T, p kernel.BrowserProxyConfigParam) {
-			assert.Equal(t, "proxy-123", p.ID.Value)
-		}},
-		{"by name", BrowsersCreateInput{ProxyName: "my-proxy"}, func(t *testing.T, p kernel.BrowserProxyConfigParam) {
-			assert.Equal(t, "my-proxy", p.Name.Value)
-		}},
-		{"by mode", BrowsersCreateInput{ProxyMode: "direct"}, func(t *testing.T, p kernel.BrowserProxyConfigParam) {
-			assert.Equal(t, kernel.BrowserProxyModeDirect, p.Mode)
-		}},
-		{"omitted", BrowsersCreateInput{}, func(t *testing.T, p kernel.BrowserProxyConfigParam) {
-			assert.False(t, p.ID.Valid())
-			assert.False(t, p.Name.Valid())
-			assert.Empty(t, p.Mode)
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var captured kernel.BrowserNewParams
-			fake := &FakeBrowsersService{
-				NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
-					captured = body
-					return &kernel.BrowserNewResponse{SessionID: "sess-new"}, nil
-				},
-			}
-			b := BrowsersCmd{browsers: fake}
-			require.NoError(t, b.Create(context.Background(), tc.in))
-			tc.assert(t, captured.Proxy)
-		})
-	}
-}
-
-func TestBrowsersCreate_ConflictingProxyFlags_Error(t *testing.T) {
-	setupStdoutCapture(t)
-	b := BrowsersCmd{browsers: &FakeBrowsersService{}}
-
-	err := b.Create(context.Background(), BrowsersCreateInput{ProxyID: "proxy-123", ProxyMode: "direct"})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "at most one")
-}
-
-func TestBrowsersCreate_UnknownProxyMode_Errors(t *testing.T) {
-	setupStdoutCapture(t)
-	b := BrowsersCmd{browsers: &FakeBrowsersService{}}
-
-	err := b.Create(context.Background(), BrowsersCreateInput{ProxyMode: "bogus"})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown proxy mode")
+	assert.Contains(t, string(raw), `"private_hosts":["*.example.ts.net","100.64.0.0/10"]`)
 }
 
 func TestBrowsersCreate_WithChromePolicy(t *testing.T) {

@@ -372,6 +372,7 @@ type BrowsersCreateInput struct {
 	TelemetryExport    string
 	ChromePolicy       string
 	ChromePolicyFile   string
+	PrivateHosts       []string
 	Name               string
 	Tags               map[string]string
 	Output             string
@@ -554,7 +555,6 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	if err := validateStartURLFlag(in.StartURL); err != nil {
 		return err
 	}
-
 	params := kernel.BrowserNewParams{}
 	if in.TimeoutSeconds > 0 {
 		params.TimeoutSeconds = kernel.Opt(int64(in.TimeoutSeconds))
@@ -670,6 +670,9 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 	if len(chromePolicy) > 0 {
 		params.ChromePolicy = chromePolicy
+	}
+	if len(in.PrivateHosts) > 0 {
+		params.Network.PrivateHosts = in.PrivateHosts
 	}
 
 	if in.Name != "" {
@@ -2955,6 +2958,7 @@ func init() {
 	browsersCreateCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts")
 	browsersCreateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
 	browsersCreateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
+	browsersCreateCmd.Flags().StringSlice("private-host", nil, "Private hostname, IP, or CIDR to route through the session network (repeatable or comma-separated; replaces defaults)")
 	browsersCreateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
 
 	// curl
@@ -3085,6 +3089,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	tags, _ := tagsFromFlag(cmd, "tag")
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
 	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
+	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
 	output, _ := cmd.Flags().GetString("output")
 	skipConfirm, _ := cmd.Flags().GetBool("yes")
 
@@ -3210,6 +3215,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		TelemetryExport:    telemetryExport,
 		ChromePolicy:       chromePolicy,
 		ChromePolicyFile:   chromePolicyFile,
+		PrivateHosts:       privateHosts,
 		Name:               name,
 		Tags:               tags,
 		Output:             output,
