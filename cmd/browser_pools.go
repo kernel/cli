@@ -57,8 +57,12 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 	if in.Offset > 0 {
 		params.Offset = kernel.Int(int64(in.Offset))
 	}
-	if in.Region != "" {
-		params.Region = kernel.BrowserPoolListParamsRegion(in.Region)
+	region, err := parseRegionFlag(in.Region)
+	if err != nil {
+		return err
+	}
+	if region != "" {
+		params.Region = kernel.BrowserPoolListParamsRegion(region)
 	}
 
 	page, err := c.client.List(ctx, params)
@@ -85,7 +89,7 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 	}
 
 	tableData := pterm.TableData{
-		{"ID", "Name", "Available", "Acquired", "Created At", "Size", "Region"},
+		{"ID", "Name", "Available", "Acquired", "Created At", "Region", "Size"},
 	}
 
 	for _, p := range pools {
@@ -97,7 +101,6 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 			util.FormatLocal(p.CreatedAt),
 			util.OrDash(string(p.Region)),
 			fmt.Sprintf("%d", p.BrowserPoolConfig.Size),
-			string(p.Region),
 		})
 	}
 
@@ -145,6 +148,7 @@ type BrowserPoolsCreateInput struct {
 	ProfileName            string
 	ProxyID                string
 	Region                 string
+	PrivateHosts           []string
 	StartURL               string
 	Extensions             []string
 	Viewport               string
@@ -203,9 +207,6 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 
 	if in.ProxyID != "" {
 		params.ProxyID = kernel.String(in.ProxyID)
-	}
-	if in.Region != "" {
-		params.Region = kernel.BrowserPoolNewParamsRegion(in.Region)
 	}
 	if in.StartURL != "" {
 		params.StartURL = kernel.String(in.StartURL)
@@ -300,7 +301,7 @@ func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error
 		{"ID", pool.ID},
 		{"Name", util.OrDash(pool.Name)},
 		{"Created At", util.FormatLocal(pool.CreatedAt)},
-		{"Region", string(pool.Region)},
+		{"Region", util.OrDash(string(pool.Region))},
 		{"Size", fmt.Sprintf("%d", cfg.Size)},
 		{"Available", fmt.Sprintf("%d", pool.AvailableCount)},
 		{"Acquired", fmt.Sprintf("%d", pool.AcquiredCount)},
@@ -725,7 +726,7 @@ func init() {
 	browserPoolsListCmd.Flags().String("query", "", "Search browser pools by name (IDs match by exact value)")
 	browserPoolsListCmd.Flags().Int("limit", 0, "Maximum number of pools to return")
 	browserPoolsListCmd.Flags().Int("offset", 0, "Number of pools to skip (for pagination)")
-	browserPoolsListCmd.Flags().String("region", "", "Filter pools by region (us-east or eu-west); omit to list pools in all regions")
+	browserPoolsListCmd.Flags().String("region", "", "Filter by geographic region: 'us-east' or 'eu-west' (omit to list pools in all regions)")
 
 	addJSONOutputFlag(browserPoolsCreateCmd)
 	browserPoolsCreateCmd.Flags().String("name", "", "Optional unique name for the pool")
@@ -740,7 +741,8 @@ func init() {
 	browserPoolsCreateCmd.Flags().String("profile-id", "", "Profile ID")
 	browserPoolsCreateCmd.Flags().String("profile-name", "", "Profile name")
 	browserPoolsCreateCmd.Flags().String("proxy-id", "", "Proxy ID")
-	browserPoolsCreateCmd.Flags().String("region", "", "Region for the browser pool (us-east or eu-west); fixed once created, defaults to us-east. Requires a Start-Up or Enterprise plan")
+	browserPoolsCreateCmd.Flags().String("region", "", "Geographic region for the pool: 'us-east' or 'eu-west'. Fixed once the pool is created; requires a Start-Up or Enterprise plan and defaults to us-east")
+	browserPoolsCreateCmd.Flags().StringSlice("private-host", nil, "Destination(s) browsers in the pool reach directly through their own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel they join (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Replaces the default private ranges (RFC1918, 100.64.0.0/10, fc00::/7); omit to keep them")
 	browserPoolsCreateCmd.Flags().String("start-url", "", "Initial page to open for new browsers")
 	browserPoolsCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsCreateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
@@ -812,7 +814,7 @@ func runBrowserPoolsList(cmd *cobra.Command, args []string) error {
 	offset, _ := cmd.Flags().GetInt("offset")
 	region, _ := cmd.Flags().GetString("region")
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
-	return c.List(cmd.Context(), BrowserPoolsListInput{Limit: limit, Offset: offset, Region: region, Output: out})
+	return c.List(cmd.Context(), BrowserPoolsListInput{Name: name, Query: query, Limit: limit, Offset: offset, Region: region, Output: out})
 }
 
 func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
@@ -836,6 +838,7 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
 	region, _ := cmd.Flags().GetString("region")
+	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
@@ -857,6 +860,7 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 		ProfileName:            profileName,
 		ProxyID:                proxyID,
 		Region:                 region,
+		PrivateHosts:           privateHosts,
 		StartURL:               startURL,
 		Extensions:             extensions,
 		Viewport:               viewport,

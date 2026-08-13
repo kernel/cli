@@ -114,10 +114,11 @@ func (c CredentialProvidersCmd) List(ctx context.Context, in CredentialProviders
 		return nil
 	}
 
-	tableData := pterm.TableData{{"ID", "Provider Type", "Enabled", "Priority", "Created At"}}
+	tableData := pterm.TableData{{"ID", "Name", "Provider Type", "Enabled", "Priority", "Created At"}}
 	for _, p := range providers {
 		tableData = append(tableData, []string{
 			p.ID,
+			p.Name,
 			string(p.ProviderType),
 			fmt.Sprintf("%t", p.Enabled),
 			fmt.Sprintf("%d", p.Priority),
@@ -146,6 +147,7 @@ func (c CredentialProvidersCmd) Get(ctx context.Context, in CredentialProvidersG
 	tableData := pterm.TableData{
 		{"Property", "Value"},
 		{"ID", provider.ID},
+		{"Name", provider.Name},
 		{"Provider Type", string(provider.ProviderType)},
 		{"Enabled", fmt.Sprintf("%t", provider.Enabled)},
 		{"Priority", fmt.Sprintf("%d", provider.Priority)},
@@ -165,7 +167,10 @@ func (c CredentialProvidersCmd) Create(ctx context.Context, in CredentialProvide
 	if in.ProviderType == "" {
 		return fmt.Errorf("--provider-type is required")
 	}
-	if in.Name == "" {
+	// The API trims surrounding whitespace and rejects a blank name, so a
+	// whitespace-only value is caught here rather than round-tripping a 400.
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
 		return fmt.Errorf("--name is required")
 	}
 	if in.Token == "" {
@@ -180,7 +185,7 @@ func (c CredentialProvidersCmd) Create(ctx context.Context, in CredentialProvide
 
 	params := kernel.CredentialProviderNewParams{
 		CreateCredentialProviderRequest: kernel.CreateCredentialProviderRequestParam{
-			Name:         in.Name,
+			Name:         name,
 			Token:        in.Token,
 			ProviderType: kernel.CreateCredentialProviderRequestProviderTypeOnepassword,
 		},
@@ -229,7 +234,12 @@ func (c CredentialProvidersCmd) Update(ctx context.Context, in CredentialProvide
 		params.UpdateCredentialProviderRequest.Token = kernel.Opt(in.Token)
 	}
 	if in.Name != "" {
-		params.UpdateCredentialProviderRequest.Name = kernel.Opt(in.Name)
+		// A name that is only whitespace trims to empty, which the API rejects.
+		name := strings.TrimSpace(in.Name)
+		if name == "" {
+			return fmt.Errorf("--name cannot be blank")
+		}
+		params.UpdateCredentialProviderRequest.Name = kernel.Opt(name)
 	}
 	if in.CacheTtlSeconds > 0 {
 		params.UpdateCredentialProviderRequest.CacheTtlSeconds = kernel.Opt(in.CacheTtlSeconds)

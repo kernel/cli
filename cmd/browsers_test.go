@@ -472,9 +472,14 @@ func TestBrowsersList_WithRegion_PassesParam(t *testing.T) {
 	assert.Equal(t, kernel.BrowserListParamsRegionEuWest, captured.Region)
 
 	// Omitting the flag leaves the param unset, so all regions are listed.
+	captured = kernel.BrowserListParams{}
 	err = b.List(context.Background(), BrowsersListInput{})
 	assert.NoError(t, err)
 	assert.Empty(t, captured.Region)
+
+	// An unknown region is rejected before the request is made.
+	err = b.List(context.Background(), BrowsersListInput{Region: "emea"})
+	assert.Error(t, err)
 }
 
 func TestBrowsersCreate_WithNameAndTags(t *testing.T) {
@@ -584,6 +589,9 @@ func TestBrowsersCreate_WithRegion(t *testing.T) {
 	raw, err = captured.MarshalJSON()
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), "region")
+
+	// An unknown region is rejected before the request is made.
+	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{Region: "emea"}))
 }
 
 func TestBrowsersCreate_WithChromePolicy(t *testing.T) {
@@ -1072,7 +1080,7 @@ func TestBrowsersGet_PrintsDetails(t *testing.T) {
 				KioskMode:          false,
 				Viewport:           shared.BrowserViewport{Width: 1920, Height: 1080, RefreshRate: 25},
 				Profile:            kernel.Profile{ID: "prof-id", Name: "my-profile"},
-				ProxyID:            "proxy-123",
+				Proxy:              kernel.BrowserProxy{ID: "proxy-123", Name: "my-proxy"},
 				Region:             kernel.BrowserGetResponseRegionEuWest,
 			}, nil
 		},
@@ -1089,7 +1097,7 @@ func TestBrowsersGet_PrintsDetails(t *testing.T) {
 	assert.Contains(t, out, "true")  // Stealth
 	assert.Contains(t, out, "1920x1080@25")
 	assert.Contains(t, out, "my-profile")
-	assert.Contains(t, out, "proxy-123")
+	assert.Contains(t, out, "my-proxy (proxy-123)")
 	assert.Contains(t, out, "eu-west")
 }
 
