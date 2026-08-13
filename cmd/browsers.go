@@ -2790,7 +2790,7 @@ func init() {
 	browsersCreateCmd.Flags().String("profile-name", "", "Profile name to load into the browser session (mutually exclusive with --profile-id)")
 	browsersCreateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
 	browsersCreateCmd.Flags().String("proxy-id", "", "Proxy ID to use for the browser session")
-	browsersCreateCmd.Flags().String("region", "", "Region for the browser session (us-east or eu-west); fixed once created, defaults to us-east")
+	browsersCreateCmd.Flags().String("region", "", "Region for the browser session (us-east or eu-west); fixed once created, defaults to us-east. Requires a Start-Up or Enterprise plan")
 	browsersCreateCmd.Flags().String("start-url", "", "Initial page to open on launch")
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
 	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")

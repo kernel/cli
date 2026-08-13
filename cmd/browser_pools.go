@@ -707,7 +707,7 @@ func init() {
 	browserPoolsCreateCmd.Flags().String("profile-id", "", "Profile ID")
 	browserPoolsCreateCmd.Flags().String("profile-name", "", "Profile name")
 	browserPoolsCreateCmd.Flags().String("proxy-id", "", "Proxy ID")
-	browserPoolsCreateCmd.Flags().String("region", "", "Region for the browser pool (us-east or eu-west); fixed once created, defaults to us-east")
+	browserPoolsCreateCmd.Flags().String("region", "", "Region for the browser pool (us-east or eu-west); fixed once created, defaults to us-east. Requires a Start-Up or Enterprise plan")
 	browserPoolsCreateCmd.Flags().String("start-url", "", "Initial page to open for new browsers")
 	browserPoolsCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsCreateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")

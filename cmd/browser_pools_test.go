@@ -17,6 +17,7 @@ import (
 // FakeBrowserPoolsService is a configurable fake implementing BrowserPoolsService.
 type FakeBrowserPoolsService struct {
 	AcquireFunc func(ctx context.Context, id string, body kernel.BrowserPoolAcquireParams, opts ...option.RequestOption) (*kernel.BrowserPoolAcquireResponse, error)
+	GetFunc     func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserPool, error)
 	ListFunc    func(ctx context.Context, query kernel.BrowserPoolListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserPool], error)
 	NewFunc     func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error)
 	UpdateFunc  func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error)
@@ -37,6 +38,9 @@ func (f *FakeBrowserPoolsService) New(ctx context.Context, body kernel.BrowserPo
 }
 
 func (f *FakeBrowserPoolsService) Get(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+	if f.GetFunc != nil {
+		return f.GetFunc(ctx, id, opts...)
+	}
 	return &kernel.BrowserPool{}, nil
 }
 
@@ -139,13 +143,13 @@ func TestBrowserPoolsList_WithRegion(t *testing.T) {
 	c := BrowserPoolsCmd{client: fake}
 
 	err := c.List(context.Background(), BrowserPoolsListInput{Region: "eu-west"})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, kernel.BrowserPoolListParamsRegionEuWest, captured.Region)
 	assert.Contains(t, outBuf.String(), "eu-west")
 
 	// Omitting the flag leaves the param unset, so all regions are listed.
 	err = c.List(context.Background(), BrowserPoolsListInput{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Empty(t, captured.Region)
 }
 
@@ -187,17 +191,40 @@ func TestBrowserPoolsCreate_WithRegion(t *testing.T) {
 	c := BrowserPoolsCmd{client: fake}
 
 	err := c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Region: "eu-west"})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, kernel.BrowserPoolNewParamsRegionEuWest, captured.Region)
+
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"region":"eu-west"`)
 
 	// Omitting the flag sends nothing; the server defaults to us-east.
 	err = c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Empty(t, captured.Region)
 
-	raw, err := captured.MarshalJSON()
-	assert.NoError(t, err)
+	raw, err = captured.MarshalJSON()
+	require.NoError(t, err)
 	assert.NotContains(t, string(raw), "region")
+}
+
+func TestBrowserPoolsGet_ShowsRegion(t *testing.T) {
+	setupStdoutCapture(t)
+
+	fake := &FakeBrowserPoolsService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			return &kernel.BrowserPool{ID: id, Name: "eu-pool", Region: kernel.BrowserPoolRegionEuWest}, nil
+		},
+	}
+	c := BrowserPoolsCmd{client: fake}
+
+	err := c.Get(context.Background(), BrowserPoolsGetInput{IDOrName: "pool-1"})
+	require.NoError(t, err)
+
+	out := outBuf.String()
+	assert.Contains(t, out, "Region")
+	assert.Contains(t, out, "eu-pool")
+	assert.Contains(t, out, "eu-west")
 }
 
 func TestBrowserPoolsCreate_WithRefreshOnProfileUpdate(t *testing.T) {
