@@ -280,7 +280,7 @@ Commands with JSON output support:
 - `kernel browser-pools get <id-or-name>` - Get pool details
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools update <id-or-name>` - Update pool configuration
-  - Same flags as create plus `--clear-profile`, `--clear-proxy`, `--clear-start-url`, `--clear-extensions`, `--clear-chrome-policy`, and `--clear-private-hosts` for removing durable configuration. `--clear-private-hosts` restores the default private IP ranges. `--fill-rate 0` pauses automatic filling. `--discard-all-idle` discards all idle browsers and refills the pool. `--telemetry` and private-host updates only apply to browsers warmed after the update.
+  - Same flags as create (except `--region`, which is fixed at creation and cannot be updated) plus `--clear-profile`, `--clear-proxy`, `--clear-start-url`, `--clear-extensions`, `--clear-chrome-policy`, and `--clear-private-hosts` for removing durable configuration. `--clear-private-hosts` restores the default private IP ranges. `--fill-rate 0` pauses automatic filling. `--discard-all-idle` discards all idle browsers and refills the pool. `--telemetry` and private-host updates only apply to browsers warmed after the update.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools delete <id-or-name>` - Delete a pool
   - `--force` - Force delete even if browsers are leased
