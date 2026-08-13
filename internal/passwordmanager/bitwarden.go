@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"golang.org/x/sync/errgroup"
 )
 
 type bitwardenProvider struct {
@@ -45,14 +47,17 @@ func (p *bitwardenProvider) Candidates(ctx context.Context, sites []string) ([]C
 	if err != nil {
 		return nil, err
 	}
+	results, err := fetchBitwardenCandidateSites(ctx, sites, func(ctx context.Context, site string) ([]bitwardenCandidateItem, error) {
+		return p.candidateItems(ctx, environment, site)
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	seen := make(map[string]struct{})
 	candidates := make([]Candidate, 0)
-	for _, site := range sites {
-		items, err := p.candidateItems(ctx, environment, site)
-		if err != nil {
-			return nil, fmt.Errorf("find Bitwarden logins for %s: %w", site, err)
-		}
-		for _, item := range items {
+	for index, site := range sites {
+		for _, item := range results[index] {
 			if item.Login == nil || item.OrganizationID != "" {
 				continue
 			}
@@ -65,6 +70,28 @@ func (p *bitwardenProvider) Candidates(ctx context.Context, sites []string) ([]C
 		}
 	}
 	return candidates, nil
+}
+
+func fetchBitwardenCandidateSites(ctx context.Context, sites []string, fetch func(context.Context, string) ([]bitwardenCandidateItem, error)) ([][]bitwardenCandidateItem, error) {
+	results := make([][]bitwardenCandidateItem, len(sites))
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(min(4, len(sites)))
+	for index, site := range sites {
+		index, site := index, site
+		group.Go(func() error {
+			items, err := fetch(groupCtx, site)
+			if err != nil {
+				return fmt.Errorf("find Bitwarden logins for %s: %w", site, err)
+			}
+			results[index] = items
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+
+	return results, nil
 }
 
 func (p *bitwardenProvider) candidateItems(ctx context.Context, environment map[string]string, site string) ([]bitwardenCandidateItem, error) {

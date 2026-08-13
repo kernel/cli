@@ -54,7 +54,6 @@ func runConnectorOpen(cmd *cobra.Command, args []string) error {
 	}
 	pterm.Info.Println("Browser import requested from a kernel:// link")
 	input := ProfilesImportLocalInput{
-		Count:           10,
 		Days:            30,
 		ProjectID:       link.ProjectID,
 		Version:         metadata.Version,

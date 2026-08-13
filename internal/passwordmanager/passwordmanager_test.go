@@ -1,10 +1,13 @@
 package passwordmanager
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -93,6 +96,79 @@ esac
 	require.NoError(t, err)
 	assert.False(t, required)
 	assert.Empty(t, os.Getenv("BW_SESSION"))
+}
+
+func TestBitwardenCandidateDiscoveryDoesNotSync(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "commands")
+	path := filepath.Join(t.TempDir(), "bw")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$BW_TEST_LOG"
+case "$1" in
+  status) printf '{"status":"unlocked"}' ;;
+  list) printf '[]' ;;
+  sync) exit 99 ;;
+  *) exit 1 ;;
+esac
+`
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o700))
+	t.Setenv("BW_TEST_LOG", logPath)
+	provider := &bitwardenProvider{path: path}
+
+	candidates, err := provider.Candidates(context.Background(), []string{"github.com"})
+	require.NoError(t, err)
+	assert.Empty(t, candidates)
+	commands, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	assert.NotContains(t, string(commands), "sync")
+	assert.Contains(t, string(commands), "list items --url github.com")
+}
+
+func TestBitwardenCandidateQueriesAreBoundedOrderedAndCanceled(t *testing.T) {
+	sites := []string{"one.com", "two.com", "three.com", "four.com", "five.com", "six.com"}
+	var active, peak atomic.Int32
+	results, err := fetchBitwardenCandidateSites(t.Context(), sites, func(ctx context.Context, site string) ([]bitwardenCandidateItem, error) {
+		current := active.Add(1)
+		defer active.Add(-1)
+		for {
+			previous := peak.Load()
+			if current <= previous || peak.CompareAndSwap(previous, current) {
+				break
+			}
+		}
+		time.Sleep(time.Duration(len(sites)-stringIndex(sites, site)) * time.Millisecond)
+		return []bitwardenCandidateItem{{ID: site}}, nil
+	})
+	require.NoError(t, err)
+	assert.LessOrEqual(t, peak.Load(), int32(4))
+	for index, site := range sites {
+		assert.Equal(t, site, results[index][0].ID)
+	}
+
+	canceled := make(chan struct{}, 1)
+	_, err = fetchBitwardenCandidateSites(t.Context(), []string{"fail", "slow"}, func(ctx context.Context, site string) ([]bitwardenCandidateItem, error) {
+		if site == "fail" {
+			time.Sleep(10 * time.Millisecond)
+			return nil, assert.AnError
+		}
+		<-ctx.Done()
+		canceled <- struct{}{}
+		return nil, ctx.Err()
+	})
+	require.Error(t, err)
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("sibling query was not canceled")
+	}
+}
+
+func stringIndex(values []string, target string) int {
+	for index, value := range values {
+		if value == target {
+			return index
+		}
+	}
+	return -1
 }
 
 func TestOnePasswordLongSummaryCanMatchWithoutItemReveal(t *testing.T) {

@@ -121,6 +121,24 @@ func TestMultiSelectUsesConventionalKeys(t *testing.T) {
 	assert.Equal(t, keys.Enter, printer.KeyConfirm)
 }
 
+func TestSelectDefaultsToFirstOption(t *testing.T) {
+	t.Parallel()
+	options := make([]string, 2000)
+	options[0] = "Done"
+	printer := newSelectPrinter("Remove a website, or continue", options, options[0])
+
+	assert.Equal(t, "Done", printer.DefaultOption)
+	assert.Equal(t, 12, printer.MaxHeight)
+}
+
+func TestSelectCanHighlightARequestedOption(t *testing.T) {
+	t.Parallel()
+	options := []string{"first", "chosen", "skip"}
+	printer := newSelectPrinter("Choose one", options, "chosen")
+
+	assert.Equal(t, "chosen", printer.DefaultOption)
+}
+
 func TestConfirmPrinterUsesRequestedDefault(t *testing.T) {
 	t.Parallel()
 	assert.False(t, newConfirmPrinter("Delete it?", false).DefaultValue)
