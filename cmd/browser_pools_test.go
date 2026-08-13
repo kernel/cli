@@ -18,6 +18,7 @@ import (
 // FakeBrowserPoolsService is a configurable fake implementing BrowserPoolsService.
 type FakeBrowserPoolsService struct {
 	AcquireFunc func(ctx context.Context, id string, body kernel.BrowserPoolAcquireParams, opts ...option.RequestOption) (*kernel.BrowserPoolAcquireResponse, error)
+	GetFunc     func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserPool, error)
 	ListFunc    func(ctx context.Context, query kernel.BrowserPoolListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserPool], error)
 	NewFunc     func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error)
 	UpdateFunc  func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error)
@@ -38,6 +39,9 @@ func (f *FakeBrowserPoolsService) New(ctx context.Context, body kernel.BrowserPo
 }
 
 func (f *FakeBrowserPoolsService) Get(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+	if f.GetFunc != nil {
+		return f.GetFunc(ctx, id, opts...)
+	}
 	return &kernel.BrowserPool{}, nil
 }
 
@@ -125,88 +129,33 @@ func TestBrowserPoolsList_ForwardsLimitOffset(t *testing.T) {
 	assert.Equal(t, int64(8), captured.Offset.Value)
 }
 
-func TestBrowserPoolsList_ForwardsRegion(t *testing.T) {
+func TestBrowserPoolsList_WithRegion(t *testing.T) {
 	setupStdoutCapture(t)
 
 	var captured kernel.BrowserPoolListParams
 	fake := &FakeBrowserPoolsService{
 		ListFunc: func(ctx context.Context, query kernel.BrowserPoolListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserPool], error) {
 			captured = query
-			return &pagination.OffsetPagination[kernel.BrowserPool]{Items: []kernel.BrowserPool{}}, nil
+			return &pagination.OffsetPagination[kernel.BrowserPool]{Items: []kernel.BrowserPool{
+				{ID: "pool-1", Region: kernel.BrowserPoolRegionEuWest},
+			}}, nil
 		},
 	}
-
 	c := BrowserPoolsCmd{client: fake}
+
 	err := c.List(context.Background(), BrowserPoolsListInput{Region: "eu-west"})
-
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, kernel.BrowserPoolListParamsRegionEuWest, captured.Region)
+	assert.Contains(t, outBuf.String(), "eu-west")
 
-	// An unknown region is rejected before the request is made.
-	err = c.List(context.Background(), BrowserPoolsListInput{Region: "emea"})
-	assert.Error(t, err)
+	// Omitting the flag leaves the param unset, so all regions are listed.
+	err = c.List(context.Background(), BrowserPoolsListInput{})
+	require.NoError(t, err)
+	assert.Empty(t, captured.Region)
 }
 
-func TestBrowserPoolsCreate_WithRegion(t *testing.T) {
-	setupStdoutCapture(t)
-
-	var captured kernel.BrowserPoolNewParams
-	fake := &FakeBrowserPoolsService{
-		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
-			captured = body
-			return &kernel.BrowserPool{ID: "pool-1", Region: kernel.BrowserPoolRegionEuWest}, nil
-		},
-	}
-
-	c := BrowserPoolsCmd{client: fake}
-	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Region: "eu-west"}))
-	assert.Equal(t, kernel.BrowserPoolNewParamsRegionEuWest, captured.Region)
-
-	// Omitting the flag leaves the region unset so the API default applies.
-	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1}))
-	assert.Empty(t, string(captured.Region))
-
-	assert.Error(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Region: "emea"}))
-}
-
-func TestBrowserPoolsCreate_PrivateHostNormalization(t *testing.T) {
-	setupStdoutCapture(t)
-
-	var gotJSON []byte
-	var marshalErr error
-	fake := &FakeBrowserPoolsService{
-		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
-			gotJSON, marshalErr = json.Marshal(body)
-			return &kernel.BrowserPool{ID: "pool-1"}, nil
-		},
-	}
-	c := BrowserPoolsCmd{client: fake}
-
-	// Blank entries from a trailing comma are dropped before the request.
-	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{
-		Size:         1,
-		PrivateHosts: []string{"*.example.ts.net", " "},
-	}))
-	require.NoError(t, marshalErr)
-	assert.Contains(t, string(gotJSON), `"network":{"private_hosts":["*.example.ts.net"]}`)
-
-	// Omitting the flag leaves network out of the request entirely, so the API
-	// keeps its default private ranges.
-	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1}))
-	require.NoError(t, marshalErr)
-	assert.NotContains(t, string(gotJSON), "network")
-
-	// The API's 32-entry cap is enforced client-side.
-	tooMany := make([]string, maxPrivateHosts+1)
-	for i := range tooMany {
-		tooMany[i] = fmt.Sprintf("host-%d.internal", i)
-	}
-	assert.Error(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, PrivateHosts: tooMany}))
-}
-
-// TestBuildAcquireParams covers the shared name/tags/timeout/telemetry/start-url
-// forwarding used by both `browser-pools acquire` and the `browsers create
-// --pool-id` lease path.
+// TestBuildAcquireParams covers the shared name/tags/timeout/telemetry forwarding
+// used by both `browser-pools acquire` and the `browsers create --pool-id` lease path.
 func TestBuildAcquireParams(t *testing.T) {
 	p, err := buildAcquireParams("lease", map[string]string{"env": "prod"}, 30, "console,network", "https://example.com")
 	assert.NoError(t, err)
@@ -231,6 +180,55 @@ func TestBuildAcquireParams(t *testing.T) {
 	// An invalid category surfaces an error rather than a partial param.
 	_, err = buildAcquireParams("", nil, 0, "bogus", "")
 	assert.Error(t, err)
+}
+
+func TestBrowserPoolsCreate_WithRegion(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolNewParams
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: "pool-region"}, nil
+		},
+	}
+	c := BrowserPoolsCmd{client: fake}
+
+	err := c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Region: "eu-west"})
+	require.NoError(t, err)
+	assert.Equal(t, kernel.BrowserPoolNewParamsRegionEuWest, captured.Region)
+
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"region":"eu-west"`)
+
+	// Omitting the flag sends nothing; the server defaults to us-east.
+	err = c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1})
+	require.NoError(t, err)
+	assert.Empty(t, captured.Region)
+
+	raw, err = captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "region")
+}
+
+func TestBrowserPoolsGet_ShowsRegion(t *testing.T) {
+	setupStdoutCapture(t)
+
+	fake := &FakeBrowserPoolsService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			return &kernel.BrowserPool{ID: id, Name: "eu-pool", Region: kernel.BrowserPoolRegionEuWest}, nil
+		},
+	}
+	c := BrowserPoolsCmd{client: fake}
+
+	err := c.Get(context.Background(), BrowserPoolsGetInput{IDOrName: "pool-1"})
+	require.NoError(t, err)
+
+	out := outBuf.String()
+	assert.Contains(t, out, "Region")
+	assert.Contains(t, out, "eu-pool")
+	assert.Contains(t, out, "eu-west")
 }
 
 func TestBrowserPoolsCreate_WithRefreshOnProfileUpdate(t *testing.T) {

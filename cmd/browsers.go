@@ -349,10 +349,7 @@ type BrowsersCreateInput struct {
 	ProfileName        string
 	ProfileSaveChanges BoolFlag
 	ProxyID            string
-	ProxyName          string
-	ProxyMode          string
 	Region             string
-	PrivateHosts       []string
 	StartURL           string
 	Extensions         []string
 	Viewport           string
@@ -456,12 +453,8 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	if in.Query != "" {
 		params.Query = kernel.Opt(in.Query)
 	}
-	region, err := parseRegionFlag(in.Region)
-	if err != nil {
-		return err
-	}
-	if region != "" {
-		params.Region = kernel.BrowserListParamsRegion(region)
+	if in.Region != "" {
+		params.Region = kernel.BrowserListParamsRegion(in.Region)
 	}
 	if len(in.Tags) > 0 {
 		params.Tags = in.Tags
@@ -487,7 +480,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	}
 
 	// Prepare table data
-	headers := []string{"Browser ID", "Name", "Created At", "Region", "Profile", "Pool", "CDP WS URL", "Live View URL"}
+	headers := []string{"Browser ID", "Name", "Created At", "Profile", "Pool", "Region", "CDP WS URL", "Live View URL"}
 	showDeletedAt := in.IncludeDeleted || in.Status == "deleted" || in.Status == "all"
 	if showDeletedAt {
 		headers = append(headers, "Deleted At")
@@ -516,6 +509,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 			util.OrDash(string(browser.Region)),
 			profile,
 			pool,
+			string(browser.Region),
 			truncateURL(browser.CdpWsURL, 50),
 			truncateURL(browser.BrowserLiveViewURL, 50),
 		}
@@ -586,6 +580,9 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 			return err
 		}
 		params.Proxy = proxy
+	}
+	if in.Region != "" {
+		params.Region = kernel.BrowserNewParamsRegion(in.Region)
 	}
 	if in.StartURL != "" {
 		params.StartURL = kernel.Opt(in.StartURL)
@@ -792,7 +789,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 
 	// Append additional detailed fields
 	tableData = append(tableData, []string{"Created At", util.FormatLocal(browser.CreatedAt)})
-	tableData = append(tableData, []string{"Region", util.OrDash(string(browser.Region))})
+	tableData = append(tableData, []string{"Region", string(browser.Region)})
 	tableData = append(tableData, []string{"Timeout (seconds)", fmt.Sprintf("%d", browser.TimeoutSeconds)})
 	tableData = append(tableData, []string{"Headless", fmt.Sprintf("%t", browser.Headless)})
 	tableData = append(tableData, []string{"Stealth", fmt.Sprintf("%t", browser.Stealth)})
@@ -2629,7 +2626,7 @@ func init() {
 	browsersListCmd.Flags().Int("limit", 0, "Maximum number of results to return (default 20, max 100)")
 	browsersListCmd.Flags().Int("offset", 0, "Number of results to skip (for pagination)")
 	browsersListCmd.Flags().String("query", "", "Search browsers by name, session ID, profile ID, proxy ID, or pool name")
-	browsersListCmd.Flags().String("region", "", "Filter by geographic region: 'us-east' or 'eu-west' (omit to list sessions in all regions)")
+	browsersListCmd.Flags().String("region", "", "Filter sessions by region (us-east or eu-west); omit to list sessions in all regions")
 	browsersListCmd.Flags().StringArray("tag", nil, "Filter by tag KEY=VALUE (repeatable; a session must match every pair)")
 
 	// get flags
@@ -2920,11 +2917,8 @@ func init() {
 	browsersCreateCmd.Flags().String("profile-id", "", "Profile ID to load into the browser session (mutually exclusive with --profile-name)")
 	browsersCreateCmd.Flags().String("profile-name", "", "Profile name to load into the browser session (mutually exclusive with --profile-id)")
 	browsersCreateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
-	browsersCreateCmd.Flags().String("proxy-id", "", "Proxy ID to use for the browser session (mutually exclusive with --proxy-name and --proxy-mode)")
-	browsersCreateCmd.Flags().String("proxy-name", "", "Proxy name to use for the browser session; must match exactly one active proxy in the project (mutually exclusive with --proxy-id and --proxy-mode)")
-	browsersCreateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' for the browser default (Kernel's stealth proxy when --stealth is set, direct egress otherwise)")
-	browsersCreateCmd.Flags().String("region", "", "Geographic region for the session: 'us-east' or 'eu-west'. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to us-east")
-	browsersCreateCmd.Flags().StringSlice("private-host", nil, "Destination(s) the browser reaches directly through its own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel the session joins (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Replaces the default private ranges (RFC1918, 100.64.0.0/10, fc00::/7); omit to keep them. Fixed once the session is created")
+	browsersCreateCmd.Flags().String("proxy-id", "", "Proxy ID to use for the browser session")
+	browsersCreateCmd.Flags().String("region", "", "Region for the browser session (us-east or eu-west); fixed once created, defaults to us-east. Requires a Start-Up or Enterprise plan")
 	browsersCreateCmd.Flags().String("start-url", "", "Initial page to open on launch")
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
 	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
@@ -3051,10 +3045,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	saveChanges, _ := cmd.Flags().GetBool("save-changes")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
-	proxyName, _ := cmd.Flags().GetString("proxy-name")
-	proxyMode, _ := cmd.Flags().GetString("proxy-mode")
 	region, _ := cmd.Flags().GetString("region")
-	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
@@ -3180,10 +3171,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		ProfileName:        profileName,
 		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
 		ProxyID:            proxyID,
-		ProxyName:          proxyName,
-		ProxyMode:          proxyMode,
 		Region:             region,
-		PrivateHosts:       privateHosts,
 		StartURL:           startURL,
 		Extensions:         extensions,
 		Viewport:           viewport,

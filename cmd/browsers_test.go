@@ -394,12 +394,14 @@ func TestBrowsersList_PrintsTableWithRows(t *testing.T) {
 			CdpWsURL:           "ws://cdp-1",
 			BrowserLiveViewURL: "http://view-1",
 			CreatedAt:          created,
+			Region:             kernel.BrowserListResponseRegionEuWest,
 		},
 		{
 			SessionID:          "sess-2",
 			CdpWsURL:           "ws://cdp-2",
 			BrowserLiveViewURL: "",
 			CreatedAt:          created,
+			Region:             kernel.BrowserListResponseRegionUsEast,
 		},
 	}
 
@@ -414,6 +416,8 @@ func TestBrowsersList_PrintsTableWithRows(t *testing.T) {
 	out := outBuf.String()
 	assert.Contains(t, out, "sess-1")
 	assert.Contains(t, out, "sess-2")
+	assert.Contains(t, out, "eu-west")
+	assert.Contains(t, out, "us-east")
 }
 
 func TestBrowsersList_PrintsErrorOnFailure(t *testing.T) {
@@ -449,6 +453,28 @@ func TestBrowsersList_WithQuery_PassesParam(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, captured.Query.Valid())
 	assert.Equal(t, "sess-matched", captured.Query.Value)
+}
+
+func TestBrowsersList_WithRegion_PassesParam(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserListParams
+	fake := &FakeBrowsersService{
+		ListFunc: func(ctx context.Context, query kernel.BrowserListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserListResponse], error) {
+			captured = query
+			return &pagination.OffsetPagination[kernel.BrowserListResponse]{Items: []kernel.BrowserListResponse{}}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.List(context.Background(), BrowsersListInput{Region: "eu-west"})
+	assert.NoError(t, err)
+	assert.Equal(t, kernel.BrowserListParamsRegionEuWest, captured.Region)
+
+	// Omitting the flag leaves the param unset, so all regions are listed.
+	err = b.List(context.Background(), BrowsersListInput{})
+	assert.NoError(t, err)
+	assert.Empty(t, captured.Region)
 }
 
 func TestBrowsersCreate_WithNameAndTags(t *testing.T) {
@@ -528,6 +554,36 @@ func TestBrowsersCreate_WithPrivateHosts(t *testing.T) {
 	assert.Error(t, (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
 		PrivateHosts: tooMany,
 	}))
+}
+
+func TestBrowsersCreate_WithRegion(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-region"}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{Region: "eu-west"})
+	require.NoError(t, err)
+	assert.Equal(t, kernel.BrowserNewParamsRegionEuWest, captured.Region)
+
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"region":"eu-west"`)
+
+	// Omitting the flag sends nothing; the server defaults to us-east.
+	err = b.Create(context.Background(), BrowsersCreateInput{})
+	require.NoError(t, err)
+	assert.Empty(t, captured.Region)
+
+	raw, err = captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "region")
 }
 
 func TestBrowsersCreate_WithChromePolicy(t *testing.T) {
@@ -1016,7 +1072,8 @@ func TestBrowsersGet_PrintsDetails(t *testing.T) {
 				KioskMode:          false,
 				Viewport:           shared.BrowserViewport{Width: 1920, Height: 1080, RefreshRate: 25},
 				Profile:            kernel.Profile{ID: "prof-id", Name: "my-profile"},
-				Proxy:              kernel.BrowserProxy{ID: "proxy-123", Name: "my-proxy"},
+				ProxyID:            "proxy-123",
+				Region:             kernel.BrowserGetResponseRegionEuWest,
 			}, nil
 		},
 	}
@@ -1032,7 +1089,8 @@ func TestBrowsersGet_PrintsDetails(t *testing.T) {
 	assert.Contains(t, out, "true")  // Stealth
 	assert.Contains(t, out, "1920x1080@25")
 	assert.Contains(t, out, "my-profile")
-	assert.Contains(t, out, "my-proxy (proxy-123)")
+	assert.Contains(t, out, "proxy-123")
+	assert.Contains(t, out, "eu-west")
 }
 
 func TestBrowsersGet_JSONOutput(t *testing.T) {

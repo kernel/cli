@@ -210,15 +210,14 @@ Commands with JSON output support:
 
 - `kernel browsers list` - List running browsers
   - `--query <q>` - Search by name, session ID, profile ID, proxy ID, or pool name
-  - `--region us-east|eu-west` - Filter by geographic region; omit to list sessions in all regions
+  - `--region <region>` - Filter sessions by region (us-east or eu-west); omit to list sessions in all regions
   - `--tag <KEY=VALUE>` - Filter by tag, repeatable; a session must match every pair
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel browsers create` - Create a new browser session
   - `-s, --stealth` - Launch browser in stealth mode to avoid detection
   - `-H, --headless` - Launch browser without GUI access
   - `--kiosk` - Launch browser in kiosk mode
-  - `--region us-east|eu-west` - Geographic region for the session. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to `us-east`.
-  - `--private-host <host>` - Destination the browser reaches directly through the session's own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel the session joins (repeatable or comma-separated, max 32). Accepts hostname patterns (`*.example.ts.net`), IPs (`10.1.30.63`, `[fd00::1]`), and private CIDRs (`100.64.0.0/10`). Replaces the default private ranges (RFC1918, `100.64.0.0/10`, `fc00::/7`); omit to keep them. Fixed once the session is created. Unrelated to a proxy's `--bypass-host`, which only chooses between upstream proxy and Kernel-managed direct egress.
+  - `--region <region>` - Region for the session (us-east or eu-west); fixed once created, defaults to us-east. Requires a Start-Up or Enterprise plan.
   - `--start-url <url>` - Initial page to open on launch
   - `--proxy-id <id>` / `--proxy-name <name>` - Use that proxy for the session regardless of stealth (mutually exclusive with each other and with `--proxy-mode`)
   - `--proxy-mode direct|default` - Egress mode instead of a selected proxy: `direct` for no proxy regardless of stealth, `default` for the stealth-derived default (Kernel's stealth proxy with `--stealth`, direct egress otherwise). Omit all proxy flags to get the default.
@@ -270,7 +269,7 @@ Commands with JSON output support:
 ### Browser Pools
 
 - `kernel browser-pools list` - List browser pools
-  - `--region us-east|eu-west` - Filter by geographic region; omit to list pools in all regions
+  - `--region <region>` - Filter pools by region (us-east or eu-west); omit to list pools in all regions
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel browser-pools create` - Create a browser pool
   - `--name <name>` - Optional unique name for the pool
@@ -279,14 +278,14 @@ Commands with JSON output support:
   - `--timeout <seconds>` - Idle timeout for browsers acquired from the pool
   - `--stealth`, `--headless`, `--kiosk` - Default pool configuration
   - `--refresh-on-profile-update` - Flush idle browsers when the pool's profile is updated (requires a profile)
-  - `--profile-id`, `--profile-name`, `--proxy-id`, `--start-url`, `--extension`, `--viewport`, `--private-host` - Same semantics as `kernel browsers create`
+  - `--profile-id`, `--profile-name`, `--proxy-id`, `--region`, `--start-url`, `--extension`, `--viewport`, `--private-host` - Same semantics as `kernel browsers create`
   - `--chrome-policy <json>` / `--chrome-policy-file <path>` - Custom Chrome enterprise policy applied to every browser in the pool, as a JSON object or from a file (`-` for stdin). Same semantics as `kernel browsers create`.
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Telemetry applied to browsers warmed into the pool. Same semantics as `kernel browsers create`.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools get <id-or-name>` - Get pool details
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools update <id-or-name>` - Update pool configuration
-  - Same flags as create plus `--clear-profile`, `--clear-proxy`, `--clear-start-url`, `--clear-extensions`, `--clear-chrome-policy`, and `--clear-private-hosts` for removing durable configuration. `--clear-private-hosts` restores the default private IP ranges. `--fill-rate 0` pauses automatic filling. `--discard-all-idle` discards all idle browsers and refills the pool. `--telemetry` and private-host updates only apply to browsers warmed after the update.
+  - Same flags as create (except `--region`, which is fixed at creation and cannot be updated) plus `--clear-profile`, `--clear-proxy`, `--clear-start-url`, `--clear-extensions`, `--clear-chrome-policy`, and `--clear-private-hosts` for removing durable configuration. `--clear-private-hosts` restores the default private IP ranges. `--fill-rate 0` pauses automatic filling. `--discard-all-idle` discards all idle browsers and refills the pool. `--telemetry` and private-host updates only apply to browsers warmed after the update.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools delete <id-or-name>` - Delete a pool
   - `--force` - Force delete even if browsers are leased
