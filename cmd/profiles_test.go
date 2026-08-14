@@ -108,7 +108,7 @@ func TestProfilesList_HasMore(t *testing.T) {
 	_ = p.List(context.Background(), ProfilesListInput{Page: 1, PerPage: perPage})
 	out := buf.String()
 	assert.Contains(t, out, "Has more: yes")
-	assert.Contains(t, out, "Next: kernel profile list --page 2 --per-page 2")
+	assert.Contains(t, out, "Next: kernel profiles list --page 2 --per-page 2")
 	assert.Contains(t, out, "p0")
 	assert.Contains(t, out, "p1")
 	assert.NotContains(t, out, "p2")

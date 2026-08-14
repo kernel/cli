@@ -35,9 +35,15 @@ type APIKeysCreateInput struct {
 }
 
 type APIKeysListInput struct {
-	Limit  int
-	Offset int
-	Output string
+	Limit          int
+	Offset         int
+	Name           string
+	Query          string
+	Status         string
+	IncludeDeleted bool
+	SortBy         string
+	SortDirection  string
+	Output         string
 }
 
 type APIKeysGetInput struct {
@@ -116,6 +122,50 @@ func (c APIKeysCmd) List(ctx context.Context, in APIKeysListInput) error {
 	if in.Offset > 0 {
 		params.Offset = kernel.Int(int64(in.Offset))
 	}
+	if in.Name != "" {
+		params.Name = kernel.String(in.Name)
+	}
+	if in.Query != "" {
+		params.Query = kernel.String(in.Query)
+	}
+	// Prefer the newer --status filter; fall back to the deprecated
+	// --include-deleted so existing scripts keep working.
+	if in.Status != "" {
+		switch in.Status {
+		case "active":
+			params.Status = kernel.APIKeyListParamsStatusActive
+		case "deleted":
+			params.Status = kernel.APIKeyListParamsStatusDeleted
+		case "all":
+			params.Status = kernel.APIKeyListParamsStatusAll
+		default:
+			return fmt.Errorf("invalid --status value: %s (must be 'active', 'deleted', or 'all')", in.Status)
+		}
+	} else if in.IncludeDeleted {
+		params.IncludeDeleted = kernel.Opt(true)
+	}
+	if in.SortBy != "" {
+		switch in.SortBy {
+		case "created_at":
+			params.SortBy = kernel.APIKeyListParamsSortByCreatedAt
+		case "name":
+			params.SortBy = kernel.APIKeyListParamsSortByName
+		case "expires_at":
+			params.SortBy = kernel.APIKeyListParamsSortByExpiresAt
+		default:
+			return fmt.Errorf("invalid --sort-by value: %s (must be 'created_at', 'name', or 'expires_at')", in.SortBy)
+		}
+	}
+	if in.SortDirection != "" {
+		switch in.SortDirection {
+		case "asc":
+			params.SortDirection = kernel.APIKeyListParamsSortDirectionAsc
+		case "desc":
+			params.SortDirection = kernel.APIKeyListParamsSortDirectionDesc
+		default:
+			return fmt.Errorf("invalid --sort-direction value: %s (must be 'asc' or 'desc')", in.SortDirection)
+		}
+	}
 
 	page, err := c.apiKeys.List(ctx, params)
 	if err != nil {
@@ -136,9 +186,15 @@ func (c APIKeysCmd) List(ctx context.Context, in APIKeysListInput) error {
 		return nil
 	}
 
-	table := pterm.TableData{{"ID", "Name", "Scope", "Project", "Masked Key", "Expires At", "Created At"}}
+	// Only surface Deleted At when the filter can actually return deleted keys.
+	showDeletedAt := in.IncludeDeleted || in.Status == "deleted" || in.Status == "all"
+	header := []string{"ID", "Name", "Scope", "Project", "Masked Key", "Expires At", "Created At"}
+	if showDeletedAt {
+		header = append(header, "Deleted At")
+	}
+	table := pterm.TableData{header}
 	for _, key := range keys {
-		table = append(table, []string{
+		row := []string{
 			key.ID,
 			key.Name,
 			formatAPIKeyScope(key),
@@ -146,7 +202,11 @@ func (c APIKeysCmd) List(ctx context.Context, in APIKeysListInput) error {
 			key.MaskedKey,
 			formatAPIKeyExpiresAt(key),
 			util.FormatLocal(key.CreatedAt),
-		})
+		}
+		if showDeletedAt {
+			row = append(row, util.FormatLocal(key.DeletedAt))
+		}
+		table = append(table, row)
 	}
 	PrintTableNoPad(table, true)
 	return nil
@@ -362,11 +422,23 @@ func runAPIKeysList(cmd *cobra.Command, args []string) error {
 	c := getAPIKeysHandler(cmd)
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
+	name, _ := cmd.Flags().GetString("name")
+	query, _ := cmd.Flags().GetString("query")
+	status, _ := cmd.Flags().GetString("status")
+	includeDeleted, _ := cmd.Flags().GetBool("include-deleted")
+	sortBy, _ := cmd.Flags().GetString("sort-by")
+	sortDirection, _ := cmd.Flags().GetString("sort-direction")
 	output, _ := cmd.Flags().GetString("output")
 	return c.List(cmd.Context(), APIKeysListInput{
-		Limit:  limit,
-		Offset: offset,
-		Output: output,
+		Limit:          limit,
+		Offset:         offset,
+		Name:           name,
+		Query:          query,
+		Status:         status,
+		IncludeDeleted: includeDeleted,
+		SortBy:         sortBy,
+		SortDirection:  sortDirection,
+		Output:         output,
 	})
 }
 
@@ -468,6 +540,12 @@ func init() {
 	addJSONOutputFlag(apiKeysListCmd)
 	apiKeysListCmd.Flags().Int("limit", 0, "Maximum number of results to return")
 	apiKeysListCmd.Flags().Int("offset", 0, "Number of results to skip")
+	apiKeysListCmd.Flags().String("name", "", "Filter by exact API key name (names are not unique, so several keys may match)")
+	apiKeysListCmd.Flags().String("query", "", "Search API keys by name, creator, or project (identifiers and masked keys match by exact value or prefix)")
+	apiKeysListCmd.Flags().String("status", "", "Filter by status: 'active' (default), 'deleted', or 'all'")
+	apiKeysListCmd.Flags().Bool("include-deleted", false, "Deprecated: Use --status all instead. Include soft-deleted API keys in the results")
+	apiKeysListCmd.Flags().String("sort-by", "", "Sort by: created_at, name, or expires_at")
+	apiKeysListCmd.Flags().String("sort-direction", "", "Sort direction: asc or desc")
 
 	addJSONOutputFlag(apiKeysGetCmd)
 	apiKeysGetCmd.Flags().Bool("include-deleted", false, "Include soft-deleted API keys in the lookup")

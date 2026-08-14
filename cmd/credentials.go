@@ -32,6 +32,7 @@ type CredentialsCmd struct {
 
 type CredentialsListInput struct {
 	Domain string
+	Query  string
 	Limit  int
 	Offset int
 	Output string
@@ -79,6 +80,9 @@ func (c CredentialsCmd) List(ctx context.Context, in CredentialsListInput) error
 	params := kernel.CredentialListParams{}
 	if in.Domain != "" {
 		params.Domain = kernel.Opt(in.Domain)
+	}
+	if in.Query != "" {
+		params.Query = kernel.Opt(in.Query)
 	}
 	if in.Limit > 0 {
 		params.Limit = kernel.Opt(int64(in.Limit))
@@ -410,6 +414,7 @@ func init() {
 	// List flags
 	addJSONOutputFlag(credentialsListCmd)
 	credentialsListCmd.Flags().String("domain", "", "Filter by domain")
+	credentialsListCmd.Flags().String("query", "", "Search credentials by name or domain (IDs match by exact value)")
 	credentialsListCmd.Flags().Int("limit", 0, "Maximum number of results to return")
 	credentialsListCmd.Flags().Int("offset", 0, "Number of results to skip")
 
@@ -445,6 +450,7 @@ func runCredentialsList(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	output, _ := cmd.Flags().GetString("output")
 	domain, _ := cmd.Flags().GetString("domain")
+	query, _ := cmd.Flags().GetString("query")
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
 
@@ -452,6 +458,7 @@ func runCredentialsList(cmd *cobra.Command, args []string) error {
 	c := CredentialsCmd{credentials: &svc}
 	return c.List(cmd.Context(), CredentialsListInput{
 		Domain: domain,
+		Query:  query,
 		Limit:  limit,
 		Offset: offset,
 		Output: output,

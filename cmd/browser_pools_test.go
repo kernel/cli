@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -128,7 +129,7 @@ func TestBrowserPoolsList_ForwardsLimitOffset(t *testing.T) {
 	assert.Equal(t, int64(8), captured.Offset.Value)
 }
 
-func TestBrowserPoolsList_WithRegion(t *testing.T) {
+func TestBrowserPoolsList_ForwardsRegion(t *testing.T) {
 	setupStdoutCapture(t)
 
 	var captured kernel.BrowserPoolListParams
@@ -140,41 +141,22 @@ func TestBrowserPoolsList_WithRegion(t *testing.T) {
 			}}, nil
 		},
 	}
-	c := BrowserPoolsCmd{client: fake}
 
+	c := BrowserPoolsCmd{client: fake}
 	err := c.List(context.Background(), BrowserPoolsListInput{Region: "eu-west"})
-	require.NoError(t, err)
+
+	assert.NoError(t, err)
 	assert.Equal(t, kernel.BrowserPoolListParamsRegionEuWest, captured.Region)
 	assert.Contains(t, outBuf.String(), "eu-west")
 
 	// Omitting the flag leaves the param unset, so all regions are listed.
+	captured = kernel.BrowserPoolListParams{}
 	err = c.List(context.Background(), BrowserPoolsListInput{})
-	require.NoError(t, err)
+	assert.NoError(t, err)
 	assert.Empty(t, captured.Region)
-}
 
-// TestBuildAcquireParams covers the shared name/tags/timeout/telemetry forwarding
-// used by both `browser-pools acquire` and the `browsers create --pool-id` lease path.
-func TestBuildAcquireParams(t *testing.T) {
-	p, err := buildAcquireParams("lease", map[string]string{"env": "prod"}, 30, "console,network")
-	assert.NoError(t, err)
-	assert.True(t, p.Name.Valid())
-	assert.Equal(t, "lease", p.Name.Value)
-	assert.Equal(t, "prod", p.Tags["env"])
-	assert.True(t, p.AcquireTimeoutSeconds.Valid())
-	assert.Equal(t, int64(30), p.AcquireTimeoutSeconds.Value)
-	assert.True(t, p.Telemetry.Browser.Console.Enabled.Value)
-	assert.True(t, p.Telemetry.Browser.Network.Enabled.Value)
-
-	// Unset inputs produce an empty params struct (nothing forwarded).
-	empty, err := buildAcquireParams("", nil, 0, "")
-	assert.NoError(t, err)
-	assert.False(t, empty.Name.Valid())
-	assert.Len(t, empty.Tags, 0)
-	assert.False(t, empty.AcquireTimeoutSeconds.Valid())
-
-	// An invalid category surfaces an error rather than a partial param.
-	_, err = buildAcquireParams("", nil, 0, "bogus")
+	// An unknown region is rejected before the request is made.
+	err = c.List(context.Background(), BrowserPoolsListInput{Region: "emea"})
 	assert.Error(t, err)
 }
 
@@ -185,27 +167,19 @@ func TestBrowserPoolsCreate_WithRegion(t *testing.T) {
 	fake := &FakeBrowserPoolsService{
 		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
 			captured = body
-			return &kernel.BrowserPool{ID: "pool-region"}, nil
+			return &kernel.BrowserPool{ID: "pool-1", Region: kernel.BrowserPoolRegionEuWest}, nil
 		},
 	}
-	c := BrowserPoolsCmd{client: fake}
 
-	err := c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Region: "eu-west"})
-	require.NoError(t, err)
+	c := BrowserPoolsCmd{client: fake}
+	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Region: "eu-west"}))
 	assert.Equal(t, kernel.BrowserPoolNewParamsRegionEuWest, captured.Region)
 
-	raw, err := captured.MarshalJSON()
-	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"region":"eu-west"`)
+	// Omitting the flag leaves the region unset so the API default applies.
+	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1}))
+	assert.Empty(t, string(captured.Region))
 
-	// Omitting the flag sends nothing; the server defaults to us-east.
-	err = c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1})
-	require.NoError(t, err)
-	assert.Empty(t, captured.Region)
-
-	raw, err = captured.MarshalJSON()
-	require.NoError(t, err)
-	assert.NotContains(t, string(raw), "region")
+	assert.Error(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Region: "emea"}))
 }
 
 func TestBrowserPoolsGet_ShowsRegion(t *testing.T) {
@@ -218,13 +192,76 @@ func TestBrowserPoolsGet_ShowsRegion(t *testing.T) {
 	}
 	c := BrowserPoolsCmd{client: fake}
 
-	err := c.Get(context.Background(), BrowserPoolsGetInput{IDOrName: "pool-1"})
-	require.NoError(t, err)
+	require.NoError(t, c.Get(context.Background(), BrowserPoolsGetInput{IDOrName: "pool-1"}))
 
 	out := outBuf.String()
 	assert.Contains(t, out, "Region")
 	assert.Contains(t, out, "eu-pool")
 	assert.Contains(t, out, "eu-west")
+}
+
+func TestBrowserPoolsCreate_PrivateHostNormalization(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var gotJSON []byte
+	var marshalErr error
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			gotJSON, marshalErr = json.Marshal(body)
+			return &kernel.BrowserPool{ID: "pool-1"}, nil
+		},
+	}
+	c := BrowserPoolsCmd{client: fake}
+
+	// Blank entries from a trailing comma are dropped before the request.
+	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{
+		Size:         1,
+		PrivateHosts: []string{"*.example.ts.net", " "},
+	}))
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(gotJSON), `"network":{"private_hosts":["*.example.ts.net"]}`)
+
+	// Omitting the flag leaves network out of the request entirely, so the API
+	// keeps its default private ranges.
+	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1}))
+	require.NoError(t, marshalErr)
+	assert.NotContains(t, string(gotJSON), "network")
+
+	// The API's 32-entry cap is enforced client-side.
+	tooMany := make([]string, maxPrivateHosts+1)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("host-%d.internal", i)
+	}
+	assert.Error(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, PrivateHosts: tooMany}))
+}
+
+// TestBuildAcquireParams covers the shared name/tags/timeout/telemetry/start-url
+// forwarding used by both `browser-pools acquire` and the `browsers create
+// --pool-id` lease path.
+func TestBuildAcquireParams(t *testing.T) {
+	p, err := buildAcquireParams("lease", map[string]string{"env": "prod"}, 30, "console,network", "https://example.com")
+	assert.NoError(t, err)
+	assert.True(t, p.Name.Valid())
+	assert.Equal(t, "lease", p.Name.Value)
+	assert.Equal(t, "prod", p.Tags["env"])
+	assert.True(t, p.AcquireTimeoutSeconds.Valid())
+	assert.Equal(t, int64(30), p.AcquireTimeoutSeconds.Value)
+	assert.True(t, p.StartURL.Valid())
+	assert.Equal(t, "https://example.com", p.StartURL.Value)
+	assert.True(t, p.Telemetry.Browser.Console.Enabled.Value)
+	assert.True(t, p.Telemetry.Browser.Network.Enabled.Value)
+
+	// Unset inputs produce an empty params struct (nothing forwarded).
+	empty, err := buildAcquireParams("", nil, 0, "", "")
+	assert.NoError(t, err)
+	assert.False(t, empty.Name.Valid())
+	assert.Len(t, empty.Tags, 0)
+	assert.False(t, empty.AcquireTimeoutSeconds.Valid())
+	assert.False(t, empty.StartURL.Valid())
+
+	// An invalid category surfaces an error rather than a partial param.
+	_, err = buildAcquireParams("", nil, 0, "bogus", "")
+	assert.Error(t, err)
 }
 
 func TestBrowserPoolsCreate_WithRefreshOnProfileUpdate(t *testing.T) {
@@ -407,6 +444,22 @@ func TestBrowserPoolsUpdate_DurableClearAndZeroStates(t *testing.T) {
 			wantJSON: `{}`,
 		},
 		{
+			name: "replace private hosts",
+			input: BrowserPoolsUpdateInput{
+				PrivateHosts: []string{" preview.internal ", "", "10.0.0.0/8"},
+			},
+			wantJSON: `{"network":{"private_hosts":["preview.internal","10.0.0.0/8"]}}`,
+		},
+		{
+			// An empty object removes the network configuration entirely, so the
+			// default private ranges come back.
+			name: "clear private hosts",
+			input: BrowserPoolsUpdateInput{
+				ClearPrivateHosts: true,
+			},
+			wantJSON: `{"network":{}}`,
+		},
+		{
 			name: "all durable clear states",
 			input: BrowserPoolsUpdateInput{
 				FillRate:          Int64Flag{Set: true, Value: 0},
@@ -415,8 +468,9 @@ func TestBrowserPoolsUpdate_DurableClearAndZeroStates(t *testing.T) {
 				ClearStartURL:     true,
 				ClearExtensions:   true,
 				ClearChromePolicy: true,
+				ClearPrivateHosts: true,
 			},
-			wantJSON: `{"fill_rate_per_minute":0,"profile":{"id":""},"proxy_id":"","start_url":"","extensions":[],"chrome_policy":{}}`,
+			wantJSON: `{"fill_rate_per_minute":0,"profile":{"id":""},"proxy_id":"","start_url":"","extensions":[],"chrome_policy":{},"network":{}}`,
 		},
 	}
 

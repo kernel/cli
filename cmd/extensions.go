@@ -54,6 +54,8 @@ type ExtensionsService interface {
 }
 
 type ExtensionsListInput struct {
+	Name   string
+	Query  string
 	Limit  int
 	Offset int
 	Output string
@@ -101,6 +103,12 @@ func (e ExtensionsCmd) List(ctx context.Context, in ExtensionsListInput) error {
 		pterm.Info.Println("Fetching extensions...")
 	}
 	params := kernel.ExtensionListParams{}
+	if in.Name != "" {
+		params.Name = kernel.String(in.Name)
+	}
+	if in.Query != "" {
+		params.Query = kernel.String(in.Query)
+	}
 	if in.Limit > 0 {
 		params.Limit = kernel.Int(int64(in.Limit))
 	}
@@ -452,11 +460,13 @@ var extensionsListCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := getKernelClient(cmd)
 		output, _ := cmd.Flags().GetString("output")
+		name, _ := cmd.Flags().GetString("name")
+		query, _ := cmd.Flags().GetString("query")
 		limit, _ := cmd.Flags().GetInt("limit")
 		offset, _ := cmd.Flags().GetInt("offset")
 		svc := client.Extensions
 		e := ExtensionsCmd{extensions: &svc}
-		return e.List(cmd.Context(), ExtensionsListInput{Limit: limit, Offset: offset, Output: output})
+		return e.List(cmd.Context(), ExtensionsListInput{Name: name, Query: query, Limit: limit, Offset: offset, Output: output})
 	},
 }
 
@@ -586,6 +596,8 @@ func init() {
 
 	addJSONOutputFlag(extensionsListCmd)
 	addJSONOutputFlag(extensionsGetCmd)
+	extensionsListCmd.Flags().String("name", "", "Filter by exact extension name")
+	extensionsListCmd.Flags().String("query", "", "Search extensions by name (IDs match by exact value)")
 	extensionsListCmd.Flags().Int("limit", 0, "Maximum number of extensions to return")
 	extensionsListCmd.Flags().Int("offset", 0, "Number of extensions to skip (for pagination)")
 	extensionsDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")

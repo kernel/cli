@@ -22,6 +22,12 @@ func (p ProxyCmd) List(ctx context.Context, in ProxyListInput) error {
 	}
 
 	params := kernel.ProxyListParams{}
+	if in.Name != "" {
+		params.Name = kernel.String(in.Name)
+	}
+	if in.Query != "" {
+		params.Query = kernel.String(in.Query)
+	}
 	if in.Limit > 0 {
 		params.Limit = kernel.Int(int64(in.Limit))
 	}
@@ -154,9 +160,11 @@ func formatProxyConfig(proxy *kernel.ProxyListResponse) string {
 func runProxiesList(cmd *cobra.Command, args []string) error {
 	client := util.GetKernelClient(cmd)
 	output, _ := cmd.Flags().GetString("output")
+	name, _ := cmd.Flags().GetString("name")
+	query, _ := cmd.Flags().GetString("query")
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
 	svc := client.Proxies
 	p := ProxyCmd{proxies: &svc}
-	return p.List(cmd.Context(), ProxyListInput{Limit: limit, Offset: offset, Output: output})
+	return p.List(cmd.Context(), ProxyListInput{Name: name, Query: query, Limit: limit, Offset: offset, Output: output})
 }
