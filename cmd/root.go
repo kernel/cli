@@ -22,7 +22,6 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
-	"github.com/kernel/kernel-go-sdk/packages/param"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -116,7 +115,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolP("version", "v", false, "Print the CLI version")
 	rootCmd.PersistentFlags().BoolP("no-color", "", false, "Disable color output")
 	rootCmd.PersistentFlags().String("log-level", "warn", "Set the log level (trace, debug, info, warn, error, fatal, print)")
-	rootCmd.PersistentFlags().String("project", "", "Project ID to scope all requests to (or set KERNEL_PROJECT to a project ID)")
+	rootCmd.PersistentFlags().String("project", "", "Project ID or name to scope all requests to (or set KERNEL_PROJECT)")
 	rootCmd.SilenceUsage = true
 	rootCmd.SilenceErrors = true
 	cobra.OnInitialize(initConfig)
@@ -143,7 +142,9 @@ func init() {
 		projectVal = resolveProjectSelection(projectVal)
 
 		if projectVal != "" {
-			clientOpts = append(clientOpts, option.WithProjectID(projectVal))
+			// X-Kernel-Project accepts either a project ID or an exact project
+			// name, so the value is sent as-is rather than resolved client-side.
+			clientOpts = append(clientOpts, option.WithProject(projectVal))
 		}
 
 		client, err := auth.GetAuthenticatedClient(clientOpts...)
@@ -300,50 +301,6 @@ func isUsageError(err error) bool {
 		}
 	}
 	return false
-}
-
-// resolveProjectByName lists the caller's projects and returns the ID of the
-// one whose name matches (case-insensitive). Returns an error if no match or
-// multiple matches are found.
-func resolveProjectByName(ctx context.Context, projects ProjectListService, name string) (string, error) {
-	const pageSize int64 = 100
-	var matched []struct{ id, name string }
-	lower := strings.ToLower(name)
-
-	var offset int64
-	for {
-		page, err := projects.List(ctx, kernel.ProjectListParams{
-			Limit:  param.NewOpt(pageSize),
-			Offset: param.NewOpt(offset),
-		})
-		if err != nil {
-			return "", fmt.Errorf("failed to resolve project name %q: %w", name, err)
-		}
-		if page == nil || len(page.Items) == 0 {
-			break
-		}
-
-		for _, p := range page.Items {
-			if strings.ToLower(p.Name) == lower {
-				matched = append(matched, struct{ id, name string }{p.ID, p.Name})
-			}
-		}
-
-		if len(matched) > 1 || int64(len(page.Items)) < pageSize {
-			break
-		}
-		offset += int64(len(page.Items))
-	}
-
-	switch len(matched) {
-	case 0:
-		return "", fmt.Errorf("no project found with name %q", name)
-	case 1:
-		pterm.Debug.Printf("Resolved project %q → %s\n", matched[0].name, matched[0].id)
-		return matched[0].id, nil
-	default:
-		return "", fmt.Errorf("multiple projects match name %q; use a project ID instead", name)
-	}
 }
 
 // onCancel runs a function when the provided context is cancelled

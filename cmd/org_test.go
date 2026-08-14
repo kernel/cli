@@ -55,6 +55,62 @@ func TestOrgLimitsGet_NullDefaultShownAsUnlimited(t *testing.T) {
 	assert.Contains(t, buf.String(), "unlimited")
 }
 
+func TestOrgLimitsGet_RendersManagedAuthLimits(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fake := &FakeOrgLimitsService{
+		GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgLimits, error) {
+			limits := &kernel.OrgLimits{
+				MaxConcurrentSessions:         100,
+				MaxAuthConnections:            10,
+				AuthConnectionsUsed:           3,
+				MinHealthCheckIntervalSeconds: 300,
+			}
+			limits.JSON.MaxAuthConnections = respjson.NewField("10")
+			limits.JSON.AuthConnectionsUsed = respjson.NewField("3")
+			limits.JSON.MinHealthCheckIntervalSeconds = respjson.NewField("300")
+			return limits, nil
+		},
+	}
+	c := OrgCmd{limits: fake}
+	assert.NoError(t, c.LimitsGet(context.Background(), OrgLimitsGetInput{}))
+
+	out := buf.String()
+	assert.Contains(t, out, "Max Auth Connections")
+	assert.Contains(t, out, "Auth Connections Used")
+	assert.Contains(t, out, "Min Health Check Interval")
+	assert.Contains(t, out, "300s")
+}
+
+func TestOrgLimitsGet_NullMaxAuthConnectionsShownAsUnlimited(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fake := &FakeOrgLimitsService{
+		GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgLimits, error) {
+			limits := &kernel.OrgLimits{MaxConcurrentSessions: 100, DefaultProjectMaxConcurrentSessions: 25}
+			limits.JSON.DefaultProjectMaxConcurrentSessions = respjson.NewField("25")
+			// Null (not omitted) means the plan allows unlimited connections.
+			limits.JSON.MaxAuthConnections = respjson.NewField(respjson.Null)
+			return limits, nil
+		},
+	}
+	c := OrgCmd{limits: fake}
+	assert.NoError(t, c.LimitsGet(context.Background(), OrgLimitsGetInput{}))
+
+	out := buf.String()
+	assert.Contains(t, out, "Max Auth Connections")
+	assert.Contains(t, out, "unlimited")
+}
+
+func TestOrgLimitsGet_OmitsManagedAuthRowsWhenAbsent(t *testing.T) {
+	buf := capturePtermOutput(t)
+	c := OrgCmd{limits: &FakeOrgLimitsService{}}
+	assert.NoError(t, c.LimitsGet(context.Background(), OrgLimitsGetInput{}))
+
+	out := buf.String()
+	assert.NotContains(t, out, "Max Auth Connections")
+	assert.NotContains(t, out, "Auth Connections Used")
+	assert.NotContains(t, out, "Min Health Check Interval")
+}
+
 func TestOrgLimitsGet_SurfacesAPIError(t *testing.T) {
 	capturePtermOutput(t)
 	fake := &FakeOrgLimitsService{

@@ -162,6 +162,90 @@ func parseViewport(viewport string) (width, height, refreshRate int64, err error
 	return w, h, refreshRate, nil
 }
 
+// availableRegions returns the geographic regions the API accepts for browser
+// sessions and pools.
+func availableRegions() []string {
+	return []string{"us-east", "eu-west"}
+}
+
+// parseRegionFlag validates a --region value. An empty value means the flag was
+// not set, which lets the API apply its default (us-east) on create and means
+// "all regions" when filtering a list.
+func parseRegionFlag(region string) (string, error) {
+	if region == "" {
+		return "", nil
+	}
+	for _, r := range availableRegions() {
+		if region == r {
+			return region, nil
+		}
+	}
+	return "", fmt.Errorf("invalid --region value: %s (must be one of %s)", region, strings.Join(availableRegions(), ", "))
+}
+
+// availableMemorySizes returns the memory sizes the API accepts when creating a
+// browser session. Only headful, non-GPU sessions can request memory; every
+// other configuration gets a fixed allocation.
+func availableMemorySizes() []string {
+	return []string{"8GiB", "16GiB"}
+}
+
+// parseMemoryFlag validates a --memory value. An empty value means the flag was
+// not set, which lets the API apply its default (8GiB).
+func parseMemoryFlag(memory string) (kernel.BrowserMemoryRequest, error) {
+	if memory == "" {
+		return "", nil
+	}
+	for _, m := range availableMemorySizes() {
+		if strings.EqualFold(memory, m) {
+			return kernel.BrowserMemoryRequest(m), nil
+		}
+	}
+	return "", fmt.Errorf("invalid --memory value: %s (must be one of %s)", memory, strings.Join(availableMemorySizes(), ", "))
+}
+
+// maxPrivateHosts mirrors the API's cap on network.private_hosts entries.
+const maxPrivateHosts = 32
+
+// normalizePrivateHosts trims --private-host values and drops empty ones, so a
+// trailing comma or a quoted empty value never reaches the API.
+func normalizePrivateHosts(hosts []string) []string {
+	out := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		if v := strings.TrimSpace(h); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// buildNetworkParam folds --private-host into the API's network configuration.
+// Omitting the list keeps the API's default private ranges, so an empty result
+// leaves the network field off the request entirely.
+func buildNetworkParam(privateHosts []string) (kernel.BrowserNetworkConfigParam, error) {
+	network := kernel.BrowserNetworkConfigParam{}
+	hosts := normalizePrivateHosts(privateHosts)
+
+	if len(hosts) > maxPrivateHosts {
+		return network, fmt.Errorf("too many --private-host entries: %d (maximum %d)", len(hosts), maxPrivateHosts)
+	}
+	network.PrivateHosts = hosts
+	return network, nil
+}
+
+// formatPrivateHosts renders a network configuration for table output. A missing
+// private_hosts list means the API's default private ranges apply; an explicit
+// empty list means nothing routes around Kernel-managed egress.
+func formatPrivateHosts(network kernel.BrowserNetworkConfig) string {
+	if !network.JSON.PrivateHosts.Valid() {
+		return "-"
+	}
+	if len(network.PrivateHosts) == 0 {
+		return "none (all traffic uses Kernel-managed egress)"
+	}
+	return strings.Join(network.PrivateHosts, ", ")
+}
+
 // parseStringMapFlag parses repeated KEY=value flag values into a map. It returns a nil
 // map when no values were given, so callers can distinguish "flag absent" from "flag set
 // to an empty map".
@@ -280,20 +364,24 @@ type BrowsersCreateInput struct {
 	Stealth            BoolFlag
 	Headless           BoolFlag
 	GPU                BoolFlag
+	Memory             string
 	InvocationID       string
 	Kiosk              BoolFlag
 	ProfileID          string
 	ProfileName        string
 	ProfileSaveChanges BoolFlag
 	ProxyID            string
+	ProxyName          string
+	ProxyMode          string
 	Region             string
+	PrivateHosts       []string
 	StartURL           string
 	Extensions         []string
 	Viewport           string
 	Telemetry          string
+	TelemetryExport    string
 	ChromePolicy       string
 	ChromePolicyFile   string
-	PrivateHosts       []string
 	Name               string
 	Tags               map[string]string
 	Output             string
@@ -317,6 +405,8 @@ type BrowsersGetInput struct {
 type BrowsersUpdateInput struct {
 	Identifier          string
 	ProxyID             string
+	ProxyName           string
+	ProxyMode           string
 	ClearProxy          bool
 	DisableDefaultProxy BoolFlag
 	ProfileID           string
@@ -388,8 +478,12 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	if in.Query != "" {
 		params.Query = kernel.Opt(in.Query)
 	}
-	if in.Region != "" {
-		params.Region = kernel.BrowserListParamsRegion(in.Region)
+	region, err := parseRegionFlag(in.Region)
+	if err != nil {
+		return err
+	}
+	if region != "" {
+		params.Region = kernel.BrowserListParamsRegion(region)
 	}
 	if len(in.Tags) > 0 {
 		params.Tags = in.Tags
@@ -415,7 +509,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	}
 
 	// Prepare table data
-	headers := []string{"Browser ID", "Name", "Created At", "Profile", "Pool", "Region", "CDP WS URL", "Live View URL"}
+	headers := []string{"Browser ID", "Name", "Created At", "Region", "Profile", "Pool", "CDP WS URL", "Live View URL"}
 	showDeletedAt := in.IncludeDeleted || in.Status == "deleted" || in.Status == "all"
 	if showDeletedAt {
 		headers = append(headers, "Deleted At")
@@ -441,9 +535,9 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 			browser.SessionID,
 			util.OrDash(browser.Name),
 			util.FormatLocal(browser.CreatedAt),
+			util.OrDash(string(browser.Region)),
 			profile,
 			pool,
-			string(browser.Region),
 			truncateURL(browser.CdpWsURL, 50),
 			truncateURL(browser.BrowserLiveViewURL, 50),
 		}
@@ -483,6 +577,13 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	if in.GPU.Set {
 		params.GPU = kernel.Opt(in.GPU.Value)
 	}
+	memory, err := parseMemoryFlag(in.Memory)
+	if err != nil {
+		return err
+	}
+	if memory != "" {
+		params.Memory = memory
+	}
 	if in.InvocationID != "" {
 		params.InvocationID = kernel.Opt(in.InvocationID)
 	}
@@ -505,15 +606,34 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		}
 	}
 
-	// Add proxy if specified
-	if in.ProxyID != "" {
-		params.ProxyID = kernel.Opt(in.ProxyID)
-	}
-	if in.Region != "" {
-		params.Region = kernel.BrowserNewParamsRegion(in.Region)
+	// Add proxy if specified. Omitting it lets the browser default apply:
+	// Kernel's default stealth proxy for stealth sessions, direct egress otherwise.
+	sel := proxySelection{ID: in.ProxyID, Name: in.ProxyName, Mode: in.ProxyMode}
+	if sel.set() {
+		proxy, err := buildProxyConfigParam(sel)
+		if err != nil {
+			return err
+		}
+		params.Proxy = proxy
 	}
 	if in.StartURL != "" {
 		params.StartURL = kernel.Opt(in.StartURL)
+	}
+
+	region, err := parseRegionFlag(in.Region)
+	if err != nil {
+		return err
+	}
+	if region != "" {
+		params.Region = kernel.BrowserNewParamsRegion(region)
+	}
+
+	network, err := buildNetworkParam(in.PrivateHosts)
+	if err != nil {
+		return err
+	}
+	if len(network.PrivateHosts) > 0 {
+		params.Network = network
 	}
 
 	// Map extensions (IDs or names) into params.Extensions
@@ -549,8 +669,8 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		}
 	}
 
-	if in.Telemetry != "" {
-		t, err := buildNewTelemetryParam(in.Telemetry)
+	if in.Telemetry != "" || in.TelemetryExport != "" {
+		t, err := buildNewTelemetryParam(in.Telemetry, in.TelemetryExport)
 		if err != nil {
 			return err
 		}
@@ -563,9 +683,6 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 	if len(chromePolicy) > 0 {
 		params.ChromePolicy = chromePolicy
-	}
-	if len(in.PrivateHosts) > 0 {
-		params.Network.PrivateHosts = in.PrivateHosts
 	}
 
 	if in.Name != "" {
@@ -587,20 +704,20 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		return util.PrintPrettyJSON(browser)
 	}
 
-	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.StartURL, browser.Name, browser.Tags)
-	if in.Telemetry != "" {
+	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.ProfileSaveChanges, browser.StartURL, browser.Name, browser.Tags)
+	if in.Telemetry != "" || in.TelemetryExport != "" {
 		printTelemetrySummary(browser.Telemetry)
 	}
 	return nil
 }
 
-func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, startURL, name string, tags kernel.Tags) {
-	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, profile, startURL, name, tags)
+func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, profileSaveChanges bool, startURL, name string, tags kernel.Tags) {
+	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, profile, profileSaveChanges, startURL, name, tags)
 	PrintTableNoPad(tableData, true)
 }
 
 // buildBrowserTableData creates a base table with common browser session fields.
-func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, startURL, name string, tags kernel.Tags) pterm.TableData {
+func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, profileSaveChanges bool, startURL, name string, tags kernel.Tags) pterm.TableData {
 	tableData := pterm.TableData{
 		{"Property", "Value"},
 		{"Session ID", sessionID},
@@ -618,6 +735,7 @@ func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, profile kernel
 			profVal = profile.ID
 		}
 		tableData = append(tableData, []string{"Profile", profVal})
+		tableData = append(tableData, []string{"Profile Save Changes", fmt.Sprintf("%t", profileSaveChanges)})
 	}
 	if startURL != "" {
 		tableData = append(tableData, []string{"Start URL", startURL})
@@ -695,6 +813,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		browser.CdpWsURL,
 		browser.BrowserLiveViewURL,
 		browser.Profile,
+		browser.ProfileSaveChanges,
 		browser.StartURL,
 		browser.Name,
 		browser.Tags,
@@ -702,11 +821,12 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 
 	// Append additional detailed fields
 	tableData = append(tableData, []string{"Created At", util.FormatLocal(browser.CreatedAt)})
-	tableData = append(tableData, []string{"Region", string(browser.Region)})
+	tableData = append(tableData, []string{"Region", util.OrDash(string(browser.Region))})
 	tableData = append(tableData, []string{"Timeout (seconds)", fmt.Sprintf("%d", browser.TimeoutSeconds)})
 	tableData = append(tableData, []string{"Headless", fmt.Sprintf("%t", browser.Headless)})
 	tableData = append(tableData, []string{"Stealth", fmt.Sprintf("%t", browser.Stealth)})
 	tableData = append(tableData, []string{"GPU", fmt.Sprintf("%t", browser.GPU)})
+	tableData = append(tableData, []string{"Memory", util.OrDash(string(browser.Memory))})
 	tableData = append(tableData, []string{"Kiosk Mode", fmt.Sprintf("%t", browser.KioskMode)})
 	if browser.Viewport.Width > 0 && browser.Viewport.Height > 0 {
 		viewportStr := fmt.Sprintf("%dx%d", browser.Viewport.Width, browser.Viewport.Height)
@@ -715,15 +835,49 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		}
 		tableData = append(tableData, []string{"Viewport", viewportStr})
 	}
-	if browser.ProxyID != "" {
-		tableData = append(tableData, []string{"Proxy ID", browser.ProxyID})
+	if proxy := formatBrowserProxy(browser.Proxy); proxy != "" {
+		tableData = append(tableData, []string{"Proxy", proxy})
 	}
+	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)})
 	if !browser.DeletedAt.IsZero() {
 		tableData = append(tableData, []string{"Deleted At", util.FormatLocal(browser.DeletedAt)})
 	}
 
 	PrintTableNoPad(tableData, true)
 	return nil
+}
+
+// browserUpdateProxySelection folds every proxy flag `browsers update` accepts
+// into the single proxy configuration the API takes. --clear-proxy drops a
+// selected proxy back to the browser default, and --disable-default-proxy
+// switches between direct and default egress, so both are mode changes.
+func browserUpdateProxySelection(in BrowsersUpdateInput) (proxySelection, error) {
+	sel := proxySelection{ID: in.ProxyID, Name: in.ProxyName, Mode: in.ProxyMode}
+
+	if !in.ClearProxy && !in.DisableDefaultProxy.Set {
+		return sel, nil
+	}
+	if in.ClearProxy && in.DisableDefaultProxy.Set {
+		return sel, fmt.Errorf("cannot specify both --clear-proxy and --disable-default-proxy")
+	}
+
+	// The legacy flags mean the same thing as --proxy-mode, so a selected proxy or
+	// an explicit mode alongside them is contradictory.
+	if sel.set() {
+		legacy := "--disable-default-proxy"
+		if in.ClearProxy {
+			legacy = "--clear-proxy"
+		}
+		return sel, fmt.Errorf("cannot combine %s with --proxy-id, --proxy-name, or --proxy-mode", legacy)
+	}
+
+	// --clear-proxy and --disable-default-proxy=false both ask for the browser
+	// default; only --disable-default-proxy=true forces direct egress.
+	sel.Mode = string(kernel.BrowserProxyModeDefault)
+	if in.DisableDefaultProxy.Value {
+		sel.Mode = string(kernel.BrowserProxyModeDirect)
+	}
+	return sel, nil
 }
 
 func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
@@ -736,9 +890,12 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("must specify at most one of --profile-id or --profile-name")
 	}
 
-	// Cannot specify both --proxy-id and --clear-proxy
-	if in.ProxyID != "" && in.ClearProxy {
-		return fmt.Errorf("cannot specify both --proxy-id and --clear-proxy")
+	// The API takes a single proxy configuration, so the flags that select one are
+	// mutually exclusive. --clear-proxy and --disable-default-proxy are older
+	// spellings of a mode change and are folded into it below.
+	proxySel, err := browserUpdateProxySelection(in)
+	if err != nil {
+		return err
 	}
 
 	// Cannot specify both --name and --clear-name
@@ -766,7 +923,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("--name requires a non-empty value; use --clear-name to clear the name")
 	}
 
-	hasProxyChange := in.ProxyID != "" || in.ClearProxy || in.DisableDefaultProxy.Set
+	hasProxyChange := proxySel.set()
 	hasProfileChange := in.ProfileID != "" || in.ProfileName != ""
 	hasViewportChange := in.Viewport != ""
 	// By this point a set name is guaranteed non-empty (the guard above rejects --name "").
@@ -785,7 +942,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 
 	// Validate that at least one update option is provided
 	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && !hasNameChange && !hasTagsChange {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --name, --clear-name, --tag, or --clear-tags")
+		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --name, --clear-name, --tag, or --clear-tags")
 	}
 
 	params := kernel.BrowserUpdateParams{}
@@ -806,13 +963,12 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	// Handle proxy changes
-	if in.ClearProxy {
-		params.ProxyID = kernel.Opt("")
-	} else if in.ProxyID != "" {
-		params.ProxyID = kernel.Opt(in.ProxyID)
-	}
-	if in.DisableDefaultProxy.Set {
-		params.DisableDefaultProxy = kernel.Opt(in.DisableDefaultProxy.Value)
+	if hasProxyChange {
+		proxy, err := buildProxyConfigParam(proxySel)
+		if err != nil {
+			return err
+		}
+		params.Proxy = proxy
 	}
 
 	// Handle profile changes
@@ -876,6 +1032,9 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 	if hasTagsChange {
 		pterm.Info.Printf("Tags: %s\n", util.OrDash(formatTags(browser.Tags)))
+	}
+	if hasProfileChange {
+		pterm.Info.Printf("Profile save changes: %t\n", browser.ProfileSaveChanges)
 	}
 	if in.Telemetry != "" {
 		printTelemetrySummary(browser.Telemetry)
@@ -2469,8 +2628,8 @@ var browsersUpdateCmd = &cobra.Command{
 	Long: `Update a running browser session.
 
 Supported operations:
-  - Change or remove proxy (--proxy-id or --clear-proxy)
-  - Disable the default stealth proxy (--disable-default-proxy)
+  - Select a proxy by ID or name (--proxy-id or --proxy-name)
+  - Change proxy egress mode (--proxy-mode=direct or --proxy-mode=default)
   - Load a profile into a session that doesn't have one (--profile-id or --profile-name)
   - Change viewport dimensions (--viewport)
   - Force viewport resize during active live view or recording (--force with --viewport)
@@ -2500,7 +2659,7 @@ func init() {
 	browsersListCmd.Flags().Int("limit", 0, "Maximum number of results to return (default 20, max 100)")
 	browsersListCmd.Flags().Int("offset", 0, "Number of results to skip (for pagination)")
 	browsersListCmd.Flags().String("query", "", "Search browsers by name, session ID, profile ID, proxy ID, or pool name")
-	browsersListCmd.Flags().String("region", "", "Filter sessions by region (us-east or eu-west); omit to list sessions in all regions")
+	browsersListCmd.Flags().String("region", "", "Filter by geographic region: 'us-east' or 'eu-west' (omit to list sessions in all regions)")
 	browsersListCmd.Flags().StringArray("tag", nil, "Filter by tag KEY=VALUE (repeatable; a session must match every pair)")
 
 	// get flags
@@ -2512,9 +2671,11 @@ func init() {
 
 	// update flags
 	addJSONOutputFlag(browsersUpdateCmd)
-	browsersUpdateCmd.Flags().String("proxy-id", "", "ID of the proxy to use for the browser session")
-	browsersUpdateCmd.Flags().Bool("clear-proxy", false, "Remove the proxy from the browser session")
-	browsersUpdateCmd.Flags().Bool("disable-default-proxy", false, "Disable the default stealth proxy so the browser connects directly; use --disable-default-proxy=false to re-enable it")
+	browsersUpdateCmd.Flags().String("proxy-id", "", "ID of the proxy to use for the browser session (mutually exclusive with --proxy-name and --proxy-mode)")
+	browsersUpdateCmd.Flags().String("proxy-name", "", "Name of the proxy to use for the browser session; must match exactly one active proxy in the project (mutually exclusive with --proxy-id and --proxy-mode)")
+	browsersUpdateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' to restore the browser default (Kernel's stealth proxy when stealth is on, direct egress otherwise)")
+	browsersUpdateCmd.Flags().Bool("clear-proxy", false, "Drop the selected proxy and restore the browser default (same as --proxy-mode=default)")
+	browsersUpdateCmd.Flags().Bool("disable-default-proxy", false, "Connect directly instead of through the default stealth proxy (same as --proxy-mode=direct); use --disable-default-proxy=false to restore the default")
 	browsersUpdateCmd.Flags().String("profile-id", "", "Profile ID to load into the browser session (mutually exclusive with --profile-name)")
 	browsersUpdateCmd.Flags().String("profile-name", "", "Profile name to load into the browser session (mutually exclusive with --profile-id)")
 	browsersUpdateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
@@ -2783,14 +2944,18 @@ func init() {
 	browsersCreateCmd.Flags().BoolP("stealth", "s", false, "Launch browser in stealth mode to avoid detection")
 	browsersCreateCmd.Flags().BoolP("headless", "H", false, "Launch browser without GUI access")
 	browsersCreateCmd.Flags().Bool("gpu", false, "Launch browser with hardware-accelerated GPU rendering")
+	browsersCreateCmd.Flags().String("memory", "", "Memory for a headful, non-GPU browser session: '8GiB' (default) or '16GiB'")
 	browsersCreateCmd.Flags().String("invocation-id", "", "Associate the browser session with an invocation")
 	browsersCreateCmd.Flags().Bool("kiosk", false, "Launch browser in kiosk mode")
 	browsersCreateCmd.Flags().IntP("timeout", "t", 60, "Timeout in seconds for the browser session")
 	browsersCreateCmd.Flags().String("profile-id", "", "Profile ID to load into the browser session (mutually exclusive with --profile-name)")
 	browsersCreateCmd.Flags().String("profile-name", "", "Profile name to load into the browser session (mutually exclusive with --profile-id)")
 	browsersCreateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
-	browsersCreateCmd.Flags().String("proxy-id", "", "Proxy ID to use for the browser session")
-	browsersCreateCmd.Flags().String("region", "", "Region for the browser session (us-east or eu-west); fixed once created, defaults to us-east. Requires a Start-Up or Enterprise plan")
+	browsersCreateCmd.Flags().String("proxy-id", "", "Proxy ID to use for the browser session (mutually exclusive with --proxy-name and --proxy-mode)")
+	browsersCreateCmd.Flags().String("proxy-name", "", "Proxy name to use for the browser session; must match exactly one active proxy in the project (mutually exclusive with --proxy-id and --proxy-mode)")
+	browsersCreateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' for the browser default (Kernel's stealth proxy when --stealth is set, direct egress otherwise)")
+	browsersCreateCmd.Flags().String("region", "", "Geographic region for the session: 'us-east' or 'eu-west'. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to us-east")
+	browsersCreateCmd.Flags().StringSlice("private-host", nil, "Destinations the browser reaches directly through its own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel the session joins (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Replaces the default private ranges (RFC1918, 100.64.0.0/10, fc00::/7); omit to keep them. Fixed once the session is created")
 	browsersCreateCmd.Flags().String("start-url", "", "Initial page to open on launch")
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
 	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
@@ -2798,12 +2963,12 @@ func init() {
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
 	browsersCreateCmd.Flags().String("telemetry", "", "Configure telemetry (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
+	browsersCreateCmd.Flags().String("telemetry-export-otlp", "", "Export captured telemetry over OTLP to one of the org's configured destinations, by ID or name; --telemetry-export-otlp=off disables export. Implies --telemetry=all when --telemetry is not set, since export requires capture")
 	browsersCreateCmd.Flags().String("name", "", "Optional unique name for the browser session (used to find it later; can be changed with 'browsers update --name')")
 	browsersCreateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the session (repeatable; up to 50 pairs)")
 	browsersCreateCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts")
 	browsersCreateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
 	browsersCreateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
-	browsersCreateCmd.Flags().StringSlice("private-host", nil, "Private hostname, IP, or CIDR to route through the session network (repeatable or comma-separated; replaces defaults)")
 	browsersCreateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
 
 	// curl
@@ -2844,6 +3009,7 @@ followed automatically by Chromium.`,
 	telemetryEvents := &cobra.Command{Use: "events <id>", Short: "Read historical telemetry events (paged)", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryEvents}
 	telemetryEvents.Flags().Int64("limit", 0, "Maximum number of events per page (1-100, default 20)")
 	telemetryEvents.Flags().Int64("offset", 0, "Pagination cursor: pass the X-Next-Offset from a previous response")
+	telemetryEvents.Flags().String("order", "", "Read direction: asc (default) reads oldest first, desc reads newest first (cannot be combined with --since)")
 	telemetryEvents.Flags().String("since", "", "Window start: RFC-3339 timestamp or a duration like 5m (default 5m). Ignored when --offset is set")
 	telemetryEvents.Flags().String("until", "", "Window end (exclusive): RFC-3339 timestamp or a duration like 5m")
 	telemetryEvents.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,connection,system,screenshot,captcha,monitor)")
@@ -2891,6 +3057,7 @@ func poolLeaseAllowedFlags() map[string]bool {
 		"pool-name": true,
 		"timeout":   true,
 		"name":      true,
+		"start-url": true,
 		"tag":       true,
 		"telemetry": true,
 		"output":    true,
@@ -2908,6 +3075,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	stealthVal, _ := cmd.Flags().GetBool("stealth")
 	headlessVal, _ := cmd.Flags().GetBool("headless")
 	gpuVal, _ := cmd.Flags().GetBool("gpu")
+	memory, _ := cmd.Flags().GetString("memory")
 	invocationID, _ := cmd.Flags().GetString("invocation-id")
 	kioskVal, _ := cmd.Flags().GetBool("kiosk")
 	timeout, _ := cmd.Flags().GetInt("timeout")
@@ -2915,7 +3083,10 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	saveChanges, _ := cmd.Flags().GetBool("save-changes")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
+	proxyName, _ := cmd.Flags().GetString("proxy-name")
+	proxyMode, _ := cmd.Flags().GetString("proxy-mode")
 	region, _ := cmd.Flags().GetString("region")
+	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
@@ -2923,11 +3094,11 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	poolID, _ := cmd.Flags().GetString("pool-id")
 	poolName, _ := cmd.Flags().GetString("pool-name")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
+	telemetryExport, _ := cmd.Flags().GetString("telemetry-export-otlp")
 	name, _ := cmd.Flags().GetString("name")
 	tags, _ := tagsFromFlag(cmd, "tag")
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
 	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
-	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
 	output, _ := cmd.Flags().GetString("output")
 	skipConfirm, _ := cmd.Flags().GetBool("yes")
 
@@ -2938,7 +3109,8 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 
 	if poolID != "" || poolName != "" {
 		// When using a pool, configuration comes from the pool itself, but
-		// name, tags, and telemetry apply per-lease to the acquired session.
+		// name, start URL, tags, and telemetry apply per-lease to the acquired
+		// session — they mirror the fields BrowserPoolAcquireParams accepts.
 		allowedFlags := poolLeaseAllowedFlags()
 
 		// Check if any browser configuration flags were set (which would conflict).
@@ -2988,7 +3160,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("timeout") && timeout > 0 {
 			acquireTimeout = int64(timeout)
 		}
-		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry)
+		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry, startURL)
 		if err != nil {
 			return err
 		}
@@ -3008,7 +3180,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if output == "json" {
 			return util.PrintPrettyJSON(resp)
 		}
-		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.StartURL, resp.Name, resp.Tags)
+		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.ProfileSaveChanges, resp.StartURL, resp.Name, resp.Tags)
 		return nil
 	}
 
@@ -3034,20 +3206,24 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		Stealth:            BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealthVal},
 		Headless:           BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headlessVal},
 		GPU:                BoolFlag{Set: cmd.Flags().Changed("gpu"), Value: gpuVal},
+		Memory:             memory,
 		InvocationID:       invocationID,
 		Kiosk:              BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kioskVal},
 		ProfileID:          profileID,
 		ProfileName:        profileName,
 		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
 		ProxyID:            proxyID,
+		ProxyName:          proxyName,
+		ProxyMode:          proxyMode,
 		Region:             region,
+		PrivateHosts:       privateHosts,
 		StartURL:           startURL,
 		Extensions:         extensions,
 		Viewport:           viewport,
 		Telemetry:          telemetry,
+		TelemetryExport:    telemetryExport,
 		ChromePolicy:       chromePolicy,
 		ChromePolicyFile:   chromePolicyFile,
-		PrivateHosts:       privateHosts,
 		Name:               name,
 		Tags:               tags,
 		Output:             output,
@@ -3102,6 +3278,8 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	out, _ := cmd.Flags().GetString("output")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
+	proxyName, _ := cmd.Flags().GetString("proxy-name")
+	proxyMode, _ := cmd.Flags().GetString("proxy-mode")
 	clearProxy, _ := cmd.Flags().GetBool("clear-proxy")
 	disableDefaultProxy, _ := cmd.Flags().GetBool("disable-default-proxy")
 	profileID, _ := cmd.Flags().GetString("profile-id")
@@ -3120,6 +3298,8 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	return b.Update(cmd.Context(), BrowsersUpdateInput{
 		Identifier:          args[0],
 		ProxyID:             proxyID,
+		ProxyName:           proxyName,
+		ProxyMode:           proxyMode,
 		ClearProxy:          clearProxy,
 		DisableDefaultProxy: BoolFlag{Set: cmd.Flags().Changed("disable-default-proxy"), Value: disableDefaultProxy},
 		ProfileID:           profileID,

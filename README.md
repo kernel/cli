@@ -103,7 +103,7 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
 - `--version`, `-v` - Print the CLI version
 - `--no-color` - Disable color output
 - `--log-level <level>` - Set log level (trace, debug, info, warn, error, fatal, print)
-- `--project <project-id>` - Scope requests to a project ID (or set `KERNEL_PROJECT` to a project ID). Project-scoped OAuth tokens cannot switch projects.
+- `--project <id-or-name>` - Scope requests to a project by ID or exact name (or set `KERNEL_PROJECT`). Project-scoped OAuth tokens cannot switch projects.
 
 ## JSON Output
 
@@ -210,15 +210,18 @@ Commands with JSON output support:
 
 - `kernel browsers list` - List running browsers
   - `--query <q>` - Search by name, session ID, profile ID, proxy ID, or pool name
-  - `--region <region>` - Filter sessions by region (us-east or eu-west); omit to list sessions in all regions
+  - `--region us-east|eu-west` - Filter by geographic region; omit to list sessions in all regions
   - `--tag <KEY=VALUE>` - Filter by tag, repeatable; a session must match every pair
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel browsers create` - Create a new browser session
   - `-s, --stealth` - Launch browser in stealth mode to avoid detection
   - `-H, --headless` - Launch browser without GUI access
   - `--kiosk` - Launch browser in kiosk mode
-  - `--region <region>` - Region for the session (us-east or eu-west); fixed once created, defaults to us-east. Requires a Start-Up or Enterprise plan.
+  - `--region us-east|eu-west` - Geographic region for the session. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to `us-east`.
+  - `--private-host <host>` - Destination the browser reaches directly through the session's own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel the session joins (repeatable or comma-separated, max 32). Accepts hostname patterns (`*.example.ts.net`), IPs (`10.1.30.63`, `[fd00::1]`), and private CIDRs (`100.64.0.0/10`). Replaces the default private ranges (RFC1918, `100.64.0.0/10`, `fc00::/7`); omit to keep them. Fixed once the session is created. Unrelated to a proxy's `--bypass-host`, which only chooses between upstream proxy and Kernel-managed direct egress.
   - `--start-url <url>` - Initial page to open on launch
+  - `--proxy-id <id>` / `--proxy-name <name>` - Use that proxy for the session regardless of stealth (mutually exclusive with each other and with `--proxy-mode`)
+  - `--proxy-mode direct|default` - Egress mode instead of a selected proxy: `direct` for no proxy regardless of stealth, `default` for the stealth-derived default (Kernel's stealth proxy with `--stealth`, direct egress otherwise). Omit all proxy flags to get the default.
   - `--name <name>` - Optional unique name for the session (used to find it later by name; can be changed with `browsers update --name`)
   - `--tag <KEY=VALUE>` - Set a tag on the session, repeatable; up to 50 pairs
   - `--pool-id <id>` - Acquire a browser from the specified pool (mutually exclusive with --pool-name; ignores other session flags). `--name`/`--tag` still apply to the acquired session.
@@ -226,9 +229,9 @@ Commands with JSON output support:
   - `--telemetry=all` - Enable telemetry for all categories
   - `--telemetry=off` - Disable telemetry
   - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`
+  - `--telemetry-export-otlp <id-or-name>` - Export captured telemetry over OTLP to one of the org's configured destinations. Implies `--telemetry=all` when `--telemetry` is not set, since export requires capture. Use `--telemetry-export-otlp=off` to disable export.
   - `--chrome-policy <json>` - Custom Chrome enterprise policy as a JSON object. Kernel-managed policies (extensions, proxy, automation) are rejected server-side.
   - `--chrome-policy-file <path>` - Read the Chrome enterprise policy from a file (use `-` for stdin). Mutually exclusive with `--chrome-policy`.
-  - `--private-host <host>` - Route a private hostname, IP, or CIDR through the session network instead of Kernel-managed egress. Repeatable or comma-separated; replaces the default private IP ranges.
   - `--output json`, `-o json` - Output raw JSON object
   - _Note: When a pool is specified, omit other session configuration flags—pool settings determine profile, proxy, viewport, etc._
 - `kernel browsers delete <id-or-name>` - Delete a browser by ID or name
@@ -244,7 +247,10 @@ Commands with JSON output support:
   - `--telemetry=all` - Enable telemetry for all categories
   - `--telemetry=off` - Disable telemetry
   - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`
-  - `--disable-default-proxy` - Disable the default stealth proxy so the browser connects directly; use `--disable-default-proxy=false` to re-enable it
+  - `--proxy-id <id>` / `--proxy-name <name>` - Switch the session to that proxy regardless of stealth (mutually exclusive with each other and with `--proxy-mode`)
+  - `--proxy-mode direct|default` - Change egress mode: `direct` for no proxy regardless of stealth, `default` to restore the browser default after using a selected proxy. Changing the proxy does not change stealth or CAPTCHA solver behavior.
+  - `--clear-proxy` - Drop the selected proxy and restore the browser default (same as `--proxy-mode=default`)
+  - `--disable-default-proxy` - Connect directly instead of through the default stealth proxy (same as `--proxy-mode=direct`); use `--disable-default-proxy=false` to restore the default
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers curl <id> <url>` - Make HTTP requests through a browser session's Chrome network stack
   - `-X, --request <method>` - HTTP method (default: GET; defaults to POST when `--data` is set)
@@ -264,7 +270,7 @@ Commands with JSON output support:
 ### Browser Pools
 
 - `kernel browser-pools list` - List browser pools
-  - `--region <region>` - Filter pools by region (us-east or eu-west); omit to list pools in all regions
+  - `--region us-east|eu-west` - Filter by geographic region; omit to list pools in all regions
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel browser-pools create` - Create a browser pool
   - `--name <name>` - Optional unique name for the pool
@@ -324,6 +330,37 @@ Telemetry config is a sub-field of the browser session. Use `browsers create` or
 - Capture specific categories: `kernel browsers update <id> --telemetry=console,network` (any of: `console`, `network`, `page`, `interaction`, `control`, `connection`, `system`, `screenshot`, `captcha`)
 
 Per-category updates are partial — only categories you name are changed; others retain their current state. `--telemetry=all` and `--telemetry=off` reset the entire config.
+
+#### Exporting telemetry
+
+Captured telemetry can be exported over OTLP to one of the org's configured destinations with `--telemetry-export-otlp <id-or-name>`. A value that looks like an ID is sent as one; anything else is resolved as a destination name, which must match exactly one destination in the org.
+
+- Capture and export: `kernel browsers create --telemetry-export-otlp my-collector`
+- Capture without exporting: `kernel browsers create --telemetry=all`
+- Stop exporting: `--telemetry-export-otlp=off`
+
+Export is bound at session creation, so it is available on `browsers create` and on the managed-auth commands that create a browser (`auth connections create`, `update`, and `login`). A browser session keeps the destination it was created with — `browsers update` cannot change it — and browser pools do not support export.
+
+#### Telemetry destinations
+
+Destinations are the OTLP/HTTP endpoints sessions export to, managed per project.
+
+- `kernel telemetry destinations list` - List OTLP destinations
+  - `--page <n>` / `--per-page <n>` - Page number (1-based) and items per page (default 20)
+  - `--name <name>` - Filter by exact destination name
+  - `--query <text>` - Substring match against name or endpoint; IDs match by exact value
+- `kernel telemetry destinations get <id-or-name>` - Get an OTLP destination
+- `kernel telemetry destinations create --name <name> --endpoint <url>` - Create an OTLP destination
+  - `--endpoint <url>` - Base OTLP/HTTP endpoint without a signal path: pass `https://api.honeycomb.io`, not `https://api.honeycomb.io/v1/logs` (required)
+  - `--name <name>` - Destination name, unique within the project (required)
+  - `--description <text>` - Optional description
+  - `--header NAME=VALUE` - Header sent with each export request, typically an ingestion key (repeatable). Values are encrypted at rest and always returned redacted, so only header names are shown
+- `kernel telemetry destinations update <id-or-name>` - Update an OTLP destination. Sessions already exporting pick up the new values without restarting, which makes this the way to rotate credentials without interrupting export
+  - `--name <name>` / `--endpoint <url>` / `--description <text>` - Update those fields; pass `--description ""` to clear it
+  - `--header NAME=VALUE` - Add or replace a header (repeatable). Headers you do not name are left as they are
+  - `--remove-header NAME` - Delete a header (repeatable). Removals are applied before `--header` is merged, so a header given to both keeps its new value
+- `kernel telemetry destinations delete <id-or-name>` - Delete an OTLP destination. Refused while sessions are still exporting to it, or while a managed auth connection still selects it
+  - `-y, --yes` - Skip confirmation prompt
 
 - `kernel browsers telemetry stream <id>` - Stream live telemetry events (NDJSON with `-o json`)
   - `--categories <list>` - Filter by event category (`console`, `network`, `page`, `interaction`, `control`, `connection`, `system`, `screenshot`, `captcha`, `monitor`)
@@ -482,10 +519,22 @@ Per-category updates are partial — only categories you name are changed; other
   - `--offset <n>` - Number of projects to skip; table indexes match this offset
   - `--output json`, `-o json` - Output `{ "projects": [...], "next_offset": <n> }`; `next_offset` is omitted on the last page
   - When more projects are available, the CLI prints the exact command to fetch the next page
+- `kernel projects get <id-or-name>` - Show a project's details
 - `kernel projects update <id-or-name>` - Update a project's name or status
-  - `--name <name>` - New project name (1-255 characters)
+  - `--name <name>` - New project name (1-255 characters; cannot contain `/` or `%`)
   - `--status <status>` - New project status: `active` or `archived`
   - `--output json`, `-o json` - Output raw JSON object
+- `kernel projects delete <id-or-name>` - Soft-delete a project (must have no active resources)
+- `kernel projects limits get <id-or-name>` - Show a project's resource limit overrides
+  - `--output json`, `-o json` - Output raw JSON object
+- `kernel projects limits set <id-or-name>` - Update a project's resource limit overrides
+  - `--max-concurrent-sessions <n>` - Cap on concurrent browser sessions (0 removes the cap)
+  - `--max-concurrent-invocations <n>` - Cap on concurrent invocations (0 removes the cap)
+  - `--max-pooled-sessions <n>` - Cap on pooled browser sessions (0 removes the cap)
+  - `--output json`, `-o json` - Output raw JSON object
+
+Every `<id-or-name>` above is resolved by the API, so a project name works
+anywhere a project ID does.
 
 ### Extension Management
 
@@ -538,6 +587,11 @@ Per-category updates are partial — only categories you name are changed; other
 - `kernel proxies delete <id>` - Delete a proxy configuration
   - `-y, --yes` - Skip confirmation prompt
 
+### Auth Context
+
+- `kernel auth context` - Show the identity and authorization context resolved for the current credentials: the authenticated principal, organization, credential scope, and the effective scope for the request. Credential secrets are never returned. Pass `--project <id>` to see the effective scope a project-scoped request would get.
+  - `--output json`, `-o json` - Output raw JSON object
+
 ### Auth Connections
 
 Managed auth connections (`kernel auth connections`). The commands below are new or gained new flags; run `kernel auth connections --help` for the full command list.
@@ -547,15 +601,26 @@ Managed auth connections (`kernel auth connections`). The commands below are new
   - `--page <n>` - Page number (1-based, default: 1)
   - `--per-page <n>` - Items per page (default: 20)
   - `--output json`, `-o json` - Output raw JSON array
-- `kernel auth connections create` - New flag:
+- `kernel auth connections create` - New flags:
+  - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy configuration for this connection's login, reauth, and health-check browser sessions (mutually exclusive). Omit to derive the default from stealth.
+  - `--stealth` - Whether those browser sessions run in stealth mode (default: true); use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Default telemetry for this connection's browser sessions. Same semantics as `kernel browsers create`
-- `kernel auth connections update <id>` - New flag:
+  - `--telemetry-export-otlp <id-or-name>` - Export this connection's captured telemetry over OTLP to one of the org's configured destinations. Implies `--telemetry=all` when `--telemetry` is not set. Use `=off` to disable export.
+- `kernel auth connections update <id>` - New flags:
+  - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy configuration for future browser sessions (mutually exclusive). Use `--proxy-mode=default` to drop a selected proxy rather than passing an empty value.
+  - `--stealth` - Set whether future browser sessions run in stealth mode; use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Update telemetry for future browser sessions
-- `kernel auth connections login <id>` - New flag:
+  - `--telemetry-export-otlp <id-or-name>` - Update where future sessions export captured telemetry. Naming a destination requires passing `--telemetry` in the same command, since the API validates capture and export together and enabling capture here would replace the connection's current category selection. Use `=off` to disable export.
+- `kernel auth connections login <id>` - New flags:
+  - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy override for this login's browser session (mutually exclusive); omitted properties inherit the connection defaults
+  - `--stealth` - Stealth override for this login's browser session; use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Telemetry override for this login only, merged onto the connection's config
+  - `--telemetry-export-otlp <id-or-name>` - Export override for this login only. Naming a destination requires passing `--telemetry` in the same command. Use `=off` to disable export.
 - `kernel auth connections submit <id>` - New flags:
   - `--field-value <id=value>` - Canonical field-id=value pair from the connection's `fields` list (repeatable); preferred over the legacy `--field`
   - `--choice-id <id>` - Canonical choice ID from the connection's `choices` list
+
+`kernel auth connections get` and `follow` list those IDs alongside the metadata the API captured for them, so you can tell the options apart before submitting. Fields show their type, ref, and any hint (which names the masked destination a one-time code was sent to); choices show their type, semantic MFA method (`sms`, `totp`, `push`, …), and masked destination.
 
 ### Agent Auth
 

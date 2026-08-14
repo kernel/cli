@@ -32,6 +32,7 @@ type CredentialProvidersCmd struct {
 }
 
 type CredentialProvidersListInput struct {
+	Query  string
 	Limit  int
 	Offset int
 	Output string
@@ -81,6 +82,9 @@ func (c CredentialProvidersCmd) List(ctx context.Context, in CredentialProviders
 	}
 
 	params := kernel.CredentialProviderListParams{}
+	if in.Query != "" {
+		params.Query = kernel.String(in.Query)
+	}
 	if in.Limit > 0 {
 		params.Limit = kernel.Int(int64(in.Limit))
 	}
@@ -110,10 +114,11 @@ func (c CredentialProvidersCmd) List(ctx context.Context, in CredentialProviders
 		return nil
 	}
 
-	tableData := pterm.TableData{{"ID", "Provider Type", "Enabled", "Priority", "Created At"}}
+	tableData := pterm.TableData{{"ID", "Name", "Provider Type", "Enabled", "Priority", "Created At"}}
 	for _, p := range providers {
 		tableData = append(tableData, []string{
 			p.ID,
+			p.Name,
 			string(p.ProviderType),
 			fmt.Sprintf("%t", p.Enabled),
 			fmt.Sprintf("%d", p.Priority),
@@ -142,6 +147,7 @@ func (c CredentialProvidersCmd) Get(ctx context.Context, in CredentialProvidersG
 	tableData := pterm.TableData{
 		{"Property", "Value"},
 		{"ID", provider.ID},
+		{"Name", provider.Name},
 		{"Provider Type", string(provider.ProviderType)},
 		{"Enabled", fmt.Sprintf("%t", provider.Enabled)},
 		{"Priority", fmt.Sprintf("%d", provider.Priority)},
@@ -161,7 +167,10 @@ func (c CredentialProvidersCmd) Create(ctx context.Context, in CredentialProvide
 	if in.ProviderType == "" {
 		return fmt.Errorf("--provider-type is required")
 	}
-	if in.Name == "" {
+	// The API trims surrounding whitespace and rejects a blank name, so a
+	// whitespace-only value is caught here rather than round-tripping a 400.
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
 		return fmt.Errorf("--name is required")
 	}
 	if in.Token == "" {
@@ -176,7 +185,7 @@ func (c CredentialProvidersCmd) Create(ctx context.Context, in CredentialProvide
 
 	params := kernel.CredentialProviderNewParams{
 		CreateCredentialProviderRequest: kernel.CreateCredentialProviderRequestParam{
-			Name:         in.Name,
+			Name:         name,
 			Token:        in.Token,
 			ProviderType: kernel.CreateCredentialProviderRequestProviderTypeOnepassword,
 		},
@@ -225,7 +234,12 @@ func (c CredentialProvidersCmd) Update(ctx context.Context, in CredentialProvide
 		params.UpdateCredentialProviderRequest.Token = kernel.Opt(in.Token)
 	}
 	if in.Name != "" {
-		params.UpdateCredentialProviderRequest.Name = kernel.Opt(in.Name)
+		// A name that is only whitespace trims to empty, which the API rejects.
+		name := strings.TrimSpace(in.Name)
+		if name == "" {
+			return fmt.Errorf("--name cannot be blank")
+		}
+		params.UpdateCredentialProviderRequest.Name = kernel.Opt(name)
 	}
 	if in.CacheTtlSeconds > 0 {
 		params.UpdateCredentialProviderRequest.CacheTtlSeconds = kernel.Opt(in.CacheTtlSeconds)
@@ -446,6 +460,7 @@ func init() {
 
 	// List flags
 	addJSONOutputFlag(credentialProvidersListCmd)
+	credentialProvidersListCmd.Flags().String("query", "", "Search credential providers by name (IDs match by exact value)")
 	credentialProvidersListCmd.Flags().Int("limit", 0, "Maximum number of credential providers to return")
 	credentialProvidersListCmd.Flags().Int("offset", 0, "Number of credential providers to skip (for pagination)")
 
@@ -483,12 +498,14 @@ func init() {
 func runCredentialProvidersList(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	output, _ := cmd.Flags().GetString("output")
+	query, _ := cmd.Flags().GetString("query")
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
 
 	svc := client.CredentialProviders
 	c := CredentialProvidersCmd{providers: &svc}
 	return c.List(cmd.Context(), CredentialProvidersListInput{
+		Query:  query,
 		Limit:  limit,
 		Offset: offset,
 		Output: output,

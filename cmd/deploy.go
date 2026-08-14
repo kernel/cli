@@ -93,6 +93,7 @@ func init() {
 	deployHistoryCmd.Flags().Int("per-page", 20, "Items per page (alias of --limit)")
 	deployHistoryCmd.Flags().Int("page", 1, "Page number (1-based)")
 	deployHistoryCmd.Flags().String("app-version", "", "Filter by application version (requires app_name)")
+	deployHistoryCmd.Flags().String("query", "", "Search deployments by ID or app name")
 	addJSONOutputFlag(deployHistoryCmd)
 	deployCmd.AddCommand(deployHistoryCmd)
 
@@ -492,6 +493,7 @@ func runDeployHistory(cmd *cobra.Command, args []string) error {
 	perPage, _ := cmd.Flags().GetInt("per-page")
 	page, _ := cmd.Flags().GetInt("page")
 	appVersionFilter, _ := cmd.Flags().GetString("app-version")
+	queryFilter, _ := cmd.Flags().GetString("query")
 	output, _ := cmd.Flags().GetString("output")
 
 	if err := validateJSONOutput(output); err != nil {
@@ -529,6 +531,9 @@ func runDeployHistory(cmd *cobra.Command, args []string) error {
 	}
 	if appVersionFilter != "" {
 		params.AppVersion = kernel.Opt(appVersionFilter)
+	}
+	if queryFilter != "" {
+		params.Query = kernel.Opt(queryFilter)
 	}
 	// Request one extra item to detect hasMore
 	params.Limit = kernel.Opt(int64(perPage + 1))
@@ -588,6 +593,9 @@ func runDeployHistory(cmd *cobra.Command, args []string) error {
 		}
 		if appVersionFilter != "" {
 			nextCmd += fmt.Sprintf(" --app-version %s", quoteIfNeeded(appVersionFilter))
+		}
+		if queryFilter != "" {
+			nextCmd += fmt.Sprintf(" --query %s", quoteIfNeeded(queryFilter))
 		}
 		pterm.Printf("Next: %s\n", nextCmd)
 	}

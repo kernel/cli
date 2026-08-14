@@ -93,6 +93,8 @@ func init() {
 
 	// Add output flags
 	addJSONOutputFlag(proxiesListCmd)
+	proxiesListCmd.Flags().String("name", "", "Filter by exact proxy name")
+	proxiesListCmd.Flags().String("query", "", "Search proxies by name, host, or IP address (IDs match by exact value)")
 	proxiesListCmd.Flags().Int("limit", 0, "Maximum number of proxies to return")
 	proxiesListCmd.Flags().Int("offset", 0, "Number of proxies to skip (for pagination)")
 	addJSONOutputFlag(proxiesGetCmd)

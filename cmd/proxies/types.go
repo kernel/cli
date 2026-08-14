@@ -27,6 +27,8 @@ type ProxyCmd struct {
 
 // Input types for proxy operations
 type ProxyListInput struct {
+	Name   string
+	Query  string
 	Limit  int
 	Offset int
 	Output string

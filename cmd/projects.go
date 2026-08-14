@@ -25,14 +25,14 @@ type ProjectListService interface {
 type ProjectsService interface {
 	ProjectListService
 	New(ctx context.Context, body kernel.ProjectNewParams, opts ...option.RequestOption) (res *kernel.Project, err error)
-	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.Project, err error)
-	Update(ctx context.Context, id string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (res *kernel.Project, err error)
-	Delete(ctx context.Context, id string, opts ...option.RequestOption) (err error)
+	Get(ctx context.Context, idOrName string, opts ...option.RequestOption) (res *kernel.Project, err error)
+	Update(ctx context.Context, idOrName string, body kernel.ProjectUpdateParams, opts ...option.RequestOption) (res *kernel.Project, err error)
+	Delete(ctx context.Context, idOrName string, opts ...option.RequestOption) (err error)
 }
 
 type ProjectLimitsService interface {
-	Get(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.ProjectLimits, err error)
-	Update(ctx context.Context, id string, body kernel.ProjectLimitUpdateParams, opts ...option.RequestOption) (res *kernel.ProjectLimits, err error)
+	Get(ctx context.Context, idOrName string, opts ...option.RequestOption) (res *kernel.ProjectLimits, err error)
+	Update(ctx context.Context, idOrName string, body kernel.ProjectLimitUpdateParams, opts ...option.RequestOption) (res *kernel.ProjectLimits, err error)
 }
 
 type ProjectsCmd struct {
@@ -43,6 +43,8 @@ type ProjectsCmd struct {
 type ProjectsListInput struct {
 	Limit  int
 	Offset int
+	Name   string
+	Query  string
 	Output string
 }
 
@@ -79,20 +81,6 @@ type ProjectsLimitsSetInput struct {
 	Output                   string
 }
 
-// resolveProjectArg resolves a positional project argument that may be an ID or
-// a name. If it looks like a cuid2 ID it is returned as-is; otherwise we list
-// projects and find the matching name (case-insensitive).
-func resolveProjectArg(ctx context.Context, projects ProjectListService, val string) (string, error) {
-	if cuidRegex.MatchString(val) {
-		return val, nil
-	}
-	resolved, err := resolveProjectByName(ctx, projects, val)
-	if err != nil {
-		return "", err
-	}
-	return resolved, nil
-}
-
 func (c ProjectsCmd) List(ctx context.Context, in ProjectsListInput) error {
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
@@ -104,11 +92,19 @@ func (c ProjectsCmd) List(ctx context.Context, in ProjectsListInput) error {
 		return fmt.Errorf("--offset must be non-negative")
 	}
 
-	var response *http.Response
-	projects, err := c.projects.List(ctx, kernel.ProjectListParams{
+	params := kernel.ProjectListParams{
 		Limit:  param.NewOpt(int64(in.Limit)),
 		Offset: param.NewOpt(int64(in.Offset)),
-	}, option.WithResponseInto(&response))
+	}
+	if in.Name != "" {
+		params.Name = param.NewOpt(in.Name)
+	}
+	if in.Query != "" {
+		params.Query = param.NewOpt(in.Query)
+	}
+
+	var response *http.Response
+	projects, err := c.projects.List(ctx, params, option.WithResponseInto(&response))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -149,9 +145,16 @@ func (c ProjectsCmd) List(ctx context.Context, in ProjectsListInput) error {
 	PrintTableNoPad(table, true)
 
 	if pagination.HasMore {
+		filters := ""
+		if in.Name != "" {
+			filters += fmt.Sprintf(" --name %q", in.Name)
+		}
+		if in.Query != "" {
+			filters += fmt.Sprintf(" --query %q", in.Query)
+		}
 		pterm.Warning.Printfln(
-			"Output truncated after index %d. Continue with: kernel projects list --limit %d --offset %d",
-			in.Offset+len(items)-1, in.Limit, pagination.NextOffset,
+			"Output truncated after index %d. Continue with: kernel projects list --limit %d --offset %d%s",
+			in.Offset+len(items)-1, in.Limit, pagination.NextOffset, filters,
 		)
 	}
 	return nil
@@ -215,10 +218,9 @@ func (c ProjectsCmd) Create(ctx context.Context, in ProjectsCreateInput) error {
 }
 
 func (c ProjectsCmd) Get(ctx context.Context, in ProjectsGetInput) error {
-	// The API resolves the GET path parameter by ID or by name (names are unique
+	// The API resolves the path parameter by ID or by name (names are unique
 	// within an organization), so pass the identifier straight through — no
-	// client-side list-and-match needed. Delete and limits endpoints do not
-	// resolve names, so those paths keep resolveProjectArg.
+	// client-side list-and-match needed.
 	project, err := c.projects.Get(ctx, in.Identifier)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -260,14 +262,7 @@ func (c ProjectsCmd) Update(ctx context.Context, in ProjectsUpdateInput) error {
 		return fmt.Errorf("must provide at least one of --name or --status")
 	}
 
-	// The PATCH endpoint takes an ID only, so resolve names client-side the way
-	// delete and the limits endpoints do.
-	projectID, err := resolveProjectArg(ctx, c.projects, in.Identifier)
-	if err != nil {
-		return err
-	}
-
-	project, err := c.projects.Update(ctx, projectID, kernel.ProjectUpdateParams{
+	project, err := c.projects.Update(ctx, in.Identifier, kernel.ProjectUpdateParams{
 		UpdateProjectRequest: inner,
 	})
 	if err != nil {
@@ -292,17 +287,12 @@ func (c ProjectsCmd) Update(ctx context.Context, in ProjectsUpdateInput) error {
 }
 
 func (c ProjectsCmd) Delete(ctx context.Context, in ProjectsDeleteInput) error {
-	projectID, err := resolveProjectArg(ctx, c.projects, in.Identifier)
-	if err != nil {
-		return err
-	}
-
-	err = c.projects.Delete(ctx, projectID)
+	err := c.projects.Delete(ctx, in.Identifier)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
-	pterm.Success.Printf("Deleted project: %s\n", projectID)
+	pterm.Success.Printf("Deleted project: %s\n", in.Identifier)
 	return nil
 }
 
@@ -311,12 +301,7 @@ func (c ProjectsCmd) LimitsGet(ctx context.Context, in ProjectsLimitsGetInput) e
 		return err
 	}
 
-	projectID, err := resolveProjectArg(ctx, c.projects, in.Identifier)
-	if err != nil {
-		return err
-	}
-
-	limits, err := c.limits.Get(ctx, projectID)
+	limits, err := c.limits.Get(ctx, in.Identifier)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -335,11 +320,6 @@ func (c ProjectsCmd) LimitsGet(ctx context.Context, in ProjectsLimitsGetInput) e
 
 func (c ProjectsCmd) LimitsSet(ctx context.Context, in ProjectsLimitsSetInput) error {
 	if err := validateJSONOutput(in.Output); err != nil {
-		return err
-	}
-
-	projectID, err := resolveProjectArg(ctx, c.projects, in.Identifier)
-	if err != nil {
 		return err
 	}
 
@@ -368,7 +348,7 @@ func (c ProjectsCmd) LimitsSet(ctx context.Context, in ProjectsLimitsSetInput) e
 		UpdateProjectLimitsRequest: inner,
 	}
 
-	limits, err := c.limits.Update(ctx, projectID, params)
+	limits, err := c.limits.Update(ctx, in.Identifier, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -420,8 +400,16 @@ func runProjectsList(cmd *cobra.Command, args []string) error {
 	c := getProjectsHandler(cmd)
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
+	name, _ := cmd.Flags().GetString("name")
+	query, _ := cmd.Flags().GetString("query")
 	output, _ := cmd.Flags().GetString("output")
-	return c.List(cmd.Context(), ProjectsListInput{Limit: limit, Offset: offset, Output: output})
+	return c.List(cmd.Context(), ProjectsListInput{
+		Limit:  limit,
+		Offset: offset,
+		Name:   name,
+		Query:  query,
+		Output: output,
+	})
 }
 
 func runProjectsCreate(cmd *cobra.Command, args []string) error {
@@ -577,6 +565,8 @@ var projectsSetLimitsCompatCmd = &cobra.Command{
 func init() {
 	projectsListCmd.Flags().Int("limit", 100, "Maximum number of projects to return (1-100)")
 	projectsListCmd.Flags().Int("offset", 0, "Number of projects to skip (for pagination)")
+	projectsListCmd.Flags().String("name", "", "Filter by exact project name (case- and accent-insensitive)")
+	projectsListCmd.Flags().String("query", "", "Search projects by name substring (case-insensitive)")
 	addJSONOutputFlag(projectsListCmd)
 
 	projectsUpdateCmd.Flags().String("name", "", "New project name (1-255 characters)")

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -471,9 +472,14 @@ func TestBrowsersList_WithRegion_PassesParam(t *testing.T) {
 	assert.Equal(t, kernel.BrowserListParamsRegionEuWest, captured.Region)
 
 	// Omitting the flag leaves the param unset, so all regions are listed.
+	captured = kernel.BrowserListParams{}
 	err = b.List(context.Background(), BrowsersListInput{})
 	assert.NoError(t, err)
 	assert.Empty(t, captured.Region)
+
+	// An unknown region is rejected before the request is made.
+	err = b.List(context.Background(), BrowsersListInput{Region: "emea"})
+	assert.Error(t, err)
 }
 
 func TestBrowsersCreate_WithNameAndTags(t *testing.T) {
@@ -532,6 +538,27 @@ func TestBrowsersCreate_WithPrivateHosts(t *testing.T) {
 	raw, err := captured.MarshalJSON()
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"private_hosts":["*.example.ts.net","100.64.0.0/10"]`)
+
+	// Blank entries from a trailing comma are dropped rather than sent through.
+	require.NoError(t, (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
+		PrivateHosts: []string{" preview.internal ", ""},
+	}))
+	assert.Equal(t, []string{"preview.internal"}, captured.Network.PrivateHosts)
+
+	// Omitting the flag leaves network off the request, keeping the API defaults.
+	require.NoError(t, (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{}))
+	raw, err = captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "network")
+
+	// The API's 32-entry cap is enforced client-side.
+	tooMany := make([]string, maxPrivateHosts+1)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("host-%d.internal", i)
+	}
+	assert.Error(t, (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
+		PrivateHosts: tooMany,
+	}))
 }
 
 func TestBrowsersCreate_WithRegion(t *testing.T) {
@@ -562,6 +589,47 @@ func TestBrowsersCreate_WithRegion(t *testing.T) {
 	raw, err = captured.MarshalJSON()
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), "region")
+
+	// An unknown region is rejected before the request is made.
+	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{Region: "emea"}))
+}
+
+func TestBrowsersCreate_WithMemory(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-memory"}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{Memory: "16GiB"})
+	require.NoError(t, err)
+	assert.Equal(t, kernel.BrowserMemoryRequest16GiB, captured.Memory)
+
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"memory":"16GiB"`)
+
+	// Values are normalized to the casing the API expects.
+	err = b.Create(context.Background(), BrowsersCreateInput{Memory: "8gib"})
+	require.NoError(t, err)
+	assert.Equal(t, kernel.BrowserMemoryRequest8GiB, captured.Memory)
+
+	// Omitting the flag sends nothing; the server defaults to 8GiB.
+	err = b.Create(context.Background(), BrowsersCreateInput{})
+	require.NoError(t, err)
+	assert.Empty(t, captured.Memory)
+
+	raw, err = captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "memory")
+
+	// An unsupported size is rejected before the request is made.
+	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{Memory: "4GiB"}))
 }
 
 func TestBrowsersCreate_WithChromePolicy(t *testing.T) {
@@ -1050,7 +1118,7 @@ func TestBrowsersGet_PrintsDetails(t *testing.T) {
 				KioskMode:          false,
 				Viewport:           shared.BrowserViewport{Width: 1920, Height: 1080, RefreshRate: 25},
 				Profile:            kernel.Profile{ID: "prof-id", Name: "my-profile"},
-				ProxyID:            "proxy-123",
+				Proxy:              kernel.BrowserProxy{ID: "proxy-123", Name: "my-proxy"},
 				Region:             kernel.BrowserGetResponseRegionEuWest,
 			}, nil
 		},
@@ -1067,7 +1135,7 @@ func TestBrowsersGet_PrintsDetails(t *testing.T) {
 	assert.Contains(t, out, "true")  // Stealth
 	assert.Contains(t, out, "1920x1080@25")
 	assert.Contains(t, out, "my-profile")
-	assert.Contains(t, out, "proxy-123")
+	assert.Contains(t, out, "my-proxy (proxy-123)")
 	assert.Contains(t, out, "eu-west")
 }
 
@@ -2234,23 +2302,71 @@ func TestBrowsersUpdate_WithViewportNoForce(t *testing.T) {
 	assert.False(t, captured.Viewport.Force.Valid())
 }
 
-func TestBrowsersUpdate_WithDisableDefaultProxy(t *testing.T) {
+// --disable-default-proxy and --clear-proxy are older spellings of a proxy mode
+// change, so both are sent as the mode the API now takes.
+func TestBrowsersUpdate_LegacyProxyFlagsMapToMode(t *testing.T) {
 	setupStdoutCapture(t)
-	var captured kernel.BrowserUpdateParams
-	fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
-		captured = body
-		return &kernel.BrowserUpdateResponse{SessionID: "session123"}, nil
-	}}
+	for _, tc := range []struct {
+		name string
+		in   BrowsersUpdateInput
+		want kernel.BrowserProxyMode
+	}{
+		{"disable default proxy", BrowsersUpdateInput{DisableDefaultProxy: BoolFlag{Set: true, Value: true}}, kernel.BrowserProxyModeDirect},
+		{"re-enable default proxy", BrowsersUpdateInput{DisableDefaultProxy: BoolFlag{Set: true, Value: false}}, kernel.BrowserProxyModeDefault},
+		{"clear proxy", BrowsersUpdateInput{ClearProxy: true}, kernel.BrowserProxyModeDefault},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, captured := captureUpdateParams(t)
+			b := BrowsersCmd{browsers: fake}
+
+			tc.in.Identifier = "session123"
+			require.NoError(t, b.Update(context.Background(), tc.in))
+			assert.Equal(t, tc.want, captured.Proxy.Mode)
+		})
+	}
+}
+
+// A selected proxy and a mode are two ways to say the same thing, so combining
+// them is a user error rather than a request the API has to reject.
+func TestBrowsersUpdate_ConflictingProxyFlags_Error(t *testing.T) {
+	setupStdoutCapture(t)
+	for _, tc := range []struct {
+		name string
+		in   BrowsersUpdateInput
+	}{
+		{"id and name", BrowsersUpdateInput{ProxyID: "proxy-123", ProxyName: "my-proxy"}},
+		{"id and mode", BrowsersUpdateInput{ProxyID: "proxy-123", ProxyMode: "direct"}},
+		{"id and clear", BrowsersUpdateInput{ProxyID: "proxy-123", ClearProxy: true}},
+		{"mode and disable default", BrowsersUpdateInput{ProxyMode: "direct", DisableDefaultProxy: BoolFlag{Set: true, Value: true}}},
+		{"clear and disable default", BrowsersUpdateInput{ClearProxy: true, DisableDefaultProxy: BoolFlag{Set: true, Value: true}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := BrowsersCmd{browsers: &FakeBrowsersService{}}
+			tc.in.Identifier = "session123"
+			assert.Error(t, b.Update(context.Background(), tc.in))
+		})
+	}
+}
+
+func TestBrowsersUpdate_UnknownProxyMode_Errors(t *testing.T) {
+	setupStdoutCapture(t)
+	b := BrowsersCmd{browsers: &FakeBrowsersService{}}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{Identifier: "session123", ProxyMode: "bogus"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown proxy mode")
+}
+
+func TestBrowsersUpdate_ProxyName_Forwarded(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
 	b := BrowsersCmd{browsers: fake}
 
-	err := b.Update(context.Background(), BrowsersUpdateInput{
-		Identifier:          "session123",
-		DisableDefaultProxy: BoolFlag{Set: true, Value: true},
-	})
+	err := b.Update(context.Background(), BrowsersUpdateInput{Identifier: "session123", ProxyName: "my-proxy"})
 
-	assert.NoError(t, err)
-	assert.True(t, captured.DisableDefaultProxy.Valid())
-	assert.True(t, captured.DisableDefaultProxy.Value)
+	require.NoError(t, err)
+	assert.Equal(t, "my-proxy", captured.Proxy.Name.Value)
 }
 
 func TestBrowsersUpdate_ForceWithoutViewport_Errors(t *testing.T) {
@@ -2445,7 +2561,7 @@ func TestBrowsersUpdate_NameAndTagsWithProxy_AllForwarded(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "combo", captured.Name.Value)
 	assert.Equal(t, "v", captured.Tags["k"])
-	assert.Equal(t, "proxy-123", captured.ProxyID.Value)
+	assert.Equal(t, "proxy-123", captured.Proxy.ID.Value)
 }
 
 // Regression guard: a non-name/non-tags update must omit both fields entirely

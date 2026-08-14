@@ -30,6 +30,7 @@ type AuditLogsDownloadInput struct {
 	Service       string
 	AuthStrategy  string
 	UserIDs       []string
+	Format        string
 	To            string
 	Force         bool
 }
@@ -50,7 +51,7 @@ func (c AuditLogsCmd) Download(ctx context.Context, in AuditLogsDownloadInput) e
 
 	outPath := in.To
 	if outPath == "" {
-		outPath = defaultAuditLogsDownloadPath(params.Start, params.End)
+		outPath = defaultAuditLogsDownloadPath(params.Start, params.End, params.Format)
 	}
 	partialPath := outPath + ".partial"
 	out, err := openAuditLogsDownloadOutput(partialPath, outPath, in.Force)
@@ -202,7 +203,14 @@ func buildAuditLogsDownloadParams(in AuditLogsDownloadInput) (kernel.AuditLogExp
 
 	params.Start = start
 	params.End = end
-	params.Format = kernel.AuditLogExportChunkParamsFormatJSONLGz
+	switch in.Format {
+	case "", "jsonl.gz":
+		params.Format = kernel.AuditLogExportChunkParamsFormatJSONLGz
+	case "jsonl":
+		params.Format = kernel.AuditLogExportChunkParamsFormatJSONL
+	default:
+		return params, fmt.Errorf("invalid --format value: %s (must be 'jsonl.gz' or 'jsonl')", in.Format)
+	}
 	if in.Search != "" {
 		params.Search = kernel.String(in.Search)
 	}
@@ -222,9 +230,9 @@ func buildAuditLogsDownloadParams(in AuditLogsDownloadInput) (kernel.AuditLogExp
 	return params, nil
 }
 
-func defaultAuditLogsDownloadPath(start, end time.Time) string {
+func defaultAuditLogsDownloadPath(start, end time.Time, format kernel.AuditLogExportChunkParamsFormat) string {
 	const stamp = "20060102"
-	return fmt.Sprintf("audit-logs-%s-%s.jsonl.gz", start.UTC().Format(stamp), end.UTC().Format(stamp))
+	return fmt.Sprintf("audit-logs-%s-%s.%s", start.UTC().Format(stamp), end.UTC().Format(stamp), format)
 }
 
 // checkAuditLogsDownloadTarget rejects paths that are not replaceable
@@ -289,20 +297,23 @@ func runAuditLogsDownload(cmd *cobra.Command, args []string) error {
 	service, _ := cmd.Flags().GetString("service")
 	authStrategy, _ := cmd.Flags().GetString("auth-strategy")
 	userIDs, _ := cmd.Flags().GetStringArray("user-id")
+	format, _ := cmd.Flags().GetString("format")
 	to, _ := cmd.Flags().GetString("to")
 	force, _ := cmd.Flags().GetBool("force")
 
 	return c.Download(cmd.Context(), AuditLogsDownloadInput{
 		Start: start, End: end, Search: search, Method: method,
 		ExcludeMethod: excludeMethod, IncludeGet: includeGet, Service: service,
-		AuthStrategy: authStrategy, UserIDs: userIDs, To: to, Force: force,
+		AuthStrategy: authStrategy, UserIDs: userIDs, Format: format,
+		To: to, Force: force,
 	})
 }
 
 var auditLogsDownloadCmd = &cobra.Command{
 	Use:   "download",
-	Short: "Download audit logs as gzip-compressed JSONL",
-	Long: "Download audit logs as gzip-compressed JSONL in verified chunks. The time range is [start, end).\n\n" +
+	Short: "Download audit logs as JSONL",
+	Long: "Download audit logs as JSONL in verified chunks. The time range is [start, end).\n\n" +
+		"Output is gzip-compressed by default; pass --format jsonl for uncompressed JSONL.\n\n" +
 		"The API allows at most 30 days per download.\n\n" +
 		"GET requests are excluded by default; pass --include-get to include them.\n\n" +
 		"The output file is published only after every chunk is downloaded.",
@@ -321,7 +332,8 @@ func init() {
 	auditLogsDownloadCmd.Flags().String("service", "", "Filter by service")
 	auditLogsDownloadCmd.Flags().String("auth-strategy", "", "Filter by authentication strategy")
 	auditLogsDownloadCmd.Flags().StringArray("user-id", nil, "Filter by user ID (repeatable)")
-	auditLogsDownloadCmd.Flags().String("to", "", "Output .jsonl.gz file path")
+	auditLogsDownloadCmd.Flags().String("format", "jsonl.gz", "Export format: jsonl.gz or jsonl")
+	auditLogsDownloadCmd.Flags().String("to", "", "Output file path (defaults to a name derived from the window and --format)")
 	auditLogsDownloadCmd.Flags().Bool("force", false, "Overwrite the output file")
 	_ = auditLogsDownloadCmd.MarkFlagRequired("start")
 	_ = auditLogsDownloadCmd.MarkFlagRequired("end")

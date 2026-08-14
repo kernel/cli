@@ -8,6 +8,7 @@ import (
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/param"
+	"github.com/kernel/kernel-go-sdk/packages/respjson"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -100,7 +101,28 @@ func renderOrgLimits(limits *kernel.OrgLimits) {
 		{"Max Concurrent Sessions", fmt.Sprintf("%d", limits.MaxConcurrentSessions)},
 		{"Default Project Max Concurrent Sessions", formatProjectLimitValue(limits.DefaultProjectMaxConcurrentSessions, limits.JSON.DefaultProjectMaxConcurrentSessions)},
 	}
+
+	// Managed auth limits are plan-derived and only returned by newer API
+	// versions, so render each row only when the field is present. A null
+	// max_auth_connections means unlimited, so presence — not validity — is the
+	// right check here.
+	if orgLimitFieldPresent(limits.JSON.MaxAuthConnections) {
+		rows = append(rows, []string{"Max Auth Connections", formatProjectLimitValue(limits.MaxAuthConnections, limits.JSON.MaxAuthConnections)})
+	}
+	if orgLimitFieldPresent(limits.JSON.AuthConnectionsUsed) {
+		rows = append(rows, []string{"Auth Connections Used", fmt.Sprintf("%d", limits.AuthConnectionsUsed)})
+	}
+	if orgLimitFieldPresent(limits.JSON.MinHealthCheckIntervalSeconds) {
+		rows = append(rows, []string{"Min Health Check Interval", fmt.Sprintf("%ds", limits.MinHealthCheckIntervalSeconds)})
+	}
+
 	PrintTableNoPad(rows, true)
+}
+
+// orgLimitFieldPresent reports whether the API returned the field at all,
+// treating an explicit JSON null as present so nullable limits still render.
+func orgLimitFieldPresent(field respjson.Field) bool {
+	return field.Raw() != respjson.Omitted
 }
 
 // --- Cobra wiring ---
@@ -116,7 +138,7 @@ var orgCmd = &cobra.Command{
 
 var orgLimitsCmd = &cobra.Command{
 	Use:   "limits",
-	Short: "Manage organization concurrency limits",
+	Short: "Manage organization limits",
 	Run: func(cmd *cobra.Command, args []string) {
 		_ = cmd.Help()
 	},
@@ -124,8 +146,8 @@ var orgLimitsCmd = &cobra.Command{
 
 var orgLimitsGetCmd = &cobra.Command{
 	Use:   "get",
-	Short: "Get organization concurrency limits",
-	Long:  "Show the organization's concurrency limit and the default per-project cap applied to projects without an explicit override.",
+	Short: "Get organization limits",
+	Long:  "Show the organization's effective limits: the concurrency limit, the default per-project cap applied to projects without an explicit override, and the plan-derived managed auth limits along with current auth connection usage.",
 	Args:  cobra.NoArgs,
 	RunE:  runOrgLimitsGet,
 }

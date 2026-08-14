@@ -132,6 +132,64 @@ func TestAuthConnectionsGet_PrintsSubmissionHints(t *testing.T) {
 	assert.Contains(t, out, "Continue with Google")
 }
 
+// TestAuthConnectionsGet_PrintsCanonicalInputMetadata covers the metadata the
+// API preserves on canonical fields and choices: the field hint naming a masked
+// code destination, and the MFA type and masked destination that distinguish
+// otherwise identical-looking choices.
+func TestAuthConnectionsGet_PrintsCanonicalInputMetadata(t *testing.T) {
+	setupStdoutCapture(t)
+
+	fake := &FakeAuthConnectionService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			return &kernel.ManagedAuth{
+				ID:         id,
+				Domain:     "auth.example.com",
+				Status:     kernel.ManagedAuthStatusNeedsAuth,
+				FlowStatus: kernel.ManagedAuthFlowStatusInProgress,
+				FlowStep:   kernel.ManagedAuthFlowStepAwaitingInput,
+				Fields: []kernel.ManagedAuthField{
+					{
+						ID:       "otp",
+						Label:    "One-time code",
+						Type:     "code",
+						Ref:      "totp_code",
+						Hint:     "Enter the code sent to +1 ••• ••• 1234",
+						Required: true,
+					},
+				},
+				Choices: []kernel.ManagedAuthChoice{
+					{
+						ID:                "mfa_sms",
+						Label:             "Text message",
+						Type:              "mfa_method",
+						MfaType:           "sms",
+						MaskedDestination: "+1 ••• ••• 1234",
+					},
+					{
+						// No label, so the captured display text stands in for it.
+						ID:          "mfa_app",
+						DisplayText: "Use your authenticator app",
+						Type:        "mfa_method",
+						MfaType:     "totp",
+					},
+				},
+			}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+
+	require.NoError(t, c.Get(context.Background(), AuthConnectionGetInput{ID: "e0x3vbw4z66kpwny3k5k46tj"}))
+
+	out := outBuf.String()
+	assert.Contains(t, out, `otp (One-time code)`)
+	assert.Contains(t, out, `code, ref=totp_code, required`)
+	assert.Contains(t, out, `hint="Enter the code sent to +1 ••• ••• 1234"`)
+	assert.Contains(t, out, `mfa_sms (Text message)`)
+	assert.Contains(t, out, `mfa_method, sms, to=+1 ••• ••• 1234`)
+	assert.Contains(t, out, `mfa_app (Use your authenticator app)`)
+	assert.Contains(t, out, `mfa_method, totp`)
+}
+
 func TestAuthConnectionsGet_JSONOutputIncludesDiscoveredFields(t *testing.T) {
 	setupStdoutCapture(t)
 	oldStdout := os.Stdout
@@ -408,8 +466,8 @@ func TestAuthConnectionsUpdate_MapsParams(t *testing.T) {
 	assert.Equal(t, "Vault/Item", captured.ManagedAuthUpdateRequest.Credential.Path.Value)
 	require.True(t, captured.ManagedAuthUpdateRequest.Credential.Auto.Valid())
 	assert.True(t, captured.ManagedAuthUpdateRequest.Credential.Auto.Value)
-	require.True(t, captured.ManagedAuthUpdateRequest.Proxy.ID.Valid())
-	assert.Equal(t, "proxy-123", captured.ManagedAuthUpdateRequest.Proxy.ID.Value)
+	require.True(t, captured.ManagedAuthUpdateRequest.Browser.Proxy.ID.Valid())
+	assert.Equal(t, "proxy-123", captured.ManagedAuthUpdateRequest.Browser.Proxy.ID.Value)
 	require.True(t, captured.ManagedAuthUpdateRequest.SaveCredentials.Valid())
 	assert.False(t, captured.ManagedAuthUpdateRequest.SaveCredentials.Value)
 	require.True(t, captured.ManagedAuthUpdateRequest.RecordSession.Valid())
@@ -643,7 +701,7 @@ func TestCreate_TelemetryCategoriesOptIn(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	tel := captured.ManagedAuthCreateRequest.BrowserTelemetry
+	tel := captured.ManagedAuthCreateRequest.Browser.Telemetry
 	assert.False(t, tel.Enabled.Valid())
 	assert.True(t, tel.Browser.Console.Enabled.Value)
 	assert.True(t, tel.Browser.Network.Enabled.Value)
@@ -664,9 +722,60 @@ func TestCreate_TelemetryOff(t *testing.T) {
 		Domain: "example.com", ProfileName: "prof", Telemetry: "off",
 	}))
 
-	tel := captured.ManagedAuthCreateRequest.BrowserTelemetry
+	tel := captured.ManagedAuthCreateRequest.Browser.Telemetry
 	require.True(t, tel.Enabled.Valid())
 	assert.False(t, tel.Enabled.Value)
+}
+
+// Proxy and stealth are carried by the connection's browser config, which the
+// API applies to its login, reauth, and health-check sessions.
+func TestCreate_BrowserConfig(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.AuthConnectionNewParams
+	fake := &FakeAuthConnectionService{
+		NewFunc: func(ctx context.Context, body kernel.AuthConnectionNewParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			captured = body
+			return &kernel.ManagedAuth{ID: "auth_1"}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+	require.NoError(t, c.Create(context.Background(), AuthConnectionCreateInput{
+		Domain:      "example.com",
+		ProfileName: "prof",
+		ProxyName:   "my-proxy",
+		Stealth:     BoolFlag{Set: true, Value: false},
+	}))
+
+	browser := captured.ManagedAuthCreateRequest.Browser
+	assert.Equal(t, "my-proxy", browser.Proxy.Name.Value)
+	require.True(t, browser.Stealth.Valid())
+	assert.False(t, browser.Stealth.Value)
+}
+
+func TestLogin_BrowserProxyMode(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.AuthConnectionLoginParams
+	fake := &FakeAuthConnectionService{
+		LoginFunc: func(ctx context.Context, id string, body kernel.AuthConnectionLoginParams, opts ...option.RequestOption) (*kernel.LoginResponse, error) {
+			captured = body
+			return &kernel.LoginResponse{ID: id}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+	require.NoError(t, c.Login(context.Background(), AuthConnectionLoginInput{ID: "auth_1", ProxyMode: "direct"}))
+	assert.Equal(t, kernel.BrowserProxyModeDirect, captured.Browser.Proxy.Mode)
+}
+
+// A proxy is selected by ID or name, so an empty value is no longer a way to
+// clear it: that is what --proxy-mode=default is for.
+func TestUpdate_EmptyProxySelection_Errors(t *testing.T) {
+	capturePtermOutput(t)
+	c := AuthConnectionCmd{svc: &FakeAuthConnectionService{}}
+
+	err := c.Update(context.Background(), AuthConnectionUpdateInput{ID: "auth_1", ProxyIDSet: true})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--proxy-mode=default")
 }
 
 func TestCreate_TelemetryUnknownCategoryErrors(t *testing.T) {
@@ -692,7 +801,7 @@ func TestUpdate_TelemetryCountsAsChange(t *testing.T) {
 	// --telemetry alone must satisfy the "at least one field" guard.
 	require.NoError(t, c.Update(context.Background(), AuthConnectionUpdateInput{ID: "auth_1", Telemetry: "all"}))
 
-	tel := captured.ManagedAuthUpdateRequest.BrowserTelemetry
+	tel := captured.ManagedAuthUpdateRequest.Browser.Telemetry
 	require.True(t, tel.Enabled.Valid())
 	assert.True(t, tel.Enabled.Value)
 }
@@ -708,7 +817,7 @@ func TestLogin_TelemetryOverride(t *testing.T) {
 	}
 	c := AuthConnectionCmd{svc: fake}
 	require.NoError(t, c.Login(context.Background(), AuthConnectionLoginInput{ID: "auth_1", Telemetry: "screenshot"}))
-	assert.True(t, captured.BrowserTelemetry.Browser.Screenshot.Enabled.Value)
+	assert.True(t, captured.Browser.Telemetry.Browser.Screenshot.Enabled.Value)
 }
 
 func TestSubmit_CanonicalChoiceID(t *testing.T) {
@@ -859,7 +968,7 @@ func TestAuthConnectionsGet_TelemetryEnabledWithoutCategories(t *testing.T) {
 	fake := &FakeAuthConnectionService{
 		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
 			var auth kernel.ManagedAuth
-			require.NoError(t, json.Unmarshal([]byte(`{"id":"conn-1","browser_telemetry":{"enabled":true}}`), &auth))
+			require.NoError(t, json.Unmarshal([]byte(`{"id":"conn-1","browser":{"telemetry":{"enabled":true}}}`), &auth))
 			return &auth, nil
 		},
 	}
@@ -869,6 +978,60 @@ func TestAuthConnectionsGet_TelemetryEnabledWithoutCategories(t *testing.T) {
 	assert.Contains(t, outBuf.String(), "enabled (default categories)")
 }
 
+func TestAuthConnectionsGet_TelemetryShowsExportDestination(t *testing.T) {
+	setupStdoutCapture(t)
+	// A connection bound to an OTLP destination reports where its sessions export,
+	// so the destination is visible without reading the raw JSON. Unlike a browser
+	// session's resolved config (where destination is the ID string), a connection
+	// echoes the stored request verbatim, so destination is an {id, name} object.
+	fake := &FakeAuthConnectionService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			var auth kernel.ManagedAuth
+			require.NoError(t, json.Unmarshal([]byte(`{"id":"conn-1","browser":{"telemetry":{"enabled":true,"browser":{"console":{"enabled":true}},"export":{"otlp":{"enabled":true,"destination":{"id":"dest-abc"}}}}}}`), &auth))
+			return &auth, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+
+	require.NoError(t, c.Get(context.Background(), AuthConnectionGetInput{ID: "conn-1"}))
+	out := outBuf.String()
+	assert.Contains(t, out, "console")
+	assert.Contains(t, out, "exporting to dest-abc")
+}
+
+func TestAuthConnectionsGet_TelemetryShowsExportDestinationByName(t *testing.T) {
+	setupStdoutCapture(t)
+	// A connection created with --telemetry-export-otlp <name> stores the name, so
+	// that is what comes back; fall back to it when no ID is present.
+	fake := &FakeAuthConnectionService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			var auth kernel.ManagedAuth
+			require.NoError(t, json.Unmarshal([]byte(`{"id":"conn-1","browser":{"telemetry":{"enabled":true,"export":{"otlp":{"enabled":true,"destination":{"name":"my-collector"}}}}}}`), &auth))
+			return &auth, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+
+	require.NoError(t, c.Get(context.Background(), AuthConnectionGetInput{ID: "conn-1"}))
+	assert.Contains(t, outBuf.String(), "exporting to my-collector")
+}
+
+func TestAuthConnectionsGet_TelemetryOmitsExportWhenDisabled(t *testing.T) {
+	setupStdoutCapture(t)
+	// An export block that is present but disabled must not read as "exporting".
+	fake := &FakeAuthConnectionService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			var auth kernel.ManagedAuth
+			require.NoError(t, json.Unmarshal([]byte(`{"id":"conn-1","browser":{"telemetry":{"enabled":true,"export":{"otlp":{"enabled":false}}}}}`), &auth))
+			return &auth, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+
+	require.NoError(t, c.Get(context.Background(), AuthConnectionGetInput{ID: "conn-1"}))
+	assert.NotContains(t, outBuf.String(), "exporting to")
+}
+
 func TestAuthConnectionsGet_TelemetryRowOmittedWhenOff(t *testing.T) {
 	setupStdoutCapture(t)
 	// Telemetry that is off is not reported at all, rather than shown as a
@@ -876,7 +1039,7 @@ func TestAuthConnectionsGet_TelemetryRowOmittedWhenOff(t *testing.T) {
 	fake := &FakeAuthConnectionService{
 		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
 			var auth kernel.ManagedAuth
-			require.NoError(t, json.Unmarshal([]byte(`{"id":"conn-1","browser_telemetry":{"enabled":false}}`), &auth))
+			require.NoError(t, json.Unmarshal([]byte(`{"id":"conn-1","browser":{"telemetry":{"enabled":false}}}`), &auth))
 			return &auth, nil
 		},
 	}

@@ -31,6 +31,8 @@ type BrowserPoolsCmd struct {
 }
 
 type BrowserPoolsListInput struct {
+	Name   string
+	Query  string
 	Limit  int
 	Offset int
 	Region string
@@ -43,14 +45,24 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 	}
 
 	params := kernel.BrowserPoolListParams{}
+	if in.Name != "" {
+		params.Name = kernel.String(in.Name)
+	}
+	if in.Query != "" {
+		params.Query = kernel.String(in.Query)
+	}
 	if in.Limit > 0 {
 		params.Limit = kernel.Int(int64(in.Limit))
 	}
 	if in.Offset > 0 {
 		params.Offset = kernel.Int(int64(in.Offset))
 	}
-	if in.Region != "" {
-		params.Region = kernel.BrowserPoolListParamsRegion(in.Region)
+	region, err := parseRegionFlag(in.Region)
+	if err != nil {
+		return err
+	}
+	if region != "" {
+		params.Region = kernel.BrowserPoolListParamsRegion(region)
 	}
 
 	page, err := c.client.List(ctx, params)
@@ -77,7 +89,7 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 	}
 
 	tableData := pterm.TableData{
-		{"ID", "Name", "Available", "Acquired", "Created At", "Size", "Region"},
+		{"ID", "Name", "Available", "Acquired", "Created At", "Region", "Size"},
 	}
 
 	for _, p := range pools {
@@ -87,8 +99,8 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 			fmt.Sprintf("%d", p.AvailableCount),
 			fmt.Sprintf("%d", p.AcquiredCount),
 			util.FormatLocal(p.CreatedAt),
+			util.OrDash(string(p.Region)),
 			fmt.Sprintf("%d", p.BrowserPoolConfig.Size),
-			string(p.Region),
 		})
 	}
 
@@ -136,12 +148,12 @@ type BrowserPoolsCreateInput struct {
 	ProfileName            string
 	ProxyID                string
 	Region                 string
+	PrivateHosts           []string
 	StartURL               string
 	Extensions             []string
 	Viewport               string
 	ChromePolicy           string
 	ChromePolicyFile       string
-	PrivateHosts           []string
 	Telemetry              string
 	Output                 string
 }
@@ -196,11 +208,24 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 	if in.ProxyID != "" {
 		params.ProxyID = kernel.String(in.ProxyID)
 	}
-	if in.Region != "" {
-		params.Region = kernel.BrowserPoolNewParamsRegion(in.Region)
-	}
 	if in.StartURL != "" {
 		params.StartURL = kernel.String(in.StartURL)
+	}
+
+	region, err := parseRegionFlag(in.Region)
+	if err != nil {
+		return err
+	}
+	if region != "" {
+		params.Region = kernel.BrowserPoolNewParamsRegion(region)
+	}
+
+	network, err := buildNetworkParam(in.PrivateHosts)
+	if err != nil {
+		return err
+	}
+	if len(network.PrivateHosts) > 0 {
+		params.Network = network
 	}
 
 	params.Extensions = buildExtensionsParam(in.Extensions)
@@ -220,9 +245,6 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 	}
 	if len(chromePolicy) > 0 {
 		params.ChromePolicy = chromePolicy
-	}
-	if len(in.PrivateHosts) > 0 {
-		params.Network.PrivateHosts = in.PrivateHosts
 	}
 
 	if in.Telemetry != "" {
@@ -279,7 +301,7 @@ func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error
 		{"ID", pool.ID},
 		{"Name", util.OrDash(pool.Name)},
 		{"Created At", util.FormatLocal(pool.CreatedAt)},
-		{"Region", string(pool.Region)},
+		{"Region", util.OrDash(string(pool.Region))},
 		{"Size", fmt.Sprintf("%d", cfg.Size)},
 		{"Available", fmt.Sprintf("%d", pool.AvailableCount)},
 		{"Acquired", fmt.Sprintf("%d", pool.AcquiredCount)},
@@ -294,6 +316,7 @@ func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error
 		{"Start URL", util.OrDash(cfg.StartURL)},
 		{"Extensions", formatExtensions(cfg.Extensions)},
 		{"Viewport", formatViewport(cfg.Viewport)},
+		{"Private Hosts", formatPrivateHosts(cfg.Network)},
 		{"Telemetry", formatPoolTelemetry(cfg.Telemetry)},
 	}
 
@@ -320,12 +343,12 @@ type BrowserPoolsUpdateInput struct {
 	ClearStartURL          bool
 	Extensions             []string
 	ClearExtensions        bool
+	PrivateHosts           []string
+	ClearPrivateHosts      bool
 	Viewport               string
 	ChromePolicy           string
 	ChromePolicyFile       string
 	ClearChromePolicy      bool
-	PrivateHosts           []string
-	ClearPrivateHosts      bool
 	Telemetry              string
 	DiscardAllIdle         BoolFlag
 	Output                 string
@@ -350,7 +373,7 @@ func validateBrowserPoolUpdateInput(in BrowserPoolsUpdateInput) error {
 	if (in.ChromePolicy != "" || in.ChromePolicyFile != "") && in.ClearChromePolicy {
 		return fmt.Errorf("cannot specify --clear-chrome-policy with --chrome-policy or --chrome-policy-file")
 	}
-	if len(in.PrivateHosts) > 0 && in.ClearPrivateHosts {
+	if len(normalizePrivateHosts(in.PrivateHosts)) > 0 && in.ClearPrivateHosts {
 		return fmt.Errorf("cannot specify both --private-host and --clear-private-hosts")
 	}
 	return nil
@@ -441,8 +464,12 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 	if len(chromePolicy) > 0 {
 		params.ChromePolicy = chromePolicy
 	}
-	if len(in.PrivateHosts) > 0 {
-		params.Network.PrivateHosts = in.PrivateHosts
+	network, err := buildNetworkParam(in.PrivateHosts)
+	if err != nil {
+		return err
+	}
+	if len(network.PrivateHosts) > 0 {
+		params.Network = network
 	}
 
 	extraFields := map[string]any{}
@@ -511,6 +538,7 @@ type BrowserPoolsAcquireInput struct {
 	IDOrName       string
 	TimeoutSeconds int64
 	Name           string
+	StartURL       string
 	Tags           map[string]string
 	Telemetry      string
 	Output         string
@@ -518,15 +546,19 @@ type BrowserPoolsAcquireInput struct {
 
 // buildAcquireParams builds the SDK params for acquiring a browser from a pool.
 // Shared by `browser-pools acquire` and the `browsers create --pool-id/--pool-name`
-// path so the per-lease name/tags/telemetry forwarding cannot silently diverge
-// between them. The telemetry override merges onto the pool's config for this lease.
-func buildAcquireParams(name string, tags map[string]string, timeoutSeconds int64, telemetry string) (kernel.BrowserPoolAcquireParams, error) {
+// path so the per-lease name/tags/start-url/telemetry forwarding cannot silently
+// diverge between them. The telemetry override merges onto the pool's config for
+// this lease.
+func buildAcquireParams(name string, tags map[string]string, timeoutSeconds int64, telemetry, startURL string) (kernel.BrowserPoolAcquireParams, error) {
 	params := kernel.BrowserPoolAcquireParams{}
 	if timeoutSeconds > 0 {
 		params.AcquireTimeoutSeconds = kernel.Int(timeoutSeconds)
 	}
 	if name != "" {
 		params.Name = kernel.Opt(name)
+	}
+	if startURL != "" {
+		params.StartURL = kernel.Opt(startURL)
 	}
 	if len(tags) > 0 {
 		params.Tags = kernel.Tags(tags)
@@ -546,7 +578,7 @@ func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInpu
 		return err
 	}
 
-	params, err := buildAcquireParams(in.Name, in.Tags, in.TimeoutSeconds, in.Telemetry)
+	params, err := buildAcquireParams(in.Name, in.Tags, in.TimeoutSeconds, in.Telemetry, in.StartURL)
 	if err != nil {
 		return err
 	}
@@ -690,9 +722,11 @@ var browserPoolsFlushCmd = &cobra.Command{
 
 func init() {
 	addJSONOutputFlag(browserPoolsListCmd)
+	browserPoolsListCmd.Flags().String("name", "", "Filter by exact browser pool name")
+	browserPoolsListCmd.Flags().String("query", "", "Search browser pools by name (IDs match by exact value)")
 	browserPoolsListCmd.Flags().Int("limit", 0, "Maximum number of pools to return")
 	browserPoolsListCmd.Flags().Int("offset", 0, "Number of pools to skip (for pagination)")
-	browserPoolsListCmd.Flags().String("region", "", "Filter pools by region (us-east or eu-west); omit to list pools in all regions")
+	browserPoolsListCmd.Flags().String("region", "", "Filter by geographic region: 'us-east' or 'eu-west' (omit to list pools in all regions)")
 
 	addJSONOutputFlag(browserPoolsCreateCmd)
 	browserPoolsCreateCmd.Flags().String("name", "", "Optional unique name for the pool")
@@ -707,13 +741,13 @@ func init() {
 	browserPoolsCreateCmd.Flags().String("profile-id", "", "Profile ID")
 	browserPoolsCreateCmd.Flags().String("profile-name", "", "Profile name")
 	browserPoolsCreateCmd.Flags().String("proxy-id", "", "Proxy ID")
-	browserPoolsCreateCmd.Flags().String("region", "", "Region for the browser pool (us-east or eu-west); fixed once created, defaults to us-east. Requires a Start-Up or Enterprise plan")
+	browserPoolsCreateCmd.Flags().String("region", "", "Geographic region for the pool: 'us-east' or 'eu-west'. Fixed once the pool is created; requires a Start-Up or Enterprise plan and defaults to us-east")
+	browserPoolsCreateCmd.Flags().StringSlice("private-host", nil, "Destinations browsers in the pool reach directly through their own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel they join (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Replaces the default private ranges (RFC1918, 100.64.0.0/10, fc00::/7); omit to keep them")
 	browserPoolsCreateCmd.Flags().String("start-url", "", "Initial page to open for new browsers")
 	browserPoolsCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsCreateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
 	browserPoolsCreateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
 	browserPoolsCreateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
-	browserPoolsCreateCmd.Flags().StringSlice("private-host", nil, "Private hostname, IP, or CIDR to route through the session network (repeatable or comma-separated; replaces defaults)")
 	browserPoolsCreateCmd.Flags().String("telemetry", "", "Configure telemetry for browsers warmed into the pool (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
 	browserPoolsCreateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
 
@@ -736,12 +770,12 @@ func init() {
 	browserPoolsUpdateCmd.Flags().Bool("clear-start-url", false, "Clear the pool start URL")
 	browserPoolsUpdateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsUpdateCmd.Flags().Bool("clear-extensions", false, "Remove all pool extensions")
+	browserPoolsUpdateCmd.Flags().StringSlice("private-host", nil, "Replace the destinations browsers in the pool reach directly through their own network instead of Kernel-managed egress (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Only applies to browsers created after the update")
+	browserPoolsUpdateCmd.Flags().Bool("clear-private-hosts", false, "Remove the private-host override and restore the default private ranges")
 	browserPoolsUpdateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
 	browserPoolsUpdateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
 	browserPoolsUpdateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
 	browserPoolsUpdateCmd.Flags().Bool("clear-chrome-policy", false, "Remove the pool's custom Chrome enterprise policy")
-	browserPoolsUpdateCmd.Flags().StringSlice("private-host", nil, "Replace private hosts routed through the session network (repeatable or comma-separated)")
-	browserPoolsUpdateCmd.Flags().Bool("clear-private-hosts", false, "Remove the private-host override and restore the default private IP ranges")
 	browserPoolsUpdateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
 	browserPoolsUpdateCmd.MarkFlagsMutuallyExclusive("private-host", "clear-private-hosts")
 	browserPoolsUpdateCmd.Flags().String("telemetry", "", "Update pool telemetry: --telemetry=all (reset to default set), --telemetry=off (disable), or --telemetry=console,network (merge those categories into the current selection). Applies only to browsers warmed after the update.")
@@ -752,6 +786,7 @@ func init() {
 
 	browserPoolsAcquireCmd.Flags().Int64("timeout", 0, "Acquire timeout in seconds")
 	browserPoolsAcquireCmd.Flags().String("name", "", "Optional name for the acquired session (applies to this lease; cleared on release)")
+	browserPoolsAcquireCmd.Flags().String("start-url", "", "URL to navigate the acquired browser to, overriding the pool's start URL for this acquire only (best-effort)")
 	browserPoolsAcquireCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the acquired session (repeatable; applies to this lease)")
 	browserPoolsAcquireCmd.Flags().String("telemetry", "", "Telemetry override for this lease only, merged onto the pool's config: --telemetry=all, --telemetry=off, or --telemetry=console,network")
 	addJSONOutputFlag(browserPoolsAcquireCmd)
@@ -773,11 +808,13 @@ func init() {
 func runBrowserPoolsList(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	out, _ := cmd.Flags().GetString("output")
+	name, _ := cmd.Flags().GetString("name")
+	query, _ := cmd.Flags().GetString("query")
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
 	region, _ := cmd.Flags().GetString("region")
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
-	return c.List(cmd.Context(), BrowserPoolsListInput{Limit: limit, Offset: offset, Region: region, Output: out})
+	return c.List(cmd.Context(), BrowserPoolsListInput{Name: name, Query: query, Limit: limit, Offset: offset, Region: region, Output: out})
 }
 
 func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
@@ -801,12 +838,12 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
 	region, _ := cmd.Flags().GetString("region")
+	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
 	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
-	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 	output, _ := cmd.Flags().GetString("output")
 
@@ -823,12 +860,12 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 		ProfileName:            profileName,
 		ProxyID:                proxyID,
 		Region:                 region,
+		PrivateHosts:           privateHosts,
 		StartURL:               startURL,
 		Extensions:             extensions,
 		Viewport:               viewport,
 		ChromePolicy:           chromePolicy,
 		ChromePolicyFile:       chromePolicyFile,
-		PrivateHosts:           privateHosts,
 		Telemetry:              telemetry,
 		Output:                 output,
 	}
@@ -864,12 +901,12 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 	clearStartURL, _ := cmd.Flags().GetBool("clear-start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	clearExtensions, _ := cmd.Flags().GetBool("clear-extensions")
+	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
+	clearPrivateHosts, _ := cmd.Flags().GetBool("clear-private-hosts")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
 	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
 	clearChromePolicy, _ := cmd.Flags().GetBool("clear-chrome-policy")
-	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
-	clearPrivateHosts, _ := cmd.Flags().GetBool("clear-private-hosts")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 	discardIdle, _ := cmd.Flags().GetBool("discard-all-idle")
 	output, _ := cmd.Flags().GetString("output")
@@ -893,12 +930,12 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 		ClearStartURL:          clearStartURL,
 		Extensions:             extensions,
 		ClearExtensions:        clearExtensions,
+		PrivateHosts:           privateHosts,
+		ClearPrivateHosts:      clearPrivateHosts,
 		Viewport:               viewport,
 		ChromePolicy:           chromePolicy,
 		ChromePolicyFile:       chromePolicyFile,
 		ClearChromePolicy:      clearChromePolicy,
-		PrivateHosts:           privateHosts,
-		ClearPrivateHosts:      clearPrivateHosts,
 		Telemetry:              telemetry,
 		DiscardAllIdle:         BoolFlag{Set: cmd.Flags().Changed("discard-all-idle"), Value: discardIdle},
 		Output:                 output,
@@ -919,6 +956,7 @@ func runBrowserPoolsAcquire(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	timeout, _ := cmd.Flags().GetInt64("timeout")
 	name, _ := cmd.Flags().GetString("name")
+	startURL, _ := cmd.Flags().GetString("start-url")
 	tags, _ := tagsFromFlag(cmd, "tag")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 	output, _ := cmd.Flags().GetString("output")
@@ -927,6 +965,7 @@ func runBrowserPoolsAcquire(cmd *cobra.Command, args []string) error {
 		IDOrName:       args[0],
 		TimeoutSeconds: timeout,
 		Name:           name,
+		StartURL:       startURL,
 		Tags:           tags,
 		Telemetry:      telemetry,
 		Output:         output,
