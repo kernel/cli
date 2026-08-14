@@ -183,6 +183,27 @@ func parseRegionFlag(region string) (string, error) {
 	return "", fmt.Errorf("invalid --region value: %s (must be one of %s)", region, strings.Join(availableRegions(), ", "))
 }
 
+// availableMemorySizes returns the memory sizes the API accepts when creating a
+// browser session. Only headful, non-GPU sessions can request memory; every
+// other configuration gets a fixed allocation.
+func availableMemorySizes() []string {
+	return []string{"8GiB", "16GiB"}
+}
+
+// parseMemoryFlag validates a --memory value. An empty value means the flag was
+// not set, which lets the API apply its default (8GiB).
+func parseMemoryFlag(memory string) (kernel.BrowserMemoryRequest, error) {
+	if memory == "" {
+		return "", nil
+	}
+	for _, m := range availableMemorySizes() {
+		if strings.EqualFold(memory, m) {
+			return kernel.BrowserMemoryRequest(m), nil
+		}
+	}
+	return "", fmt.Errorf("invalid --memory value: %s (must be one of %s)", memory, strings.Join(availableMemorySizes(), ", "))
+}
+
 // maxPrivateHosts mirrors the API's cap on network.private_hosts entries.
 const maxPrivateHosts = 32
 
@@ -343,6 +364,7 @@ type BrowsersCreateInput struct {
 	Stealth            BoolFlag
 	Headless           BoolFlag
 	GPU                BoolFlag
+	Memory             string
 	InvocationID       string
 	Kiosk              BoolFlag
 	ProfileID          string
@@ -554,6 +576,13 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 	if in.GPU.Set {
 		params.GPU = kernel.Opt(in.GPU.Value)
+	}
+	memory, err := parseMemoryFlag(in.Memory)
+	if err != nil {
+		return err
+	}
+	if memory != "" {
+		params.Memory = memory
 	}
 	if in.InvocationID != "" {
 		params.InvocationID = kernel.Opt(in.InvocationID)
@@ -797,6 +826,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	tableData = append(tableData, []string{"Headless", fmt.Sprintf("%t", browser.Headless)})
 	tableData = append(tableData, []string{"Stealth", fmt.Sprintf("%t", browser.Stealth)})
 	tableData = append(tableData, []string{"GPU", fmt.Sprintf("%t", browser.GPU)})
+	tableData = append(tableData, []string{"Memory", util.OrDash(string(browser.Memory))})
 	tableData = append(tableData, []string{"Kiosk Mode", fmt.Sprintf("%t", browser.KioskMode)})
 	if browser.Viewport.Width > 0 && browser.Viewport.Height > 0 {
 		viewportStr := fmt.Sprintf("%dx%d", browser.Viewport.Width, browser.Viewport.Height)
@@ -2914,6 +2944,7 @@ func init() {
 	browsersCreateCmd.Flags().BoolP("stealth", "s", false, "Launch browser in stealth mode to avoid detection")
 	browsersCreateCmd.Flags().BoolP("headless", "H", false, "Launch browser without GUI access")
 	browsersCreateCmd.Flags().Bool("gpu", false, "Launch browser with hardware-accelerated GPU rendering")
+	browsersCreateCmd.Flags().String("memory", "", "Memory for a headful, non-GPU browser session: '8GiB' (default) or '16GiB'")
 	browsersCreateCmd.Flags().String("invocation-id", "", "Associate the browser session with an invocation")
 	browsersCreateCmd.Flags().Bool("kiosk", false, "Launch browser in kiosk mode")
 	browsersCreateCmd.Flags().IntP("timeout", "t", 60, "Timeout in seconds for the browser session")
@@ -3044,6 +3075,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	stealthVal, _ := cmd.Flags().GetBool("stealth")
 	headlessVal, _ := cmd.Flags().GetBool("headless")
 	gpuVal, _ := cmd.Flags().GetBool("gpu")
+	memory, _ := cmd.Flags().GetString("memory")
 	invocationID, _ := cmd.Flags().GetString("invocation-id")
 	kioskVal, _ := cmd.Flags().GetBool("kiosk")
 	timeout, _ := cmd.Flags().GetInt("timeout")
@@ -3174,6 +3206,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		Stealth:            BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealthVal},
 		Headless:           BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headlessVal},
 		GPU:                BoolFlag{Set: cmd.Flags().Changed("gpu"), Value: gpuVal},
+		Memory:             memory,
 		InvocationID:       invocationID,
 		Kiosk:              BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kioskVal},
 		ProfileID:          profileID,

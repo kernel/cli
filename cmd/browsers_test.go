@@ -594,6 +594,44 @@ func TestBrowsersCreate_WithRegion(t *testing.T) {
 	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{Region: "emea"}))
 }
 
+func TestBrowsersCreate_WithMemory(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-memory"}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{Memory: "16GiB"})
+	require.NoError(t, err)
+	assert.Equal(t, kernel.BrowserMemoryRequest16GiB, captured.Memory)
+
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"memory":"16GiB"`)
+
+	// Values are normalized to the casing the API expects.
+	err = b.Create(context.Background(), BrowsersCreateInput{Memory: "8gib"})
+	require.NoError(t, err)
+	assert.Equal(t, kernel.BrowserMemoryRequest8GiB, captured.Memory)
+
+	// Omitting the flag sends nothing; the server defaults to 8GiB.
+	err = b.Create(context.Background(), BrowsersCreateInput{})
+	require.NoError(t, err)
+	assert.Empty(t, captured.Memory)
+
+	raw, err = captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "memory")
+
+	// An unsupported size is rejected before the request is made.
+	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{Memory: "4GiB"}))
+}
+
 func TestBrowsersCreate_WithChromePolicy(t *testing.T) {
 	setupStdoutCapture(t)
 
