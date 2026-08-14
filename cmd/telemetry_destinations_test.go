@@ -116,6 +116,46 @@ func TestTelemetryDestinationsList_HasMore(t *testing.T) {
 	assert.NotContains(t, out, "dest2")
 }
 
+func TestTelemetryDestinationsList_JSONEnvelope(t *testing.T) {
+	var item kernel.OtlpDestination
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"d1","name":"honeycomb","endpoint":"https://api.honeycomb.io"}`), &item))
+	// Two items with per-page 1: the lookahead item is dropped and reported as has_more.
+	fake := &FakeTelemetryDestinationsService{ListFunc: func(ctx context.Context, query kernel.TelemetryDestinationListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.OtlpDestination], error) {
+		return &pagination.OffsetPagination[kernel.OtlpDestination]{Items: []kernel.OtlpDestination{item, item}}, nil
+	}}
+	c := TelemetryDestinationsCmd{destinations: fake}
+	out := captureStdout(t, func() {
+		require.NoError(t, c.List(context.Background(), TelemetryDestinationsListInput{Page: 1, PerPage: 1, Output: "json"}))
+	})
+	var payload struct {
+		Destinations []map[string]any `json:"destinations"`
+		Page         int              `json:"page"`
+		PerPage      int              `json:"per_page"`
+		HasMore      bool             `json:"has_more"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &payload))
+	require.Len(t, payload.Destinations, 1)
+	assert.Equal(t, "d1", payload.Destinations[0]["id"])
+	assert.Equal(t, 1, payload.Page)
+	assert.Equal(t, 1, payload.PerPage)
+	assert.True(t, payload.HasMore)
+}
+
+func TestTelemetryDestinationsList_JSONEnvelopeEmpty(t *testing.T) {
+	c := TelemetryDestinationsCmd{destinations: &FakeTelemetryDestinationsService{}}
+	out := captureStdout(t, func() {
+		require.NoError(t, c.List(context.Background(), TelemetryDestinationsListInput{Page: 1, PerPage: 20, Output: "json"}))
+	})
+	var payload struct {
+		Destinations []map[string]any `json:"destinations"`
+		HasMore      bool             `json:"has_more"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &payload))
+	assert.NotNil(t, payload.Destinations)
+	assert.Empty(t, payload.Destinations)
+	assert.False(t, payload.HasMore)
+}
+
 func TestTelemetryDestinationsCreate_SendsHeaders(t *testing.T) {
 	capturePtermOutput(t)
 	var got kernel.TelemetryDestinationNewParams

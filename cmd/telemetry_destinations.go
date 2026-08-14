@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -118,11 +119,26 @@ func (c TelemetryDestinationsCmd) List(ctx context.Context, in TelemetryDestinat
 	itemsThisPage := len(items)
 
 	if in.Output == "json" {
-		if len(items) == 0 {
-			fmt.Println("[]")
-			return nil
+		rawItems := make([]json.RawMessage, 0, len(items))
+		for _, d := range items {
+			r := d.RawJSON()
+			if r == "" {
+				r = "{}"
+			}
+			rawItems = append(rawItems, json.RawMessage(r))
 		}
-		return util.PrintPrettyJSONSlice(items)
+		payload := struct {
+			Destinations []json.RawMessage `json:"destinations"`
+			Page         int               `json:"page"`
+			PerPage      int               `json:"per_page"`
+			HasMore      bool              `json:"has_more"`
+		}{Destinations: rawItems, Page: page, PerPage: perPage, HasMore: hasMore}
+		data, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
 	}
 
 	if len(items) == 0 {
