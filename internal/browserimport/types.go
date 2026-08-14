@@ -46,6 +46,61 @@ type Cookie struct {
 	SameSite  string     `json:"same_site,omitempty"`
 }
 
+type BookmarkDocument struct {
+	Roots []BookmarkRoot `json:"roots"`
+}
+
+type BookmarkRoot struct {
+	Name     string         `json:"name"`
+	Children []BookmarkNode `json:"children"`
+}
+
+type BookmarkNode struct {
+	Title        string         `json:"title"`
+	URL          string         `json:"url,omitempty"`
+	Children     []BookmarkNode `json:"children"`
+	DateAdded    *time.Time     `json:"date_added,omitempty"`
+	DateLastUsed *time.Time     `json:"date_last_used,omitempty"`
+}
+
+type HistoryRecord struct {
+	URL        string    `json:"url"`
+	Title      string    `json:"title,omitempty"`
+	VisitedAt  time.Time `json:"visited_at"`
+	VisitCount int       `json:"visit_count,omitempty"`
+}
+
+const (
+	StorageKindLocal       = "local_storage"
+	MaxPortableStorageSize = 64 << 20
+)
+
+type StorageRecord struct {
+	Origin string `json:"origin"`
+	Kind   string `json:"kind"`
+	Key    string `json:"key"`
+	Value  string `json:"value"`
+}
+
+type StorageSite struct {
+	Origin string
+	Bytes  int64
+}
+
+type Extension struct {
+	ID     string `json:"id"`
+	Name   string `json:"name,omitempty"`
+	Source string `json:"source"`
+}
+
+type ProfileData struct {
+	Cookies    []Cookie
+	Storage    []StorageRecord
+	Bookmarks  *BookmarkDocument
+	History    []HistoryRecord
+	Extensions []Extension
+}
+
 type Source struct {
 	ID         string         `json:"id"`
 	Kind       string         `json:"kind"`

@@ -7,6 +7,7 @@ import (
 	"crypto/cipher"
 	"crypto/sha1"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -18,9 +19,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 
+	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/util"
 	"golang.org/x/crypto/pbkdf2"
 	"golang.org/x/net/publicsuffix"
 )
@@ -29,9 +34,14 @@ const (
 	maxDocumentBytes = 16 << 20
 	maxSQLiteOutput  = 64 << 20
 	maxSQLiteBytes   = 2 << 30
+	maxStorageBytes  = MaxPortableStorageSize
+	maxStorageSource = 512 << 20
+	maxStorageRecord = 1 << 20
+	maxStorageCount  = 100_000
 )
 
 var profileIDCharacters = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
+var chromeWebStoreExtensionID = regexp.MustCompile(`^[a-p]{32}$`)
 
 func DiscoverMacOSProfiles(home string) ([]Profile, error) {
 	browsers := []Browser{
@@ -244,6 +254,373 @@ func ExportCookies(ctx context.Context, profile Profile, selectedSites []string)
 	return cookies, nil
 }
 
+func ExportBookmarks(profile Profile) (BookmarkDocument, int, error) {
+	payload, err := readFileBounded(filepath.Join(profile.Path, "Bookmarks"), maxDocumentBytes)
+	if errors.Is(err, os.ErrNotExist) {
+		return BookmarkDocument{}, 0, nil
+	}
+	if err != nil {
+		return BookmarkDocument{}, 0, fmt.Errorf("read browser bookmarks: %w", err)
+	}
+	var source struct {
+		Roots map[string]chromiumBookmarkNode `json:"roots"`
+	}
+	if err := json.Unmarshal(payload, &source); err != nil {
+		return BookmarkDocument{}, 0, fmt.Errorf("decode browser bookmarks: %w", err)
+	}
+	document := BookmarkDocument{Roots: make([]BookmarkRoot, 0, 3)}
+	count := 0
+	for _, name := range []string{"bookmark_bar", "other", "synced"} {
+		root, ok := source.Roots[name]
+		if !ok {
+			continue
+		}
+		portableName := name
+		if name == "synced" {
+			portableName = "mobile"
+		}
+		document.Roots = append(document.Roots, BookmarkRoot{Name: portableName, Children: portableBookmarkNodes(root.Children, &count)})
+	}
+	return document, count, nil
+}
+
+type chromiumBookmarkNode struct {
+	Name         string                 `json:"name"`
+	Type         string                 `json:"type"`
+	URL          string                 `json:"url"`
+	DateAdded    string                 `json:"date_added"`
+	DateLastUsed string                 `json:"date_last_used"`
+	Children     []chromiumBookmarkNode `json:"children"`
+}
+
+func portableBookmarkNodes(nodes []chromiumBookmarkNode, count *int) []BookmarkNode {
+	result := make([]BookmarkNode, 0, len(nodes))
+	for _, node := range nodes {
+		if node.Type == "url" {
+			parsed, err := url.Parse(node.URL)
+			if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+				continue
+			}
+			*count++
+			result = append(result, BookmarkNode{Title: node.Name, URL: node.URL, DateAdded: chromiumTimestamp(node.DateAdded), DateLastUsed: chromiumTimestamp(node.DateLastUsed)})
+			continue
+		}
+		if node.Type != "folder" {
+			continue
+		}
+		children := portableBookmarkNodes(node.Children, count)
+		*count++
+		result = append(result, BookmarkNode{Title: node.Name, Children: children, DateAdded: chromiumTimestamp(node.DateAdded)})
+	}
+	return result
+}
+
+func chromiumTimestamp(value string) *time.Time {
+	microseconds, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || microseconds <= 0 {
+		return nil
+	}
+	parsed := chromiumTime(microseconds)
+	return &parsed
+}
+
+func ExportHistory(ctx context.Context, profile Profile, since time.Time) ([]HistoryRecord, error) {
+	const chromeEpochMicros = int64(11_644_473_600_000_000)
+	cutoff := since.UnixMicro() + chromeEpochMicros
+	query := fmt.Sprintf(`SELECT urls.url, urls.title, MAX(visits.visit_time) AS last_visit_time, COUNT(*) AS visit_count FROM visits JOIN urls ON urls.id = visits.url WHERE visits.visit_time >= %d AND (urls.url LIKE 'http://%%' OR urls.url LIKE 'https://%%') GROUP BY urls.id ORDER BY last_visit_time DESC LIMIT 100001`, cutoff)
+	payload, err := sqliteSnapshotJSON(ctx, filepath.Join(profile.Path, "History"), query)
+	if err != nil {
+		return nil, fmt.Errorf("read browser history: %w", err)
+	}
+	var rows []struct {
+		URL       string `json:"url"`
+		Title     string `json:"title"`
+		VisitedAt int64  `json:"last_visit_time"`
+		Count     int    `json:"visit_count"`
+	}
+	if len(bytes.TrimSpace(payload)) != 0 {
+		if err := json.Unmarshal(payload, &rows); err != nil {
+			return nil, fmt.Errorf("decode browser history: %w", err)
+		}
+	}
+	if len(rows) > 100000 {
+		return nil, fmt.Errorf("browser history exceeds the 100000-record import limit; use fewer days")
+	}
+	records := make([]HistoryRecord, 0, len(rows))
+	for _, row := range rows {
+		parsed, err := url.Parse(row.URL)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			continue
+		}
+		records = append(records, HistoryRecord{URL: row.URL, Title: row.Title, VisitedAt: chromiumTime(row.VisitedAt), VisitCount: max(1, row.Count)})
+	}
+	return records, nil
+}
+
+func HistoryCount(ctx context.Context, profile Profile, since time.Time) (int, error) {
+	const chromeEpochMicros = int64(11_644_473_600_000_000)
+	cutoff := since.UnixMicro() + chromeEpochMicros
+	query := fmt.Sprintf(`SELECT COUNT(*) AS count FROM visits JOIN urls ON urls.id = visits.url WHERE visits.visit_time >= %d AND (urls.url LIKE 'http://%%' OR urls.url LIKE 'https://%%')`, cutoff)
+	payload, err := sqliteSnapshotJSON(ctx, filepath.Join(profile.Path, "History"), query)
+	if err != nil {
+		return 0, fmt.Errorf("count browser history: %w", err)
+	}
+	var rows []struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(payload, &rows); err != nil {
+		return 0, fmt.Errorf("decode browser history count: %w", err)
+	}
+	if len(rows) != 1 || rows[0].Count < 0 {
+		return 0, fmt.Errorf("browser history count is invalid")
+	}
+	return rows[0].Count, nil
+}
+
+func LocalStorageSites(ctx context.Context, profile Profile) ([]StorageSite, error) {
+	database, cleanup, err := levelDBSnapshot(ctx, filepath.Join(profile.Path, "Local Storage", "leveldb"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("snapshot browser local storage: %w", err)
+	}
+	defer cleanup()
+
+	db, err := leveldb.OpenFile(database, nil)
+	if err != nil {
+		return nil, fmt.Errorf("open browser local storage: %w", err)
+	}
+	defer db.Close()
+
+	metadataBytes := make(map[string]int64)
+	recordBytes := make(map[string]int64)
+	iterator := db.NewIterator(nil, nil)
+	defer iterator.Release()
+	for iterator.Next() {
+		key := iterator.Key()
+		if bytes.HasPrefix(key, []byte("META:")) {
+			origin, ok := portableStorageOrigin(string(key[len("META:"):]))
+			if !ok {
+				continue
+			}
+			size, err := localStorageMetadataSize(iterator.Value())
+			if err != nil {
+				return nil, fmt.Errorf("decode local storage metadata for %s: %w", origin, err)
+			}
+			metadataBytes[origin] = size
+			continue
+		}
+		if len(key) < 2 || key[0] != '_' {
+			continue
+		}
+		separator := bytes.IndexByte(key[1:], 0)
+		if separator < 1 {
+			continue
+		}
+		origin, ok := portableStorageOrigin(string(key[1 : 1+separator]))
+		if ok {
+			recordBytes[origin] += int64(len(key[2+separator:]) + len(iterator.Value()))
+		}
+	}
+	if err := iterator.Error(); err != nil {
+		return nil, fmt.Errorf("read browser local storage metadata: %w", err)
+	}
+	sites := make([]StorageSite, 0, len(metadataBytes)+len(recordBytes))
+	for origin, bytes := range recordBytes {
+		if metadataBytes[origin] > bytes {
+			bytes = metadataBytes[origin]
+		}
+		sites = append(sites, StorageSite{Origin: origin, Bytes: bytes})
+		delete(metadataBytes, origin)
+	}
+	for origin, bytes := range metadataBytes {
+		sites = append(sites, StorageSite{Origin: origin, Bytes: bytes})
+	}
+	sort.Slice(sites, func(left, right int) bool { return sites[left].Origin < sites[right].Origin })
+	return sites, nil
+}
+
+func ExportLocalStorage(ctx context.Context, profile Profile, selectedOrigins []string) ([]StorageRecord, error) {
+	database, cleanup, err := levelDBSnapshot(ctx, filepath.Join(profile.Path, "Local Storage", "leveldb"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("snapshot browser local storage: %w", err)
+	}
+	defer cleanup()
+
+	db, err := leveldb.OpenFile(database, nil)
+	if err != nil {
+		return nil, fmt.Errorf("open browser local storage: %w", err)
+	}
+	defer db.Close()
+
+	selected := make(map[string]struct{}, len(selectedOrigins))
+	for _, origin := range selectedOrigins {
+		selected[origin] = struct{}{}
+	}
+	records := make([]StorageRecord, 0)
+	encodedBytes := 0
+	iterator := db.NewIterator(util.BytesPrefix([]byte("_")), nil)
+	defer iterator.Release()
+	for iterator.Next() {
+		key := iterator.Key()[1:]
+		separator := bytes.IndexByte(key, 0)
+		if separator < 1 || separator == len(key)-1 {
+			continue
+		}
+		origin, ok := portableStorageOrigin(string(key[:separator]))
+		if !ok {
+			continue
+		}
+		if len(selected) > 0 {
+			if _, ok := selected[origin]; !ok {
+				continue
+			}
+		}
+		scriptKey, err := decodeChromiumStorageString(key[separator+1:])
+		if err != nil || scriptKey == "" {
+			continue
+		}
+		value, err := decodeChromiumStorageString(iterator.Value())
+		if err != nil {
+			continue
+		}
+		record := StorageRecord{Origin: origin, Kind: StorageKindLocal, Key: scriptKey, Value: value}
+		encoded, err := json.Marshal(record)
+		if err != nil {
+			return nil, fmt.Errorf("encode browser local storage: %w", err)
+		}
+		if len(encoded)+1 > maxStorageRecord {
+			return nil, fmt.Errorf("local storage key %q for %s exceeds the 1 MiB record limit", scriptKey, origin)
+		}
+		encodedBytes += len(encoded) + 1
+		if encodedBytes > maxStorageBytes {
+			return nil, fmt.Errorf("browser local storage exceeds the 64 MiB import limit; choose fewer websites")
+		}
+		records = append(records, record)
+		if len(records) > maxStorageCount {
+			return nil, fmt.Errorf("browser local storage exceeds the 100000-record import limit; choose fewer websites")
+		}
+	}
+	if err := iterator.Error(); err != nil {
+		return nil, fmt.Errorf("read browser local storage: %w", err)
+	}
+	sort.Slice(records, func(left, right int) bool {
+		if records[left].Origin == records[right].Origin {
+			return records[left].Key < records[right].Key
+		}
+		return records[left].Origin < records[right].Origin
+	})
+	return records, nil
+}
+
+func portableStorageOrigin(raw string) (string, bool) {
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", false
+	}
+	origin := parsed.Scheme + "://" + parsed.Host
+	if raw != origin && raw != origin+"/" {
+		return "", false
+	}
+	return origin, true
+}
+
+func decodeChromiumStorageString(raw []byte) (string, error) {
+	if len(raw) == 0 {
+		return "", fmt.Errorf("string is missing its encoding prefix")
+	}
+	switch raw[0] {
+	case 0:
+		if len(raw[1:])%2 != 0 {
+			return "", fmt.Errorf("UTF-16 string has an odd byte length")
+		}
+		units := make([]uint16, len(raw[1:])/2)
+		for index := range units {
+			units[index] = binary.LittleEndian.Uint16(raw[1+index*2:])
+		}
+		return string(utf16.Decode(units)), nil
+	case 1:
+		runes := make([]rune, len(raw)-1)
+		for index, value := range raw[1:] {
+			runes[index] = rune(value)
+		}
+		return string(runes), nil
+	default:
+		return "", fmt.Errorf("unsupported string encoding prefix %d", raw[0])
+	}
+}
+
+func localStorageMetadataSize(raw []byte) (int64, error) {
+	for len(raw) > 0 {
+		tag, read := binary.Uvarint(raw)
+		if read <= 0 {
+			return 0, fmt.Errorf("invalid protobuf tag")
+		}
+		raw = raw[read:]
+		field, wire := tag>>3, tag&7
+		if wire != 0 {
+			return 0, fmt.Errorf("unsupported protobuf wire type %d", wire)
+		}
+		value, read := binary.Uvarint(raw)
+		if read <= 0 {
+			return 0, fmt.Errorf("invalid protobuf value")
+		}
+		raw = raw[read:]
+		if field == 2 {
+			if value > uint64(^uint64(0)>>1) {
+				return 0, fmt.Errorf("size exceeds int64")
+			}
+			return int64(value), nil
+		}
+	}
+	return 0, fmt.Errorf("size field is missing")
+}
+
+func DiscoverExtensions(profile Profile) ([]Extension, error) {
+	payload, err := readFileBounded(filepath.Join(profile.Path, "Secure Preferences"), maxDocumentBytes)
+	if errors.Is(err, os.ErrNotExist) {
+		payload, err = readFileBounded(filepath.Join(profile.Path, "Preferences"), maxDocumentBytes)
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read browser extensions: %w", err)
+	}
+	var source struct {
+		Extensions struct {
+			Settings map[string]struct {
+				State        *int `json:"state"`
+				FromWebStore bool `json:"from_webstore"`
+				Manifest     struct {
+					Name string `json:"name"`
+				} `json:"manifest"`
+			} `json:"settings"`
+		} `json:"extensions"`
+	}
+	if err := json.Unmarshal(payload, &source); err != nil {
+		return nil, fmt.Errorf("decode browser extensions: %w", err)
+	}
+	result := make([]Extension, 0)
+	for id, setting := range source.Extensions.Settings {
+		if (setting.State != nil && *setting.State != 1) || !setting.FromWebStore || !chromeWebStoreExtensionID.MatchString(id) {
+			continue
+		}
+		result = append(result, Extension{ID: id, Name: setting.Manifest.Name, Source: "chrome_web_store"})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Name == result[j].Name {
+			return result[i].ID < result[j].ID
+		}
+		return result[i].Name < result[j].Name
+	})
+	return result, nil
+}
+
 // CookieSites returns every website with importable cookies, ranked by recent
 // browser use. It reads cookie metadata only; values are decrypted by
 // ExportCookies after the user chooses what to import.
@@ -372,6 +749,93 @@ type fileFingerprint struct {
 	exists   bool
 	size     int64
 	modified time.Time
+}
+
+type directoryFingerprint struct {
+	name     string
+	size     int64
+	modified time.Time
+}
+
+func levelDBSnapshot(ctx context.Context, sourceDirectory string) (string, func(), error) {
+	if _, err := os.Stat(sourceDirectory); err != nil {
+		return "", nil, err
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		before, err := fingerprintLevelDB(sourceDirectory)
+		if err != nil {
+			return "", nil, err
+		}
+		var total int64
+		for _, file := range before {
+			total += file.size
+		}
+		if total > maxStorageSource {
+			return "", nil, fmt.Errorf("browser local storage source exceeds 512 MiB")
+		}
+		root, err := os.MkdirTemp("", "kernel-browser-import-leveldb-")
+		if err != nil {
+			return "", nil, err
+		}
+		destination := filepath.Join(root, "leveldb")
+		if err := os.Mkdir(destination, 0o700); err != nil {
+			_ = os.RemoveAll(root)
+			return "", nil, err
+		}
+		changed := false
+		for _, file := range before {
+			err := copyFileBounded(ctx, filepath.Join(sourceDirectory, file.name), filepath.Join(destination, file.name), file.size)
+			if errors.Is(err, os.ErrNotExist) || errors.Is(err, errFileGrew) {
+				changed = true
+				break
+			}
+			if err != nil {
+				_ = os.RemoveAll(root)
+				return "", nil, fmt.Errorf("copy local storage %s: %w", file.name, err)
+			}
+		}
+		after, err := fingerprintLevelDB(sourceDirectory)
+		if !changed && err == nil && directoryFingerprintsEqual(before, after) {
+			return destination, func() { _ = os.RemoveAll(root) }, nil
+		}
+		_ = os.RemoveAll(root)
+	}
+	return "", nil, fmt.Errorf("browser local storage changed while it was being read; try again")
+}
+
+func fingerprintLevelDB(directory string) ([]directoryFingerprint, error) {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]directoryFingerprint, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Name() == "LOCK" || entry.Name() == "LOG" || entry.Name() == "LOG.old" {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return nil, err
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		result = append(result, directoryFingerprint{name: entry.Name(), size: info.Size(), modified: info.ModTime()})
+	}
+	sort.Slice(result, func(left, right int) bool { return result[left].name < result[right].name })
+	return result, nil
+}
+
+func directoryFingerprintsEqual(left, right []directoryFingerprint) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func sqliteSnapshot(ctx context.Context, databasePath string) (string, func(), error) {
