@@ -20,10 +20,10 @@ interface TeamSizeOutput {
 // See https://www.kernel.sh/docs/apps/deploy#environment-variables
 // Defaults to OpenAI. Override MODEL to use another provider (e.g. google/gemini-2.5-flash).
 const MODEL = (process.env.MODEL ?? "openai/gpt-4.1") as ModelName;
-const MODEL_API_KEY = process.env.MODEL_API_KEY ?? process.env.OPENAI_API_KEY;
+const MODEL_API_KEY = process.env.MODEL_API_KEY;
 
 if (!MODEL_API_KEY) {
-  throw new Error("MODEL_API_KEY (or OPENAI_API_KEY) is not set");
+  throw new Error("MODEL_API_KEY is not set");
 }
 
 app.action<CompanyInput, TeamSizeOutput>(
