@@ -540,7 +540,7 @@ func init() {
 	addJSONOutputFlag(apiKeysListCmd)
 	apiKeysListCmd.Flags().Int("limit", 0, "Maximum number of results to return")
 	apiKeysListCmd.Flags().Int("offset", 0, "Number of results to skip")
-	apiKeysListCmd.Flags().String("name", "", "Exact-match filter on API key name (names are not unique, so several keys may match)")
+	apiKeysListCmd.Flags().String("name", "", "Filter by exact API key name (names are not unique, so several keys may match)")
 	apiKeysListCmd.Flags().String("query", "", "Search API keys by name, creator, or project (identifiers and masked keys match by exact value or prefix)")
 	apiKeysListCmd.Flags().String("status", "", "Filter by status: 'active' (default), 'deleted', or 'all'")
 	apiKeysListCmd.Flags().Bool("include-deleted", false, "Deprecated: Use --status all instead. Include soft-deleted API keys in the results")

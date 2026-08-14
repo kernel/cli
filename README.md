@@ -347,7 +347,7 @@ Destinations are the OTLP/HTTP endpoints sessions export to, managed per project
 
 - `kernel telemetry destinations list` - List OTLP destinations
   - `--page <n>` / `--per-page <n>` - Page number (1-based) and items per page (default 20)
-  - `--name <name>` - Exact-match filter on destination name
+  - `--name <name>` - Filter by exact destination name
   - `--query <text>` - Substring match against name or endpoint; IDs match by exact value
 - `kernel telemetry destinations get <id-or-name>` - Get an OTLP destination
 - `kernel telemetry destinations create --name <name> --endpoint <url>` - Create an OTLP destination

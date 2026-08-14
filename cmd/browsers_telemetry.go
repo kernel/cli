@@ -449,7 +449,7 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 	// The endpoint rejects desc combined with a window start, since desc pages
 	// backwards from --until (or the newest archived event) instead.
 	if in.Order == "desc" && in.Since != "" {
-		return fmt.Errorf("--order desc cannot be combined with --since; use --until to bound the window instead")
+		return fmt.Errorf("cannot combine --order desc with --since; use --until to bound the window instead")
 	}
 
 	// Resolve a name to a session ID. The events archive outlives the session, so

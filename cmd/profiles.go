@@ -458,7 +458,7 @@ func init() {
 	addJSONOutputFlag(profilesListCmd)
 	profilesListCmd.Flags().Int("per-page", 20, "Items per page (default 20)")
 	profilesListCmd.Flags().Int("page", 1, "Page number (1-based)")
-	profilesListCmd.Flags().String("name", "", "Exact-match filter on profile name")
+	profilesListCmd.Flags().String("name", "", "Filter by exact profile name")
 	profilesListCmd.Flags().String("query", "", "Search profiles by name or ID")
 	addJSONOutputFlag(profilesGetCmd)
 	addJSONOutputFlag(profilesCreateCmd)

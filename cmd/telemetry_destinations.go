@@ -402,7 +402,7 @@ func init() {
 	addJSONOutputFlag(telemetryDestinationsListCmd)
 	telemetryDestinationsListCmd.Flags().Int("page", 1, "Page number (1-based)")
 	telemetryDestinationsListCmd.Flags().Int("per-page", 20, "Items per page (default 20)")
-	telemetryDestinationsListCmd.Flags().String("name", "", "Exact-match filter on destination name")
+	telemetryDestinationsListCmd.Flags().String("name", "", "Filter by exact destination name")
 	telemetryDestinationsListCmd.Flags().String("query", "", "Search destinations by name or endpoint substring; IDs match by exact value")
 
 	addJSONOutputFlag(telemetryDestinationsGetCmd)

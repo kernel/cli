@@ -722,7 +722,7 @@ var browserPoolsFlushCmd = &cobra.Command{
 
 func init() {
 	addJSONOutputFlag(browserPoolsListCmd)
-	browserPoolsListCmd.Flags().String("name", "", "Exact-match filter on browser pool name")
+	browserPoolsListCmd.Flags().String("name", "", "Filter by exact browser pool name")
 	browserPoolsListCmd.Flags().String("query", "", "Search browser pools by name (IDs match by exact value)")
 	browserPoolsListCmd.Flags().Int("limit", 0, "Maximum number of pools to return")
 	browserPoolsListCmd.Flags().Int("offset", 0, "Number of pools to skip (for pagination)")
@@ -742,7 +742,7 @@ func init() {
 	browserPoolsCreateCmd.Flags().String("profile-name", "", "Profile name")
 	browserPoolsCreateCmd.Flags().String("proxy-id", "", "Proxy ID")
 	browserPoolsCreateCmd.Flags().String("region", "", "Geographic region for the pool: 'us-east' or 'eu-west'. Fixed once the pool is created; requires a Start-Up or Enterprise plan and defaults to us-east")
-	browserPoolsCreateCmd.Flags().StringSlice("private-host", nil, "Destination(s) browsers in the pool reach directly through their own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel they join (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Replaces the default private ranges (RFC1918, 100.64.0.0/10, fc00::/7); omit to keep them")
+	browserPoolsCreateCmd.Flags().StringSlice("private-host", nil, "Destinations browsers in the pool reach directly through their own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel they join (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Replaces the default private ranges (RFC1918, 100.64.0.0/10, fc00::/7); omit to keep them")
 	browserPoolsCreateCmd.Flags().String("start-url", "", "Initial page to open for new browsers")
 	browserPoolsCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsCreateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")

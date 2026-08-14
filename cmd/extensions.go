@@ -596,7 +596,7 @@ func init() {
 
 	addJSONOutputFlag(extensionsListCmd)
 	addJSONOutputFlag(extensionsGetCmd)
-	extensionsListCmd.Flags().String("name", "", "Exact-match filter on extension name")
+	extensionsListCmd.Flags().String("name", "", "Filter by exact extension name")
 	extensionsListCmd.Flags().String("query", "", "Search extensions by name (IDs match by exact value)")
 	extensionsListCmd.Flags().Int("limit", 0, "Maximum number of extensions to return")
 	extensionsListCmd.Flags().Int("offset", 0, "Number of extensions to skip (for pagination)")
