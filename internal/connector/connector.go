@@ -223,10 +223,10 @@ func bundleIdentifier(contents []byte) (string, error) {
 func macOSAppleScript(executable string) string {
 	return `on «event GURLGURL» incomingURL
 set kernelExecutable to "` + appleScriptString(executable) + `"
-set commandText to quoted form of kernelExecutable & " connector open " & quoted form of incomingURL
+set commandText to "for variable in KERNEL_BASE_URL KERNEL_API_KEY KERNEL_AUTH_BASE_URL; do value=$(/bin/launchctl getenv \"$variable\"); if [[ -n \"$value\" ]]; then export \"$variable=$value\"; fi; done; exec " & quoted form of kernelExecutable & " connector open " & quoted form of incomingURL
 set scriptPath to «event sysoexec» "/usr/bin/mktemp /tmp/kernel-connector.XXXXXX"
 set scriptFile to «event rdwropen» POSIX file scriptPath with «class perm»
-«event rdwrwrit» "#!/bin/zsh" & linefeed & "rm -f " & quoted form of scriptPath & linefeed & "if [[ ! -x " & quoted form of kernelExecutable & " ]]; then echo 'Kernel CLI was removed. Reinstall it with: brew install kernel/tap/kernel'; read -k 1 '?Press any key to close'; exit 1; fi" & linefeed & "for variable in KERNEL_BASE_URL KERNEL_API_KEY KERNEL_AUTH_BASE_URL; do value=$(/bin/launchctl getenv \"$variable\"); if [[ -n \"$value\" ]]; then export \"$variable=$value\"; fi; done" & linefeed & "exec /bin/zsh -lic " & quoted form of commandText & linefeed given «class refn»:scriptFile
+«event rdwrwrit» "#!/bin/zsh" & linefeed & "rm -f " & quoted form of scriptPath & linefeed & "if [[ ! -x " & quoted form of kernelExecutable & " ]]; then echo 'Kernel CLI was removed. Reinstall it with: brew install kernel/tap/kernel'; read -k 1 '?Press any key to close'; exit 1; fi" & linefeed & "exec /bin/zsh -lic " & quoted form of commandText & linefeed given «class refn»:scriptFile
 «event rdwrclos» scriptFile
 «event sysoexec» "/bin/chmod 700 " & quoted form of scriptPath
 «event sysoexec» "/usr/bin/open -a Terminal " & quoted form of scriptPath
