@@ -16,14 +16,15 @@ interface TeamSizeOutput {
   teamSize: string;
 }
 
-// LLM API Keys are set in the environment during `kernel deploy <filename> -e MODEL_API_KEY=XXX`
+// Set MODEL (provider-prefixed, e.g. anthropic/claude-sonnet-4-5, openai/gpt-4.1,
+// google/gemini-2.5-flash) and MODEL_API_KEY for that provider in the environment
+// during `kernel deploy <filename> -e MODEL=XXX -e MODEL_API_KEY=YYY`.
 // See https://www.kernel.sh/docs/apps/deploy#environment-variables
-// Defaults to OpenAI. Override MODEL to use another provider (e.g. google/gemini-2.5-flash).
-const MODEL = (process.env.MODEL ?? "openai/gpt-4.1") as ModelName;
+const MODEL = process.env.MODEL as ModelName | undefined;
 const MODEL_API_KEY = process.env.MODEL_API_KEY;
 
-if (!MODEL_API_KEY) {
-  throw new Error("MODEL_API_KEY is not set");
+if (!MODEL || !MODEL_API_KEY) {
+  throw new Error("MODEL and MODEL_API_KEY must be set");
 }
 
 app.action<CompanyInput, TeamSizeOutput>(

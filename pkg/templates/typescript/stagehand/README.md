@@ -32,18 +32,14 @@ Stagehand v4 no longer drives the browser purely over CDP — it runs as a **Chr
 
 ## Setup
 
-Create a `.env` file (defaults to OpenAI):
+Create a `.env` file with a provider-prefixed `MODEL` and its API key:
 
 ```
-MODEL_API_KEY=your-openai-api-key
+MODEL=anthropic/claude-sonnet-4-5
+MODEL_API_KEY=your-api-key
 ```
 
-To use a different provider, also set `MODEL` (with a provider prefix):
-
-```
-MODEL=google/gemini-2.5-flash
-MODEL_API_KEY=your-gemini-api-key
-```
+`MODEL` can be any provider Stagehand supports, e.g. `openai/gpt-4.1` or `google/gemini-2.5-flash`.
 
 ## Deploy
 
