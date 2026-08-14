@@ -59,19 +59,19 @@ app.action<CompanyInput, TeamSizeOutput>(
 
     console.log("Kernel browser live view url: ", kernelBrowser.browser_live_view_url);
 
-    // Mirror the Stagehand extension onto the running browser's filesystem at the
-    // exact path Stagehand loads it from, so the `Extensions.loadUnpacked` call
-    // made by `localBrowser.connect` (below) finds it.
-    await kernel.browsers.fs.uploadZip(kernelBrowser.session_id, {
-      dest_path: STAGEHAND_EXTENSION_DIR,
-      zip_file: createReadStream(STAGEHAND_EXTENSION_ZIP),
-    });
-
     // Stagehand only closes browsers it launched, so we close the connection and
     // delete the Kernel browser ourselves, even if the automation throws.
     let stagehand: Awaited<ReturnType<typeof Stagehand.create>> | undefined;
     let browser: Awaited<ReturnType<typeof localBrowser.connect>> | undefined;
     try {
+      // Mirror the Stagehand extension onto the running browser's filesystem at
+      // the exact path Stagehand loads it from, so the `Extensions.loadUnpacked`
+      // call made by `localBrowser.connect` (below) finds it.
+      await kernel.browsers.fs.uploadZip(kernelBrowser.session_id, {
+        dest_path: STAGEHAND_EXTENSION_DIR,
+        zip_file: createReadStream(STAGEHAND_EXTENSION_ZIP),
+      });
+
       // No `extensionId`: Stagehand loads the mirrored extension over CDP.
       browser = await localBrowser.connect({
         cdpUrl: kernelBrowser.cdp_ws_url,
