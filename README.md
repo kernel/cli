@@ -210,12 +210,14 @@ Commands with JSON output support:
 
 - `kernel browsers list` - List running browsers
   - `--query <q>` - Search by name, session ID, profile ID, proxy ID, or pool name
+  - `--region <region>` - Filter sessions by region (us-east or eu-west); omit to list sessions in all regions
   - `--tag <KEY=VALUE>` - Filter by tag, repeatable; a session must match every pair
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel browsers create` - Create a new browser session
   - `-s, --stealth` - Launch browser in stealth mode to avoid detection
   - `-H, --headless` - Launch browser without GUI access
   - `--kiosk` - Launch browser in kiosk mode
+  - `--region <region>` - Region for the session (us-east or eu-west); fixed once created, defaults to us-east. Requires a Start-Up or Enterprise plan.
   - `--start-url <url>` - Initial page to open on launch
   - `--name <name>` - Optional unique name for the session (used to find it later by name; can be changed with `browsers update --name`)
   - `--tag <KEY=VALUE>` - Set a tag on the session, repeatable; up to 50 pairs
@@ -226,6 +228,7 @@ Commands with JSON output support:
   - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`
   - `--chrome-policy <json>` - Custom Chrome enterprise policy as a JSON object. Kernel-managed policies (extensions, proxy, automation) are rejected server-side.
   - `--chrome-policy-file <path>` - Read the Chrome enterprise policy from a file (use `-` for stdin). Mutually exclusive with `--chrome-policy`.
+  - `--private-host <host>` - Route a private hostname, IP, or CIDR through the session network instead of Kernel-managed egress. Repeatable or comma-separated; replaces the default private IP ranges.
   - `--output json`, `-o json` - Output raw JSON object
   - _Note: When a pool is specified, omit other session configuration flags—pool settings determine profile, proxy, viewport, etc._
 - `kernel browsers delete <id-or-name>` - Delete a browser by ID or name
@@ -261,6 +264,7 @@ Commands with JSON output support:
 ### Browser Pools
 
 - `kernel browser-pools list` - List browser pools
+  - `--region <region>` - Filter pools by region (us-east or eu-west); omit to list pools in all regions
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel browser-pools create` - Create a browser pool
   - `--name <name>` - Optional unique name for the pool
@@ -269,14 +273,14 @@ Commands with JSON output support:
   - `--timeout <seconds>` - Idle timeout for browsers acquired from the pool
   - `--stealth`, `--headless`, `--kiosk` - Default pool configuration
   - `--refresh-on-profile-update` - Flush idle browsers when the pool's profile is updated (requires a profile)
-  - `--profile-id`, `--profile-name`, `--proxy-id`, `--start-url`, `--extension`, `--viewport` - Same semantics as `kernel browsers create`
+  - `--profile-id`, `--profile-name`, `--proxy-id`, `--region`, `--start-url`, `--extension`, `--viewport`, `--private-host` - Same semantics as `kernel browsers create`
   - `--chrome-policy <json>` / `--chrome-policy-file <path>` - Custom Chrome enterprise policy applied to every browser in the pool, as a JSON object or from a file (`-` for stdin). Same semantics as `kernel browsers create`.
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Telemetry applied to browsers warmed into the pool. Same semantics as `kernel browsers create`.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools get <id-or-name>` - Get pool details
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools update <id-or-name>` - Update pool configuration
-  - Same flags as create plus `--clear-profile`, `--clear-proxy`, `--clear-start-url`, `--clear-extensions`, and `--clear-chrome-policy` for removing durable configuration. `--fill-rate 0` pauses automatic filling. `--discard-all-idle` discards all idle browsers and refills the pool. `--telemetry` updates only apply to browsers warmed after the update.
+  - Same flags as create (except `--region`, which is fixed at creation and cannot be updated) plus `--clear-profile`, `--clear-proxy`, `--clear-start-url`, `--clear-extensions`, `--clear-chrome-policy`, and `--clear-private-hosts` for removing durable configuration. `--clear-private-hosts` restores the default private IP ranges. `--fill-rate 0` pauses automatic filling. `--discard-all-idle` discards all idle browsers and refills the pool. `--telemetry` and private-host updates only apply to browsers warmed after the update.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools delete <id-or-name>` - Delete a pool
   - `--force` - Force delete even if browsers are leased

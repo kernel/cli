@@ -33,6 +33,7 @@ type BrowserPoolsCmd struct {
 type BrowserPoolsListInput struct {
 	Limit  int
 	Offset int
+	Region string
 	Output string
 }
 
@@ -47,6 +48,9 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 	}
 	if in.Offset > 0 {
 		params.Offset = kernel.Int(int64(in.Offset))
+	}
+	if in.Region != "" {
+		params.Region = kernel.BrowserPoolListParamsRegion(in.Region)
 	}
 
 	page, err := c.client.List(ctx, params)
@@ -73,7 +77,7 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 	}
 
 	tableData := pterm.TableData{
-		{"ID", "Name", "Available", "Acquired", "Created At", "Size"},
+		{"ID", "Name", "Available", "Acquired", "Created At", "Size", "Region"},
 	}
 
 	for _, p := range pools {
@@ -84,6 +88,7 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 			fmt.Sprintf("%d", p.AcquiredCount),
 			util.FormatLocal(p.CreatedAt),
 			fmt.Sprintf("%d", p.BrowserPoolConfig.Size),
+			string(p.Region),
 		})
 	}
 
@@ -130,11 +135,13 @@ type BrowserPoolsCreateInput struct {
 	ProfileID              string
 	ProfileName            string
 	ProxyID                string
+	Region                 string
 	StartURL               string
 	Extensions             []string
 	Viewport               string
 	ChromePolicy           string
 	ChromePolicyFile       string
+	PrivateHosts           []string
 	Telemetry              string
 	Output                 string
 }
@@ -189,6 +196,9 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 	if in.ProxyID != "" {
 		params.ProxyID = kernel.String(in.ProxyID)
 	}
+	if in.Region != "" {
+		params.Region = kernel.BrowserPoolNewParamsRegion(in.Region)
+	}
 	if in.StartURL != "" {
 		params.StartURL = kernel.String(in.StartURL)
 	}
@@ -210,6 +220,9 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 	}
 	if len(chromePolicy) > 0 {
 		params.ChromePolicy = chromePolicy
+	}
+	if len(in.PrivateHosts) > 0 {
+		params.Network.PrivateHosts = in.PrivateHosts
 	}
 
 	if in.Telemetry != "" {
@@ -266,6 +279,7 @@ func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error
 		{"ID", pool.ID},
 		{"Name", util.OrDash(pool.Name)},
 		{"Created At", util.FormatLocal(pool.CreatedAt)},
+		{"Region", string(pool.Region)},
 		{"Size", fmt.Sprintf("%d", cfg.Size)},
 		{"Available", fmt.Sprintf("%d", pool.AvailableCount)},
 		{"Acquired", fmt.Sprintf("%d", pool.AcquiredCount)},
@@ -310,6 +324,8 @@ type BrowserPoolsUpdateInput struct {
 	ChromePolicy           string
 	ChromePolicyFile       string
 	ClearChromePolicy      bool
+	PrivateHosts           []string
+	ClearPrivateHosts      bool
 	Telemetry              string
 	DiscardAllIdle         BoolFlag
 	Output                 string
@@ -333,6 +349,9 @@ func validateBrowserPoolUpdateInput(in BrowserPoolsUpdateInput) error {
 	}
 	if (in.ChromePolicy != "" || in.ChromePolicyFile != "") && in.ClearChromePolicy {
 		return fmt.Errorf("cannot specify --clear-chrome-policy with --chrome-policy or --chrome-policy-file")
+	}
+	if len(in.PrivateHosts) > 0 && in.ClearPrivateHosts {
+		return fmt.Errorf("cannot specify both --private-host and --clear-private-hosts")
 	}
 	return nil
 }
@@ -422,6 +441,9 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 	if len(chromePolicy) > 0 {
 		params.ChromePolicy = chromePolicy
 	}
+	if len(in.PrivateHosts) > 0 {
+		params.Network.PrivateHosts = in.PrivateHosts
+	}
 
 	extraFields := map[string]any{}
 	// The SDK's omitzero encoder drops empty collections, so explicit clears use
@@ -431,6 +453,9 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 	}
 	if in.ClearChromePolicy || (chromePolicy != nil && len(chromePolicy) == 0) {
 		extraFields["chrome_policy"] = map[string]any{}
+	}
+	if in.ClearPrivateHosts {
+		extraFields["network"] = map[string]any{}
 	}
 	if len(extraFields) > 0 {
 		params.SetExtraFields(extraFields)
@@ -667,6 +692,7 @@ func init() {
 	addJSONOutputFlag(browserPoolsListCmd)
 	browserPoolsListCmd.Flags().Int("limit", 0, "Maximum number of pools to return")
 	browserPoolsListCmd.Flags().Int("offset", 0, "Number of pools to skip (for pagination)")
+	browserPoolsListCmd.Flags().String("region", "", "Filter pools by region (us-east or eu-west); omit to list pools in all regions")
 
 	addJSONOutputFlag(browserPoolsCreateCmd)
 	browserPoolsCreateCmd.Flags().String("name", "", "Optional unique name for the pool")
@@ -681,11 +707,13 @@ func init() {
 	browserPoolsCreateCmd.Flags().String("profile-id", "", "Profile ID")
 	browserPoolsCreateCmd.Flags().String("profile-name", "", "Profile name")
 	browserPoolsCreateCmd.Flags().String("proxy-id", "", "Proxy ID")
+	browserPoolsCreateCmd.Flags().String("region", "", "Region for the browser pool (us-east or eu-west); fixed once created, defaults to us-east. Requires a Start-Up or Enterprise plan")
 	browserPoolsCreateCmd.Flags().String("start-url", "", "Initial page to open for new browsers")
 	browserPoolsCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsCreateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
 	browserPoolsCreateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
 	browserPoolsCreateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
+	browserPoolsCreateCmd.Flags().StringSlice("private-host", nil, "Private hostname, IP, or CIDR to route through the session network (repeatable or comma-separated; replaces defaults)")
 	browserPoolsCreateCmd.Flags().String("telemetry", "", "Configure telemetry for browsers warmed into the pool (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
 	browserPoolsCreateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
 
@@ -712,7 +740,10 @@ func init() {
 	browserPoolsUpdateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
 	browserPoolsUpdateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
 	browserPoolsUpdateCmd.Flags().Bool("clear-chrome-policy", false, "Remove the pool's custom Chrome enterprise policy")
+	browserPoolsUpdateCmd.Flags().StringSlice("private-host", nil, "Replace private hosts routed through the session network (repeatable or comma-separated)")
+	browserPoolsUpdateCmd.Flags().Bool("clear-private-hosts", false, "Remove the private-host override and restore the default private IP ranges")
 	browserPoolsUpdateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
+	browserPoolsUpdateCmd.MarkFlagsMutuallyExclusive("private-host", "clear-private-hosts")
 	browserPoolsUpdateCmd.Flags().String("telemetry", "", "Update pool telemetry: --telemetry=all (reset to default set), --telemetry=off (disable), or --telemetry=console,network (merge those categories into the current selection). Applies only to browsers warmed after the update.")
 	browserPoolsUpdateCmd.Flags().Bool("discard-all-idle", false, "Discard all idle browsers")
 	addJSONOutputFlag(browserPoolsUpdateCmd)
@@ -744,8 +775,9 @@ func runBrowserPoolsList(cmd *cobra.Command, args []string) error {
 	out, _ := cmd.Flags().GetString("output")
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
+	region, _ := cmd.Flags().GetString("region")
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
-	return c.List(cmd.Context(), BrowserPoolsListInput{Limit: limit, Offset: offset, Output: out})
+	return c.List(cmd.Context(), BrowserPoolsListInput{Limit: limit, Offset: offset, Region: region, Output: out})
 }
 
 func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
@@ -768,11 +800,13 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	profileID, _ := cmd.Flags().GetString("profile-id")
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
+	region, _ := cmd.Flags().GetString("region")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
 	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
+	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 	output, _ := cmd.Flags().GetString("output")
 
@@ -788,11 +822,13 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 		ProfileID:              profileID,
 		ProfileName:            profileName,
 		ProxyID:                proxyID,
+		Region:                 region,
 		StartURL:               startURL,
 		Extensions:             extensions,
 		Viewport:               viewport,
 		ChromePolicy:           chromePolicy,
 		ChromePolicyFile:       chromePolicyFile,
+		PrivateHosts:           privateHosts,
 		Telemetry:              telemetry,
 		Output:                 output,
 	}
@@ -832,6 +868,8 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
 	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
 	clearChromePolicy, _ := cmd.Flags().GetBool("clear-chrome-policy")
+	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
+	clearPrivateHosts, _ := cmd.Flags().GetBool("clear-private-hosts")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 	discardIdle, _ := cmd.Flags().GetBool("discard-all-idle")
 	output, _ := cmd.Flags().GetString("output")
@@ -859,6 +897,8 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 		ChromePolicy:           chromePolicy,
 		ChromePolicyFile:       chromePolicyFile,
 		ClearChromePolicy:      clearChromePolicy,
+		PrivateHosts:           privateHosts,
+		ClearPrivateHosts:      clearPrivateHosts,
 		Telemetry:              telemetry,
 		DiscardAllIdle:         BoolFlag{Set: cmd.Flags().Changed("discard-all-idle"), Value: discardIdle},
 		Output:                 output,
