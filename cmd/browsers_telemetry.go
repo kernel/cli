@@ -126,8 +126,9 @@ func resolveTelemetryExportFlag(s string) (enabled param.Opt[bool], id, name str
 	if val == "" {
 		return param.Opt[bool]{}, "", "", fmt.Errorf("empty --telemetry-export-otlp value: pass an OTLP destination ID or name, or %q to disable export", telemetryExportOff)
 	}
-	// Destinations have no list endpoint to disambiguate against, so fall back to
-	// the same CUID shape test the CLI uses for other ID-or-name references.
+	// Destination names cannot be shaped like an ID, so the same CUID shape test
+	// the CLI uses for other ID-or-name references tells the two apart without a
+	// lookup.
 	if cuidRegex.MatchString(val) {
 		return param.Opt[bool]{}, val, "", nil
 	}

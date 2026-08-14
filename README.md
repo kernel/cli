@@ -341,6 +341,27 @@ Captured telemetry can be exported over OTLP to one of the org's configured dest
 
 Export is bound at session creation, so it is available on `browsers create` and on the managed-auth commands that create a browser (`auth connections create`, `update`, and `login`). A browser session keeps the destination it was created with — `browsers update` cannot change it — and browser pools do not support export.
 
+#### Telemetry destinations
+
+Destinations are the OTLP/HTTP endpoints sessions export to, managed per project.
+
+- `kernel telemetry destinations list` - List OTLP destinations
+  - `--page <n>` / `--per-page <n>` - Page number (1-based) and items per page (default 20)
+  - `--name <name>` - Exact-match filter on destination name
+  - `--query <text>` - Substring match against name or endpoint; IDs match by exact value
+- `kernel telemetry destinations get <id-or-name>` - Get an OTLP destination
+- `kernel telemetry destinations create --name <name> --endpoint <url>` - Create an OTLP destination
+  - `--endpoint <url>` - Base OTLP/HTTP endpoint without a signal path: pass `https://api.honeycomb.io`, not `https://api.honeycomb.io/v1/logs` (required)
+  - `--name <name>` - Destination name, unique within the project (required)
+  - `--description <text>` - Optional description
+  - `--header NAME=VALUE` - Header sent with each export request, typically an ingestion key (repeatable). Values are encrypted at rest and always returned redacted, so only header names are shown
+- `kernel telemetry destinations update <id-or-name>` - Update an OTLP destination. Sessions already exporting pick up the new values without restarting, which makes this the way to rotate credentials without interrupting export
+  - `--name <name>` / `--endpoint <url>` / `--description <text>` - Update those fields; pass `--description ""` to clear it
+  - `--header NAME=VALUE` - Add or replace a header (repeatable). Headers you do not name are left as they are
+  - `--remove-header NAME` - Delete a header (repeatable). Removals are applied before `--header` is merged, so a header given to both keeps its new value
+- `kernel telemetry destinations delete <id-or-name>` - Delete an OTLP destination. Refused while sessions are still exporting to it, or while a managed auth connection still selects it
+  - `-y, --yes` - Skip confirmation prompt
+
 - `kernel browsers telemetry stream <id>` - Stream live telemetry events (NDJSON with `-o json`)
   - `--categories <list>` - Filter by event category (`console`, `network`, `page`, `interaction`, `control`, `connection`, `system`, `screenshot`, `captcha`, `monitor`)
   - `--types <list>` - Filter by event type (e.g. `network_response`, `console_error`)
