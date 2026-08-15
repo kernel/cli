@@ -83,9 +83,16 @@ app.action<CompanyInput, TeamSizeOutput>(
 
       return data;
     } finally {
-      await stagehand?.close();
-      await browser?.close();
-      await kernel.browsers.deleteByID(kernelBrowser.session_id);
+      // Nested so a rejected close() never skips deleting the Kernel browser.
+      try {
+        await stagehand?.close();
+      } finally {
+        try {
+          await browser?.close();
+        } finally {
+          await kernel.browsers.deleteByID(kernelBrowser.session_id);
+        }
+      }
     }
   },
 );
