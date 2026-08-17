@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -14,6 +15,86 @@ import (
 type FakeOrgLimitsService struct {
 	GetFunc    func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgLimits, error)
 	UpdateFunc func(ctx context.Context, body kernel.OrganizationLimitUpdateParams, opts ...option.RequestOption) (*kernel.OrgLimits, error)
+}
+
+type FakeOrgEntitlementsService struct {
+	GetFunc func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgEntitlements, error)
+}
+
+func (f *FakeOrgEntitlementsService) Get(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgEntitlements, error) {
+	if f.GetFunc != nil {
+		return f.GetFunc(ctx, opts...)
+	}
+	return nil, nil
+}
+
+func testOrgEntitlements(t *testing.T) *kernel.OrgEntitlements {
+	t.Helper()
+	var entitlements kernel.OrgEntitlements
+	err := json.Unmarshal([]byte(`{
+		"plan":{"id":"FREE","effective_id":"START_UP","status":null,"is_trialing":true,"trial_ends_at":null},
+		"features":{
+			"profiles":{"enabled":true},
+			"file_io":{"enabled":true},
+			"browser_replays":{"enabled":true,"retention_days":30},
+			"browser_extensions":{"enabled":true,"max_stored_per_org":null},
+			"browser_pools":{"enabled":true},
+			"managed_auth":{"enabled":true,"max_connections":null,"health_check_interval_min_seconds":1200,"health_check_interval_default_seconds":3600,"health_check_interval_max_seconds":86400},
+			"credentials":{"enabled":true},
+			"credential_providers":{"enabled":true},
+			"managed_proxies":{"enabled":true},
+			"custom_proxies":{"enabled":true},
+			"proxy_bypass_hosts":{"enabled":true},
+			"gpu":{"enabled":false}
+		},
+		"limits":{"max_concurrent_browsers":150,"max_concurrent_invocations":150,"default_max_concurrent_invocations_per_app":20}
+	}`), &entitlements)
+	assert.NoError(t, err)
+	return &entitlements
+}
+
+func TestOrgEntitlements_RendersEffectiveValues(t *testing.T) {
+	buf := capturePtermOutput(t)
+	c := OrgCmd{entitlements: &FakeOrgEntitlementsService{
+		GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgEntitlements, error) {
+			return testOrgEntitlements(t), nil
+		},
+	}}
+
+	assert.NoError(t, c.Entitlements(context.Background(), OrgEntitlementsInput{}))
+	out := buf.String()
+	assert.Contains(t, out, "Contractual plan")
+	assert.Contains(t, out, "Effective plan")
+	assert.Contains(t, out, "START_UP")
+	assert.Contains(t, out, "Browser replay retention (days)")
+	assert.Contains(t, out, "Max managed auth connections")
+	assert.Contains(t, out, "unlimited")
+	assert.Contains(t, out, "Max concurrent browsers")
+}
+
+func TestOrgEntitlements_JSONPreservesNullUnlimitedValues(t *testing.T) {
+	c := OrgCmd{entitlements: &FakeOrgEntitlementsService{
+		GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgEntitlements, error) {
+			return testOrgEntitlements(t), nil
+		},
+	}}
+
+	out := captureStdout(t, func() {
+		assert.NoError(t, c.Entitlements(context.Background(), OrgEntitlementsInput{Output: "json"}))
+	})
+	assert.Contains(t, out, `"max_stored_per_org": null`)
+	assert.Contains(t, out, `"max_connections": null`)
+}
+
+func TestOrgEntitlements_SurfacesAPIError(t *testing.T) {
+	capturePtermOutput(t)
+	c := OrgCmd{entitlements: &FakeOrgEntitlementsService{
+		GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgEntitlements, error) {
+			return nil, errors.New("boom")
+		},
+	}}
+
+	assert.Error(t, c.Entitlements(context.Background(), OrgEntitlementsInput{}))
 }
 
 func (f *FakeOrgLimitsService) Get(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgLimits, error) {
