@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
@@ -336,6 +337,15 @@ func TestManagedAuthRecommendationOptionsShowRecentUse(t *testing.T) {
 	assert.Contains(t, options[0], "1475 visits")
 	assert.Equal(t, "github.com", domains[options[0]])
 	assert.NotContains(t, options[1], "visits")
+}
+
+func TestManagedAuthRecommendationOptionsAlignColumns(t *testing.T) {
+	first := managedAuthSiteOption(0, "google.com", localbrowser.Site{Visits: 2014})
+	last := managedAuthSiteOption(9, "office.com", localbrowser.Site{Visits: 364})
+
+	assert.Equal(t, 50, ansi.StringWidth(first))
+	assert.Equal(t, ansi.StringWidth(first), ansi.StringWidth(last))
+	assert.Equal(t, strings.Index(first, "2014")+len("2014"), strings.Index(last, "364")+len("364"))
 }
 
 func TestManagedAuthSearchOptionsExcludeSelectedWebsites(t *testing.T) {

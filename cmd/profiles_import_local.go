@@ -1047,11 +1047,11 @@ func managedAuthRecommendationOptions(sites []string, available []localbrowser.S
 }
 
 func managedAuthSiteOption(index int, domain string, site localbrowser.Site) string {
-	label := fmt.Sprintf("%d  %s", index+1, domain)
+	label := fmt.Sprintf("%2d  %s", index+1, paddedCompactField(domain, 28))
 	if site.Visits > 0 {
-		label += fmt.Sprintf("  %s visits", boundedCount(site.Visits))
+		label += fmt.Sprintf("  %9s visits", boundedCount(site.Visits))
 	}
-	return label
+	return strings.TrimRight(label, " ")
 }
 
 func siteMetadata(sites []localbrowser.Site, domain string) localbrowser.Site {
@@ -1439,6 +1439,11 @@ func compactField(value string, limit int) string {
 		return r
 	}, value)
 	return ansi.Truncate(strings.Join(strings.Fields(value), " "), limit, "…")
+}
+
+func paddedCompactField(value string, width int) string {
+	value = compactField(value, width)
+	return value + strings.Repeat(" ", max(0, width-ansi.StringWidth(value)))
 }
 
 func groupedLoginCandidateLabel(provider string, candidate passwordmanager.Candidate) string {
