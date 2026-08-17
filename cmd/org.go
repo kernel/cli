@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
@@ -170,7 +169,7 @@ func renderOrgEntitlements(entitlements *kernel.OrgEntitlements) {
 	}
 	trialEndsAt := "none"
 	if entitlements.Plan.JSON.TrialEndsAt.Valid() {
-		trialEndsAt = entitlements.Plan.TrialEndsAt.Format(time.RFC3339)
+		trialEndsAt = util.FormatLocal(entitlements.Plan.TrialEndsAt)
 	}
 
 	features := entitlements.Features

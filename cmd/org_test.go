@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/respjson"
@@ -70,6 +71,21 @@ func TestOrgEntitlements_RendersEffectiveValues(t *testing.T) {
 	assert.Contains(t, out, "Max managed auth connections")
 	assert.Contains(t, out, "unlimited")
 	assert.Contains(t, out, "Max concurrent browsers")
+}
+
+func TestOrgEntitlements_RendersTrialEndInLocalTime(t *testing.T) {
+	var entitlements kernel.OrgEntitlements
+	err := json.Unmarshal([]byte(`{
+		"plan":{"id":"FREE","effective_id":"START_UP","status":"ACTIVE","is_trialing":true,"trial_ends_at":"2030-01-02T03:04:05Z"},
+		"features":{},
+		"limits":{}
+	}`), &entitlements)
+	assert.NoError(t, err)
+
+	buf := capturePtermOutput(t)
+	renderOrgEntitlements(&entitlements)
+
+	assert.Contains(t, buf.String(), util.FormatLocal(entitlements.Plan.TrialEndsAt))
 }
 
 func TestOrgEntitlements_JSONPreservesNullUnlimitedValues(t *testing.T) {
