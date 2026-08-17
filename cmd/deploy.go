@@ -110,6 +110,21 @@ func init() {
 	deployCmd.AddCommand(deployGithubCmd)
 }
 
+// reservedDeployEnvVars are set by the platform on every deployment; a
+// user-supplied value is overridden and ignored. Mirrors the reserved set in
+// the API's deploy activity.
+var reservedDeployEnvVars = []string{"KERNEL_API_KEY", "ENTRYPOINT_RELPATH"}
+
+// warnReservedEnvVars notifies the user when a supplied env var is reserved and
+// will be ignored, so a silently-dropped value doesn't surprise them later.
+func warnReservedEnvVars(envVars map[string]string) {
+	for _, k := range reservedDeployEnvVars {
+		if _, ok := envVars[k]; ok {
+			pterm.Warning.Printfln("%s is reserved by Kernel and will be ignored (Kernel sets it automatically). Use a different variable name if you need your own value.", k)
+		}
+	}
+}
+
 func runDeployGithub(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 
@@ -150,6 +165,10 @@ func runDeployGithub(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("invalid env variable format: %s (expected KEY=value)", kv)
 		}
 		envVars[parts[0]] = parts[1]
+	}
+
+	if output != "json" {
+		warnReservedEnvVars(envVars)
 	}
 
 	// Build the multipart request body directly for source-based deploy
@@ -310,6 +329,10 @@ func runDeploy(cmd *cobra.Command, args []string) (err error) {
 			return fmt.Errorf("invalid env variable format: %s (expected KEY=value)", kv)
 		}
 		envVars[parts[0]] = parts[1]
+	}
+
+	if output != "json" {
+		warnReservedEnvVars(envVars)
 	}
 
 	logger.Debug("deploying app", logger.Args("version", version, "force", force, "entrypoint", filepath.Base(resolvedEntrypoint)))
