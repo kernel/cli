@@ -300,24 +300,6 @@ func TestLocalStorageSitesAndExportUseLivePortableRecords(t *testing.T) {
 	require.Equal(t, "hello 世界", records[1].Value)
 }
 
-func TestDiscoverExtensionsUsesPortableAllowlist(t *testing.T) {
-	profile := sqliteProfileFixture(t)
-	payload := `{
-  "browser":{"theme":{"color_scheme2":2},"show_home_button":true},
-  "extensions":{"settings":{
-	"abcdefghijklmnopabcdefghijklmnop":{"from_webstore":true,"manifest":{"name":"Eligible"}},
-    "bcdefghijklmnopabcdefghijklmnopa":{"state":0,"from_webstore":true,"manifest":{"name":"Disabled"}},
-    "cdefghijklmnopabcdefghijklmnopab":{"state":1,"from_webstore":false,"manifest":{"name":"Local"}}
-  }}
-}`
-	require.NoError(t, os.WriteFile(filepath.Join(profile.Path, "Preferences"), []byte(payload), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(profile.Path, "Secure Preferences"), []byte(payload), 0o600))
-
-	extensions, err := DiscoverExtensions(profile)
-	require.NoError(t, err)
-	require.Equal(t, []Extension{{ID: "abcdefghijklmnopabcdefghijklmnop", Name: "Eligible", Source: "chrome_web_store"}}, extensions)
-}
-
 func TestSelectedCookieFilterEscapesInput(t *testing.T) {
 	cte, clause := selectedCookieFilter([]string{"example.com' OR 1=1 --"}, false)
 	assert.Contains(t, cte, "example.com'' or 1=1 --")

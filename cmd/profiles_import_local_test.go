@@ -384,19 +384,6 @@ func TestDecodeManagedAuthCapacity(t *testing.T) {
 	})
 }
 
-func TestDecodeStoredExtensionCapacity(t *testing.T) {
-	capacity, err := decodeStoredExtensionCapacity(`{"max_stored_extensions":5,"stored_extensions_used":3}`)
-	require.NoError(t, err)
-	assert.Equal(t, storedExtensionCapacity{remaining: 2}, capacity)
-
-	capacity, err = decodeStoredExtensionCapacity(`{"max_stored_extensions":null,"stored_extensions_used":12}`)
-	require.NoError(t, err)
-	assert.Equal(t, storedExtensionCapacity{unlimited: true}, capacity)
-
-	_, err = decodeStoredExtensionCapacity(`{"max_auth_connections":10}`)
-	require.ErrorContains(t, err, "does not expose stored extension capacity")
-}
-
 func TestChooseManagedAuthLoginsRejectsExplicitBatchAboveRemainingConnections(t *testing.T) {
 	command := managedAuthTestCommand(func() []passwordmanager.Provider {
 		return []passwordmanager.Provider{fakePasswordManager{candidates: []passwordmanager.Candidate{

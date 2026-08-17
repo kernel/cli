@@ -19,11 +19,6 @@ type managedAuthCapacity struct {
 	unlimited bool
 }
 
-type storedExtensionCapacity struct {
-	remaining int
-	unlimited bool
-}
-
 type orgLimitsGetter interface {
 	Get(context.Context, ...option.RequestOption) (*kernel.OrgLimits, error)
 }
@@ -60,40 +55,6 @@ func decodeManagedAuthCapacity(raw string) (managedAuthCapacity, error) {
 		return managedAuthCapacity{}, fmt.Errorf("Kernel API returned invalid Managed Auth capacity")
 	}
 	return managedAuthCapacity{remaining: max(0, maxConnections-usedConnections)}, nil
-}
-
-func loadStoredExtensionCapacity(ctx context.Context, limits orgLimitsGetter) (storedExtensionCapacity, error) {
-	orgLimits, err := limits.Get(ctx)
-	if err != nil {
-		return storedExtensionCapacity{}, err
-	}
-	return decodeStoredExtensionCapacity(orgLimits.RawJSON())
-}
-
-func decodeStoredExtensionCapacity(raw string) (storedExtensionCapacity, error) {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
-		return storedExtensionCapacity{}, fmt.Errorf("decode organization limits: %w", err)
-	}
-	maxRaw, hasMax := fields["max_stored_extensions"]
-	usedRaw, hasUsed := fields["stored_extensions_used"]
-	if !hasMax || !hasUsed {
-		return storedExtensionCapacity{}, fmt.Errorf("Kernel API does not expose stored extension capacity")
-	}
-	if string(maxRaw) == "null" {
-		return storedExtensionCapacity{unlimited: true}, nil
-	}
-	var maximum, used int
-	if err := json.Unmarshal(maxRaw, &maximum); err != nil {
-		return storedExtensionCapacity{}, fmt.Errorf("decode max stored extensions: %w", err)
-	}
-	if err := json.Unmarshal(usedRaw, &used); err != nil {
-		return storedExtensionCapacity{}, fmt.Errorf("decode used stored extensions: %w", err)
-	}
-	if maximum < 0 || used < 0 {
-		return storedExtensionCapacity{}, fmt.Errorf("Kernel API returned invalid stored extension capacity")
-	}
-	return storedExtensionCapacity{remaining: max(0, maximum-used)}, nil
 }
 
 type managedAuthProvisioner interface {

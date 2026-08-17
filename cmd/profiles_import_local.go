@@ -52,7 +52,6 @@ type ProfilesImportLocalCmd struct {
 	providers           func() []passwordmanager.Provider
 	provisioner         managedAuthProvisioner
 	managedAuthCapacity func(context.Context) (managedAuthCapacity, error)
-	extensionCapacity   func(context.Context) (storedExtensionCapacity, error)
 }
 
 type pendingManagedAuth struct {
@@ -305,9 +304,6 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		}
 		if count := itemCounts["storage"]; count > 0 {
 			pterm.Success.Printf("Imported %d local storage keys from %d origins\n", count, importedStorageOriginCount(profileData.Storage))
-		}
-		if count := itemCounts["extensions"]; count > 0 {
-			pterm.Success.Printf("Installed %d browser extensions\n", count)
 		}
 	}
 	connectionIDs := make([]string, 0)
@@ -1520,9 +1516,6 @@ func runProfilesImportLocalWithInput(cmd *cobra.Command, input ProfilesImportLoc
 		providers:           passwordmanager.Detect,
 		provisioner:         kernelManagedAuthProvisioner{credentials: &credentials, connections: &connections},
 		managedAuthCapacity: func(ctx context.Context) (managedAuthCapacity, error) { return loadManagedAuthCapacity(ctx, &limits) },
-		extensionCapacity: func(ctx context.Context) (storedExtensionCapacity, error) {
-			return loadStoredExtensionCapacity(ctx, &limits)
-		},
 	}
 	input.ProjectID = project.ID
 	if input.Version == "" {

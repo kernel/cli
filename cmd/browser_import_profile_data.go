@@ -11,10 +11,9 @@ import (
 )
 
 const (
-	bookmarksChoice  = "Bookmarks"
-	historyChoice    = "History"
-	storageChoice    = "Local storage"
-	extensionsChoice = "Browser extensions"
+	bookmarksChoice = "Bookmarks"
+	historyChoice   = "History"
+	storageChoice   = "Local storage"
 )
 
 type localProfileDataSelection struct {
@@ -31,29 +30,17 @@ func (c ProfilesImportLocalCmd) chooseLocalProfileData(ctx context.Context, prof
 	bookmarks, bookmarkCount, bookmarkErr := localbrowser.ExportBookmarks(profile)
 	historyCount, historyErr := localbrowser.HistoryCount(ctx, profile, since)
 	storageSites, storageErr := localbrowser.LocalStorageSites(ctx, profile)
-	extensions, extensionErr := localbrowser.DiscoverExtensions(profile)
-	extensionCapacity := storedExtensionCapacity{unlimited: true}
-	extensionCapacityKnown := c.extensionCapacity == nil
-	if extensionErr == nil && len(extensions) > 0 && c.extensionCapacity != nil {
-		var capacityErr error
-		extensionCapacity, capacityErr = c.extensionCapacity(ctx)
-		extensionCapacityKnown = capacityErr == nil
-		if capacityErr != nil && humanOutput {
-			pterm.Warning.Printf("extension capacity could not be checked; Kernel will enforce it during import: %v\n", capacityErr)
-		}
-	}
 
 	if humanOutput {
 		warnUnavailableBrowserData("bookmarks", bookmarkErr)
 		warnUnavailableBrowserData("history", historyErr)
 		warnUnavailableBrowserData("local storage", storageErr)
-		warnUnavailableBrowserData("extensions", extensionErr)
 	}
 
 	selection := localProfileDataSelection{history: includeHistory}
-	options := make([]string, 0, 4)
-	defaults := make([]string, 0, 4)
-	labels := make(map[string]string, 4)
+	options := make([]string, 0, 3)
+	defaults := make([]string, 0, 3)
+	labels := make(map[string]string, 3)
 	if bookmarkErr == nil && bookmarkCount > 0 {
 		labels[bookmarksChoice] = fmt.Sprintf("%s — %d", bookmarksChoice, bookmarkCount)
 		options = append(options, labels[bookmarksChoice])
@@ -72,12 +59,6 @@ func (c ProfilesImportLocalCmd) chooseLocalProfileData(ctx context.Context, prof
 		options = append(options, labels[storageChoice])
 		defaults = append(defaults, labels[storageChoice])
 	}
-	if extensionErr == nil && len(extensions) > 0 {
-		labels[extensionsChoice] = fmt.Sprintf("%s — %d detected (plan limit applies)", extensionsChoice, len(extensions))
-		options = append(options, labels[extensionsChoice])
-		defaults = append(defaults, labels[extensionsChoice])
-	}
-
 	chosen := defaults
 	var err error
 	if !nonInteractive && len(options) > 0 {
@@ -97,8 +78,6 @@ func (c ProfilesImportLocalCmd) chooseLocalProfileData(ctx context.Context, prof
 		case labels[storageChoice]:
 			selection.storage = true
 			selection.storageBytes = storageSiteBytes(storageSites)
-		case labels[extensionsChoice]:
-			selection.data.Extensions = append(selection.data.Extensions, extensions...)
 		}
 	}
 
@@ -108,12 +87,6 @@ func (c ProfilesImportLocalCmd) chooseLocalProfileData(ctx context.Context, prof
 			return localProfileDataSelection{}, err
 		}
 		selection.storageBytes = selectedStorageSiteBytes(storageSites, selection.storageSites)
-	}
-	if len(selection.data.Extensions) > 0 {
-		selection.data.Extensions, err = c.chooseProfileExtensions(selection.data.Extensions, extensionCapacity, extensionCapacityKnown, nonInteractive)
-		if err != nil {
-			return localProfileDataSelection{}, err
-		}
 	}
 	return selection, nil
 }
@@ -140,9 +113,6 @@ func (c ProfilesImportLocalCmd) confirmBrowserImport(targetName string, cookies 
 	}
 	if profileData.storage {
 		pterm.Printf("  Local storage — %s across %d origins\n", formatBinaryBytes(profileData.storageBytes), len(profileData.storageSites))
-	}
-	if count := len(profileData.data.Extensions); count > 0 {
-		pterm.Printf("  Browser extensions — %d\n", count)
 	}
 	loginCount := 0
 	for _, provider := range logins.providers {
@@ -212,48 +182,6 @@ func (c ProfilesImportLocalCmd) chooseLocalStorageSites(sites []localbrowser.Sto
 	return result, nil
 }
 
-func (c ProfilesImportLocalCmd) chooseProfileExtensions(extensions []localbrowser.Extension, capacity storedExtensionCapacity, capacityKnown, nonInteractive bool) ([]localbrowser.Extension, error) {
-	maximum := min(20, len(extensions))
-	if capacityKnown && !capacity.unlimited {
-		maximum = min(maximum, capacity.remaining)
-	}
-	if nonInteractive {
-		if len(extensions) > maximum {
-			return nil, fmt.Errorf("%d extensions were selected, but only %d can be added under the profile and plan limits; run interactively to choose extensions", len(extensions), maximum)
-		}
-		return extensions, nil
-	}
-	labels := make([]string, 0, len(extensions))
-	byLabel := make(map[string]localbrowser.Extension, len(extensions))
-	for index, extension := range extensions {
-		name := extension.Name
-		if name == "" {
-			name = "Unnamed extension"
-		}
-		label := fmt.Sprintf("%d  %s · %s", index+1, compactField(name, 42), extension.ID[len(extension.ID)-6:])
-		labels = append(labels, label)
-		byLabel[label] = extension
-	}
-	defaults := labels[:maximum]
-	for {
-		prompt := fmt.Sprintf("Choose extensions to reinstall (select up to %d)", maximum)
-		chosen, err := c.prompter.MultiSelect("browser extensions", "your Kernel plan controls stored extension capacity", prompt, labels, defaults)
-		if err != nil {
-			return nil, err
-		}
-		if len(chosen) > maximum {
-			pterm.Warning.Printf("Select at most %d extension%s\n", maximum, pluralSuffix(maximum))
-			defaults = chosen
-			continue
-		}
-		result := make([]localbrowser.Extension, 0, len(chosen))
-		for _, label := range chosen {
-			result = append(result, byLabel[label])
-		}
-		return result, nil
-	}
-}
-
 func buildSelectedProfileData(ctx context.Context, profile localbrowser.Profile, selection localProfileDataSelection, cookies []localbrowser.Cookie, since time.Time) (localbrowser.ProfileData, map[string]int, error) {
 	data := selection.data
 	data.Cookies = cookies
@@ -280,14 +208,11 @@ func buildSelectedProfileData(ctx context.Context, profile localbrowser.Profile,
 		data.Storage = storage
 		counts["storage"] = len(storage)
 	}
-	if len(data.Extensions) > 0 {
-		counts["extensions"] = len(data.Extensions)
-	}
 	return data, counts, nil
 }
 
 func selectedProfileCategories(counts map[string]int) []string {
-	order := []string{"cookies", "storage", "bookmarks", "history", "extensions"}
+	order := []string{"cookies", "storage", "bookmarks", "history"}
 	result := make([]string, 0, len(counts))
 	for _, category := range order {
 		if count, selected := counts[category]; selected && count > 0 {

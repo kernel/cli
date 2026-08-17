@@ -15,10 +15,9 @@ import (
 func TestBuildProfileBundleIncludesOnlySelectedCategories(t *testing.T) {
 	profile := Profile{ID: "helium-default-1234", Name: "Personal", Browser: Browser{ID: "helium", Name: "Helium"}}
 	bundle, err := BuildProfileBundle(t.Context(), profile, "my-browser", "test", ProfileData{
-		Cookies:    []Cookie{{Domain: ".example.com", Path: "/", Name: "session", Value: "secret"}},
-		Storage:    []StorageRecord{{Origin: "https://example.com", Kind: StorageKindLocal, Key: "theme", Value: "dark"}},
-		Bookmarks:  &BookmarkDocument{Roots: []BookmarkRoot{{Name: "bookmark_bar", Children: []BookmarkNode{{Title: "Kernel", URL: "https://onkernel.com"}}}}},
-		Extensions: []Extension{{ID: "abcdefghijklmnopabcdefghijklmnop", Source: "chrome_web_store"}},
+		Cookies:   []Cookie{{Domain: ".example.com", Path: "/", Name: "session", Value: "secret"}},
+		Storage:   []StorageRecord{{Origin: "https://example.com", Kind: StorageKindLocal, Key: "theme", Value: "dark"}},
+		Bookmarks: &BookmarkDocument{Roots: []BookmarkRoot{{Name: "bookmark_bar", Children: []BookmarkNode{{Title: "Kernel", URL: "https://onkernel.com"}}}}},
 	})
 	require.NoError(t, err)
 
@@ -42,7 +41,6 @@ func TestBuildProfileBundleIncludesOnlySelectedCategories(t *testing.T) {
 	require.NotEmpty(t, manifest.Profiles[0].Files.Storage)
 	require.NotEmpty(t, manifest.Profiles[0].Files.Bookmarks)
 	require.Empty(t, manifest.Profiles[0].Files.History)
-	require.NotEmpty(t, manifest.Profiles[0].Files.Extensions)
 }
 
 func TestEncodeJSONLEnforcesPortableRecordLimits(t *testing.T) {

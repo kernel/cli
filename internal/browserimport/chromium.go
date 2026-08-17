@@ -41,7 +41,6 @@ const (
 )
 
 var profileIDCharacters = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
-var chromeWebStoreExtensionID = regexp.MustCompile(`^[a-p]{32}$`)
 
 func DiscoverMacOSProfiles(home string) ([]Profile, error) {
 	browsers := []Browser{
@@ -578,47 +577,6 @@ func localStorageMetadataSize(raw []byte) (int64, error) {
 		}
 	}
 	return 0, fmt.Errorf("size field is missing")
-}
-
-func DiscoverExtensions(profile Profile) ([]Extension, error) {
-	payload, err := readFileBounded(filepath.Join(profile.Path, "Secure Preferences"), maxDocumentBytes)
-	if errors.Is(err, os.ErrNotExist) {
-		payload, err = readFileBounded(filepath.Join(profile.Path, "Preferences"), maxDocumentBytes)
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read browser extensions: %w", err)
-	}
-	var source struct {
-		Extensions struct {
-			Settings map[string]struct {
-				State        *int `json:"state"`
-				FromWebStore bool `json:"from_webstore"`
-				Manifest     struct {
-					Name string `json:"name"`
-				} `json:"manifest"`
-			} `json:"settings"`
-		} `json:"extensions"`
-	}
-	if err := json.Unmarshal(payload, &source); err != nil {
-		return nil, fmt.Errorf("decode browser extensions: %w", err)
-	}
-	result := make([]Extension, 0)
-	for id, setting := range source.Extensions.Settings {
-		if (setting.State != nil && *setting.State != 1) || !setting.FromWebStore || !chromeWebStoreExtensionID.MatchString(id) {
-			continue
-		}
-		result = append(result, Extension{ID: id, Name: setting.Manifest.Name, Source: "chrome_web_store"})
-	}
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].Name == result[j].Name {
-			return result[i].ID < result[j].ID
-		}
-		return result[i].Name < result[j].Name
-	})
-	return result, nil
 }
 
 // CookieSites returns every website with importable cookies, ranked by recent

@@ -87,18 +87,11 @@ type StorageSite struct {
 	Bytes  int64
 }
 
-type Extension struct {
-	ID     string `json:"id"`
-	Name   string `json:"name,omitempty"`
-	Source string `json:"source"`
-}
-
 type ProfileData struct {
-	Cookies    []Cookie
-	Storage    []StorageRecord
-	Bookmarks  *BookmarkDocument
-	History    []HistoryRecord
-	Extensions []Extension
+	Cookies   []Cookie
+	Storage   []StorageRecord
+	Bookmarks *BookmarkDocument
+	History   []HistoryRecord
 }
 
 type Source struct {
@@ -139,7 +132,6 @@ type ApplyFailure struct {
 type Applied struct {
 	Profiles            []AppliedProfile `json:"profiles"`
 	CredentialsImported int              `json:"credentials_imported"`
-	ExtensionsDetected  int              `json:"extensions_detected"`
 	Failure             *ApplyFailure    `json:"failure,omitempty"`
 }
 

@@ -38,11 +38,10 @@ type BundleProfile struct {
 }
 
 type ProfileFiles struct {
-	Cookies    string `json:"cookies,omitempty"`
-	Storage    string `json:"storage,omitempty"`
-	Bookmarks  string `json:"bookmarks,omitempty"`
-	History    string `json:"history,omitempty"`
-	Extensions string `json:"extensions,omitempty"`
+	Cookies   string `json:"cookies,omitempty"`
+	Storage   string `json:"storage,omitempty"`
+	Bookmarks string `json:"bookmarks,omitempty"`
+	History   string `json:"history,omitempty"`
 }
 
 type bundleFile struct {
@@ -51,7 +50,7 @@ type bundleFile struct {
 }
 
 func BuildProfileBundle(ctx context.Context, profile Profile, targetName, version string, data ProfileData) ([]byte, error) {
-	if len(data.Cookies) == 0 && len(data.Storage) == 0 && data.Bookmarks == nil && len(data.History) == 0 && len(data.Extensions) == 0 {
+	if len(data.Cookies) == 0 && len(data.Storage) == 0 && data.Bookmarks == nil && len(data.History) == 0 {
 		return nil, fmt.Errorf("no browser data was selected")
 	}
 	files := ProfileFiles{}
@@ -96,12 +95,6 @@ func BuildProfileBundle(ctx context.Context, profile Profile, targetName, versio
 			return nil, fmt.Errorf("encode browser history: %w", err)
 		}
 		payloads = append(payloads, bundleFile{path: files.History, data: encoded})
-	}
-	if len(data.Extensions) > 0 {
-		files.Extensions = "profiles/" + profile.ID + "/extensions.json"
-		if err := addJSON(files.Extensions, "extensions", data.Extensions); err != nil {
-			return nil, err
-		}
 	}
 	manifest := Manifest{
 		Version: BundleVersion,

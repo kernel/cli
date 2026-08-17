@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"strings"
 	"testing"
 
 	localbrowser "github.com/kernel/cli/internal/browserimport"
@@ -26,26 +25,15 @@ func TestLocalStorageSelectionRequiresReviewWhenOverLimit(t *testing.T) {
 	require.ErrorContains(t, err, "run interactively to choose websites")
 }
 
-func TestNonInteractiveExtensionSelectionHonorsCapacity(t *testing.T) {
-	extensions := []localbrowser.Extension{
-		{ID: strings.Repeat("a", 32), Source: "chrome_web_store"},
-		{ID: strings.Repeat("b", 32), Source: "chrome_web_store"},
-	}
-
-	_, err := (ProfilesImportLocalCmd{}).chooseProfileExtensions(extensions, storedExtensionCapacity{remaining: 1}, true, true)
-	require.ErrorContains(t, err, "only 1 can be added")
-}
-
 func TestSelectedProfileCategoriesUsePortableApplyOrder(t *testing.T) {
 	categories := selectedProfileCategories(map[string]int{
-		"extensions": 1,
-		"bookmarks":  2,
-		"cookies":    3,
-		"history":    4,
-		"storage":    5,
+		"bookmarks": 2,
+		"cookies":   3,
+		"history":   4,
+		"storage":   5,
 	})
 
-	require.Equal(t, []string{"cookies", "storage", "bookmarks", "history", "extensions"}, categories)
+	require.Equal(t, []string{"cookies", "storage", "bookmarks", "history"}, categories)
 }
 
 func TestProfilesImportLocalDefaultsHistoryOn(t *testing.T) {
