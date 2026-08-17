@@ -238,30 +238,39 @@ func macOSAppleScript(executable string) string {
 	return `on «event GURLGURL» incomingURL
 set kernelExecutable to "` + appleScriptString(executable) + `"
 set commandText to "for variable in KERNEL_BASE_URL KERNEL_API_KEY KERNEL_AUTH_BASE_URL; do value=$(/bin/launchctl getenv \"$variable\"); if [[ -n \"$value\" ]]; then export \"$variable=$value\"; fi; done; exec " & quoted form of kernelExecutable & " connector open " & quoted form of incomingURL
-set scriptPath to «event sysoexec» "/usr/bin/mktemp /tmp/kernel-connector.XXXXXX"
-set successPath to scriptPath & ".success"
-set scriptFile to «event rdwropen» POSIX file scriptPath with «class perm»
-«event rdwrwrit» "#!/bin/zsh" & linefeed & "rm -f " & quoted form of scriptPath & " " & quoted form of successPath & linefeed & "if [[ ! -x " & quoted form of kernelExecutable & " ]]; then echo 'Kernel CLI was removed. Reinstall it with: brew install kernel/tap/kernel'; read -k 1 '?Press any key to close'; exit 1; fi" & linefeed & "/bin/zsh -lic " & quoted form of commandText & linefeed & "commandStatus=$?" & linefeed & "if [[ $commandStatus -eq 0 ]]; then /usr/bin/touch " & quoted form of successPath & "; fi" & linefeed & "exit $commandStatus" & linefeed given «class refn»:scriptFile
+set launcherPath to «event sysoexec» "/usr/bin/mktemp /tmp/kernel-connector.XXXXXX"
+set startedPath to launcherPath & ".started"
+set successPath to launcherPath & ".success"
+set donePath to launcherPath & ".done"
+set scriptFile to «event rdwropen» POSIX file launcherPath with «class perm»
+«event rdwrwrit» "#!/bin/zsh" & linefeed & "rm -f " & quoted form of launcherPath & " " & quoted form of startedPath & " " & quoted form of successPath & " " & quoted form of donePath & linefeed & "commandStatus=1" & linefeed & "finishConnector() { commandStatus=$?; if [[ $commandStatus -eq 0 ]]; then /usr/bin/touch " & quoted form of successPath & "; fi; /usr/bin/touch " & quoted form of donePath & "; }" & linefeed & "trap finishConnector EXIT" & linefeed & "/usr/bin/touch " & quoted form of startedPath & linefeed & "if [[ ! -x " & quoted form of kernelExecutable & " ]]; then echo 'Kernel CLI was removed. Reinstall it with: brew install kernel/tap/kernel'; read -k 1 '?Press any key to close'; exit 1; fi" & linefeed & "/bin/zsh -lic " & quoted form of commandText & linefeed & "commandStatus=$?" & linefeed & "exit $commandStatus" & linefeed given «class refn»:scriptFile
 «event rdwrclos» scriptFile
-«event sysoexec» "/bin/chmod 700 " & quoted form of scriptPath
+«event sysoexec» "/bin/chmod 700 " & quoted form of launcherPath
 tell application "Terminal"
 activate
-set connectorTab to do script (quoted form of scriptPath)
+set connectorTab to do script (quoted form of launcherPath)
 end tell
 repeat
 try
-tell application "Terminal" to set connectorBusy to busy of connectorTab
+«event sysoexec» "/usr/bin/test -f " & quoted form of startedPath
+exit repeat
 on error
-return
-end try
-if not connectorBusy then exit repeat
 delay 0.2
+end try
+end repeat
+repeat
+try
+«event sysoexec» "/usr/bin/test -f " & quoted form of donePath
+exit repeat
+on error
+delay 0.2
+end try
 end repeat
 try
 «event sysoexec» "/usr/bin/test -f " & quoted form of successPath
 tell application "Terminal" to close connectorTab
-«event sysoexec» "/bin/rm -f " & quoted form of successPath
 end try
+«event sysoexec» "/bin/rm -f " & quoted form of startedPath & " " & quoted form of successPath & " " & quoted form of donePath
 end «event GURLGURL»`
 }
 
