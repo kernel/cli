@@ -348,6 +348,26 @@ func TestManagedAuthRecommendationOptionsAlignColumns(t *testing.T) {
 	assert.Equal(t, strings.Index(first, "2014")+len("2014"), strings.Index(last, "364")+len("364"))
 }
 
+func TestEffectiveStorageImportSummaryUsesAppliedCounts(t *testing.T) {
+	importedOrigins, importedEntries := 4, 8
+	skippedOrigins, skippedEntries := 2, 3
+
+	summary := effectiveStorageImportSummary(localbrowser.AppliedProfile{
+		StorageOriginsImported: &importedOrigins,
+		StorageEntriesImported: &importedEntries,
+		StorageOriginsSkipped:  &skippedOrigins,
+		StorageEntriesSkipped:  &skippedEntries,
+	}, 11, 6)
+
+	require.Equal(t, storageImportSummary{importedOrigins: 4, importedEntries: 8, skippedOrigins: 2, skippedEntries: 3}, summary)
+}
+
+func TestEffectiveStorageImportSummaryFallsBackForOlderAPI(t *testing.T) {
+	summary := effectiveStorageImportSummary(localbrowser.AppliedProfile{}, 11, 6)
+
+	require.Equal(t, storageImportSummary{importedOrigins: 6, importedEntries: 11}, summary)
+}
+
 func TestManagedAuthSearchOptionsExcludeSelectedWebsites(t *testing.T) {
 	options, domains := managedAuthSearchOptions([]localbrowser.Site{
 		{Domain: "google.com", Visits: 20},

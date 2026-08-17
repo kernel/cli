@@ -410,6 +410,30 @@ func importedStorageOriginCount(records []localbrowser.StorageRecord) int {
 	return len(origins)
 }
 
+type storageImportSummary struct {
+	importedOrigins int
+	importedEntries int
+	skippedOrigins  int
+	skippedEntries  int
+}
+
+func effectiveStorageImportSummary(applied localbrowser.AppliedProfile, requestedEntries, requestedOrigins int) storageImportSummary {
+	if applied.StorageEntriesImported == nil || applied.StorageOriginsImported == nil {
+		return storageImportSummary{importedOrigins: requestedOrigins, importedEntries: requestedEntries}
+	}
+	summary := storageImportSummary{
+		importedOrigins: *applied.StorageOriginsImported,
+		importedEntries: *applied.StorageEntriesImported,
+	}
+	if applied.StorageOriginsSkipped != nil {
+		summary.skippedOrigins = *applied.StorageOriginsSkipped
+	}
+	if applied.StorageEntriesSkipped != nil {
+		summary.skippedEntries = *applied.StorageEntriesSkipped
+	}
+	return summary
+}
+
 func formatBinaryBytes(bytes int64) string {
 	if bytes < 1<<20 {
 		return fmt.Sprintf("%.1f KiB", float64(bytes)/(1<<10))

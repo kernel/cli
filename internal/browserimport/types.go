@@ -118,9 +118,13 @@ type Selection struct {
 }
 
 type AppliedProfile struct {
-	SourceID   string `json:"source_id"`
-	ProfileID  string `json:"profile_id"`
-	TargetName string `json:"target_name"`
+	SourceID               string `json:"source_id"`
+	ProfileID              string `json:"profile_id"`
+	TargetName             string `json:"target_name"`
+	StorageOriginsImported *int   `json:"storage_origins_imported,omitempty"`
+	StorageEntriesImported *int   `json:"storage_entries_imported,omitempty"`
+	StorageOriginsSkipped  *int   `json:"storage_origins_skipped,omitempty"`
+	StorageEntriesSkipped  *int   `json:"storage_entries_skipped,omitempty"`
 }
 
 type ApplyFailure struct {

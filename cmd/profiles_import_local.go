@@ -384,7 +384,10 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	if status.Applied == nil || len(status.Applied.Profiles) == 0 {
 		return fmt.Errorf("browser import completed without a profile")
 	}
-	profileID := status.Applied.Profiles[0].ProfileID
+	appliedProfile := status.Applied.Profiles[0]
+	profileID := appliedProfile.ProfileID
+	storageSummary := effectiveStorageImportSummary(appliedProfile, itemCounts["storage"], importedStorageOriginCount(profileData.Storage))
+	clientCompletion.Counts.StorageOrigins = storageSummary.importedOrigins
 	clientFailureStage = "managed_auth"
 	if humanOutput {
 		pterm.Success.Printf("Imported %d cookies from %d websites\n", len(cookies), importedCookieSites)
@@ -394,8 +397,11 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		if count := itemCounts["history"]; count > 0 {
 			pterm.Success.Printf("Imported %d history entries\n", count)
 		}
-		if count := itemCounts["storage"]; count > 0 {
-			pterm.Success.Printf("Imported %d local storage keys from %d origins\n", count, importedStorageOriginCount(profileData.Storage))
+		if storageSummary.importedEntries > 0 {
+			pterm.Success.Printf("Imported %d local storage keys from %d origins\n", storageSummary.importedEntries, storageSummary.importedOrigins)
+		}
+		if storageSummary.skippedEntries > 0 {
+			pterm.Warning.Printf("Skipped %d local storage keys from %d origins that could not be restored\n", storageSummary.skippedEntries, storageSummary.skippedOrigins)
 		}
 	}
 	connectionIDs := make([]string, 0)
