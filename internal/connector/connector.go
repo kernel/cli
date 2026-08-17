@@ -248,7 +248,7 @@ set scriptFile to «event rdwropen» POSIX file launcherPath with «class perm»
 «event sysoexec» "/bin/chmod 700 " & quoted form of launcherPath
 tell application "Terminal"
 activate
-set connectorTab to do script (quoted form of launcherPath)
+set connectorTab to do script (quoted form of launcherPath & "; exit")
 end tell
 repeat
 try
@@ -266,9 +266,24 @@ on error
 delay 0.2
 end try
 end repeat
+set connectorIdle to false
+repeat 50 times
+try
+tell application "Terminal" to set connectorBusy to busy of connectorTab
+if not connectorBusy then
+set connectorIdle to true
+exit repeat
+end if
+on error
+exit repeat
+end try
+delay 0.2
+end repeat
 try
 «event sysoexec» "/usr/bin/test -f " & quoted form of successPath
+if connectorIdle then
 tell application "Terminal" to close connectorTab
+end if
 end try
 «event sysoexec» "/bin/rm -f " & quoted form of startedPath & " " & quoted form of successPath & " " & quoted form of donePath
 end «event GURLGURL»`
