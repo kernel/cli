@@ -332,8 +332,14 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 			return err
 		}
 	}
+	var profileSpinner *pterm.SpinnerPrinter
 	if humanOutput {
-		pterm.Info.Printf("Creating Kernel profile %q...\n", targetName)
+		profileSpinner, _ = pterm.DefaultSpinner.Start(fmt.Sprintf("Creating Kernel profile %q...", targetName))
+		defer func() {
+			if profileSpinner != nil {
+				_ = profileSpinner.Stop()
+			}
+		}()
 	}
 	phaseStarted = time.Now()
 	importID := in.ImportID
@@ -361,14 +367,23 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	if err != nil {
 		return browserImportProgressError(importID, status.Phase, time.Since(phaseStarted), err)
 	}
+	if profileSpinner != nil {
+		profileSpinner.UpdateText("Preparing browser profile import...")
+	}
 	selection := localbrowser.Selection{Profiles: []localbrowser.ProfileSelection{{SourceID: profile.ID, TargetName: targetName, Categories: categories}}}
 	status, err = client.SubmitSelection(ctx, importID, selection)
 	if err != nil {
 		return browserImportProgressError(importID, status.Phase, time.Since(phaseStarted), err)
 	}
+	if profileSpinner != nil {
+		profileSpinner.UpdateText("Uploading encrypted browser data...")
+	}
 	status, err = client.Upload(ctx, importID, helperToken, bundle)
 	if err != nil {
 		return browserImportProgressError(importID, status.Phase, time.Since(phaseStarted), err)
+	}
+	if profileSpinner != nil {
+		profileSpinner.UpdateText("Applying cookies, bookmarks, history, and website storage (this can take a few minutes)...")
 	}
 	waitCtx, cancelWait := context.WithTimeout(ctx, in.WaitTimeout)
 	defer cancelWait()
@@ -390,6 +405,10 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	clientCompletion.Counts.StorageOrigins = storageSummary.importedOrigins
 	clientFailureStage = "managed_auth"
 	if humanOutput {
+		if profileSpinner != nil {
+			profileSpinner.Success(fmt.Sprintf("Created Kernel profile %q", targetName))
+			profileSpinner = nil
+		}
 		pterm.Success.Printf("Imported %d cookies from %d websites\n", len(cookies), importedCookieSites)
 		if count := itemCounts["bookmarks"]; count > 0 {
 			pterm.Success.Printf("Imported %d bookmarks\n", count)
@@ -516,7 +535,7 @@ func (c ProfilesImportLocalCmd) offerAgentSkills(home string, installRequested, 
 		if nonInteractive {
 			return 0, nil
 		}
-		approved, err := c.prompter.Confirm("install agent skill", "Install the Kernel Managed Auth skill for your local agents?")
+		approved, err := c.prompter.ConfirmDefault("install agent skill", "Install the Kernel Managed Auth skill for your local agents?", true)
 		if err != nil || !approved {
 			return 0, err
 		}
