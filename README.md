@@ -729,6 +729,8 @@ Automated authentication for web services. The `run` command orchestrates the fu
 - `kernel org limits set` - Set the default per-project concurrency cap applied to projects without an explicit override
   - `--default-project-max-concurrent-sessions <n>` - Default maximum concurrent browsers for projects without an explicit override (`0` to remove the default)
   - `--output json`, `-o json` - Output raw JSON object
+- `kernel org entitlements get` - Show the organization's effective feature access and constraints after applying its plan, active trial treatment, plan status, and organization-specific overrides; unlimited constraints are shown as `unlimited`
+  - `--output json`, `-o json` - Output raw JSON object
 
 ## Examples
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
@@ -176,4 +177,151 @@ func TestOrgLimitsSet_RejectsNegative(t *testing.T) {
 	})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "must be non-negative")
+}
+
+type FakeOrgEntitlementsService struct {
+	GetFunc func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgEntitlements, error)
+}
+
+func (f *FakeOrgEntitlementsService) Get(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgEntitlements, error) {
+	if f.GetFunc != nil {
+		return f.GetFunc(ctx, opts...)
+	}
+	return &kernel.OrgEntitlements{}, nil
+}
+
+// populatedEntitlements builds an entitlements payload with every nullable field
+// present, so renders exercise the non-"unlimited" branches.
+func populatedEntitlements() *kernel.OrgEntitlements {
+	ent := &kernel.OrgEntitlements{}
+
+	ent.Plan.ID = "START_UP"
+	ent.Plan.EffectiveID = "START_UP"
+	ent.Plan.IsTrialing = true
+	ent.Plan.Status = "ACTIVE"
+	ent.Plan.TrialEndsAt = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	ent.Plan.JSON.Status = respjson.NewField(`"ACTIVE"`)
+	ent.Plan.JSON.TrialEndsAt = respjson.NewField(`"2030-01-02T03:04:05Z"`)
+
+	ent.Features.BrowserExtensions.Enabled = true
+	ent.Features.BrowserExtensions.MaxStoredPerOrg = 25
+	ent.Features.BrowserExtensions.JSON.MaxStoredPerOrg = respjson.NewField("25")
+	ent.Features.BrowserPools.Enabled = true
+	ent.Features.BrowserReplays.Enabled = true
+	ent.Features.BrowserReplays.RetentionDays = 7
+	ent.Features.BrowserReplays.JSON.RetentionDays = respjson.NewField("7")
+	ent.Features.CredentialProviders.Enabled = true
+	ent.Features.Credentials.Enabled = true
+	ent.Features.CustomProxies.Enabled = false
+	ent.Features.FileIo.Enabled = true
+	ent.Features.GPU.Enabled = false
+	ent.Features.ManagedAuth.Enabled = true
+	ent.Features.ManagedAuth.MaxConnections = 10
+	ent.Features.ManagedAuth.HealthCheckIntervalDefaultSeconds = 600
+	ent.Features.ManagedAuth.HealthCheckIntervalMinSeconds = 300
+	ent.Features.ManagedAuth.HealthCheckIntervalMaxSeconds = 86400
+	ent.Features.ManagedAuth.JSON.MaxConnections = respjson.NewField("10")
+	ent.Features.ManagedProxies.Enabled = true
+	ent.Features.Profiles.Enabled = true
+	ent.Features.ProxyBypassHosts.Enabled = true
+
+	ent.Limits.MaxConcurrentBrowsers = 50
+	ent.Limits.MaxConcurrentInvocations = 20
+	ent.Limits.DefaultMaxConcurrentInvocationsPerApp = 5
+	ent.Limits.JSON.MaxConcurrentBrowsers = respjson.NewField("50")
+	ent.Limits.JSON.MaxConcurrentInvocations = respjson.NewField("20")
+	ent.Limits.JSON.DefaultMaxConcurrentInvocationsPerApp = respjson.NewField("5")
+
+	return ent
+}
+
+func TestOrgEntitlementsGet_RendersPlanFeaturesAndLimits(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fake := &FakeOrgEntitlementsService{
+		GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgEntitlements, error) {
+			return populatedEntitlements(), nil
+		},
+	}
+	c := OrgCmd{entitlements: fake}
+	assert.NoError(t, c.EntitlementsGet(context.Background(), OrgEntitlementsGetInput{}))
+
+	out := buf.String()
+	// Plan section
+	assert.Contains(t, out, "START_UP")
+	assert.Contains(t, out, "Effective Plan")
+	assert.Contains(t, out, "Trialing")
+	assert.Contains(t, out, "ACTIVE")
+	// Features section — every feature should get a row.
+	for _, feature := range []string{
+		"Browser Extensions", "Browser Pools", "Browser Replays", "Credential Providers",
+		"Credentials", "Custom Proxies", "File I/O", "GPU", "Managed Auth",
+		"Managed Proxies", "Profiles", "Proxy Bypass Hosts",
+	} {
+		assert.Contains(t, out, feature)
+	}
+	assert.Contains(t, out, "max stored per org: 25")
+	assert.Contains(t, out, "retention: 7 days")
+	assert.Contains(t, out, "max connections: 10")
+	assert.Contains(t, out, "600s default (300s-86400s)")
+	// Limits section
+	assert.Contains(t, out, "Max Concurrent Browsers")
+	assert.Contains(t, out, "Max Concurrent Invocations")
+	assert.Contains(t, out, "Default Max Concurrent Invocations Per App")
+}
+
+func TestOrgEntitlementsGet_NullConstraintsShownAsUnlimited(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fake := &FakeOrgEntitlementsService{
+		GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgEntitlements, error) {
+			ent := populatedEntitlements()
+			// Null (not omitted) constraints mean unlimited.
+			ent.Features.BrowserExtensions.JSON.MaxStoredPerOrg = respjson.NewField(respjson.Null)
+			ent.Features.ManagedAuth.JSON.MaxConnections = respjson.NewField(respjson.Null)
+			ent.Limits.JSON.MaxConcurrentBrowsers = respjson.NewField(respjson.Null)
+			return ent, nil
+		},
+	}
+	c := OrgCmd{entitlements: fake}
+	assert.NoError(t, c.EntitlementsGet(context.Background(), OrgEntitlementsGetInput{}))
+
+	out := buf.String()
+	assert.Contains(t, out, "max stored per org: unlimited")
+	assert.Contains(t, out, "max connections: unlimited")
+	assert.Contains(t, out, "unlimited")
+}
+
+func TestOrgEntitlementsGet_NullPlanFieldsShownAsDash(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fake := &FakeOrgEntitlementsService{
+		GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgEntitlements, error) {
+			ent := populatedEntitlements()
+			ent.Plan.IsTrialing = false
+			ent.Plan.JSON.Status = respjson.NewField(respjson.Null)
+			ent.Plan.JSON.TrialEndsAt = respjson.NewField(respjson.Null)
+			return ent, nil
+		},
+	}
+	c := OrgCmd{entitlements: fake}
+	assert.NoError(t, c.EntitlementsGet(context.Background(), OrgEntitlementsGetInput{}))
+
+	out := buf.String()
+	assert.Contains(t, out, "Billing Status")
+	assert.Contains(t, out, "Trial Ends At")
+	assert.NotContains(t, out, "ACTIVE")
+}
+
+func TestOrgEntitlementsGet_RejectsUnknownOutput(t *testing.T) {
+	c := OrgCmd{entitlements: &FakeOrgEntitlementsService{}}
+	assert.Error(t, c.EntitlementsGet(context.Background(), OrgEntitlementsGetInput{Output: "yaml"}))
+}
+
+func TestOrgEntitlementsGet_SurfacesAPIError(t *testing.T) {
+	capturePtermOutput(t)
+	fake := &FakeOrgEntitlementsService{
+		GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgEntitlements, error) {
+			return nil, errors.New("boom")
+		},
+	}
+	c := OrgCmd{entitlements: fake}
+	assert.Error(t, c.EntitlementsGet(context.Background(), OrgEntitlementsGetInput{}))
 }
