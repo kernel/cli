@@ -526,6 +526,21 @@ func TestProfilesImportStatusRejectsUnsupportedOutputBeforeAuthentication(t *tes
 	assert.EqualError(t, err, `unsupported --output value "yaml"; use "json" or omit --output for human-readable output`)
 }
 
+func TestManagedAuthCompletionConnectionsPreserveProvisionedPrefix(t *testing.T) {
+	connections := managedAuthCompletionConnections(
+		[]string{"ma_google", "ma_github"},
+		[]passwordmanager.Record{
+			{Domain: "google.com"},
+			{Domain: "github.com"},
+			{Domain: "x.com"},
+		},
+	)
+	assert.Equal(t, []localbrowser.ManagedAuthConnection{
+		{ID: "ma_google", Domain: "google.com"},
+		{ID: "ma_github", Domain: "github.com"},
+	}, connections)
+}
+
 func TestChooseProfileRejectsDuplicateFriendlyName(t *testing.T) {
 	profiles := []localbrowser.Profile{
 		{ID: "one", Name: "Personal", Browser: localbrowser.Browser{Name: "Google Chrome"}},

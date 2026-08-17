@@ -84,11 +84,17 @@ func (c *Client) Create(ctx context.Context) (CreateResponse, error) {
 	return CreateResponse{}, lastErr
 }
 
+func (c *Client) AcquireHelperGrant(ctx context.Context, id string) (HelperGrant, error) {
+	var result HelperGrant
+	err := c.doJSON(ctx, http.MethodPost, "/browser-imports/"+url.PathEscape(id)+"/helper-grant", c.token, nil, &result)
+	return result, err
+}
+
 func (c *Client) SubmitInventory(ctx context.Context, id, helperToken string, inventory Inventory) (Status, error) {
 	var result Status
 	err := c.doJSON(ctx, http.MethodPost, "/browser-imports/"+url.PathEscape(id)+"/inventory", helperToken, inventory, &result)
 	if err != nil {
-		return c.reconcile(ctx, id, err, "awaiting_selection", "awaiting_bundle", "staged", "applying", "completed")
+		return c.reconcile(ctx, id, err, "awaiting_selection", "awaiting_bundle", "staged", "applying", "awaiting_client_completion", "awaiting_dashboard_ack", "completed")
 	}
 	return result, err
 }
@@ -97,7 +103,7 @@ func (c *Client) SubmitSelection(ctx context.Context, id string, selection Selec
 	var result Status
 	err := c.doJSON(ctx, http.MethodPost, "/browser-imports/"+url.PathEscape(id)+"/selection", c.token, selection, &result)
 	if err != nil {
-		return c.reconcile(ctx, id, err, "awaiting_bundle", "staged", "applying", "completed")
+		return c.reconcile(ctx, id, err, "awaiting_bundle", "staged", "applying", "awaiting_client_completion", "awaiting_dashboard_ack", "completed")
 	}
 	return result, err
 }
@@ -111,12 +117,21 @@ func (c *Client) Upload(ctx context.Context, id, helperToken string, bundle []by
 	request.Header.Set("Content-Type", "application/octet-stream")
 	response, err := c.http.Do(request)
 	if err != nil {
-		return c.reconcile(ctx, id, err, "staged", "applying", "completed", "failed")
+		return c.reconcile(ctx, id, err, "staged", "applying", "awaiting_client_completion", "awaiting_dashboard_ack", "completed", "failed")
 	}
 	defer response.Body.Close()
 	var result Status
 	if err := decodeResponse(response, &result); err != nil {
-		return c.reconcile(ctx, id, err, "staged", "applying", "completed", "failed")
+		return c.reconcile(ctx, id, err, "staged", "applying", "awaiting_client_completion", "awaiting_dashboard_ack", "completed", "failed")
+	}
+	return result, nil
+}
+
+func (c *Client) SubmitClientCompletion(ctx context.Context, id string, completion ClientCompletion) (Status, error) {
+	var result Status
+	err := c.doJSON(ctx, http.MethodPost, "/browser-imports/"+url.PathEscape(id)+"/client-completion", c.token, completion, &result)
+	if err != nil {
+		return c.reconcile(ctx, id, err, "awaiting_dashboard_ack", "completed", "failed")
 	}
 	return result, nil
 }
@@ -141,6 +156,14 @@ func (c *Client) Status(ctx context.Context, id string) (Status, error) {
 }
 
 func (c *Client) Wait(ctx context.Context, id string, interval time.Duration) (Status, error) {
+	return c.wait(ctx, id, interval, false)
+}
+
+func (c *Client) WaitForProfile(ctx context.Context, id string, interval time.Duration) (Status, error) {
+	return c.wait(ctx, id, interval, true)
+}
+
+func (c *Client) wait(ctx context.Context, id string, interval time.Duration, returnWhenAwaitingClient bool) (Status, error) {
 	if interval <= 0 {
 		interval = time.Second
 	}
@@ -159,6 +182,10 @@ func (c *Client) Wait(ctx context.Context, id string, interval time.Duration) (S
 			switch status.Phase {
 			case "completed":
 				return status, nil
+			case "awaiting_client_completion":
+				if returnWhenAwaitingClient {
+					return status, nil
+				}
 			case "failed":
 				if status.Applied != nil && status.Applied.Failure != nil {
 					return status, fmt.Errorf("browser import failed during %s: %s", status.Applied.Failure.Stage, status.Applied.Failure.Message)

@@ -56,6 +56,7 @@ func runConnectorOpen(cmd *cobra.Command, args []string) error {
 	input := ProfilesImportLocalInput{
 		Days:            30,
 		ProjectID:       link.ProjectID,
+		ImportID:        link.ImportID,
 		Version:         metadata.Version,
 		WaitTimeout:     30 * time.Minute,
 		DashboardLaunch: true,

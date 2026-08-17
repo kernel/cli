@@ -136,15 +136,45 @@ type Applied struct {
 }
 
 type Status struct {
-	ID        string     `json:"id"`
-	Phase     string     `json:"phase"`
-	Inventory *Inventory `json:"inventory,omitempty"`
-	Selection *Selection `json:"selection,omitempty"`
-	Applied   *Applied   `json:"applied,omitempty"`
+	ID        string            `json:"id"`
+	Phase     string            `json:"phase"`
+	Inventory *Inventory        `json:"inventory,omitempty"`
+	Selection *Selection        `json:"selection,omitempty"`
+	Applied   *Applied          `json:"applied,omitempty"`
+	Client    *ClientCompletion `json:"client,omitempty"`
 }
 
 type CreateResponse struct {
 	ID                   string    `json:"id"`
 	HelperToken          string    `json:"helper_token"`
 	HelperTokenExpiresAt time.Time `json:"helper_token_expires_at"`
+}
+
+type HelperGrant struct {
+	HelperToken          string    `json:"helper_token"`
+	HelperTokenExpiresAt time.Time `json:"helper_token_expires_at"`
+}
+
+type ManagedAuthConnection struct {
+	ID     string `json:"id"`
+	Domain string `json:"domain"`
+}
+
+type ClientCounts struct {
+	Cookies        int `json:"cookies"`
+	Bookmarks      int `json:"bookmarks"`
+	History        int `json:"history"`
+	StorageOrigins int `json:"storage_origins"`
+}
+
+type ClientFailure struct {
+	Stage   string `json:"stage"`
+	Message string `json:"message"`
+}
+
+type ClientCompletion struct {
+	Outcome                string                  `json:"outcome"`
+	Counts                 ClientCounts            `json:"counts"`
+	ManagedAuthConnections []ManagedAuthConnection `json:"managed_auth_connections"`
+	Failure                *ClientFailure          `json:"failure,omitempty"`
 }

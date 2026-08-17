@@ -36,6 +36,7 @@ type ProfilesImportLocalInput struct {
 	SkipConfirm        bool
 	Output             string
 	ProjectID          string
+	ImportID           string
 	Version            string
 	WaitTimeout        time.Duration
 	PasswordManager    string
@@ -90,7 +91,7 @@ func dashboardProjectUnauthorized(err error) bool {
 	return errors.As(err, &apiError) && apiError.StatusCode == http.StatusUnauthorized
 }
 
-func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalInput) error {
+func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalInput) (returnErr error) {
 	startedAt := time.Now()
 	timings := make(map[string]time.Duration)
 	if err := validateJSONOutput(in.Output); err != nil {
@@ -118,6 +119,39 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	}
 	humanOutput := in.Output != "json"
 	nonInteractive := in.SkipConfirm || !humanOutput
+	dashboardHandoff := in.DashboardLaunch && in.ImportID != ""
+	var handoffClient *localbrowser.Client
+	clientCompletion := localbrowser.ClientCompletion{
+		Outcome: "failed", ManagedAuthConnections: make([]localbrowser.ManagedAuthConnection, 0),
+	}
+	clientFailureStage := "local"
+	clientCompletionReported := false
+	if dashboardHandoff {
+		token, err := auth.BearerToken(ctx)
+		if err != nil {
+			return err
+		}
+		handoffClient, err = localbrowser.NewClient(util.GetBaseURL(), token, in.ProjectID)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if returnErr == nil || clientCompletionReported {
+				return
+			}
+			reportCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			status, statusErr := handoffClient.Status(reportCtx, in.ImportID)
+			if statusErr == nil && status.Phase == "failed" {
+				return
+			}
+			clientCompletion.Outcome = "failed"
+			clientCompletion.Failure = &localbrowser.ClientFailure{Stage: clientFailureStage, Message: "Local browser import did not finish."}
+			if _, reportErr := handoffClient.SubmitClientCompletion(reportCtx, in.ImportID, clientCompletion); reportErr != nil {
+				returnErr = errors.Join(returnErr, fmt.Errorf("report browser import failure: %w", reportErr))
+			}
+		}()
+	}
 	if humanOutput {
 		pterm.Info.Println("Looking for local browser profiles...")
 	}
@@ -209,6 +243,14 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		}
 		if !proceed {
 			pterm.Info.Println("Browser import canceled; no Kernel resources were changed")
+			if dashboardHandoff {
+				clientCompletion.Outcome = "canceled"
+				clientCompletion.Failure = &localbrowser.ClientFailure{Stage: "local", Message: "Browser import was canceled locally."}
+				if _, err := handoffClient.SubmitClientCompletion(ctx, in.ImportID, clientCompletion); err != nil {
+					return fmt.Errorf("report browser import cancellation: %w", err)
+				}
+				clientCompletionReported = true
+			}
 			return nil
 		}
 	}
@@ -261,6 +303,14 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		}
 		if !proceed {
 			pterm.Info.Println("Browser import canceled; no Kernel resources were changed")
+			if dashboardHandoff {
+				clientCompletion.Outcome = "canceled"
+				clientCompletion.Failure = &localbrowser.ClientFailure{Stage: "local", Message: "Browser import was canceled locally."}
+				if _, err := handoffClient.SubmitClientCompletion(ctx, in.ImportID, clientCompletion); err != nil {
+					return fmt.Errorf("report browser import cancellation: %w", err)
+				}
+				clientCompletionReported = true
+			}
 			return nil
 		}
 	}
@@ -268,50 +318,74 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	itemCounts = fit.itemCounts
 	bundle := fit.bundle
 	categories := selectedProfileCategories(itemCounts)
-	token, err := auth.BearerToken(ctx)
-	if err != nil {
-		return err
+	clientCompletion.Counts = localbrowser.ClientCounts{
+		Cookies: itemCounts["cookies"], Bookmarks: itemCounts["bookmarks"], History: itemCounts["history"], StorageOrigins: importedStorageOriginCount(profileData.Storage),
 	}
-	client, err := localbrowser.NewClient(util.GetBaseURL(), token, in.ProjectID)
-	if err != nil {
-		return err
+	client := handoffClient
+	if client == nil {
+		token, err := auth.BearerToken(ctx)
+		if err != nil {
+			return err
+		}
+		client, err = localbrowser.NewClient(util.GetBaseURL(), token, in.ProjectID)
+		if err != nil {
+			return err
+		}
 	}
 	if humanOutput {
 		pterm.Info.Printf("Creating Kernel profile %q...\n", targetName)
 	}
 	phaseStarted = time.Now()
-	created, err := client.Create(ctx)
-	if err != nil {
-		return err
+	importID := in.ImportID
+	helperToken := ""
+	if dashboardHandoff {
+		grant, err := client.AcquireHelperGrant(ctx, importID)
+		if err != nil {
+			return fmt.Errorf("get scoped browser import grant: %w", err)
+		}
+		helperToken = grant.HelperToken
+	} else {
+		created, err := client.Create(ctx)
+		if err != nil {
+			return err
+		}
+		importID = created.ID
+		helperToken = created.HelperToken
 	}
+	clientFailureStage = "profile"
 	inventory := localbrowser.Inventory{Sources: []localbrowser.Source{{
 		ID: profile.ID, Kind: "browser", Name: profile.DisplayName(), Browser: profile.Browser.ID,
 		DataTypes: categories, ItemCounts: itemCounts,
 	}}}
-	status, err := client.SubmitInventory(ctx, created.ID, created.HelperToken, inventory)
+	status, err := client.SubmitInventory(ctx, importID, helperToken, inventory)
 	if err != nil {
-		return browserImportProgressError(created.ID, status.Phase, time.Since(phaseStarted), err)
+		return browserImportProgressError(importID, status.Phase, time.Since(phaseStarted), err)
 	}
 	selection := localbrowser.Selection{Profiles: []localbrowser.ProfileSelection{{SourceID: profile.ID, TargetName: targetName, Categories: categories}}}
-	status, err = client.SubmitSelection(ctx, created.ID, selection)
+	status, err = client.SubmitSelection(ctx, importID, selection)
 	if err != nil {
-		return browserImportProgressError(created.ID, status.Phase, time.Since(phaseStarted), err)
+		return browserImportProgressError(importID, status.Phase, time.Since(phaseStarted), err)
 	}
-	status, err = client.Upload(ctx, created.ID, created.HelperToken, bundle)
+	status, err = client.Upload(ctx, importID, helperToken, bundle)
 	if err != nil {
-		return browserImportProgressError(created.ID, status.Phase, time.Since(phaseStarted), err)
+		return browserImportProgressError(importID, status.Phase, time.Since(phaseStarted), err)
 	}
 	waitCtx, cancelWait := context.WithTimeout(ctx, in.WaitTimeout)
 	defer cancelWait()
-	status, err = client.Wait(waitCtx, created.ID, 2*time.Second)
+	if dashboardHandoff {
+		status, err = client.WaitForProfile(waitCtx, importID, 2*time.Second)
+	} else {
+		status, err = client.Wait(waitCtx, importID, 2*time.Second)
+	}
 	timings["upload_and_apply"] = time.Since(phaseStarted)
 	if err != nil {
-		return fmt.Errorf("browser import %s did not complete: %w; check it with: kernel profiles import-status %s", created.ID, err, created.ID)
+		return fmt.Errorf("browser import %s did not complete: %w; check it with: kernel profiles import-status %s", importID, err, importID)
 	}
 	if status.Applied == nil || len(status.Applied.Profiles) == 0 {
 		return fmt.Errorf("browser import completed without a profile")
 	}
 	profileID := status.Applied.Profiles[0].ProfileID
+	clientFailureStage = "managed_auth"
 	if humanOutput {
 		pterm.Success.Printf("Imported %d cookies from %d websites\n", len(cookies), importedCookieSites)
 		if count := itemCounts["bookmarks"]; count > 0 {
@@ -347,6 +421,7 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		}
 		phaseStarted = time.Now()
 		connectionIDs, err = c.provisioner.Provision(ctx, targetName, approvedLogins)
+		clientCompletion.ManagedAuthConnections = managedAuthCompletionConnections(connectionIDs, approvedLogins)
 		timings["managed_auth"] = time.Since(phaseStarted)
 		if err != nil {
 			if humanOutput {
@@ -365,11 +440,29 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	installedSkills := 0
 	skillWarning := ""
 	if len(connectionIDs) > 0 {
+		clientFailureStage = "agent_skills"
 		phaseStarted = time.Now()
 		installedSkills, err = c.offerAgentSkills(home, in.InstallAgentSkills, nonInteractive, humanOutput)
 		timings["agent_skills"] = time.Since(phaseStarted)
 		if err != nil {
 			skillWarning = err.Error()
+		}
+	}
+	if dashboardHandoff {
+		clientCompletion.Outcome = "completed"
+		clientCompletion.Failure = nil
+		if humanOutput {
+			pterm.Info.Println("Opening Kernel to finish authentication...")
+		}
+		if _, err := client.SubmitClientCompletion(ctx, importID, clientCompletion); err != nil {
+			return fmt.Errorf("report browser import completion: %w", err)
+		}
+		clientCompletionReported = true
+		ackCtx, cancelAck := context.WithTimeout(ctx, in.WaitTimeout)
+		defer cancelAck()
+		status, err = client.Wait(ackCtx, importID, 2*time.Second)
+		if err != nil {
+			return fmt.Errorf("dashboard did not acknowledge browser import %s: %w; reopen Kernel to finish setup", importID, err)
 		}
 	}
 	if in.Output == "json" {
@@ -391,6 +484,17 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	}
 	pterm.Printf("Next: kernel browsers create --profile %s\n", targetName)
 	return nil
+}
+
+func managedAuthCompletionConnections(ids []string, records []passwordmanager.Record) []localbrowser.ManagedAuthConnection {
+	connections := make([]localbrowser.ManagedAuthConnection, 0, min(len(ids), len(records)))
+	for index, id := range ids {
+		if index >= len(records) {
+			break
+		}
+		connections = append(connections, localbrowser.ManagedAuthConnection{ID: id, Domain: records[index].Domain})
+	}
+	return connections
 }
 
 func (c ProfilesImportLocalCmd) offerAgentSkills(home string, installRequested, nonInteractive, humanOutput bool) (int, error) {
