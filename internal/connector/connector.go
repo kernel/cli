@@ -243,12 +243,13 @@ set startedPath to launcherPath & ".started"
 set successPath to launcherPath & ".success"
 set donePath to launcherPath & ".done"
 set scriptFile to «event rdwropen» POSIX file launcherPath with «class perm»
-«event rdwrwrit» "#!/bin/zsh" & linefeed & "rm -f " & quoted form of launcherPath & " " & quoted form of startedPath & " " & quoted form of successPath & " " & quoted form of donePath & linefeed & "commandStatus=1" & linefeed & "finishConnector() { commandStatus=$?; if [[ $commandStatus -eq 0 ]]; then /usr/bin/touch " & quoted form of successPath & "; fi; /usr/bin/touch " & quoted form of donePath & "; }" & linefeed & "trap finishConnector EXIT" & linefeed & "/usr/bin/touch " & quoted form of startedPath & linefeed & "if [[ ! -x " & quoted form of kernelExecutable & " ]]; then echo 'Kernel CLI was removed. Reinstall it with: brew install kernel/tap/kernel'; read -k 1 '?Press any key to close'; exit 1; fi" & linefeed & "/bin/zsh -lic " & quoted form of commandText & linefeed & "commandStatus=$?" & linefeed & "exit $commandStatus" & linefeed given «class refn»:scriptFile
+«event rdwrwrit» "#!/bin/zsh" & linefeed & "rm -f " & quoted form of launcherPath & " " & quoted form of startedPath & " " & quoted form of successPath & " " & quoted form of donePath & linefeed & "commandStatus=1" & linefeed & "finishConnector() { commandStatus=$?; if [[ $commandStatus -eq 0 ]]; then /usr/bin/touch " & quoted form of successPath & "; fi; /usr/bin/touch " & quoted form of donePath & "; }" & linefeed & "trap finishConnector EXIT" & linefeed & "/usr/bin/touch " & quoted form of startedPath & linefeed & "if [[ ! -x " & quoted form of kernelExecutable & " ]]; then echo 'Kernel CLI was removed. Reinstall it with: brew install kernel/tap/kernel'; read -k 1 '?Press any key to close'; exit 1; fi" & linefeed & "/bin/zsh -lc " & quoted form of commandText & linefeed & "commandStatus=$?" & linefeed & "exit $commandStatus" & linefeed given «class refn»:scriptFile
 «event rdwrclos» scriptFile
 «event sysoexec» "/bin/chmod 700 " & quoted form of launcherPath
 tell application "Terminal"
 activate
 set connectorTab to do script (quoted form of launcherPath & "; exit")
+set connectorWindow to front window
 end tell
 repeat
 try
@@ -282,7 +283,7 @@ end repeat
 try
 «event sysoexec» "/usr/bin/test -f " & quoted form of successPath
 if connectorIdle then
-tell application "Terminal" to close connectorTab
+tell application "Terminal" to close connectorWindow saving no
 end if
 end try
 «event sysoexec» "/bin/rm -f " & quoted form of startedPath & " " & quoted form of successPath & " " & quoted form of donePath
