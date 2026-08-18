@@ -10,6 +10,7 @@ import (
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/respjson"
+	"github.com/pterm/pterm"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -29,7 +30,7 @@ func (f *FakeOrgEntitlementsService) Get(ctx context.Context, opts ...option.Req
 	return nil, nil
 }
 
-func testOrgEntitlements(t *testing.T) *kernel.OrgEntitlements {
+func testOrgEntitlementsWithUnlimitedValues(t *testing.T) *kernel.OrgEntitlements {
 	t.Helper()
 	var entitlements kernel.OrgEntitlements
 	err := json.Unmarshal([]byte(`{
@@ -54,23 +55,57 @@ func testOrgEntitlements(t *testing.T) *kernel.OrgEntitlements {
 	return &entitlements
 }
 
-func TestOrgEntitlements_RendersEffectiveValues(t *testing.T) {
-	buf := capturePtermOutput(t)
-	c := OrgCmd{entitlements: &FakeOrgEntitlementsService{
-		GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgEntitlements, error) {
-			return testOrgEntitlements(t), nil
+func TestOrgEntitlementRows_CompleteProjection(t *testing.T) {
+	var entitlements kernel.OrgEntitlements
+	err := json.Unmarshal([]byte(`{
+		"plan":{"id":"HOBBYIST","effective_id":"START_UP","status":"ACTIVE","is_trialing":true,"trial_ends_at":"2030-01-02T03:04:05Z"},
+		"features":{
+			"profiles":{"enabled":true},
+			"file_io":{"enabled":false},
+			"browser_replays":{"enabled":true,"retention_days":17},
+			"browser_extensions":{"enabled":false,"max_stored_per_org":23},
+			"browser_pools":{"enabled":true},
+			"managed_auth":{"enabled":false,"max_connections":29,"health_check_interval_min_seconds":31,"health_check_interval_default_seconds":37,"health_check_interval_max_seconds":41},
+			"credentials":{"enabled":true},
+			"credential_providers":{"enabled":false},
+			"managed_proxies":{"enabled":true},
+			"custom_proxies":{"enabled":false},
+			"proxy_bypass_hosts":{"enabled":true},
+			"gpu":{"enabled":false}
 		},
-	}}
+		"limits":{"max_concurrent_browsers":43,"max_concurrent_invocations":47,"default_max_concurrent_invocations_per_app":53}
+	}`), &entitlements)
+	assert.NoError(t, err)
 
-	assert.NoError(t, c.Entitlements(context.Background(), OrgEntitlementsInput{}))
-	out := buf.String()
-	assert.Contains(t, out, "Contractual plan")
-	assert.Contains(t, out, "Effective plan")
-	assert.Contains(t, out, "START_UP")
-	assert.Contains(t, out, "Browser replay retention (days)")
-	assert.Contains(t, out, "Max managed auth connections")
-	assert.Contains(t, out, "unlimited")
-	assert.Contains(t, out, "Max concurrent browsers")
+	assert.Equal(t, pterm.TableData{
+		{"Category", "Entitlement", "Value"},
+		{"Plan", "Contractual plan", "HOBBYIST"},
+		{"Plan", "Effective plan", "START_UP"},
+		{"Plan", "Status", "ACTIVE"},
+		{"Plan", "Trialing", "true"},
+		{"Plan", "Trial ends at", util.FormatLocal(entitlements.Plan.TrialEndsAt)},
+		{"Feature", "Profiles", "true"},
+		{"Feature", "File I/O", "false"},
+		{"Feature", "Browser replays", "true"},
+		{"Feature", "Browser replay retention (days)", "17"},
+		{"Feature", "Browser extensions", "false"},
+		{"Feature", "Max stored extensions", "23"},
+		{"Feature", "Browser pools", "true"},
+		{"Feature", "Managed auth", "false"},
+		{"Feature", "Max managed auth connections", "29"},
+		{"Feature", "Health check minimum (seconds)", "31"},
+		{"Feature", "Health check default (seconds)", "37"},
+		{"Feature", "Health check maximum (seconds)", "41"},
+		{"Feature", "Credentials", "true"},
+		{"Feature", "Credential providers", "false"},
+		{"Feature", "Managed proxies", "true"},
+		{"Feature", "Custom proxies", "false"},
+		{"Feature", "Proxy bypass hosts", "true"},
+		{"Feature", "GPU", "false"},
+		{"Limit", "Max concurrent browsers", "43"},
+		{"Limit", "Max concurrent invocations", "47"},
+		{"Limit", "Default max concurrent invocations per app", "53"},
+	}, orgEntitlementRows(&entitlements))
 }
 
 func TestOrgEntitlements_RendersTrialEndInLocalTime(t *testing.T) {
@@ -91,7 +126,7 @@ func TestOrgEntitlements_RendersTrialEndInLocalTime(t *testing.T) {
 func TestOrgEntitlements_JSONPreservesNullUnlimitedValues(t *testing.T) {
 	c := OrgCmd{entitlements: &FakeOrgEntitlementsService{
 		GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgEntitlements, error) {
-			return testOrgEntitlements(t), nil
+			return testOrgEntitlementsWithUnlimitedValues(t), nil
 		},
 	}}
 

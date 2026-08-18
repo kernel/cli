@@ -163,6 +163,10 @@ func renderOrgEntitlements(entitlements *kernel.OrgEntitlements) {
 		return
 	}
 
+	PrintTableNoPad(orgEntitlementRows(entitlements), true)
+}
+
+func orgEntitlementRows(entitlements *kernel.OrgEntitlements) pterm.TableData {
 	status := entitlements.Plan.Status
 	if !entitlements.Plan.JSON.Status.Valid() {
 		status = "none"
@@ -174,7 +178,7 @@ func renderOrgEntitlements(entitlements *kernel.OrgEntitlements) {
 
 	features := entitlements.Features
 	limits := entitlements.Limits
-	rows := pterm.TableData{
+	return pterm.TableData{
 		{"Category", "Entitlement", "Value"},
 		{"Plan", "Contractual plan", entitlements.Plan.ID},
 		{"Plan", "Effective plan", entitlements.Plan.EffectiveID},
@@ -203,8 +207,6 @@ func renderOrgEntitlements(entitlements *kernel.OrgEntitlements) {
 		{"Limit", "Max concurrent invocations", fmt.Sprintf("%d", limits.MaxConcurrentInvocations)},
 		{"Limit", "Default max concurrent invocations per app", fmt.Sprintf("%d", limits.DefaultMaxConcurrentInvocationsPerApp)},
 	}
-
-	PrintTableNoPad(rows, true)
 }
 
 // --- Cobra wiring ---
