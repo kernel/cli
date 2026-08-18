@@ -39,7 +39,7 @@ func decodeManagedAuthCapacity(raw string) (managedAuthCapacity, error) {
 	maxRaw, hasMax := fields["max_auth_connections"]
 	usedRaw, hasUsed := fields["auth_connections_used"]
 	if !hasMax || !hasUsed {
-		return managedAuthCapacity{}, fmt.Errorf("Kernel API does not expose Managed Auth capacity; deploy the organization entitlements API first")
+		return managedAuthCapacity{}, fmt.Errorf("Kernel API does not expose Managed Auth capacity through organization limits")
 	}
 	if string(maxRaw) == "null" {
 		return managedAuthCapacity{unlimited: true}, nil

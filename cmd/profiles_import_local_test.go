@@ -410,7 +410,7 @@ func TestDecodeManagedAuthCapacity(t *testing.T) {
 	})
 	t.Run("old API", func(t *testing.T) {
 		_, err := decodeManagedAuthCapacity(`{"max_concurrent_sessions":10}`)
-		require.ErrorContains(t, err, "deploy the organization entitlements API first")
+		require.ErrorContains(t, err, "does not expose Managed Auth capacity through organization limits")
 	})
 }
 
