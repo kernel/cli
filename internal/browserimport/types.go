@@ -87,11 +87,20 @@ type StorageSite struct {
 	Bytes  int64
 }
 
+// StorageExport contains portable records and records excluded by size limits.
+type StorageExport struct {
+	Records        []StorageRecord
+	SkippedRecords int
+	SkippedOrigins int
+}
+
 type ProfileData struct {
-	Cookies   []Cookie
-	Storage   []StorageRecord
-	Bookmarks *BookmarkDocument
-	History   []HistoryRecord
+	Cookies               []Cookie
+	Storage               []StorageRecord
+	StorageRecordsSkipped int
+	StorageOriginsSkipped int
+	Bookmarks             *BookmarkDocument
+	History               []HistoryRecord
 }
 
 type Source struct {

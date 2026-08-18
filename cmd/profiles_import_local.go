@@ -422,6 +422,9 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		if storageSummary.skippedEntries > 0 {
 			pterm.Warning.Printf("Skipped %d local storage keys from %d origins that could not be restored\n", storageSummary.skippedEntries, storageSummary.skippedOrigins)
 		}
+		if profileData.StorageRecordsSkipped > 0 {
+			pterm.Warning.Printf("Skipped %d oversized local storage keys from %d origins (1 MiB maximum per key)\n", profileData.StorageRecordsSkipped, profileData.StorageOriginsSkipped)
+		}
 	}
 	connectionIDs := make([]string, 0)
 	approvedLogins := make([]passwordmanager.Record, 0)

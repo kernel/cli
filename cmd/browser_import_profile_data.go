@@ -359,12 +359,14 @@ func buildSelectedProfileData(ctx context.Context, profile localbrowser.Profile,
 		counts["history"] = len(history)
 	}
 	if selection.storage {
-		storage, err := localbrowser.ExportLocalStorage(ctx, profile, selection.storageSites)
+		exported, err := localbrowser.ExportLocalStorage(ctx, profile, selection.storageSites)
 		if err != nil {
 			return localbrowser.ProfileData{}, nil, err
 		}
-		data.Storage = storage
-		counts["storage"] = len(storage)
+		data.Storage = exported.Records
+		data.StorageRecordsSkipped = exported.SkippedRecords
+		data.StorageOriginsSkipped = exported.SkippedOrigins
+		counts["storage"] = len(exported.Records)
 	}
 	return data, counts, nil
 }
