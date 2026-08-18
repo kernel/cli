@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/kernel/cli/pkg/util"
@@ -167,12 +168,11 @@ func renderOrgEntitlements(entitlements *kernel.OrgEntitlements) {
 }
 
 func orgEntitlementRows(entitlements *kernel.OrgEntitlements) pterm.TableData {
-	status := entitlements.Plan.Status
-	if !entitlements.Plan.JSON.Status.Valid() {
-		status = "none"
-	}
-	trialEndsAt := "none"
-	if entitlements.Plan.JSON.TrialEndsAt.Valid() {
+	status := formatNullableEntitlementString(entitlements.Plan.Status, entitlements.Plan.JSON.Status)
+	trialEndsAt := "unknown"
+	if entitlements.Plan.JSON.TrialEndsAt.Raw() == respjson.Null {
+		trialEndsAt = "none"
+	} else if entitlements.Plan.JSON.TrialEndsAt.Valid() {
 		trialEndsAt = util.FormatLocal(entitlements.Plan.TrialEndsAt)
 	}
 
@@ -190,10 +190,10 @@ func orgEntitlementRows(entitlements *kernel.OrgEntitlements) pterm.TableData {
 		{"Feature", "Browser replays", fmt.Sprintf("%t", features.BrowserReplays.Enabled)},
 		{"Feature", "Browser replay retention (days)", fmt.Sprintf("%d", features.BrowserReplays.RetentionDays)},
 		{"Feature", "Browser extensions", fmt.Sprintf("%t", features.BrowserExtensions.Enabled)},
-		{"Feature", "Max stored extensions", formatProjectLimitValue(features.BrowserExtensions.MaxStoredPerOrg, features.BrowserExtensions.JSON.MaxStoredPerOrg)},
+		{"Feature", "Max stored extensions", formatEntitlementLimitValue(features.BrowserExtensions.MaxStoredPerOrg, features.BrowserExtensions.JSON.MaxStoredPerOrg)},
 		{"Feature", "Browser pools", fmt.Sprintf("%t", features.BrowserPools.Enabled)},
 		{"Feature", "Managed auth", fmt.Sprintf("%t", features.ManagedAuth.Enabled)},
-		{"Feature", "Max managed auth connections", formatProjectLimitValue(features.ManagedAuth.MaxConnections, features.ManagedAuth.JSON.MaxConnections)},
+		{"Feature", "Max managed auth connections", formatEntitlementLimitValue(features.ManagedAuth.MaxConnections, features.ManagedAuth.JSON.MaxConnections)},
 		{"Feature", "Health check minimum (seconds)", fmt.Sprintf("%d", features.ManagedAuth.HealthCheckIntervalMinSeconds)},
 		{"Feature", "Health check default (seconds)", fmt.Sprintf("%d", features.ManagedAuth.HealthCheckIntervalDefaultSeconds)},
 		{"Feature", "Health check maximum (seconds)", fmt.Sprintf("%d", features.ManagedAuth.HealthCheckIntervalMaxSeconds)},
@@ -207,6 +207,30 @@ func orgEntitlementRows(entitlements *kernel.OrgEntitlements) pterm.TableData {
 		{"Limit", "Max concurrent invocations", fmt.Sprintf("%d", limits.MaxConcurrentInvocations)},
 		{"Limit", "Default max concurrent invocations per app", fmt.Sprintf("%d", limits.DefaultMaxConcurrentInvocationsPerApp)},
 	}
+}
+
+func formatNullableEntitlementString(value string, field respjson.Field) string {
+	if field.Raw() == respjson.Null {
+		return "none"
+	}
+	if !field.Valid() {
+		return "unknown"
+	}
+	var decoded string
+	if err := json.Unmarshal([]byte(field.Raw()), &decoded); err != nil {
+		return "unknown"
+	}
+	return value
+}
+
+func formatEntitlementLimitValue(value int64, field respjson.Field) string {
+	if field.Raw() == respjson.Null {
+		return "unlimited"
+	}
+	if !field.Valid() {
+		return "unknown"
+	}
+	return fmt.Sprintf("%d", value)
 }
 
 // --- Cobra wiring ---

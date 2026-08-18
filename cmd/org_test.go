@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
@@ -106,6 +107,68 @@ func TestOrgEntitlementRows_CompleteProjection(t *testing.T) {
 		{"Limit", "Max concurrent invocations", "47"},
 		{"Limit", "Default max concurrent invocations per app", "53"},
 	}, orgEntitlementRows(&entitlements))
+}
+
+func TestOrgEntitlementRows_NullableFieldStates(t *testing.T) {
+	populatedTrialEnd, err := time.Parse(time.RFC3339, "2031-02-03T04:05:06Z")
+	assert.NoError(t, err)
+
+	tests := []struct {
+		name                 string
+		payload              string
+		expectedStatus       string
+		expectedTrialEnd     string
+		expectedMaxStored    string
+		expectedMaxAuthConns string
+	}{
+		{
+			name:                 "populated",
+			payload:              `{"plan":{"status":"ACTIVE","trial_ends_at":"2031-02-03T04:05:06Z"},"features":{"browser_extensions":{"max_stored_per_org":11},"managed_auth":{"max_connections":13}}}`,
+			expectedStatus:       "ACTIVE",
+			expectedTrialEnd:     util.FormatLocal(populatedTrialEnd),
+			expectedMaxStored:    "11",
+			expectedMaxAuthConns: "13",
+		},
+		{
+			name:                 "explicit null",
+			payload:              `{"plan":{"status":null,"trial_ends_at":null},"features":{"browser_extensions":{"max_stored_per_org":null},"managed_auth":{"max_connections":null}}}`,
+			expectedStatus:       "none",
+			expectedTrialEnd:     "none",
+			expectedMaxStored:    "unlimited",
+			expectedMaxAuthConns: "unlimited",
+		},
+		{
+			name:                 "omitted",
+			payload:              `{"plan":{},"features":{"browser_extensions":{},"managed_auth":{}}}`,
+			expectedStatus:       "unknown",
+			expectedTrialEnd:     "unknown",
+			expectedMaxStored:    "unknown",
+			expectedMaxAuthConns: "unknown",
+		},
+		{
+			name:                 "malformed",
+			payload:              `{"plan":{"status":7,"trial_ends_at":"not-a-date"},"features":{"browser_extensions":{"max_stored_per_org":"many"},"managed_auth":{"max_connections":"many"}}}`,
+			expectedStatus:       "unknown",
+			expectedTrialEnd:     "unknown",
+			expectedMaxStored:    "unknown",
+			expectedMaxAuthConns: "unknown",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var entitlements kernel.OrgEntitlements
+			assert.NoError(t, json.Unmarshal([]byte(tt.payload), &entitlements))
+
+			rows := orgEntitlementRows(&entitlements)
+			assert.Equal(t, pterm.TableData{
+				{"Plan", "Status", tt.expectedStatus},
+				{"Plan", "Trial ends at", tt.expectedTrialEnd},
+				{"Feature", "Max stored extensions", tt.expectedMaxStored},
+				{"Feature", "Max managed auth connections", tt.expectedMaxAuthConns},
+			}, pterm.TableData{rows[3], rows[5], rows[11], rows[14]})
+		})
+	}
 }
 
 func TestOrgEntitlements_RendersTrialEndInLocalTime(t *testing.T) {
