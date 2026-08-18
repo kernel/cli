@@ -250,43 +250,11 @@ tell application "Terminal"
 activate
 set connectorTab to do script (quoted form of launcherPath & "; exit")
 set connectorWindow to front window
+set connectorWindowID to id of connectorWindow
 end tell
-repeat
-try
-«event sysoexec» "/usr/bin/test -f " & quoted form of startedPath
-exit repeat
-on error
-delay 0.2
-end try
-end repeat
-repeat
-try
-«event sysoexec» "/usr/bin/test -f " & quoted form of donePath
-exit repeat
-on error
-delay 0.2
-end try
-end repeat
-set connectorIdle to false
-repeat 50 times
-try
-tell application "Terminal" to set connectorBusy to busy of connectorTab
-if not connectorBusy then
-set connectorIdle to true
-exit repeat
-end if
-on error
-exit repeat
-end try
-delay 0.2
-end repeat
-try
-«event sysoexec» "/usr/bin/test -f " & quoted form of successPath
-if connectorIdle then
-tell application "Terminal" to close connectorWindow saving no
-end if
-end try
-«event sysoexec» "/bin/rm -f " & quoted form of startedPath & " " & quoted form of successPath & " " & quoted form of donePath
+set closeTerminalWindow to "tell application \"Terminal\" to close (first window whose id is " & connectorWindowID & ") saving no"
+set monitorCommand to "for i in {1..57600}; do if [[ -f " & quoted form of donePath & " ]]; then break; fi; /bin/sleep 0.5; done; if [[ -f " & quoted form of successPath & " ]]; then /bin/sleep 1; /usr/bin/osascript -e " & quoted form of closeTerminalWindow & "; fi; /bin/rm -f " & quoted form of startedPath & " " & quoted form of successPath & " " & quoted form of donePath
+«event sysoexec» "/usr/bin/nohup /bin/zsh -c " & quoted form of monitorCommand & " >/dev/null 2>&1 &"
 end «event GURLGURL»`
 }
 
