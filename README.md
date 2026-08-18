@@ -724,6 +724,8 @@ Automated authentication for web services. The `run` command orchestrates the fu
 
 ### Org
 
+- `kernel org entitlements` - Show the organization's effective plan, feature access, and limits
+  - `--output json`, `-o json` - Output the raw entitlement response
 - `kernel org limits get` - Show the organization's concurrency limit and the default per-project cap applied to projects without an explicit override
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel org limits set` - Set the default per-project concurrency cap applied to projects without an explicit override
