@@ -414,13 +414,13 @@ func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateIn
 // models the one on `get` and the one on the `follow` event stream as two
 // identical but distinct types, so both are converted to this before rendering.
 type managedAuthInputField struct {
-	ID              string
-	Label           string
-	Type            string
-	Ref             string
-	Hint            string
-	Required        bool
-	ReplaceExisting bool
+	ID       string
+	Label    string
+	Type     string
+	Ref      string
+	Hint     string
+	Reason   string
+	Required bool
 }
 
 // managedAuthInputChoice is the choice counterpart of managedAuthInputField.
@@ -448,8 +448,8 @@ func formatManagedAuthField(f managedAuthInputField) string {
 	if f.Required {
 		meta = append(meta, "required")
 	}
-	if f.ReplaceExisting {
-		meta = append(meta, "replace-existing")
+	if f.Reason != "" {
+		meta = append(meta, "reason="+f.Reason)
 	}
 	if f.Hint != "" {
 		meta = append(meta, fmt.Sprintf("hint=%q", f.Hint))
@@ -542,13 +542,13 @@ func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) e
 		fields := make([]string, 0, len(auth.Fields))
 		for _, f := range auth.Fields {
 			fields = append(fields, formatManagedAuthField(managedAuthInputField{
-				ID:              f.ID,
-				Label:           f.Label,
-				Type:            f.Type,
-				Ref:             f.Ref,
-				Hint:            f.Hint,
-				Required:        f.Required,
-				ReplaceExisting: f.ReplaceExisting,
+				ID:       f.ID,
+				Label:    f.Label,
+				Type:     f.Type,
+				Ref:      f.Ref,
+				Hint:     f.Hint,
+				Reason:   f.Reason,
+				Required: f.Required,
 			}))
 		}
 		tableData = append(tableData, []string{"Fields", strings.Join(fields, "; ")})
@@ -1067,13 +1067,13 @@ func (c AuthConnectionCmd) Follow(ctx context.Context, in AuthConnectionFollowIn
 				fields := make([]string, 0, len(state.Fields))
 				for _, f := range state.Fields {
 					fields = append(fields, formatManagedAuthField(managedAuthInputField{
-						ID:              f.ID,
-						Label:           f.Label,
-						Type:            f.Type,
-						Ref:             f.Ref,
-						Hint:            f.Hint,
-						Required:        f.Required,
-						ReplaceExisting: f.ReplaceExisting,
+						ID:       f.ID,
+						Label:    f.Label,
+						Type:     f.Type,
+						Ref:      f.Ref,
+						Hint:     f.Hint,
+						Reason:   f.Reason,
+						Required: f.Required,
 					}))
 				}
 				pterm.Info.Printf("  Fields: %s\n", strings.Join(fields, ", "))
