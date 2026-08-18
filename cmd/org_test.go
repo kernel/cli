@@ -110,7 +110,6 @@ func TestOrgEntitlementRows_CompleteProjection(t *testing.T) {
 }
 
 func TestOrgEntitlementRows_BooleanFieldProvenance(t *testing.T) {
-	booleanEntitlements := []string{"Trialing", "Profiles", "File I/O", "Browser replays", "Browser extensions", "Browser pools", "Managed auth", "Credentials", "Credential providers", "Managed proxies", "Custom proxies", "Proxy bypass hosts", "GPU"}
 	tests := []struct {
 		entitlement string
 		set         func(*kernel.OrgEntitlements)
@@ -140,12 +139,12 @@ func TestOrgEntitlementRows_BooleanFieldProvenance(t *testing.T) {
 				values[row[1]] = row[2]
 			}
 
-			for _, entitlement := range booleanEntitlements {
+			for _, candidate := range tests {
 				expected := "false"
-				if entitlement == tt.entitlement {
+				if candidate.entitlement == tt.entitlement {
 					expected = "true"
 				}
-				assert.Equal(t, expected, values[entitlement], entitlement)
+				assert.Equal(t, expected, values[candidate.entitlement], candidate.entitlement)
 			}
 		})
 	}
