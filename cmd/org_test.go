@@ -109,6 +109,48 @@ func TestOrgEntitlementRows_CompleteProjection(t *testing.T) {
 	}, orgEntitlementRows(&entitlements))
 }
 
+func TestOrgEntitlementRows_BooleanFieldProvenance(t *testing.T) {
+	booleanEntitlements := []string{"Trialing", "Profiles", "File I/O", "Browser replays", "Browser extensions", "Browser pools", "Managed auth", "Credentials", "Credential providers", "Managed proxies", "Custom proxies", "Proxy bypass hosts", "GPU"}
+	tests := []struct {
+		entitlement string
+		set         func(*kernel.OrgEntitlements)
+	}{
+		{"Trialing", func(e *kernel.OrgEntitlements) { e.Plan.IsTrialing = true }},
+		{"Profiles", func(e *kernel.OrgEntitlements) { e.Features.Profiles.Enabled = true }},
+		{"File I/O", func(e *kernel.OrgEntitlements) { e.Features.FileIo.Enabled = true }},
+		{"Browser replays", func(e *kernel.OrgEntitlements) { e.Features.BrowserReplays.Enabled = true }},
+		{"Browser extensions", func(e *kernel.OrgEntitlements) { e.Features.BrowserExtensions.Enabled = true }},
+		{"Browser pools", func(e *kernel.OrgEntitlements) { e.Features.BrowserPools.Enabled = true }},
+		{"Managed auth", func(e *kernel.OrgEntitlements) { e.Features.ManagedAuth.Enabled = true }},
+		{"Credentials", func(e *kernel.OrgEntitlements) { e.Features.Credentials.Enabled = true }},
+		{"Credential providers", func(e *kernel.OrgEntitlements) { e.Features.CredentialProviders.Enabled = true }},
+		{"Managed proxies", func(e *kernel.OrgEntitlements) { e.Features.ManagedProxies.Enabled = true }},
+		{"Custom proxies", func(e *kernel.OrgEntitlements) { e.Features.CustomProxies.Enabled = true }},
+		{"Proxy bypass hosts", func(e *kernel.OrgEntitlements) { e.Features.ProxyBypassHosts.Enabled = true }},
+		{"GPU", func(e *kernel.OrgEntitlements) { e.Features.GPU.Enabled = true }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.entitlement, func(t *testing.T) {
+			var entitlements kernel.OrgEntitlements
+			tt.set(&entitlements)
+			rows := orgEntitlementRows(&entitlements)
+			values := make(map[string]string, len(rows))
+			for _, row := range rows {
+				values[row[1]] = row[2]
+			}
+
+			for _, entitlement := range booleanEntitlements {
+				expected := "false"
+				if entitlement == tt.entitlement {
+					expected = "true"
+				}
+				assert.Equal(t, expected, values[entitlement], entitlement)
+			}
+		})
+	}
+}
+
 func TestOrgEntitlementRows_NullableFieldStates(t *testing.T) {
 	populatedTrialEnd, err := time.Parse(time.RFC3339, "2031-02-03T04:05:06Z")
 	assert.NoError(t, err)
