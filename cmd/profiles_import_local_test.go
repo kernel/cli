@@ -355,10 +355,22 @@ func TestManagedAuthSearchOptionsExcludeWebsitesAlreadySearched(t *testing.T) {
 		{Domain: "github.com", Visits: 10},
 	}, []string{"google.com"})
 
-	require.Len(t, options, 2)
-	assert.Equal(t, backOption, options[0])
-	assert.Contains(t, options[1], "github.com")
-	assert.Equal(t, "github.com", domains[options[1]])
+	require.Len(t, options, 1)
+	assert.Contains(t, options[0], "github.com")
+	assert.Equal(t, "github.com", domains[options[0]])
+}
+
+func TestFilterManagedAuthSearchOptionsSupportsMultipleTerms(t *testing.T) {
+	options, domains := managedAuthSearchOptions([]localbrowser.Site{
+		{Domain: "dashboard-git-browser-import.example", Visits: 9},
+		{Domain: "github.com", Visits: 10},
+		{Domain: "example.com", Visits: 20},
+	}, nil)
+
+	filtered := filterManagedAuthSearchOptions(options, domains, "git browser")
+	require.Len(t, filtered, 1)
+	assert.Equal(t, "dashboard-git-browser-import.example", domains[filtered[0]])
+	assert.Empty(t, filterManagedAuthSearchOptions(options, domains, "missing"))
 }
 
 func TestEffectiveStorageImportSummaryUsesAppliedCounts(t *testing.T) {

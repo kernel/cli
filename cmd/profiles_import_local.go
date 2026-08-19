@@ -1045,47 +1045,64 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthWebsites(
 			return selectedSites, filtered, nil
 		}
 		options, domains := managedAuthSearchOptions(availableSites, searchedSites)
-		if len(options) == 1 {
+		if len(options) == 0 {
 			pterm.Info.Println("Every browser website has already been searched")
 			continue
 		}
-		chosen, err := c.prompter.Select("Managed Auth website", "select a website", "Find another website — type to search, Enter adds, Back returns", options)
+		query, err := c.prompter.TextInput("browser website search", "type a website domain", "Search browser websites (leave blank to go back)")
 		if err != nil {
 			return nil, nil, err
 		}
-		if chosen == backOption {
+		if strings.TrimSpace(query) == "" {
 			continue
 		}
-		domain := domains[chosen]
-		searchedSites = append(searchedSites, domain)
-		matches := make([]sourcedPasswordManagerCandidate, 0)
-		for _, provider := range providers {
-			candidates, err := discoverProviderCandidates(ctx, provider, []string{domain}, false, humanOutput)
-			if err != nil {
-				return nil, nil, err
-			}
-			for _, candidate := range candidates {
-				matches = append(matches, sourcedPasswordManagerCandidate{provider: provider, candidate: candidate})
-			}
-		}
-		if len(matches) == 0 {
-			pterm.Info.Printf("No password-manager login matched %s\n", domain)
+		options = filterManagedAuthSearchOptions(options, domains, query)
+		if len(options) == 0 {
+			pterm.Info.Printf("No browser website matched %q\n", strings.TrimSpace(query))
 			continue
 		}
-		candidateRecords := make([]passwordmanager.Candidate, 0, len(matches))
-		for _, match := range matches {
-			candidateRecords = append(candidateRecords, match.candidate)
-		}
-		domainExisting, err := c.provisioner.Existing(ctx, profileName, candidateRecords)
+		selected, err := c.prompter.MultiSelect(
+			"Managed Auth websites",
+			"select websites",
+			"Choose websites to add\nSpace toggles websites · Enter continues",
+			options,
+			nil,
+		)
 		if err != nil {
-			return nil, nil, fmt.Errorf("check existing Managed Auth connection for %s: %w", domain, err)
+			return nil, nil, err
 		}
-		for key, value := range domainExisting {
-			existing[key] = value
-		}
-		candidates = append(candidates, matches...)
-		if domainHasExistingManagedAuth(domain, candidates, existing) || capacity.unlimited || managedAuthNewWebsiteCount(selectedSites, candidates, existing) < availableConnections {
-			selectedSites = append(selectedSites, domain)
+		for _, chosen := range selected {
+			domain := domains[chosen]
+			searchedSites = append(searchedSites, domain)
+			matches := make([]sourcedPasswordManagerCandidate, 0)
+			for _, provider := range providers {
+				discovered, err := discoverProviderCandidates(ctx, provider, []string{domain}, false, humanOutput)
+				if err != nil {
+					return nil, nil, err
+				}
+				for _, candidate := range discovered {
+					matches = append(matches, sourcedPasswordManagerCandidate{provider: provider, candidate: candidate})
+				}
+			}
+			if len(matches) == 0 {
+				pterm.Info.Printf("No password-manager login matched %s\n", domain)
+				continue
+			}
+			candidateRecords := make([]passwordmanager.Candidate, 0, len(matches))
+			for _, match := range matches {
+				candidateRecords = append(candidateRecords, match.candidate)
+			}
+			domainExisting, err := c.provisioner.Existing(ctx, profileName, candidateRecords)
+			if err != nil {
+				return nil, nil, fmt.Errorf("check existing Managed Auth connection for %s: %w", domain, err)
+			}
+			for key, value := range domainExisting {
+				existing[key] = value
+			}
+			candidates = append(candidates, matches...)
+			if domainHasExistingManagedAuth(domain, candidates, existing) || capacity.unlimited || managedAuthNewWebsiteCount(selectedSites, candidates, existing) < availableConnections {
+				selectedSites = append(selectedSites, domain)
+			}
 		}
 	}
 }
@@ -1171,7 +1188,7 @@ func managedAuthSearchOptions(available []localbrowser.Site, selected []string) 
 	for _, domain := range selected {
 		selectedSet[domain] = struct{}{}
 	}
-	options := []string{backOption}
+	options := make([]string, 0, len(available))
 	byOption := make(map[string]string, len(available))
 	for index, site := range available {
 		if _, exists := selectedSet[site.Domain]; exists {
@@ -1183,6 +1200,25 @@ func managedAuthSearchOptions(available []localbrowser.Site, selected []string) 
 		byOption[label] = site.Domain
 	}
 	return options, byOption
+}
+
+func filterManagedAuthSearchOptions(options []string, domains map[string]string, query string) []string {
+	terms := strings.Fields(strings.ToLower(strings.TrimSpace(query)))
+	filtered := make([]string, 0, len(options))
+	for _, option := range options {
+		domain := strings.ToLower(domains[option])
+		matches := true
+		for _, term := range terms {
+			if !strings.Contains(domain, term) {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			filtered = append(filtered, option)
+		}
+	}
+	return filtered
 }
 
 func previousAmbiguousDomainIndex(domains []string, candidates map[string][]sourcedPasswordManagerCandidate, current int) int {
