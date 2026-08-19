@@ -1061,10 +1061,18 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthSites(sites []string, available
 
 func managedAuthSitePrompt(sites []string, capacity managedAuthCapacity, capacityKnown bool) (string, []string) {
 	defaults := sites
-	prompt := "Choose recent websites to find Managed Auth logins"
-	if capacityKnown && !capacity.unlimited {
-		prompt = fmt.Sprintf("Choose recent websites to find Managed Auth logins (%d of %d connections used · %d available)", capacity.used, capacity.maximum, capacity.remaining)
+	const searchPrompt = `Choose websites to search for matching logins
+Searching does not use a connection slot.`
+	if !capacityKnown {
+		return "Managed Auth capacity will be checked before connections are created\n\n" + searchPrompt, defaults
 	}
+	if capacity.unlimited {
+		return fmt.Sprintf("Managed Auth capacity: unlimited · %d connections currently used\n\n%s", capacity.used, searchPrompt), defaults
+	}
+	prompt := fmt.Sprintf(`Managed Auth capacity: %d of %d used · %d new connections available
+
+Choose websites to search for matching logins
+Searching does not use a connection slot. You can create up to %d new connections.`, capacity.used, capacity.maximum, capacity.remaining, capacity.remaining)
 	return prompt, defaults
 }
 

@@ -313,15 +313,26 @@ func TestManagedAuthWebsiteDiscoveryDefaultsStaySelectedAtLimitedCapacity(t *tes
 	sites := []string{"one.com", "two.com", "three.com"}
 	prompt, defaults := managedAuthSitePrompt(sites, managedAuthCapacity{maximum: 5, used: 3, remaining: 2}, true)
 
-	assert.Contains(t, prompt, "3 of 5 connections used · 2 available")
+	assert.Equal(t, `Managed Auth capacity: 3 of 5 used · 2 new connections available
+
+Choose websites to search for matching logins
+Searching does not use a connection slot. You can create up to 2 new connections.`, prompt)
 	assert.Equal(t, sites, defaults)
 }
 
 func TestManagedAuthWebsiteDefaultsStayOpenWhenCapacityIsUnknownOrUnlimited(t *testing.T) {
 	sites := []string{"one.com", "two.com", "three.com"}
-	_, unknownDefaults := managedAuthSitePrompt(sites, managedAuthCapacity{}, false)
-	_, unlimitedDefaults := managedAuthSitePrompt(sites, managedAuthCapacity{unlimited: true}, true)
+	unknownPrompt, unknownDefaults := managedAuthSitePrompt(sites, managedAuthCapacity{}, false)
+	unlimitedPrompt, unlimitedDefaults := managedAuthSitePrompt(sites, managedAuthCapacity{used: 7, unlimited: true}, true)
 
+	assert.Equal(t, `Managed Auth capacity will be checked before connections are created
+
+Choose websites to search for matching logins
+Searching does not use a connection slot.`, unknownPrompt)
+	assert.Equal(t, `Managed Auth capacity: unlimited · 7 connections currently used
+
+Choose websites to search for matching logins
+Searching does not use a connection slot.`, unlimitedPrompt)
 	assert.Equal(t, sites, unknownDefaults)
 	assert.Equal(t, sites, unlimitedDefaults)
 }
