@@ -1084,27 +1084,41 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthWebsites(
 			pterm.Info.Println("Every browser website has already been searched")
 			continue
 		}
-		query, err := c.prompter.TextInput("browser website search", "type a website domain", "Search browser websites (leave blank to go back)")
-		if err != nil {
-			return nil, nil, err
-		}
-		if strings.TrimSpace(query) == "" {
-			continue
-		}
-		options = filterManagedAuthSearchOptions(options, domains, query)
-		if len(options) == 0 {
-			pterm.Info.Printf("No browser website matched %q\n", strings.TrimSpace(query))
-			continue
-		}
+		browseOptions := managedAuthBrowseOptions(options)
 		selected, err := c.prompter.MultiSelect(
 			"Managed Auth websites",
 			"select websites",
-			"Choose websites to add\nSpace toggles websites · Enter continues",
-			options,
+			"Choose browser websites to add\nScroll with ↑/↓ · Space toggles websites · Enter continues",
+			browseOptions,
 			nil,
 		)
 		if err != nil {
 			return nil, nil, err
+		}
+		selected, searchRequested := managedAuthBrowseSelection(selected)
+		if searchRequested {
+			query, err := c.prompter.TextInput("browser website search", "type a website domain", "Search browser websites (leave blank to go back)")
+			if err != nil {
+				return nil, nil, err
+			}
+			if strings.TrimSpace(query) != "" {
+				filtered := filterManagedAuthSearchOptions(options, domains, query)
+				if len(filtered) == 0 {
+					pterm.Info.Printf("No browser website matched %q\n", strings.TrimSpace(query))
+				} else {
+					searched, err := c.prompter.MultiSelect(
+						"Managed Auth websites",
+						"select websites",
+						"Choose matching websites to add\nSpace toggles websites · Enter continues",
+						filtered,
+						nil,
+					)
+					if err != nil {
+						return nil, nil, err
+					}
+					selected = append(selected, searched...)
+				}
+			}
 		}
 		for _, chosen := range selected {
 			domain := domains[chosen]
@@ -1140,6 +1154,30 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthWebsites(
 			}
 		}
 	}
+}
+
+const searchManagedAuthWebsites = "+ Search websites"
+
+func managedAuthBrowseOptions(options []string) []string {
+	return append(append([]string(nil), options...), searchManagedAuthWebsites)
+}
+
+func managedAuthBrowseSelection(selected []string) ([]string, bool) {
+	websites := make([]string, 0, len(selected))
+	seen := make(map[string]struct{}, len(selected))
+	searchRequested := false
+	for _, label := range selected {
+		if label == searchManagedAuthWebsites {
+			searchRequested = true
+			continue
+		}
+		if _, exists := seen[label]; exists {
+			continue
+		}
+		seen[label] = struct{}{}
+		websites = append(websites, label)
+	}
+	return websites, searchRequested
 }
 
 func managedAuthMatchedSites(sites []string, candidates []sourcedPasswordManagerCandidate) []string {

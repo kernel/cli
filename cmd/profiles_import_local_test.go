@@ -391,6 +391,31 @@ func TestFilterManagedAuthSearchOptionsSupportsMultipleTerms(t *testing.T) {
 	assert.Empty(t, filterManagedAuthSearchOptions(options, domains, "missing"))
 }
 
+func TestManagedAuthBrowseOptionsKeepScrollableSitesAndOptionalSearch(t *testing.T) {
+	options := []string{"1  reddit.com  149 visits", "2  openai.com  99 visits"}
+
+	browseOptions := managedAuthBrowseOptions(options)
+
+	assert.Equal(t, []string{
+		"1  reddit.com  149 visits",
+		"2  openai.com  99 visits",
+		searchManagedAuthWebsites,
+	}, browseOptions)
+	assert.Equal(t, []string{"1  reddit.com  149 visits", "2  openai.com  99 visits"}, options)
+}
+
+func TestManagedAuthBrowseSelectionSeparatesSearchAction(t *testing.T) {
+	selected, searchRequested := managedAuthBrowseSelection([]string{
+		"1  reddit.com  149 visits",
+		searchManagedAuthWebsites,
+		"2  openai.com  99 visits",
+		"1  reddit.com  149 visits",
+	})
+
+	assert.True(t, searchRequested)
+	assert.Equal(t, []string{"1  reddit.com  149 visits", "2  openai.com  99 visits"}, selected)
+}
+
 func TestEffectiveStorageImportSummaryUsesAppliedCounts(t *testing.T) {
 	importedOrigins, importedEntries := 4, 8
 	skippedOrigins, skippedEntries := 2, 3
