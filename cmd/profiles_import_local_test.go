@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
@@ -309,54 +308,31 @@ func TestManagedAuthUsesExplicitCookieSitesWithoutHistoryRanking(t *testing.T) {
 	assert.Equal(t, selected, rankedManagedAuthSites([]localbrowser.Site{{Domain: "github.com"}, {Domain: "google.com"}}, selected, 10))
 }
 
-func TestManagedAuthWebsiteDiscoveryDefaultsStaySelectedAtLimitedCapacity(t *testing.T) {
-	sites := []string{"one.com", "two.com", "three.com"}
-	prompt, defaults := managedAuthSitePrompt(sites, managedAuthCapacity{maximum: 5, used: 3, remaining: 2}, true)
+func TestManagedAuthAccountHeaderExplainsConnectionCapacity(t *testing.T) {
+	assert.Equal(t, `Managed Auth
+3 of 5 connections used · 2 new connections available
 
-	assert.Equal(t, `Managed Auth capacity: 3 of 5 used · 2 new connections available
+Choose accounts to make available to agents:`, managedAuthAccountHeader(managedAuthCapacity{maximum: 5, used: 3, remaining: 2}, true))
+	assert.Equal(t, `Managed Auth
+Unlimited connections · 7 currently used
 
-Choose websites to search for matching logins
-Searching does not use a connection slot. You can create up to 2 new connections.`, prompt)
-	assert.Equal(t, sites, defaults)
+Choose accounts to make available to agents:`, managedAuthAccountHeader(managedAuthCapacity{used: 7, unlimited: true}, true))
+	assert.Equal(t, `Managed Auth
+Connection capacity will be checked before creating new connections
+
+Choose accounts to make available to agents:`, managedAuthAccountHeader(managedAuthCapacity{}, false))
 }
 
-func TestManagedAuthWebsiteDefaultsStayOpenWhenCapacityIsUnknownOrUnlimited(t *testing.T) {
-	sites := []string{"one.com", "two.com", "three.com"}
-	unknownPrompt, unknownDefaults := managedAuthSitePrompt(sites, managedAuthCapacity{}, false)
-	unlimitedPrompt, unlimitedDefaults := managedAuthSitePrompt(sites, managedAuthCapacity{used: 7, unlimited: true}, true)
-
-	assert.Equal(t, `Managed Auth capacity will be checked before connections are created
-
-Choose websites to search for matching logins
-Searching does not use a connection slot.`, unknownPrompt)
-	assert.Equal(t, `Managed Auth capacity: unlimited · 7 connections currently used
-
-Choose websites to search for matching logins
-Searching does not use a connection slot.`, unlimitedPrompt)
-	assert.Equal(t, sites, unknownDefaults)
-	assert.Equal(t, sites, unlimitedDefaults)
-}
-
-func TestManagedAuthRecommendationOptionsShowRecentUse(t *testing.T) {
-	options, domains := managedAuthRecommendationOptions(
-		[]string{"github.com", "example.com"},
-		[]localbrowser.Site{{Domain: "github.com", Visits: 1475}},
-	)
+func TestManagedAuthSearchOptionsExcludeWebsitesAlreadySearched(t *testing.T) {
+	options, domains := managedAuthSearchOptions([]localbrowser.Site{
+		{Domain: "google.com", Visits: 20},
+		{Domain: "github.com", Visits: 10},
+	}, []string{"google.com"})
 
 	require.Len(t, options, 2)
-	assert.Contains(t, options[0], "github.com")
-	assert.Contains(t, options[0], "1475 visits")
-	assert.Equal(t, "github.com", domains[options[0]])
-	assert.NotContains(t, options[1], "visits")
-}
-
-func TestManagedAuthRecommendationOptionsAlignColumns(t *testing.T) {
-	first := managedAuthSiteOption(0, "google.com", localbrowser.Site{Visits: 2014})
-	last := managedAuthSiteOption(9, "office.com", localbrowser.Site{Visits: 364})
-
-	assert.Equal(t, 50, ansi.StringWidth(first))
-	assert.Equal(t, ansi.StringWidth(first), ansi.StringWidth(last))
-	assert.Equal(t, strings.Index(first, "2014")+len("2014"), strings.Index(last, "364")+len("364"))
+	assert.Equal(t, backOption, options[0])
+	assert.Contains(t, options[1], "github.com")
+	assert.Equal(t, "github.com", domains[options[1]])
 }
 
 func TestEffectiveStorageImportSummaryUsesAppliedCounts(t *testing.T) {
@@ -377,19 +353,6 @@ func TestEffectiveStorageImportSummaryFallsBackForOlderAPI(t *testing.T) {
 	summary := effectiveStorageImportSummary(localbrowser.AppliedProfile{}, 11, 6)
 
 	require.Equal(t, storageImportSummary{importedOrigins: 6, importedEntries: 11}, summary)
-}
-
-func TestManagedAuthSearchOptionsExcludeSelectedWebsites(t *testing.T) {
-	options, domains := managedAuthSearchOptions([]localbrowser.Site{
-		{Domain: "google.com", Visits: 20},
-		{Domain: "github.com", Visits: 10},
-	}, []string{"google.com"})
-
-	require.Len(t, options, 2)
-	assert.Equal(t, backOption, options[0])
-	assert.NotContains(t, domains, backOption)
-	assert.Contains(t, options[1], "github.com")
-	assert.Equal(t, "github.com", domains[options[1]])
 }
 
 func TestSelectedSiteMetadataPreservesRankAndExplicitSites(t *testing.T) {

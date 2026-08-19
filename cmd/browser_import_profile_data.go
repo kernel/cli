@@ -236,7 +236,7 @@ func warnUnavailableBrowserData(category string, err error) {
 	}
 }
 
-func (c ProfilesImportLocalCmd) confirmBrowserImport(targetName string, cookies cookieImportSelection, cookieSites []localbrowser.Site, profileData localProfileDataSelection, logins pendingManagedAuth) (bool, error) {
+func (c ProfilesImportLocalCmd) confirmBrowserImport(targetName string, cookies cookieImportSelection, cookieSites []localbrowser.Site, profileData localProfileDataSelection) (bool, error) {
 	pterm.Println()
 	pterm.Printf("Ready to import into profile %q\n\n", targetName)
 	if cookies.all {
@@ -252,13 +252,6 @@ func (c ProfilesImportLocalCmd) confirmBrowserImport(targetName string, cookies 
 	}
 	if profileData.storage {
 		pterm.Printf("  Local storage — %s across %d origins\n", formatBinaryBytes(profileData.storageBytes), len(profileData.storageSites))
-	}
-	loginCount := 0
-	for _, provider := range logins.providers {
-		loginCount += len(provider.candidates)
-	}
-	if loginCount > 0 {
-		pterm.Printf("  Managed Auth connections — %d\n", loginCount)
 	}
 	pterm.Println()
 	return c.prompter.ConfirmDefault("import browser data", "Proceed?", true)
