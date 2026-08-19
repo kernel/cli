@@ -2,18 +2,254 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
+	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/respjson"
+	"github.com/pterm/pterm"
 	"github.com/stretchr/testify/assert"
 )
 
 type FakeOrgLimitsService struct {
 	GetFunc    func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgLimits, error)
 	UpdateFunc func(ctx context.Context, body kernel.OrganizationLimitUpdateParams, opts ...option.RequestOption) (*kernel.OrgLimits, error)
+}
+
+type FakeOrgEntitlementsService struct {
+	GetFunc func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgEntitlements, error)
+}
+
+func (f *FakeOrgEntitlementsService) Get(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgEntitlements, error) {
+	if f.GetFunc != nil {
+		return f.GetFunc(ctx, opts...)
+	}
+	return nil, nil
+}
+
+func testOrgEntitlementsWithUnlimitedValues(t *testing.T) *kernel.OrgEntitlements {
+	t.Helper()
+	var entitlements kernel.OrgEntitlements
+	err := json.Unmarshal([]byte(`{
+		"plan":{"id":"FREE","effective_id":"START_UP","status":null,"is_trialing":true,"trial_ends_at":null},
+		"features":{
+			"profiles":{"enabled":true},
+			"file_io":{"enabled":true},
+			"browser_replays":{"enabled":true,"retention_days":30},
+			"browser_extensions":{"enabled":true,"max_stored_per_org":null},
+			"browser_pools":{"enabled":true},
+			"managed_auth":{"enabled":true,"max_connections":null,"health_check_interval_min_seconds":1200,"health_check_interval_default_seconds":3600,"health_check_interval_max_seconds":86400},
+			"credentials":{"enabled":true},
+			"credential_providers":{"enabled":true},
+			"managed_proxies":{"enabled":true},
+			"custom_proxies":{"enabled":true},
+			"proxy_bypass_hosts":{"enabled":true},
+			"gpu":{"enabled":false}
+		},
+		"limits":{"max_concurrent_browsers":150,"max_concurrent_invocations":150,"default_max_concurrent_invocations_per_app":20}
+	}`), &entitlements)
+	assert.NoError(t, err)
+	return &entitlements
+}
+
+func TestOrgEntitlementRows_CompleteProjection(t *testing.T) {
+	var entitlements kernel.OrgEntitlements
+	err := json.Unmarshal([]byte(`{
+		"plan":{"id":"HOBBYIST","effective_id":"START_UP","status":"ACTIVE","is_trialing":true,"trial_ends_at":"2030-01-02T03:04:05Z"},
+		"features":{
+			"profiles":{"enabled":true},
+			"file_io":{"enabled":false},
+			"browser_replays":{"enabled":true,"retention_days":17},
+			"browser_extensions":{"enabled":false,"max_stored_per_org":23},
+			"browser_pools":{"enabled":true},
+			"managed_auth":{"enabled":false,"max_connections":29,"health_check_interval_min_seconds":31,"health_check_interval_default_seconds":37,"health_check_interval_max_seconds":41},
+			"credentials":{"enabled":true},
+			"credential_providers":{"enabled":false},
+			"managed_proxies":{"enabled":true},
+			"custom_proxies":{"enabled":false},
+			"proxy_bypass_hosts":{"enabled":true},
+			"gpu":{"enabled":false}
+		},
+		"limits":{"max_concurrent_browsers":43,"max_concurrent_invocations":47,"default_max_concurrent_invocations_per_app":53}
+	}`), &entitlements)
+	assert.NoError(t, err)
+
+	assert.Equal(t, pterm.TableData{
+		{"Category", "Entitlement", "Value"},
+		{"Plan", "Contractual plan", "HOBBYIST"},
+		{"Plan", "Effective plan", "START_UP"},
+		{"Plan", "Status", "ACTIVE"},
+		{"Plan", "Trialing", "true"},
+		{"Plan", "Trial ends at", util.FormatLocal(entitlements.Plan.TrialEndsAt)},
+		{"Feature", "Profiles", "true"},
+		{"Feature", "File I/O", "false"},
+		{"Feature", "Browser replays", "true"},
+		{"Feature", "Browser replay retention (days)", "17"},
+		{"Feature", "Browser extensions", "false"},
+		{"Feature", "Max stored extensions", "23"},
+		{"Feature", "Browser pools", "true"},
+		{"Feature", "Managed auth", "false"},
+		{"Feature", "Max managed auth connections", "29"},
+		{"Feature", "Health check minimum (seconds)", "31"},
+		{"Feature", "Health check default (seconds)", "37"},
+		{"Feature", "Health check maximum (seconds)", "41"},
+		{"Feature", "Credentials", "true"},
+		{"Feature", "Credential providers", "false"},
+		{"Feature", "Managed proxies", "true"},
+		{"Feature", "Custom proxies", "false"},
+		{"Feature", "Proxy bypass hosts", "true"},
+		{"Feature", "GPU", "false"},
+		{"Limit", "Max concurrent browsers", "43"},
+		{"Limit", "Max concurrent invocations", "47"},
+		{"Limit", "Default max concurrent invocations per app", "53"},
+	}, orgEntitlementRows(&entitlements))
+}
+
+func TestOrgEntitlementRows_BooleanFieldProvenance(t *testing.T) {
+	tests := []struct {
+		entitlement string
+		set         func(*kernel.OrgEntitlements)
+	}{
+		{"Trialing", func(e *kernel.OrgEntitlements) { e.Plan.IsTrialing = true }},
+		{"Profiles", func(e *kernel.OrgEntitlements) { e.Features.Profiles.Enabled = true }},
+		{"File I/O", func(e *kernel.OrgEntitlements) { e.Features.FileIo.Enabled = true }},
+		{"Browser replays", func(e *kernel.OrgEntitlements) { e.Features.BrowserReplays.Enabled = true }},
+		{"Browser extensions", func(e *kernel.OrgEntitlements) { e.Features.BrowserExtensions.Enabled = true }},
+		{"Browser pools", func(e *kernel.OrgEntitlements) { e.Features.BrowserPools.Enabled = true }},
+		{"Managed auth", func(e *kernel.OrgEntitlements) { e.Features.ManagedAuth.Enabled = true }},
+		{"Credentials", func(e *kernel.OrgEntitlements) { e.Features.Credentials.Enabled = true }},
+		{"Credential providers", func(e *kernel.OrgEntitlements) { e.Features.CredentialProviders.Enabled = true }},
+		{"Managed proxies", func(e *kernel.OrgEntitlements) { e.Features.ManagedProxies.Enabled = true }},
+		{"Custom proxies", func(e *kernel.OrgEntitlements) { e.Features.CustomProxies.Enabled = true }},
+		{"Proxy bypass hosts", func(e *kernel.OrgEntitlements) { e.Features.ProxyBypassHosts.Enabled = true }},
+		{"GPU", func(e *kernel.OrgEntitlements) { e.Features.GPU.Enabled = true }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.entitlement, func(t *testing.T) {
+			var entitlements kernel.OrgEntitlements
+			tt.set(&entitlements)
+			rows := orgEntitlementRows(&entitlements)
+			values := make(map[string]string, len(rows))
+			for _, row := range rows {
+				values[row[1]] = row[2]
+			}
+
+			for _, candidate := range tests {
+				expected := "false"
+				if candidate.entitlement == tt.entitlement {
+					expected = "true"
+				}
+				assert.Equal(t, expected, values[candidate.entitlement], candidate.entitlement)
+			}
+		})
+	}
+}
+
+func TestOrgEntitlementRows_NullableFieldStates(t *testing.T) {
+	populatedTrialEnd, err := time.Parse(time.RFC3339, "2031-02-03T04:05:06Z")
+	assert.NoError(t, err)
+
+	tests := []struct {
+		name                 string
+		payload              string
+		expectedStatus       string
+		expectedTrialEnd     string
+		expectedMaxStored    string
+		expectedMaxAuthConns string
+	}{
+		{
+			name:                 "populated",
+			payload:              `{"plan":{"status":"ACTIVE","trial_ends_at":"2031-02-03T04:05:06Z"},"features":{"browser_extensions":{"max_stored_per_org":11},"managed_auth":{"max_connections":13}}}`,
+			expectedStatus:       "ACTIVE",
+			expectedTrialEnd:     util.FormatLocal(populatedTrialEnd),
+			expectedMaxStored:    "11",
+			expectedMaxAuthConns: "13",
+		},
+		{
+			name:                 "explicit null",
+			payload:              `{"plan":{"status":null,"trial_ends_at":null},"features":{"browser_extensions":{"max_stored_per_org":null},"managed_auth":{"max_connections":null}}}`,
+			expectedStatus:       "none",
+			expectedTrialEnd:     "none",
+			expectedMaxStored:    "unlimited",
+			expectedMaxAuthConns: "unlimited",
+		},
+		{
+			name:                 "omitted",
+			payload:              `{"plan":{},"features":{"browser_extensions":{},"managed_auth":{}}}`,
+			expectedStatus:       "unknown",
+			expectedTrialEnd:     "unknown",
+			expectedMaxStored:    "unknown",
+			expectedMaxAuthConns: "unknown",
+		},
+		{
+			name:                 "malformed",
+			payload:              `{"plan":{"status":7,"trial_ends_at":"not-a-date"},"features":{"browser_extensions":{"max_stored_per_org":"many"},"managed_auth":{"max_connections":"many"}}}`,
+			expectedStatus:       "unknown",
+			expectedTrialEnd:     "unknown",
+			expectedMaxStored:    "unknown",
+			expectedMaxAuthConns: "unknown",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var entitlements kernel.OrgEntitlements
+			assert.NoError(t, json.Unmarshal([]byte(tt.payload), &entitlements))
+
+			rows := orgEntitlementRows(&entitlements)
+			assert.Equal(t, pterm.TableData{
+				{"Plan", "Status", tt.expectedStatus},
+				{"Plan", "Trial ends at", tt.expectedTrialEnd},
+				{"Feature", "Max stored extensions", tt.expectedMaxStored},
+				{"Feature", "Max managed auth connections", tt.expectedMaxAuthConns},
+			}, pterm.TableData{rows[3], rows[5], rows[11], rows[14]})
+		})
+	}
+}
+
+func TestOrgEntitlements_RendersTrialEndInLocalTime(t *testing.T) {
+	var entitlements kernel.OrgEntitlements
+	err := json.Unmarshal([]byte(`{
+		"plan":{"id":"FREE","effective_id":"START_UP","status":"ACTIVE","is_trialing":true,"trial_ends_at":"2030-01-02T03:04:05Z"},
+		"features":{},
+		"limits":{}
+	}`), &entitlements)
+	assert.NoError(t, err)
+
+	buf := capturePtermOutput(t)
+	renderOrgEntitlements(&entitlements)
+
+	assert.Contains(t, buf.String(), util.FormatLocal(entitlements.Plan.TrialEndsAt))
+}
+
+func TestOrgEntitlements_JSONPreservesNullUnlimitedValues(t *testing.T) {
+	c := OrgCmd{entitlements: &FakeOrgEntitlementsService{
+		GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgEntitlements, error) {
+			return testOrgEntitlementsWithUnlimitedValues(t), nil
+		},
+	}}
+
+	out := captureStdout(t, func() {
+		assert.NoError(t, c.Entitlements(context.Background(), OrgEntitlementsInput{Output: "json"}))
+	})
+	assert.Contains(t, out, `"max_stored_per_org": null`)
+	assert.Contains(t, out, `"max_connections": null`)
+}
+
+func TestOrgEntitlements_SurfacesAPIError(t *testing.T) {
+	capturePtermOutput(t)
+	c := OrgCmd{entitlements: &FakeOrgEntitlementsService{
+		GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgEntitlements, error) {
+			return nil, errors.New("boom")
+		},
+	}}
+
+	assert.Error(t, c.Entitlements(context.Background(), OrgEntitlementsInput{}))
 }
 
 func (f *FakeOrgLimitsService) Get(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgLimits, error) {
