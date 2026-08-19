@@ -147,6 +147,9 @@ func TestAuthConnectionsGet_PrintsCanonicalInputMetadata(t *testing.T) {
 				Status:     kernel.ManagedAuthStatusNeedsAuth,
 				FlowStatus: kernel.ManagedAuthFlowStatusInProgress,
 				FlowStep:   kernel.ManagedAuthFlowStepAwaitingInput,
+				// Canonical fields and choices always arrive with the interaction
+				// they belong to, which `submit` needs.
+				InteractionID: "mai_abc123xyz",
 				Fields: []kernel.ManagedAuthField{
 					{
 						ID:       "otp",
@@ -182,6 +185,7 @@ func TestAuthConnectionsGet_PrintsCanonicalInputMetadata(t *testing.T) {
 	require.NoError(t, c.Get(context.Background(), AuthConnectionGetInput{ID: "e0x3vbw4z66kpwny3k5k46tj"}))
 
 	out := outBuf.String()
+	assert.Contains(t, out, `mai_abc123xyz`)
 	assert.Contains(t, out, `otp (One-time code)`)
 	// The reason tells the user why the field is being asked for: "rejected"
 	// means a stored credential was refused, so a new value has to replace it.
@@ -823,16 +827,24 @@ func TestLogin_TelemetryOverride(t *testing.T) {
 	assert.True(t, captured.Browser.Telemetry.Browser.Screenshot.Enabled.Value)
 }
 
-func TestSubmit_CanonicalChoiceID(t *testing.T) {
-	capturePtermOutput(t)
-	var captured kernel.AuthConnectionSubmitParams
-	fake := &FakeAuthConnectionService{
+// canonicalSubmitFake serves the current interaction ID from `get` and captures
+// what `submit` sends, which is what every canonical submission needs.
+func canonicalSubmitFake(interactionID string, captured *kernel.AuthConnectionSubmitParams) *FakeAuthConnectionService {
+	return &FakeAuthConnectionService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			return &kernel.ManagedAuth{ID: id, InteractionID: interactionID}, nil
+		},
 		SubmitFunc: func(ctx context.Context, id string, body kernel.AuthConnectionSubmitParams, opts ...option.RequestOption) (*kernel.SubmitFieldsResponse, error) {
-			captured = body
+			*captured = body
 			return &kernel.SubmitFieldsResponse{Accepted: true}, nil
 		},
 	}
-	c := AuthConnectionCmd{svc: fake}
+}
+
+func TestSubmit_CanonicalChoiceID(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.AuthConnectionSubmitParams
+	c := AuthConnectionCmd{svc: canonicalSubmitFake("mai_current", &captured)}
 	require.NoError(t, c.Submit(context.Background(), AuthConnectionSubmitInput{
 		ID:               "auth_1",
 		SelectedChoiceID: "choice_sms",
@@ -846,6 +858,53 @@ func TestSubmit_CanonicalChoiceID(t *testing.T) {
 func TestSubmit_CanonicalFieldValues(t *testing.T) {
 	capturePtermOutput(t)
 	var captured kernel.AuthConnectionSubmitParams
+	c := AuthConnectionCmd{svc: canonicalSubmitFake("mai_current", &captured)}
+	require.NoError(t, c.Submit(context.Background(), AuthConnectionSubmitInput{
+		ID:                   "auth_1",
+		CanonicalFieldValues: map[string]string{"field_email": "me@example.com"},
+	}))
+	assert.Equal(t, map[string]string{"field_email": "me@example.com"}, captured.SubmitFieldsRequest.FieldValues)
+	assert.Nil(t, captured.SubmitFieldsRequest.Fields)
+}
+
+func TestSubmit_CanonicalResolvesCurrentInteractionID(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.AuthConnectionSubmitParams
+	c := AuthConnectionCmd{svc: canonicalSubmitFake("mai_current", &captured)}
+	require.NoError(t, c.Submit(context.Background(), AuthConnectionSubmitInput{
+		ID:                   "auth_1",
+		CanonicalFieldValues: map[string]string{"field_email": "me@example.com"},
+	}))
+	require.True(t, captured.SubmitFieldsRequest.InteractionID.Valid())
+	assert.Equal(t, "mai_current", captured.SubmitFieldsRequest.InteractionID.Value)
+}
+
+func TestSubmit_ExplicitInteractionIDIsNotOverwritten(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.AuthConnectionSubmitParams
+	fake := canonicalSubmitFake("mai_current", &captured)
+	getCalls := 0
+	inner := fake.GetFunc
+	fake.GetFunc = func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+		getCalls++
+		return inner(ctx, id, opts...)
+	}
+	c := AuthConnectionCmd{svc: fake}
+	require.NoError(t, c.Submit(context.Background(), AuthConnectionSubmitInput{
+		ID:               "auth_1",
+		SelectedChoiceID: "choice_sms",
+		// Pinning an older interaction is how a caller detects that the flow moved
+		// on, so the CLI must forward it untouched.
+		InteractionID: "mai_pinned",
+	}))
+	assert.Equal(t, 0, getCalls)
+	require.True(t, captured.SubmitFieldsRequest.InteractionID.Valid())
+	assert.Equal(t, "mai_pinned", captured.SubmitFieldsRequest.InteractionID.Value)
+}
+
+func TestSubmit_LegacyModeOmitsInteractionID(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.AuthConnectionSubmitParams
 	fake := &FakeAuthConnectionService{
 		SubmitFunc: func(ctx context.Context, id string, body kernel.AuthConnectionSubmitParams, opts ...option.RequestOption) (*kernel.SubmitFieldsResponse, error) {
 			captured = body
@@ -854,11 +913,61 @@ func TestSubmit_CanonicalFieldValues(t *testing.T) {
 	}
 	c := AuthConnectionCmd{svc: fake}
 	require.NoError(t, c.Submit(context.Background(), AuthConnectionSubmitInput{
+		ID:          "auth_1",
+		FieldValues: map[string]string{"username": "me"},
+	}))
+	// The API rejects an interaction ID paired with a legacy submit mode.
+	assert.False(t, captured.SubmitFieldsRequest.InteractionID.Valid())
+}
+
+func TestSubmit_InteractionIDRequiresCanonicalMode(t *testing.T) {
+	capturePtermOutput(t)
+	c := AuthConnectionCmd{svc: &FakeAuthConnectionService{}}
+	err := c.Submit(context.Background(), AuthConnectionSubmitInput{
+		ID:            "auth_1",
+		FieldValues:   map[string]string{"username": "me"},
+		InteractionID: "mai_current",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the --interaction-id flag is only valid with --field-value or --choice-id")
+}
+
+func TestSubmit_CanonicalWithoutPendingInteractionErrors(t *testing.T) {
+	capturePtermOutput(t)
+	submitted := false
+	fake := &FakeAuthConnectionService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			return &kernel.ManagedAuth{ID: id}, nil
+		},
+		SubmitFunc: func(ctx context.Context, id string, body kernel.AuthConnectionSubmitParams, opts ...option.RequestOption) (*kernel.SubmitFieldsResponse, error) {
+			submitted = true
+			return &kernel.SubmitFieldsResponse{Accepted: true}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+	err := c.Submit(context.Background(), AuthConnectionSubmitInput{
+		ID:               "auth_1",
+		SelectedChoiceID: "choice_sms",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no canonical interaction awaiting input")
+	assert.False(t, submitted)
+}
+
+func TestSubmit_CanonicalGetErrorSurfaced(t *testing.T) {
+	capturePtermOutput(t)
+	fake := &FakeAuthConnectionService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			return nil, errors.New("boom")
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+	err := c.Submit(context.Background(), AuthConnectionSubmitInput{
 		ID:                   "auth_1",
 		CanonicalFieldValues: map[string]string{"field_email": "me@example.com"},
-	}))
-	assert.Equal(t, map[string]string{"field_email": "me@example.com"}, captured.SubmitFieldsRequest.FieldValues)
-	assert.Nil(t, captured.SubmitFieldsRequest.Fields)
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "interaction ID resolution")
 }
 
 func TestSubmit_CanonicalAndLegacyAreMutuallyExclusive(t *testing.T) {

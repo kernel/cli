@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
@@ -12,7 +11,6 @@ import (
 	"github.com/kernel/kernel-go-sdk/packages/param"
 	"github.com/kernel/kernel-go-sdk/packages/respjson"
 	"github.com/pterm/pterm"
-	"github.com/samber/lo"
 	"github.com/spf13/cobra"
 )
 
@@ -33,10 +31,6 @@ type OrgCmd struct {
 }
 
 type OrgLimitsGetInput struct {
-	Output string
-}
-
-type OrgEntitlementsGetInput struct {
 	Output string
 }
 
@@ -125,118 +119,6 @@ func (c OrgCmd) LimitsSet(ctx context.Context, in OrgLimitsSetInput) error {
 	pterm.Success.Println("Organization limits updated:")
 	renderOrgLimits(limits)
 	return nil
-}
-
-func (c OrgCmd) EntitlementsGet(ctx context.Context, in OrgEntitlementsGetInput) error {
-	if err := validateJSONOutput(in.Output); err != nil {
-		return err
-	}
-
-	entitlements, err := c.entitlements.Get(ctx)
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-
-	if in.Output == "json" {
-		if entitlements == nil {
-			fmt.Println("null")
-			return nil
-		}
-		return util.PrintPrettyJSON(entitlements)
-	}
-
-	renderOrgEntitlements(entitlements)
-	return nil
-}
-
-func renderOrgEntitlements(ent *kernel.OrgEntitlements) {
-	if ent == nil {
-		pterm.Info.Println("No organization entitlements found")
-		return
-	}
-
-	plan := ent.Plan
-	planRows := pterm.TableData{
-		{"Field", "Value"},
-		{"Plan", plan.ID},
-		// Active trials resolve to a different effective plan than the
-		// contractual one, so show both.
-		{"Effective Plan", plan.EffectiveID},
-		{"Trialing", lo.Ternary(plan.IsTrialing, "yes", "no")},
-		// Billing status and trial end are both nullable.
-		{"Billing Status", formatOrgEntitlementString(plan.Status, plan.JSON.Status)},
-		{"Trial Ends At", formatOrgEntitlementTime(plan.TrialEndsAt, plan.JSON.TrialEndsAt)},
-	}
-	pterm.DefaultSection.Println("Plan")
-	PrintTableNoPad(planRows, true)
-
-	f := ent.Features
-	featureRows := pterm.TableData{
-		{"Feature", "Enabled", "Constraints"},
-		{"Browser Extensions", formatOrgEntitlementEnabled(f.BrowserExtensions.Enabled), fmt.Sprintf("max stored per org: %s", formatProjectLimitValue(f.BrowserExtensions.MaxStoredPerOrg, f.BrowserExtensions.JSON.MaxStoredPerOrg))},
-		{"Browser Pools", formatOrgEntitlementEnabled(f.BrowserPools.Enabled), ""},
-		{"Browser Replays", formatOrgEntitlementEnabled(f.BrowserReplays.Enabled), fmt.Sprintf("retention: %s", formatOrgEntitlementDays(f.BrowserReplays.RetentionDays, f.BrowserReplays.JSON.RetentionDays))},
-		{"Credential Providers", formatOrgEntitlementEnabled(f.CredentialProviders.Enabled), ""},
-		{"Credentials", formatOrgEntitlementEnabled(f.Credentials.Enabled), ""},
-		{"Custom Proxies", formatOrgEntitlementEnabled(f.CustomProxies.Enabled), ""},
-		{"File I/O", formatOrgEntitlementEnabled(f.FileIo.Enabled), ""},
-		{"GPU", formatOrgEntitlementEnabled(f.GPU.Enabled), ""},
-		{"Managed Auth", formatOrgEntitlementEnabled(f.ManagedAuth.Enabled), formatManagedAuthConstraints(f.ManagedAuth)},
-		{"Managed Proxies", formatOrgEntitlementEnabled(f.ManagedProxies.Enabled), ""},
-		{"Profiles", formatOrgEntitlementEnabled(f.Profiles.Enabled), ""},
-		{"Proxy Bypass Hosts", formatOrgEntitlementEnabled(f.ProxyBypassHosts.Enabled), ""},
-	}
-	pterm.DefaultSection.Println("Features")
-	PrintTableNoPad(featureRows, true)
-
-	l := ent.Limits
-	limitRows := pterm.TableData{
-		{"Limit", "Value"},
-		{"Max Concurrent Browsers", formatProjectLimitValue(l.MaxConcurrentBrowsers, l.JSON.MaxConcurrentBrowsers)},
-		{"Max Concurrent Invocations", formatProjectLimitValue(l.MaxConcurrentInvocations, l.JSON.MaxConcurrentInvocations)},
-		{"Default Max Concurrent Invocations Per App", formatProjectLimitValue(l.DefaultMaxConcurrentInvocationsPerApp, l.JSON.DefaultMaxConcurrentInvocationsPerApp)},
-	}
-	pterm.DefaultSection.Println("Limits")
-	PrintTableNoPad(limitRows, true)
-}
-
-func formatOrgEntitlementEnabled(enabled bool) string {
-	return lo.Ternary(enabled, "yes", "no")
-}
-
-// formatManagedAuthConstraints summarizes the managed auth connection cap and the
-// accepted health-check interval window in a single cell.
-func formatManagedAuthConstraints(ma kernel.OrgEntitlementsFeaturesManagedAuth) string {
-	return fmt.Sprintf(
-		"max connections: %s, health check interval: %ds default (%ds-%ds)",
-		formatProjectLimitValue(ma.MaxConnections, ma.JSON.MaxConnections),
-		ma.HealthCheckIntervalDefaultSeconds,
-		ma.HealthCheckIntervalMinSeconds,
-		ma.HealthCheckIntervalMaxSeconds,
-	)
-}
-
-// formatOrgEntitlementDays renders a retention window, treating a null value as
-// unlimited retention rather than zero days.
-func formatOrgEntitlementDays(value int64, field respjson.Field) string {
-	if !field.Valid() {
-		return "unlimited"
-	}
-	return fmt.Sprintf("%d days", value)
-}
-
-func formatOrgEntitlementString(value string, field respjson.Field) string {
-	if !field.Valid() || value == "" {
-		return "-"
-	}
-	return value
-}
-
-func formatOrgEntitlementTime(value time.Time, field respjson.Field) string {
-	if !field.Valid() || value.IsZero() {
-		return "-"
-	}
-	return util.FormatLocal(value)
 }
 
 func renderOrgLimits(limits *kernel.OrgLimits) {
@@ -370,22 +252,6 @@ var orgLimitsCmd = &cobra.Command{
 	},
 }
 
-var orgEntitlementsCmd = &cobra.Command{
-	Use:   "entitlements",
-	Short: "Read organization entitlements",
-	Run: func(cmd *cobra.Command, args []string) {
-		_ = cmd.Help()
-	},
-}
-
-var orgEntitlementsGetCmd = &cobra.Command{
-	Use:   "get",
-	Short: "Get organization entitlements",
-	Long:  "Show the organization's effective feature access and constraints after applying its plan, active trial treatment, plan status, and organization-specific overrides. Unlimited constraints are shown as \"unlimited\".",
-	Args:  cobra.NoArgs,
-	RunE:  runOrgEntitlementsGet,
-}
-
 var orgLimitsGetCmd = &cobra.Command{
 	Use:   "get",
 	Short: "Get organization limits",
@@ -449,11 +315,8 @@ func init() {
 	addJSONOutputFlag(orgLimitsSetCmd)
 	addJSONOutputFlag(orgEntitlementsCmd)
 
-	addJSONOutputFlag(orgEntitlementsGetCmd)
-
 	orgLimitsCmd.AddCommand(orgLimitsGetCmd)
 	orgLimitsCmd.AddCommand(orgLimitsSetCmd)
-	orgEntitlementsCmd.AddCommand(orgEntitlementsGetCmd)
 	orgCmd.AddCommand(orgLimitsCmd)
 	orgCmd.AddCommand(orgEntitlementsCmd)
 }

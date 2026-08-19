@@ -619,6 +619,7 @@ Managed auth connections (`kernel auth connections`). The commands below are new
 - `kernel auth connections submit <id>` - New flags:
   - `--field-value <id=value>` - Canonical field-id=value pair from the connection's `fields` list (repeatable); preferred over the legacy `--field`
   - `--choice-id <id>` - Canonical choice ID from the connection's `choices` list
+  - `--interaction-id <id>` - Canonical interaction the submitted values answer. Only valid with `--field-value` or `--choice-id`; omit it and the CLI reads the connection's current interaction ID for you. Pass it to pin the submission, so the API rejects it if the flow has already moved on.
 
 `kernel auth connections get` and `follow` list those IDs alongside the metadata the API captured for them, so you can tell the options apart before submitting. Fields show their type, ref, and any hint (which names the masked destination a one-time code was sent to); choices show their type, semantic MFA method (`sms`, `totp`, `push`, …), and masked destination.
 
@@ -730,8 +731,6 @@ Automated authentication for web services. The `run` command orchestrates the fu
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel org limits set` - Set the default per-project concurrency cap applied to projects without an explicit override
   - `--default-project-max-concurrent-sessions <n>` - Default maximum concurrent browsers for projects without an explicit override (`0` to remove the default)
-  - `--output json`, `-o json` - Output raw JSON object
-- `kernel org entitlements get` - Show the organization's effective feature access and constraints after applying its plan, active trial treatment, plan status, and organization-specific overrides; unlimited constraints are shown as `unlimited`
   - `--output json`, `-o json` - Output raw JSON object
 
 ## Examples
