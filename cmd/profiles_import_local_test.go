@@ -323,6 +323,24 @@ Connection capacity will be checked before creating new connections
 Choose accounts to make available to agents:`, managedAuthAccountHeader(managedAuthCapacity{}, false))
 }
 
+func TestCompletedDashboardImportMessage(t *testing.T) {
+	for _, phase := range []string{"staged", "applying", "awaiting_client_completion"} {
+		message, handled := completedDashboardImportMessage(phase)
+		assert.True(t, handled, phase)
+		assert.Contains(t, message, "already running", phase)
+	}
+	for _, phase := range []string{"awaiting_dashboard_ack", "finishing_managed_auth", "completed"} {
+		message, handled := completedDashboardImportMessage(phase)
+		assert.True(t, handled, phase)
+		assert.Contains(t, message, "already finished", phase)
+	}
+	for _, phase := range []string{"awaiting_inventory", "awaiting_selection", "awaiting_bundle", "failed"} {
+		message, handled := completedDashboardImportMessage(phase)
+		assert.False(t, handled, phase)
+		assert.Empty(t, message, phase)
+	}
+}
+
 func TestManagedAuthWebsiteDefaultsRespectCapacityWithoutRemovingChoice(t *testing.T) {
 	candidates := []sourcedPasswordManagerCandidate{
 		{candidate: passwordmanager.Candidate{Provider: "bitwarden", ID: "existing", Domain: "existing.com"}},

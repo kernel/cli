@@ -142,6 +142,20 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		if err != nil {
 			return err
 		}
+		status, err := handoffClient.Status(ctx, in.ImportID)
+		if err != nil {
+			return fmt.Errorf("check browser import before starting local work: %w", err)
+		}
+		if message, handled := completedDashboardImportMessage(status.Phase); handled {
+			if humanOutput {
+				pterm.Info.Println(message)
+			}
+			clientCompletionReported = true
+			return nil
+		}
+		if status.Phase == "failed" {
+			return fmt.Errorf("browser import %s has already failed; start a new import from Kernel", in.ImportID)
+		}
 		defer func() {
 			if returnErr == nil || clientCompletionReported {
 				return
@@ -333,6 +347,16 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	if dashboardHandoff {
 		grant, err := client.AcquireHelperGrant(ctx, importID)
 		if err != nil {
+			status, statusErr := client.Status(ctx, importID)
+			if statusErr == nil {
+				if message, handled := completedDashboardImportMessage(status.Phase); handled {
+					if humanOutput {
+						pterm.Info.Println(message)
+					}
+					clientCompletionReported = true
+					return nil
+				}
+			}
 			return fmt.Errorf("get scoped browser import grant: %w", err)
 		}
 		helperToken = grant.HelperToken
@@ -490,6 +514,17 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	}
 	pterm.Printf("Next: kernel browsers create --profile %s\n", targetName)
 	return nil
+}
+
+func completedDashboardImportMessage(phase string) (string, bool) {
+	switch phase {
+	case "staged", "applying", "awaiting_client_completion":
+		return "This browser import is already running. Return to Kernel for progress.", true
+	case "awaiting_dashboard_ack", "finishing_managed_auth", "completed":
+		return "This browser import has already finished. Return to Kernel to continue.", true
+	default:
+		return "", false
+	}
 }
 
 func approvedCredentialReadMessage(pending pendingManagedAuth) string {
