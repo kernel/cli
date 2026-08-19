@@ -323,6 +323,23 @@ Connection capacity will be checked before creating new connections
 Choose accounts to make available to agents:`, managedAuthAccountHeader(managedAuthCapacity{}, false))
 }
 
+func TestManagedAuthWebsiteDefaultsRespectCapacityWithoutRemovingChoice(t *testing.T) {
+	candidates := []sourcedPasswordManagerCandidate{
+		{candidate: passwordmanager.Candidate{Provider: "bitwarden", ID: "existing", Domain: "existing.com"}},
+		{candidate: passwordmanager.Candidate{Provider: "bitwarden", ID: "one", Domain: "one.com"}},
+		{candidate: passwordmanager.Candidate{Provider: "bitwarden", ID: "two", Domain: "two.com"}},
+		{candidate: passwordmanager.Candidate{Provider: "bitwarden", ID: "three", Domain: "three.com"}},
+	}
+	existing := map[string]bool{candidateKey(candidates[0].candidate): true}
+	sites := []string{"existing.com", "one.com", "two.com", "three.com"}
+
+	assert.Equal(t, []string{"existing.com", "one.com", "two.com"}, defaultManagedAuthWebsites(sites, candidates, existing, 2, managedAuthCapacity{remaining: 2}))
+	assert.Equal(t, []string{"existing.com"}, defaultManagedAuthWebsites(sites, candidates, existing, 0, managedAuthCapacity{}))
+	assert.Equal(t, sites, defaultManagedAuthWebsites(sites, candidates, existing, 0, managedAuthCapacity{unlimited: true}))
+	options, _ := managedAuthWebsiteOptions(sites, candidates, existing)
+	assert.Contains(t, options[0], "existing connection")
+}
+
 func TestApprovedCredentialReadMessageNamesProviders(t *testing.T) {
 	pending := pendingManagedAuth{providers: []pendingProviderLogins{
 		{provider: fakePasswordManager{name: "Bitwarden"}, candidates: []passwordmanager.Candidate{{ID: "one"}, {ID: "two"}}},

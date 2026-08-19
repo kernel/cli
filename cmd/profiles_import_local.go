@@ -686,7 +686,7 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, pro
 			allCandidates = append(allCandidates, sourcedPasswordManagerCandidate{provider: provider, candidate: candidate})
 		}
 	}
-	if len(allCandidates) == 0 {
+	if len(allCandidates) == 0 && nonInteractive {
 		return pendingManagedAuth{}, nil
 	}
 	if c.provisioner == nil {
@@ -722,6 +722,14 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, pro
 	var capacityLookupErr error
 	if !hasNew {
 		// Existing imports refresh their credential and do not consume quota.
+		// Interactive discovery may still add another website, so retain the
+		// known capacity for that choice without making refreshes depend on it.
+		if !nonInteractive && capacityLoaded {
+			availableConnections = capacityHint.remaining
+			if capacityHint.unlimited {
+				availableConnections = len(availableSites)
+			}
+		}
 	} else if c.managedAuthCapacity == nil {
 		if !hasExisting {
 			return pendingManagedAuth{}, fmt.Errorf("managed auth capacity is unavailable")
@@ -760,7 +768,7 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, pro
 	if availableConnections == 0 && hasNew && requested != "" && nonInteractive {
 		return pendingManagedAuth{}, fmt.Errorf("your organization has no Managed Auth connection slots available for new logins; delete a connection or upgrade your plan, then retry")
 	}
-	if capacityKnown && availableConnections == 0 && !hasExisting {
+	if hasNew && capacityKnown && availableConnections == 0 && !hasExisting && nonInteractive {
 		if requested != "" {
 			return pendingManagedAuth{}, fmt.Errorf("your organization has no Managed Auth connection slots available; delete a connection or upgrade your plan, then retry")
 		}
@@ -788,6 +796,15 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, pro
 		}
 		return left.candidate.Name < right.candidate.Name
 	})
+	if !nonInteractive {
+		sites, allCandidates, err = c.chooseManagedAuthWebsites(ctx, profileName, sites, availableSites, chosenProviders, allCandidates, existing, availableConnections, displayCapacity, displayCapacityKnown, humanOutput)
+		if err != nil {
+			return pendingManagedAuth{}, err
+		}
+		if len(sites) == 0 {
+			return pendingManagedAuth{}, nil
+		}
+	}
 	domainCounts := make(map[string]int, len(sites))
 	for _, sourced := range allCandidates {
 		domainCounts[sourced.candidate.Domain]++
@@ -829,10 +846,6 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, pro
 		}
 	} else {
 		approvedCandidates, err = c.chooseManagedAuthAccountsByWebsite(sites, allCandidates, existing, availableConnections, 0, displayCapacity, displayCapacityKnown)
-		if err != nil {
-			return pendingManagedAuth{}, err
-		}
-		approvedCandidates, err = c.chooseAdditionalManagedAuthAccounts(ctx, profileName, chosenProviders, availableSites, sites, approvedCandidates, existing, availableConnections, displayCapacity, displayCapacityKnown, humanOutput)
 		if err != nil {
 			return pendingManagedAuth{}, err
 		}
@@ -970,48 +983,86 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthAccountsByWebsite(sites []strin
 	return approved, nil
 }
 
-func (c ProfilesImportLocalCmd) chooseAdditionalManagedAuthAccounts(
+func (c ProfilesImportLocalCmd) chooseManagedAuthWebsites(
 	ctx context.Context,
 	profileName string,
-	providers []passwordmanager.Provider,
+	sites []string,
 	availableSites []localbrowser.Site,
-	initialSites []string,
-	approved []sourcedPasswordManagerCandidate,
+	providers []passwordmanager.Provider,
+	candidates []sourcedPasswordManagerCandidate,
 	existing map[string]bool,
 	availableConnections int,
 	capacity managedAuthCapacity,
 	capacityKnown bool,
 	humanOutput bool,
-) ([]sourcedPasswordManagerCandidate, error) {
-	selectedSites := append([]string(nil), initialSites...)
+) ([]string, []sourcedPasswordManagerCandidate, error) {
+	searchedSites := append([]string(nil), sites...)
+	selectedSites := defaultManagedAuthWebsites(sites, candidates, existing, availableConnections, capacity)
 	const findAnother = "+ Find another website"
 	for {
-		action, err := c.prompter.SelectDefault("Managed Auth action", "choose Continue or find another website", "Managed Auth", []string{"Continue", findAnother}, "Continue")
+		matchedSites := managedAuthMatchedSites(searchedSites, candidates)
+		labels, byLabel := managedAuthWebsiteOptions(matchedSites, candidates, existing)
+		labels = append(labels, findAnother)
+		selectedSet := make(map[string]struct{}, len(selectedSites))
+		for _, site := range selectedSites {
+			selectedSet[site] = struct{}{}
+		}
+		defaults := make([]string, 0, len(selectedSites))
+		for _, label := range labels {
+			if _, selected := selectedSet[byLabel[label]]; selected {
+				defaults = append(defaults, label)
+			}
+		}
+		prompt := managedAuthWebsiteHeader(capacity, capacityKnown) + "\nSpace toggles websites · Enter continues"
+		selectedLabels, err := c.prompter.MultiSelect("Managed Auth websites", "select websites or continue without Managed Auth", prompt, labels, defaults)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		if action == "Continue" {
-			return approved, nil
+		selectedSites = selectedSites[:0]
+		findRequested := false
+		for _, label := range selectedLabels {
+			if label == findAnother {
+				findRequested = true
+				continue
+			}
+			selectedSites = append(selectedSites, byLabel[label])
 		}
-		options, domains := managedAuthSearchOptions(availableSites, selectedSites)
+		if !capacity.unlimited && managedAuthNewWebsiteCount(selectedSites, candidates, existing) > availableConnections {
+			pterm.Warning.Printf("Choose at most %d website%s that need a new connection; existing connections do not use a slot\n", availableConnections, pluralSuffix(availableConnections))
+			continue
+		}
+		if !findRequested {
+			selected := make(map[string]struct{}, len(selectedSites))
+			for _, site := range selectedSites {
+				selected[site] = struct{}{}
+			}
+			filtered := make([]sourcedPasswordManagerCandidate, 0, len(candidates))
+			for _, candidate := range candidates {
+				if _, ok := selected[candidate.candidate.Domain]; ok {
+					filtered = append(filtered, candidate)
+				}
+			}
+			return selectedSites, filtered, nil
+		}
+		options, domains := managedAuthSearchOptions(availableSites, searchedSites)
 		if len(options) == 1 {
 			pterm.Info.Println("Every browser website has already been searched")
 			continue
 		}
 		chosen, err := c.prompter.Select("Managed Auth website", "select a website", "Find another website — type to search, Enter adds, Back returns", options)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if chosen == backOption {
 			continue
 		}
 		domain := domains[chosen]
-		selectedSites = append(selectedSites, domain)
+		searchedSites = append(searchedSites, domain)
 		matches := make([]sourcedPasswordManagerCandidate, 0)
 		for _, provider := range providers {
 			candidates, err := discoverProviderCandidates(ctx, provider, []string{domain}, false, humanOutput)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			for _, candidate := range candidates {
 				matches = append(matches, sourcedPasswordManagerCandidate{provider: provider, candidate: candidate})
@@ -1021,34 +1072,94 @@ func (c ProfilesImportLocalCmd) chooseAdditionalManagedAuthAccounts(
 			pterm.Info.Printf("No password-manager login matched %s\n", domain)
 			continue
 		}
-		candidates := make([]passwordmanager.Candidate, 0, len(matches))
+		candidateRecords := make([]passwordmanager.Candidate, 0, len(matches))
 		for _, match := range matches {
-			candidates = append(candidates, match.candidate)
+			candidateRecords = append(candidateRecords, match.candidate)
 		}
-		domainExisting, err := c.provisioner.Existing(ctx, profileName, candidates)
+		domainExisting, err := c.provisioner.Existing(ctx, profileName, candidateRecords)
 		if err != nil {
-			return nil, fmt.Errorf("check existing Managed Auth connection for %s: %w", domain, err)
+			return nil, nil, fmt.Errorf("check existing Managed Auth connection for %s: %w", domain, err)
 		}
 		for key, value := range domainExisting {
 			existing[key] = value
 		}
-		alreadySelectedNew := managedAuthSelectedNewCount(approved, existing)
-		chosenAccounts, err := c.chooseManagedAuthAccountsByWebsite([]string{domain}, matches, existing, availableConnections, alreadySelectedNew, capacity, capacityKnown)
-		if err != nil {
-			return nil, err
+		candidates = append(candidates, matches...)
+		if domainHasExistingManagedAuth(domain, candidates, existing) || capacity.unlimited || managedAuthNewWebsiteCount(selectedSites, candidates, existing) < availableConnections {
+			selectedSites = append(selectedSites, domain)
 		}
-		approved = append(approved, chosenAccounts...)
 	}
 }
 
-func managedAuthSelectedNewCount(selected []sourcedPasswordManagerCandidate, existing map[string]bool) int {
+func managedAuthMatchedSites(sites []string, candidates []sourcedPasswordManagerCandidate) []string {
+	matched := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		matched[candidate.candidate.Domain] = struct{}{}
+	}
+	result := make([]string, 0, len(matched))
+	for _, site := range sites {
+		if _, ok := matched[site]; ok {
+			result = append(result, site)
+		}
+	}
+	return result
+}
+
+func domainHasExistingManagedAuth(domain string, candidates []sourcedPasswordManagerCandidate, existing map[string]bool) bool {
+	for _, candidate := range candidates {
+		if candidate.candidate.Domain == domain && existing[candidateKey(candidate.candidate)] {
+			return true
+		}
+	}
+	return false
+}
+
+func managedAuthNewWebsiteCount(sites []string, candidates []sourcedPasswordManagerCandidate, existing map[string]bool) int {
 	count := 0
-	for _, candidate := range selected {
-		if !existing[candidateKey(candidate.candidate)] {
+	for _, site := range sites {
+		if !domainHasExistingManagedAuth(site, candidates, existing) {
 			count++
 		}
 	}
 	return count
+}
+
+func defaultManagedAuthWebsites(sites []string, candidates []sourcedPasswordManagerCandidate, existing map[string]bool, availableConnections int, capacity managedAuthCapacity) []string {
+	defaults := make([]string, 0, len(sites))
+	newConnections := 0
+	for _, site := range managedAuthMatchedSites(sites, candidates) {
+		if domainHasExistingManagedAuth(site, candidates, existing) {
+			defaults = append(defaults, site)
+			continue
+		}
+		if capacity.unlimited || newConnections < availableConnections {
+			defaults = append(defaults, site)
+			newConnections++
+		}
+	}
+	return defaults
+}
+
+func managedAuthWebsiteOptions(sites []string, candidates []sourcedPasswordManagerCandidate, existing map[string]bool) ([]string, map[string]string) {
+	counts := make(map[string]int, len(sites))
+	for _, candidate := range candidates {
+		counts[candidate.candidate.Domain]++
+	}
+	options := make([]string, 0, len(sites))
+	byOption := make(map[string]string, len(sites))
+	for index, site := range sites {
+		label := fmt.Sprintf("%2d  %-28s %d matching login%s", index+1, compactField(site, 28), counts[site], pluralSuffix(counts[site]))
+		if domainHasExistingManagedAuth(site, candidates, existing) {
+			label += " · existing connection"
+		}
+		options = append(options, label)
+		byOption[label] = site
+	}
+	return options, byOption
+}
+
+func managedAuthWebsiteHeader(capacity managedAuthCapacity, capacityKnown bool) string {
+	header := managedAuthAccountHeader(capacity, capacityKnown)
+	return strings.Replace(header, "Choose accounts to make available to agents:", "Choose websites to make available to agents:", 1)
 }
 
 func managedAuthCapacityReached(selected, available int, capacity managedAuthCapacity) bool {
