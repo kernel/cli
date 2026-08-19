@@ -404,6 +404,9 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	connectionIDs := make([]string, 0)
 	approvedLogins := make([]passwordmanager.Record, 0)
 	if len(pendingLogins.providers) > 0 {
+		if humanOutput {
+			pterm.Info.Println(approvedCredentialReadMessage(pendingLogins))
+		}
 		phaseStarted = time.Now()
 		for _, pendingProvider := range pendingLogins.providers {
 			records, revealErr := pendingProvider.provider.Reveal(ctx, pendingProvider.candidates)
@@ -487,6 +490,20 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	}
 	pterm.Printf("Next: kernel browsers create --profile %s\n", targetName)
 	return nil
+}
+
+func approvedCredentialReadMessage(pending pendingManagedAuth) string {
+	count := 0
+	providers := make([]string, 0, len(pending.providers))
+	for _, pendingProvider := range pending.providers {
+		count += len(pendingProvider.candidates)
+		providers = append(providers, pendingProvider.provider.Name())
+	}
+	credential := "credentials"
+	if count == 1 {
+		credential = "credential"
+	}
+	return fmt.Sprintf("Reading %d approved %s from %s...", count, credential, strings.Join(providers, " and "))
 }
 
 func managedAuthCompletionConnections(ids []string, records []passwordmanager.Record) []localbrowser.ManagedAuthConnection {

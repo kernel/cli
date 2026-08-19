@@ -323,6 +323,15 @@ Connection capacity will be checked before creating new connections
 Choose accounts to make available to agents:`, managedAuthAccountHeader(managedAuthCapacity{}, false))
 }
 
+func TestApprovedCredentialReadMessageNamesProviders(t *testing.T) {
+	pending := pendingManagedAuth{providers: []pendingProviderLogins{
+		{provider: fakePasswordManager{name: "Bitwarden"}, candidates: []passwordmanager.Candidate{{ID: "one"}, {ID: "two"}}},
+		{provider: fakePasswordManager{name: "1Password"}, candidates: []passwordmanager.Candidate{{ID: "three"}}},
+	}}
+
+	assert.Equal(t, "Reading 3 approved credentials from Bitwarden and 1Password...", approvedCredentialReadMessage(pending))
+}
+
 func TestManagedAuthSearchOptionsExcludeWebsitesAlreadySearched(t *testing.T) {
 	options, domains := managedAuthSearchOptions([]localbrowser.Site{
 		{Domain: "google.com", Visits: 20},
