@@ -311,9 +311,9 @@ func TestManagedAuthUsesExplicitCookieSitesWithoutHistoryRanking(t *testing.T) {
 
 func TestManagedAuthWebsiteDiscoveryDefaultsStaySelectedAtLimitedCapacity(t *testing.T) {
 	sites := []string{"one.com", "two.com", "three.com"}
-	prompt, defaults := managedAuthSitePrompt(sites, managedAuthCapacity{remaining: 2}, true)
+	prompt, defaults := managedAuthSitePrompt(sites, managedAuthCapacity{maximum: 5, used: 3, remaining: 2}, true)
 
-	assert.Contains(t, prompt, "2 new connection slots available")
+	assert.Contains(t, prompt, "3 of 5 connections used · 2 available")
 	assert.Equal(t, sites, defaults)
 }
 
@@ -396,22 +396,31 @@ func TestDecodeManagedAuthCapacity(t *testing.T) {
 	t.Run("remaining", func(t *testing.T) {
 		capacity, err := decodeManagedAuthCapacity(`{"max_auth_connections":5,"auth_connections_used":3}`)
 		require.NoError(t, err)
-		assert.Equal(t, managedAuthCapacity{remaining: 2}, capacity)
+		assert.Equal(t, managedAuthCapacity{maximum: 5, used: 3, remaining: 2}, capacity)
 	})
 	t.Run("at limit", func(t *testing.T) {
 		capacity, err := decodeManagedAuthCapacity(`{"max_auth_connections":3,"auth_connections_used":4}`)
 		require.NoError(t, err)
-		assert.Equal(t, managedAuthCapacity{}, capacity)
+		assert.Equal(t, managedAuthCapacity{maximum: 3, used: 4}, capacity)
 	})
 	t.Run("unlimited", func(t *testing.T) {
 		capacity, err := decodeManagedAuthCapacity(`{"max_auth_connections":null,"auth_connections_used":329}`)
 		require.NoError(t, err)
-		assert.Equal(t, managedAuthCapacity{unlimited: true}, capacity)
+		assert.Equal(t, managedAuthCapacity{used: 329, unlimited: true}, capacity)
 	})
 	t.Run("old API", func(t *testing.T) {
 		_, err := decodeManagedAuthCapacity(`{"max_concurrent_sessions":10}`)
 		require.ErrorContains(t, err, "does not expose Managed Auth capacity through organization limits")
 	})
+}
+
+func TestProfileImportProgressStagesDescribeCompletedServerMilestones(t *testing.T) {
+	assert.Equal(t, []string{
+		"Preparing import",
+		"Uploading encrypted browser data",
+		"Applying and saving browser profile",
+		"Profile ready",
+	}, profileImportProgressStages)
 }
 
 func TestChooseManagedAuthLoginsRejectsExplicitBatchAboveRemainingConnections(t *testing.T) {

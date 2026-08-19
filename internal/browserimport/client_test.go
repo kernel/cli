@@ -105,7 +105,7 @@ func TestClientRunsDashboardHandoffWithFreshScopedGrant(t *testing.T) {
 		case "GET /browser-imports/bri_1":
 			phase := "awaiting_client_completion"
 			if statusCalls.Add(1) > 1 {
-				phase = "completed"
+				phase = "finishing_managed_auth"
 			}
 			fmt.Fprintf(response, `{"id":"bri_1","phase":%q}`, phase)
 		default:
@@ -125,9 +125,11 @@ func TestClientRunsDashboardHandoffWithFreshScopedGrant(t *testing.T) {
 		Outcome: "completed", ManagedAuthConnections: []ManagedAuthConnection{{ID: "auth-1", Domain: "github.com"}},
 	})
 	require.NoError(t, err)
-	status, err = client.Wait(context.Background(), "bri_1", time.Millisecond)
+	waitCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	status, err = client.Wait(waitCtx, "bri_1", time.Millisecond)
 	require.NoError(t, err)
-	assert.Equal(t, "completed", status.Phase)
+	assert.Equal(t, "finishing_managed_auth", status.Phase)
 }
 
 func TestClientRejectsUntrustedPlaintextAPI(t *testing.T) {

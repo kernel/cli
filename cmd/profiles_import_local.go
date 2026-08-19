@@ -28,6 +28,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var profileImportProgressStages = []string{
+	"Preparing import",
+	"Uploading encrypted browser data",
+	"Applying and saving browser profile",
+	"Profile ready",
+}
+
 type ProfilesImportLocalInput struct {
 	BrowserProfile     string
 	ProfileName        string
@@ -332,12 +339,16 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 			return err
 		}
 	}
-	var profileSpinner *pterm.SpinnerPrinter
+	var profileProgress *pterm.ProgressbarPrinter
 	if humanOutput {
-		profileSpinner, _ = pterm.DefaultSpinner.Start(fmt.Sprintf("Creating Kernel profile %q...", targetName))
+		profileProgress, _ = pterm.DefaultProgressbar.
+			WithTotal(len(profileImportProgressStages)).
+			WithTitle(fmt.Sprintf("%s: %q", profileImportProgressStages[0], targetName)).
+			WithShowElapsedTime().
+			Start()
 		defer func() {
-			if profileSpinner != nil {
-				_ = profileSpinner.Stop()
+			if profileProgress != nil {
+				_, _ = profileProgress.Stop()
 			}
 		}()
 	}
@@ -367,23 +378,20 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	if err != nil {
 		return browserImportProgressError(importID, status.Phase, time.Since(phaseStarted), err)
 	}
-	if profileSpinner != nil {
-		profileSpinner.UpdateText("Preparing browser profile import...")
-	}
 	selection := localbrowser.Selection{Profiles: []localbrowser.ProfileSelection{{SourceID: profile.ID, TargetName: targetName, Categories: categories}}}
 	status, err = client.SubmitSelection(ctx, importID, selection)
 	if err != nil {
 		return browserImportProgressError(importID, status.Phase, time.Since(phaseStarted), err)
 	}
-	if profileSpinner != nil {
-		profileSpinner.UpdateText("Uploading encrypted browser data...")
+	if profileProgress != nil {
+		profileProgress.Increment().UpdateTitle(profileImportProgressStages[1])
 	}
 	status, err = client.Upload(ctx, importID, helperToken, bundle)
 	if err != nil {
 		return browserImportProgressError(importID, status.Phase, time.Since(phaseStarted), err)
 	}
-	if profileSpinner != nil {
-		profileSpinner.UpdateText("Applying cookies, bookmarks, history, and website storage (this can take a few minutes)...")
+	if profileProgress != nil {
+		profileProgress.Increment().UpdateTitle(profileImportProgressStages[2])
 	}
 	waitCtx, cancelWait := context.WithTimeout(ctx, in.WaitTimeout)
 	defer cancelWait()
@@ -405,9 +413,10 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	clientCompletion.Counts.StorageOrigins = storageSummary.importedOrigins
 	clientFailureStage = "managed_auth"
 	if humanOutput {
-		if profileSpinner != nil {
-			profileSpinner.Success(fmt.Sprintf("Created Kernel profile %q", targetName))
-			profileSpinner = nil
+		if profileProgress != nil {
+			profileProgress.Increment().UpdateTitle(profileImportProgressStages[3]).Increment()
+			_, _ = profileProgress.Stop()
+			profileProgress = nil
 		}
 		pterm.Success.Printf("Imported %d cookies from %d websites\n", len(cookies), importedCookieSites)
 		if count := itemCounts["bookmarks"]; count > 0 {
@@ -755,7 +764,7 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, pro
 			if capacity.unlimited {
 				availableConnections = len(sites)
 			} else if humanOutput {
-				pterm.Info.Printf("Your organization has %d Managed Auth connection slot%s available\n", availableConnections, pluralSuffix(availableConnections))
+				pterm.Info.Printf("Managed Auth: %d of %d connections used · %d available\n", capacity.used, capacity.maximum, availableConnections)
 			}
 		}
 	}
@@ -1054,7 +1063,7 @@ func managedAuthSitePrompt(sites []string, capacity managedAuthCapacity, capacit
 	defaults := sites
 	prompt := "Choose recent websites to find Managed Auth logins"
 	if capacityKnown && !capacity.unlimited {
-		prompt = fmt.Sprintf("Choose recent websites to find Managed Auth logins (%d new connection slot%s available)", capacity.remaining, pluralSuffix(capacity.remaining))
+		prompt = fmt.Sprintf("Choose recent websites to find Managed Auth logins (%d of %d connections used · %d available)", capacity.used, capacity.maximum, capacity.remaining)
 	}
 	return prompt, defaults
 }

@@ -131,7 +131,7 @@ func (c *Client) SubmitClientCompletion(ctx context.Context, id string, completi
 	var result Status
 	err := c.doJSON(ctx, http.MethodPost, "/browser-imports/"+url.PathEscape(id)+"/client-completion", c.token, completion, &result)
 	if err != nil {
-		return c.reconcile(ctx, id, err, "awaiting_dashboard_ack", "completed", "failed")
+		return c.reconcile(ctx, id, err, "awaiting_dashboard_ack", "finishing_managed_auth", "completed", "failed")
 	}
 	return result, nil
 }
@@ -180,7 +180,7 @@ func (c *Client) wait(ctx context.Context, id string, interval time.Duration, re
 		} else {
 			consecutiveErrors = 0
 			switch status.Phase {
-			case "completed":
+			case "completed", "finishing_managed_auth":
 				return status, nil
 			case "awaiting_client_completion":
 				if returnWhenAwaitingClient {

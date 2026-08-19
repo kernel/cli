@@ -15,6 +15,8 @@ import (
 )
 
 type managedAuthCapacity struct {
+	maximum   int
+	used      int
 	remaining int
 	unlimited bool
 }
@@ -42,7 +44,14 @@ func decodeManagedAuthCapacity(raw string) (managedAuthCapacity, error) {
 		return managedAuthCapacity{}, fmt.Errorf("Kernel API does not expose Managed Auth capacity through organization limits")
 	}
 	if string(maxRaw) == "null" {
-		return managedAuthCapacity{unlimited: true}, nil
+		var usedConnections int
+		if err := json.Unmarshal(usedRaw, &usedConnections); err != nil {
+			return managedAuthCapacity{}, fmt.Errorf("decode used auth connections: %w", err)
+		}
+		if usedConnections < 0 {
+			return managedAuthCapacity{}, fmt.Errorf("Kernel API returned invalid Managed Auth capacity")
+		}
+		return managedAuthCapacity{used: usedConnections, unlimited: true}, nil
 	}
 	var maxConnections, usedConnections int
 	if err := json.Unmarshal(maxRaw, &maxConnections); err != nil {
@@ -54,7 +63,11 @@ func decodeManagedAuthCapacity(raw string) (managedAuthCapacity, error) {
 	if maxConnections < 0 || usedConnections < 0 {
 		return managedAuthCapacity{}, fmt.Errorf("Kernel API returned invalid Managed Auth capacity")
 	}
-	return managedAuthCapacity{remaining: max(0, maxConnections-usedConnections)}, nil
+	return managedAuthCapacity{
+		maximum:   maxConnections,
+		used:      usedConnections,
+		remaining: max(0, maxConnections-usedConnections),
+	}, nil
 }
 
 type managedAuthProvisioner interface {
