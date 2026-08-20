@@ -96,6 +96,10 @@ func isAuthExempt(cmd *cobra.Command) bool {
 	switch topLevel.Name() {
 	case "login", "logout", "help", "completion", "create", "mcp", "upgrade", "status":
 		return true
+	case "connector":
+		// The connector installs without auth and performs login-on-demand when
+		// opening a dashboard link.
+		return cmd == connectorInstallCmd || cmd == connectorOpenCmd
 	case "auth":
 		// Only exempt the auth command itself (status display), not its subcommands
 		return cmd == topLevel

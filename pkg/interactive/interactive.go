@@ -171,14 +171,30 @@ func newConfirmPrinter(promptText string, defaultValue bool) *pterm.InteractiveC
 // When the Prompter cannot prompt it fails fast with
 // ErrInputRequired(what, hint) instead.
 func (p Prompter) Select(what, hint, promptText string, options []string) (string, error) {
+	defaultOption := ""
+	if len(options) > 0 {
+		defaultOption = options[0]
+	}
+	return p.SelectDefault(what, hint, promptText, options, defaultOption)
+}
+
+// SelectDefault shows a select prompt with the requested option highlighted.
+func (p Prompter) SelectDefault(what, hint, promptText string, options []string, defaultOption string) (string, error) {
 	if !p.CanPrompt() {
 		return "", ErrInputRequired(what, hint)
 	}
-	return pterm.DefaultInteractiveSelect.
+	return newSelectPrinter(promptText, options, defaultOption).Show()
+}
+
+func newSelectPrinter(promptText string, options []string, defaultOption string) *pterm.InteractiveSelectPrinter {
+	printer := pterm.DefaultInteractiveSelect.
 		WithOptions(options).
 		WithDefaultText(promptText).
-		WithMaxHeight(len(options)).
-		Show()
+		WithMaxHeight(min(len(options), 12))
+	if defaultOption != "" {
+		printer = printer.WithDefaultOption(defaultOption)
+	}
+	return printer
 }
 
 // MultiSelect shows a checkbox menu and returns the selected options.

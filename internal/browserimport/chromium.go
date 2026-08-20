@@ -183,8 +183,8 @@ func ExportCookies(ctx context.Context, profile Profile, selectedSites []string)
 		return nil, err
 	}
 	defer cleanup()
-	siteClause := selectedCookieClause(selectedSites, true)
-	query := `SELECT host_key, path, name, value, hex(encrypted_value) AS encrypted_value, expires_utc, is_httponly, is_secure, samesite FROM cookies` + whereClause + siteClause + ` ORDER BY host_key, name`
+	selectionCTE, siteClause := selectedCookieFilter(selectedSites, true)
+	query := selectionCTE + `SELECT host_key, path, name, value, hex(encrypted_value) AS encrypted_value, expires_utc, is_httponly, is_secure, samesite FROM cookies` + whereClause + siteClause + ` ORDER BY host_key, name`
 	data, err := sqliteJSON(ctx, snapshot, query)
 	if err != nil {
 		return nil, fmt.Errorf("read browser cookies: %w", err)
@@ -208,6 +208,11 @@ func ExportCookies(ctx context.Context, profile Profile, selectedSites []string)
 	var key []byte
 	cookies := make([]Cookie, 0)
 	for _, row := range rows {
+		if len(selectedSites) == 0 {
+			if _, err := CanonicalSite(row.Domain); err != nil {
+				continue
+			}
+		}
 		if !matchesAnySite(row.Domain, selectedSites) {
 			continue
 		}
@@ -239,37 +244,57 @@ func ExportCookies(ctx context.Context, profile Profile, selectedSites []string)
 	return cookies, nil
 }
 
-// CountCookiesForSites counts importable cookies without reading or decrypting their values.
-func CountCookiesForSites(ctx context.Context, profile Profile, sites []Site) ([]Site, error) {
-	selected := make([]string, 0, len(sites))
-	for _, site := range sites {
-		selected = append(selected, site.Domain)
-	}
+// CookieSites returns every website with importable cookies, ranked by recent
+// browser use. It reads cookie metadata only; values are decrypted by
+// ExportCookies after the user chooses what to import.
+func CookieSites(ctx context.Context, profile Profile, recent []Site) ([]Site, error) {
 	snapshot, whereClause, cleanup, err := cookieDatabaseSnapshot(ctx, profile)
 	if err != nil {
 		return nil, err
 	}
 	defer cleanup()
-	data, err := sqliteJSON(ctx, snapshot, `SELECT host_key FROM cookies`+whereClause+selectedCookieClause(selected, true))
+	data, err := sqliteJSON(ctx, snapshot, `SELECT host_key, COUNT(*) AS cookie_count FROM cookies`+whereClause+` GROUP BY host_key`)
 	if err != nil {
-		return nil, fmt.Errorf("count browser cookies: %w", err)
+		return nil, fmt.Errorf("find browser cookie websites: %w", err)
 	}
 	var rows []struct {
-		Domain string `json:"host_key"`
+		Domain      string `json:"host_key"`
+		CookieCount int    `json:"cookie_count"`
 	}
 	if len(bytes.TrimSpace(data)) != 0 {
 		if err := json.Unmarshal(data, &rows); err != nil {
-			return nil, fmt.Errorf("decode browser cookie counts: %w", err)
+			return nil, fmt.Errorf("decode browser cookie websites: %w", err)
 		}
 	}
-	result := append([]Site(nil), sites...)
-	for i := range result {
-		for _, row := range rows {
-			if domainMatchesSite(row.Domain, result[i].Domain) {
-				result[i].CookieCount++
-			}
+	byDomain := make(map[string]Site, len(rows))
+	for _, site := range recent {
+		byDomain[site.Domain] = site
+	}
+	for _, row := range rows {
+		domain, err := CanonicalSite(row.Domain)
+		if err != nil {
+			continue
+		}
+		site := byDomain[domain]
+		site.Domain = domain
+		site.CookieCount += row.CookieCount
+		byDomain[domain] = site
+	}
+	result := make([]Site, 0, len(byDomain))
+	for _, site := range byDomain {
+		if site.CookieCount > 0 {
+			result = append(result, site)
 		}
 	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Visits != result[j].Visits {
+			return result[i].Visits > result[j].Visits
+		}
+		if !result[i].LastVisited.Equal(result[j].LastVisited) {
+			return result[i].LastVisited.After(result[j].LastVisited)
+		}
+		return result[i].Domain < result[j].Domain
+	})
 	return result, nil
 }
 
@@ -461,20 +486,22 @@ func copyFileBounded(ctx context.Context, source, destination string, limit int6
 
 var errFileGrew = errors.New("file grew while being copied")
 
-func selectedCookieClause(sites []string, hasWhere bool) string {
+func selectedCookieFilter(sites []string, hasWhere bool) (string, string) {
 	if len(sites) == 0 {
-		return ""
+		return "", ""
 	}
-	predicates := make([]string, 0, len(sites))
+	values := make([]string, 0, len(sites))
 	for _, site := range sites {
 		site = strings.TrimPrefix(strings.ToLower(site), ".")
-		predicates = append(predicates, "(host_key = "+sqliteLiteral(site)+" OR host_key = "+sqliteLiteral("."+site)+" OR host_key LIKE "+sqliteLiteral("%."+site)+")")
+		values = append(values, "("+sqliteLiteral(site)+")")
 	}
 	prefix := " WHERE "
 	if hasWhere {
 		prefix = " AND "
 	}
-	return prefix + "(" + strings.Join(predicates, " OR ") + ")"
+	cte := "WITH selected_sites(site) AS (VALUES " + strings.Join(values, ",") + ") "
+	predicate := prefix + "EXISTS (SELECT 1 FROM selected_sites WHERE host_key = site OR host_key = '.' || site OR host_key LIKE '%.' || site)"
+	return cte, predicate
 }
 
 func sqliteLiteral(value string) string {
@@ -540,6 +567,9 @@ func CanonicalSite(value string) (string, error) {
 }
 
 func matchesAnySite(cookieDomain string, sites []string) bool {
+	if len(sites) == 0 {
+		return true
+	}
 	for _, site := range sites {
 		if domainMatchesSite(cookieDomain, site) {
 			return true

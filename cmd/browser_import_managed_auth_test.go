@@ -146,6 +146,20 @@ func TestImportedCredentialNameFitsAPINameLimit(t *testing.T) {
 	assert.Regexp(t, `-[a-f0-9]{10}$`, name)
 }
 
+func TestManagedAuthExistingUsesOnePasswordVaultIdentity(t *testing.T) {
+	candidate := passwordmanager.Candidate{Provider: "1password", VaultID: "vault", ID: "item", Domain: "example.com"}
+	name := importedCredentialName(passwordmanager.Record{Provider: "1password", ID: "vault:item", Domain: "example.com"})
+	provisioner := kernelManagedAuthProvisioner{connections: fakeImportedConnections{
+		listFunc: func(kernel.AuthConnectionListParams) (*pagination.OffsetPagination[kernel.ManagedAuth], error) {
+			return &pagination.OffsetPagination[kernel.ManagedAuth]{Items: []kernel.ManagedAuth{{Credential: kernel.ManagedAuthCredential{Name: name}}}}, nil
+		},
+	}}
+
+	existing, err := provisioner.Existing(t.Context(), "profile", []passwordmanager.Candidate{candidate})
+	require.NoError(t, err)
+	assert.True(t, existing[candidateKey(candidate)])
+}
+
 func TestManagedAuthProvisionFindsMatchingConnectionAfterSiblingAccount(t *testing.T) {
 	record := passwordmanager.Record{Provider: "bitwarden", ID: "item", Domain: "example.com", Username: "me"}
 	name := importedCredentialName(record)
