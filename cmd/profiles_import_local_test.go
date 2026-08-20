@@ -2,9 +2,14 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
@@ -152,6 +157,14 @@ type fakePasswordManager struct {
 	candidates []passwordmanager.Candidate
 	err        error
 }
+
+type lockedFakePasswordManager struct{ fakePasswordManager }
+
+func (lockedFakePasswordManager) AuthorizationRequired(context.Context) (bool, error) {
+	return true, nil
+}
+
+func (lockedFakePasswordManager) Authorize(context.Context) error { return nil }
 
 type fakeManagedAuthProvisioner struct {
 	existing map[string]bool
@@ -611,6 +624,46 @@ func TestProfilesImportLocalRejectsUnsupportedOutputBeforeDiscovery(t *testing.T
 	command := ProfilesImportLocalCmd{prompter: interactive.NewPrompterWithTerminal(false)}
 	err := command.Run(t.Context(), ProfilesImportLocalInput{Output: "yaml", Days: 30})
 	assert.EqualError(t, err, `unsupported --output value "yaml"; use "json" or omit --output for human-readable output`)
+}
+
+func TestProfilesImportLocalChecksExplicitPasswordManagerBeforeRemoteMutation(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("local browser import is macOS-only")
+	}
+	home := t.TempDir()
+	root := filepath.Join(home, "Library/Application Support/net.imput.helium")
+	profilePath := filepath.Join(root, "Default")
+	require.NoError(t, os.MkdirAll(filepath.Join(profilePath, "Network"), 0o755))
+	state, err := json.Marshal(map[string]any{"profile": map[string]any{"info_cache": map[string]any{"Default": map[string]string{"name": "Personal"}}}})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "Local State"), state, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(profilePath, "History"), nil, 0o600))
+	createCookies := exec.Command("/usr/bin/sqlite3", filepath.Join(profilePath, "Network", "Cookies"), `
+CREATE TABLE cookies (
+  host_key TEXT, path TEXT, name TEXT, value TEXT, encrypted_value BLOB,
+  expires_utc INTEGER, is_httponly INTEGER, is_secure INTEGER, samesite INTEGER
+);
+INSERT INTO cookies VALUES ('.google.com', '/', 'session', 'secret', X'', 0, 1, 1, 1);
+`)
+	output, err := createCookies.CombinedOutput()
+	require.NoError(t, err, string(output))
+
+	t.Setenv("KERNEL_API_KEY", "test-api-key")
+	t.Setenv("KERNEL_BASE_URL", "http://127.0.0.1:1")
+	command := ProfilesImportLocalCmd{
+		prompter: interactive.NewPrompterWithTerminal(false),
+		homeDir:  func() (string, error) { return home, nil },
+		providers: func() []passwordmanager.Provider {
+			return []passwordmanager.Provider{lockedFakePasswordManager{fakePasswordManager{name: "Bitwarden"}}}
+		},
+	}
+	err = command.Run(t.Context(), ProfilesImportLocalInput{
+		BrowserProfile: "Helium / Personal", ProfileName: "test-profile", Sites: []string{"google.com"},
+		Days: 30, SkipConfirm: true, PasswordManager: "bitwarden",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "select Managed Auth setup before creating profile")
+	assert.Contains(t, err.Error(), "Bitwarden is locked")
 }
 
 func TestProfilesImportStatusRejectsUnsupportedOutputBeforeAuthentication(t *testing.T) {

@@ -331,6 +331,20 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	clientCompletion.Counts = localbrowser.ClientCounts{
 		Cookies: itemCounts["cookies"], Bookmarks: itemCounts["bookmarks"], History: itemCounts["history"], StorageOrigins: importedStorageOriginCount(profileData.Storage),
 	}
+	pendingLogins := pendingManagedAuth{}
+	var managedAuthSelectionErr error
+	managedAuthRequested := managedAuthImportRequested(in.PasswordManager, nonInteractive)
+	if managedAuthRequested && nonInteractive {
+		phaseStarted = time.Now()
+		loginSites := rankedManagedAuthSites(cookieSites, cookieSelection.sites, managedAuthSiteLimit)
+		availableLoginSites := selectedSiteMetadata(cookieSites, cookieSelection.sites)
+		pendingLogins, managedAuthSelectionErr = c.chooseManagedAuthLogins(ctx, targetName, loginSites, availableLoginSites, in.PasswordManager, true, humanOutput)
+		timings["password_manager_discovery"] = time.Since(phaseStarted)
+		if managedAuthSelectionErr != nil {
+			return fmt.Errorf("select Managed Auth setup before creating profile: %w", managedAuthSelectionErr)
+		}
+	}
+
 	client := handoffClient
 	if client == nil {
 		token, err := auth.BearerToken(ctx)
@@ -380,13 +394,11 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	})
 	defer profileJob.Cancel()
 
-	pendingLogins := pendingManagedAuth{}
-	var managedAuthSelectionErr error
-	if managedAuthImportRequested(in.PasswordManager, nonInteractive) {
+	if managedAuthRequested && !nonInteractive {
 		phaseStarted = time.Now()
 		loginSites := rankedManagedAuthSites(cookieSites, cookieSelection.sites, managedAuthSiteLimit)
 		availableLoginSites := selectedSiteMetadata(cookieSites, cookieSelection.sites)
-		pendingLogins, managedAuthSelectionErr = c.chooseManagedAuthLogins(ctx, targetName, loginSites, availableLoginSites, in.PasswordManager, nonInteractive, humanOutput)
+		pendingLogins, managedAuthSelectionErr = c.chooseManagedAuthLogins(ctx, targetName, loginSites, availableLoginSites, in.PasswordManager, false, humanOutput)
 		timings["password_manager_discovery"] = time.Since(phaseStarted)
 	}
 
