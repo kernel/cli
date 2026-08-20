@@ -60,6 +60,7 @@ type ProfilesImportLocalCmd struct {
 	providers           func() []passwordmanager.Provider
 	provisioner         managedAuthProvisioner
 	managedAuthCapacity func(context.Context) (managedAuthCapacity, error)
+	profileExists       func(context.Context, string) (bool, error)
 }
 
 type pendingManagedAuth struct {
@@ -194,11 +195,22 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		pterm.Success.Printf("Found %s\n", profile.DisplayName())
 	}
 	targetName := in.ProfileName
+	explicitProfileName := targetName != ""
 	if targetName == "" {
 		targetName = defaultImportedProfileName(profile)
 	}
 	if targetName == "" || len(targetName) > 255 || profileIDNameCharacters.MatchString(targetName) || cuidLikeProfileName.MatchString(targetName) {
 		return fmt.Errorf("profile name must be 1-255 letters, numbers, dots, underscores, or hyphens and cannot be a cuid-like string")
+	}
+	if c.profileExists != nil {
+		resolvedName, renamed, err := resolveImportedProfileName(ctx, targetName, explicitProfileName, c.profileExists)
+		if err != nil {
+			return err
+		}
+		if renamed && humanOutput {
+			pterm.Info.Printf("Kernel profile %q already exists; using %q for this import\n", targetName, resolvedName)
+		}
+		targetName = resolvedName
 	}
 	explicitSites := in.Sites
 	if len(explicitSites) > 0 {
@@ -439,6 +451,7 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	}
 	connectionIDs := make([]string, 0)
 	approvedLogins := make([]passwordmanager.Record, 0)
+	approvedCredentialCount := pendingCredentialCount(pendingLogins)
 	if len(pendingLogins.providers) > 0 {
 		if humanOutput {
 			pterm.Info.Println(approvedCredentialReadMessage(pendingLogins))
@@ -452,6 +465,9 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 			approvedLogins = append(approvedLogins, records...)
 		}
 		timings["password_manager_reveal"] = time.Since(phaseStarted)
+		if skipped := approvedCredentialCount - len(approvedLogins); skipped > 0 && humanOutput {
+			pterm.Warning.Printf("Skipped %d approved password-manager item%s without a usable username or password\n", skipped, pluralSuffix(skipped))
+		}
 	}
 	if len(approvedLogins) > 0 {
 		if c.provisioner == nil {
@@ -540,10 +556,9 @@ func completedDashboardImportMessage(phase string) (string, bool) {
 }
 
 func approvedCredentialReadMessage(pending pendingManagedAuth) string {
-	count := 0
+	count := pendingCredentialCount(pending)
 	providers := make([]string, 0, len(pending.providers))
 	for _, pendingProvider := range pending.providers {
-		count += len(pendingProvider.candidates)
 		providers = append(providers, pendingProvider.provider.Name())
 	}
 	credential := "credentials"
@@ -551,6 +566,14 @@ func approvedCredentialReadMessage(pending pendingManagedAuth) string {
 		credential = "credential"
 	}
 	return fmt.Sprintf("Reading %d approved %s from %s...", count, credential, strings.Join(providers, " and "))
+}
+
+func pendingCredentialCount(pending pendingManagedAuth) int {
+	count := 0
+	for _, pendingProvider := range pending.providers {
+		count += len(pendingProvider.candidates)
+	}
+	return count
 }
 
 func managedAuthCompletionConnections(ids []string, records []passwordmanager.Record) []localbrowser.ManagedAuthConnection {
@@ -1395,6 +1418,35 @@ func browserImportProgressError(importID, phase string, elapsed time.Duration, e
 	return fmt.Errorf("browser import %s stopped after %s in phase %s: %w; check it with: kernel profiles import-status %s", importID, elapsed.Round(time.Millisecond), phase, err, importID)
 }
 
+func resolveImportedProfileName(ctx context.Context, requested string, explicit bool, exists func(context.Context, string) (bool, error)) (string, bool, error) {
+	found, err := exists(ctx, requested)
+	if err != nil {
+		return "", false, fmt.Errorf("check Kernel profile name %q: %w", requested, err)
+	}
+	if !found {
+		return requested, false, nil
+	}
+	if explicit {
+		return "", false, fmt.Errorf("Kernel profile %q already exists; choose a different --profile-name", requested)
+	}
+	for suffixNumber := 2; suffixNumber < 10000; suffixNumber++ {
+		suffix := fmt.Sprintf("-%d", suffixNumber)
+		base := requested
+		if len(base)+len(suffix) > 255 {
+			base = base[:255-len(suffix)]
+		}
+		candidate := base + suffix
+		found, err = exists(ctx, candidate)
+		if err != nil {
+			return "", false, fmt.Errorf("check Kernel profile name %q: %w", candidate, err)
+		}
+		if !found {
+			return candidate, true, nil
+		}
+	}
+	return "", false, fmt.Errorf("could not find an available Kernel profile name based on %q; use --profile-name", requested)
+}
+
 func durationMilliseconds(values map[string]time.Duration) map[string]int64 {
 	result := make(map[string]int64, len(values))
 	for name, duration := range values {
@@ -1885,11 +1937,23 @@ func runProfilesImportLocalWithInput(cmd *cobra.Command, input ProfilesImportLoc
 	credentials := projectClient.Credentials
 	connections := projectClient.Auth.Connections
 	limits := projectClient.Organization.Limits
+	profiles := projectClient.Profiles
 	c := ProfilesImportLocalCmd{
 		prompter:            interactive.NewPrompter(),
 		providers:           passwordmanager.Detect,
 		provisioner:         kernelManagedAuthProvisioner{credentials: &credentials, connections: &connections},
 		managedAuthCapacity: func(ctx context.Context) (managedAuthCapacity, error) { return loadManagedAuthCapacity(ctx, &limits) },
+		profileExists: func(ctx context.Context, name string) (bool, error) {
+			_, err := profiles.Get(ctx, name)
+			if err == nil {
+				return true, nil
+			}
+			var apiErr *kernel.Error
+			if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+				return false, nil
+			}
+			return false, util.CleanedUpSdkError{Err: err}
+		},
 	}
 	input.ProjectID = project.ID
 	if input.Version == "" {

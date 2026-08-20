@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
@@ -377,6 +378,7 @@ func TestApprovedCredentialReadMessageNamesProviders(t *testing.T) {
 		{provider: fakePasswordManager{name: "1Password"}, candidates: []passwordmanager.Candidate{{ID: "three"}}},
 	}}
 
+	assert.Equal(t, 3, pendingCredentialCount(pending))
 	assert.Equal(t, "Reading 3 approved credentials from Bitwarden and 1Password...", approvedCredentialReadMessage(pending))
 }
 
@@ -618,6 +620,34 @@ func TestChooseSitesFailsFastWithoutTTYOrFlags(t *testing.T) {
 func TestDefaultImportedProfileName(t *testing.T) {
 	profile := localbrowser.Profile{Name: "Ilyaas Personal", Browser: localbrowser.Browser{ID: "chrome"}}
 	assert.Equal(t, "chrome-ilyaas-personal", defaultImportedProfileName(profile))
+}
+
+func TestResolveImportedProfileNameUsesFirstAvailableSuffix(t *testing.T) {
+	existing := map[string]bool{"helium-you": true, "helium-you-2": true}
+	name, renamed, err := resolveImportedProfileName(t.Context(), "helium-you", false, func(_ context.Context, name string) (bool, error) {
+		return existing[name], nil
+	})
+	require.NoError(t, err)
+	assert.True(t, renamed)
+	assert.Equal(t, "helium-you-3", name)
+}
+
+func TestResolveImportedProfileNameRejectsExplicitDuplicate(t *testing.T) {
+	_, _, err := resolveImportedProfileName(t.Context(), "helium-you", true, func(context.Context, string) (bool, error) {
+		return true, nil
+	})
+	require.EqualError(t, err, `Kernel profile "helium-you" already exists; choose a different --profile-name`)
+}
+
+func TestResolveImportedProfileNamePreservesMaximumLength(t *testing.T) {
+	requested := strings.Repeat("a", 255)
+	name, renamed, err := resolveImportedProfileName(t.Context(), requested, false, func(_ context.Context, name string) (bool, error) {
+		return name == requested, nil
+	})
+	require.NoError(t, err)
+	assert.True(t, renamed)
+	assert.Len(t, name, 255)
+	assert.True(t, strings.HasSuffix(name, "-2"))
 }
 
 func TestProfilesImportLocalRejectsUnsupportedOutputBeforeDiscovery(t *testing.T) {
