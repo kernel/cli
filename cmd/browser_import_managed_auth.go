@@ -75,6 +75,10 @@ type managedAuthProvisioner interface {
 	Existing(context.Context, string, []passwordmanager.Candidate) (map[string]bool, error)
 }
 
+type crossProfileManagedAuthFinder interface {
+	ExistingProfiles(context.Context, string, []passwordmanager.Candidate) (map[string][]string, error)
+}
+
 type kernelManagedAuthProvisioner struct {
 	credentials interface {
 		New(context.Context, kernel.CredentialNewParams, ...option.RequestOption) (*kernel.Credential, error)
@@ -164,6 +168,34 @@ func (p kernelManagedAuthProvisioner) Existing(ctx context.Context, profileName 
 	for _, candidate := range candidates {
 		name := importedCredentialNameFor(candidate.Provider, candidateImportID(candidate), candidate.Domain)
 		_, result[candidateKey(candidate)] = existingNames[name]
+	}
+	return result, nil
+}
+
+func (p kernelManagedAuthProvisioner) ExistingProfiles(ctx context.Context, profileName string, candidates []passwordmanager.Candidate) (map[string][]string, error) {
+	profilesByCredential := make(map[string][]string)
+	const pageSize = 100
+	for offset := int64(0); ; offset += pageSize {
+		page, err := p.connections.List(ctx, kernel.AuthConnectionListParams{Limit: kernel.Opt(int64(pageSize)), Offset: kernel.Opt(offset)})
+		if err != nil {
+			return nil, err
+		}
+		if page == nil {
+			break
+		}
+		for _, connection := range page.Items {
+			if connection.ProfileName != profileName {
+				profilesByCredential[connection.Credential.Name] = append(profilesByCredential[connection.Credential.Name], connection.ProfileName)
+			}
+		}
+		if len(page.Items) < pageSize {
+			break
+		}
+	}
+	result := make(map[string][]string, len(candidates))
+	for _, candidate := range candidates {
+		name := importedCredentialNameFor(candidate.Provider, candidateImportID(candidate), candidate.Domain)
+		result[candidateKey(candidate)] = profilesByCredential[name]
 	}
 	return result, nil
 }

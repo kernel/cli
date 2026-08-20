@@ -117,9 +117,10 @@ type Inventory struct {
 }
 
 type ProfileSelection struct {
-	SourceID   string   `json:"source_id"`
-	TargetName string   `json:"target_name"`
-	Categories []string `json:"categories"`
+	SourceID        string   `json:"source_id"`
+	TargetName      string   `json:"target_name"`
+	TargetProfileID string   `json:"target_profile_id,omitempty"`
+	Categories      []string `json:"categories"`
 }
 
 type Selection struct {

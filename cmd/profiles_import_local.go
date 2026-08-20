@@ -54,13 +54,20 @@ type ProfilesImportLocalInput struct {
 }
 
 type ProfilesImportLocalCmd struct {
-	prompter            interactive.Prompter
-	homeDir             func() (string, error)
-	now                 func() time.Time
-	providers           func() []passwordmanager.Provider
-	provisioner         managedAuthProvisioner
-	managedAuthCapacity func(context.Context) (managedAuthCapacity, error)
-	profileExists       func(context.Context, string) (bool, error)
+	prompter                 interactive.Prompter
+	homeDir                  func() (string, error)
+	now                      func() time.Time
+	providers                func() []passwordmanager.Provider
+	provisioner              managedAuthProvisioner
+	managedAuthCapacity      func(context.Context) (managedAuthCapacity, error)
+	profileLookup            func(context.Context, string) (kernelProfileReference, bool, error)
+	selectProfileTarget      func(string, []string, string) (string, error)
+	selectManagedAuthAccount func(string, []string, string) (string, error)
+}
+
+type kernelProfileReference struct {
+	ID   string
+	Name string
 }
 
 type pendingManagedAuth struct {
@@ -195,22 +202,18 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		pterm.Success.Printf("Found %s\n", profile.DisplayName())
 	}
 	targetName := in.ProfileName
-	explicitProfileName := targetName != ""
+	targetProfileID := ""
 	if targetName == "" {
 		targetName = defaultImportedProfileName(profile)
 	}
 	if targetName == "" || len(targetName) > 255 || profileIDNameCharacters.MatchString(targetName) || cuidLikeProfileName.MatchString(targetName) {
 		return fmt.Errorf("profile name must be 1-255 letters, numbers, dots, underscores, or hyphens and cannot be a cuid-like string")
 	}
-	if c.profileExists != nil {
-		resolvedName, renamed, err := resolveImportedProfileName(ctx, targetName, explicitProfileName, c.profileExists)
+	if c.profileLookup != nil {
+		targetName, targetProfileID, err = c.chooseImportedProfileTarget(ctx, profile, targetName, nonInteractive)
 		if err != nil {
 			return err
 		}
-		if renamed && humanOutput {
-			pterm.Info.Printf("Kernel profile %q already exists; using %q for this import\n", targetName, resolvedName)
-		}
-		targetName = resolvedName
 	}
 	explicitSites := in.Sites
 	if len(explicitSites) > 0 {
@@ -399,7 +402,7 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		ID: profile.ID, Kind: "browser", Name: profile.DisplayName(), Browser: profile.Browser.ID,
 		DataTypes: categories, ItemCounts: itemCounts,
 	}}}
-	selection := localbrowser.Selection{Profiles: []localbrowser.ProfileSelection{{SourceID: profile.ID, TargetName: targetName, Categories: categories}}}
+	selection := localbrowser.Selection{Profiles: []localbrowser.ProfileSelection{{SourceID: profile.ID, TargetName: targetName, TargetProfileID: targetProfileID, Categories: categories}}}
 	profileJob := startProfileImport(ctx, client, profileImportRequest{
 		importID: importID, helperToken: helperToken, dashboardHandoff: dashboardHandoff,
 		inventory: inventory, selection: selection, bundle: bundle, waitTimeout: in.WaitTimeout,
@@ -776,12 +779,21 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, pro
 		}
 		return pendingManagedAuth{}, nil
 	}
+	otherProfiles := make(map[string][]string)
+	if finder, ok := c.provisioner.(crossProfileManagedAuthFinder); ok {
+		otherProfiles, err = finder.ExistingProfiles(ctx, profileName, candidates)
+		if err != nil {
+			return pendingManagedAuth{}, fmt.Errorf("check Managed Auth connections on other profiles: %w", err)
+		}
+	}
 	hasExisting := false
 	hasNew := false
 	for _, candidate := range candidates {
-		if existing[candidateKey(candidate)] {
+		key := candidateKey(candidate)
+		if existing[key] || len(otherProfiles[key]) > 0 {
 			hasExisting = true
-		} else {
+		}
+		if !existing[key] {
 			hasNew = true
 		}
 	}
@@ -915,7 +927,7 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, pro
 			approvedCandidates = append(approvedCandidates, sourced)
 		}
 	} else {
-		approvedCandidates, err = c.chooseManagedAuthAccountsByWebsite(sites, allCandidates, existing, availableConnections, 0, displayCapacity, displayCapacityKnown)
+		approvedCandidates, err = c.chooseManagedAuthAccountsByWebsite(profileName, sites, allCandidates, existing, otherProfiles, availableConnections, 0, displayCapacity, displayCapacityKnown)
 		if err != nil {
 			return pendingManagedAuth{}, err
 		}
@@ -939,7 +951,7 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, pro
 	return pending, nil
 }
 
-func (c ProfilesImportLocalCmd) chooseManagedAuthAccountsByWebsite(sites []string, candidates []sourcedPasswordManagerCandidate, existing map[string]bool, availableConnections, alreadySelectedNew int, capacity managedAuthCapacity, capacityKnown bool) ([]sourcedPasswordManagerCandidate, error) {
+func (c ProfilesImportLocalCmd) chooseManagedAuthAccountsByWebsite(profileName string, sites []string, candidates []sourcedPasswordManagerCandidate, existing map[string]bool, otherProfiles map[string][]string, availableConnections, alreadySelectedNew int, capacity managedAuthCapacity, capacityKnown bool) ([]sourcedPasswordManagerCandidate, error) {
 	byDomain := make(map[string][]sourcedPasswordManagerCandidate, len(sites))
 	for _, candidate := range candidates {
 		byDomain[candidate.candidate.Domain] = append(byDomain[candidate.candidate.Domain], candidate)
@@ -958,7 +970,7 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthAccountsByWebsite(sites []strin
 	for domainIndex := 0; domainIndex < len(domains); {
 		domain := domains[domainIndex]
 		domainCandidates := byDomain[domain]
-		if len(domainCandidates) == 1 {
+		if len(domainCandidates) == 1 && len(otherProfiles[candidateKey(domainCandidates[0].candidate)]) == 0 {
 			chosen := domainCandidates[0]
 			delete(choices, domain)
 			if !existing[candidateKey(chosen.candidate)] && managedAuthCapacityReached(alreadySelectedNew+managedAuthNewChoiceCount(choices, existing), availableConnections, capacity) {
@@ -971,16 +983,38 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthAccountsByWebsite(sites []strin
 			domainIndex++
 			continue
 		}
-		labels := make([]string, 0, len(domainCandidates))
+		labels := make([]string, 0, len(domainCandidates)*2)
 		byLabel := make(map[string]sourcedPasswordManagerCandidate, len(domainCandidates))
+		keepExisting := make(map[string]bool)
 		existingLabels := make([]string, 0, len(domainCandidates))
-		labels = groupedLoginLabels(domainCandidates)
+		candidateLabels := groupedLoginLabels(domainCandidates)
+		accountPrompt := domain + " — ↑/↓ move, Enter chooses"
+		if len(domainCandidates) == 1 {
+			profiles := otherProfiles[candidateKey(domainCandidates[0].candidate)]
+			if len(profiles) > 0 && !existing[candidateKey(domainCandidates[0].candidate)] {
+				pterm.Printf("%s\nAlready managed on %q with this account\n\n", domain, profiles[0])
+				accountPrompt = "Choose how to use this account — ↑/↓ move, Enter chooses"
+			}
+		}
 		for index, sourced := range domainCandidates {
-			label := labels[index]
+			label := candidateLabels[index]
+			profiles := otherProfiles[candidateKey(sourced.candidate)]
+			if len(profiles) > 0 && !existing[candidateKey(sourced.candidate)] {
+				keepLabel := fmt.Sprintf("Keep this account managed on %q  · 0 new slots", profiles[0])
+				alsoLabel := fmt.Sprintf("Also manage this account on %q  · uses 1 slot", profileName)
+				if len(domainCandidates) > 1 {
+					keepLabel = fmt.Sprintf("Keep %s on %q  · 0 new slots", label, profiles[0])
+					alsoLabel = fmt.Sprintf("Also manage %s on %q  · uses 1 slot", label, profileName)
+				}
+				labels = append(labels, keepLabel, alsoLabel)
+				keepExisting[keepLabel] = true
+				byLabel[alsoLabel] = sourced
+				continue
+			}
 			if existing[candidateKey(sourced.candidate)] {
 				label += "  ✓ existing · no new slot"
-				labels[index] = label
 			}
+			labels = append(labels, label)
 			byLabel[label] = sourced
 			if existing[candidateKey(sourced.candidate)] {
 				existingLabels = append(existingLabels, label)
@@ -1004,7 +1038,13 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthAccountsByWebsite(sites []strin
 		} else if managedAuthCapacityReached(alreadySelectedNew+managedAuthNewChoiceCount(choices, existing), availableConnections, capacity) {
 			defaultOption = "Skip this website"
 		}
-		selected, err := c.prompter.SelectDefault("login for "+domain, "use arrow keys and press Enter", domain+" — ↑/↓ move, Enter chooses", options, defaultOption)
+		var selected string
+		var err error
+		if c.selectManagedAuthAccount != nil {
+			selected, err = c.selectManagedAuthAccount(domain, options, defaultOption)
+		} else {
+			selected, err = c.prompter.SelectDefault("login for "+domain, "use arrow keys and press Enter", accountPrompt, options, defaultOption)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1020,6 +1060,11 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthAccountsByWebsite(sites []strin
 			domainIndex = previousIndex
 			continue
 		case "Skip this website":
+			delete(choices, domain)
+			domainIndex++
+			continue
+		}
+		if keepExisting[selected] {
 			delete(choices, domain)
 			domainIndex++
 			continue
@@ -1445,6 +1490,44 @@ func resolveImportedProfileName(ctx context.Context, requested string, explicit 
 		}
 	}
 	return "", false, fmt.Errorf("could not find an available Kernel profile name based on %q; use --profile-name", requested)
+}
+
+func (c ProfilesImportLocalCmd) chooseImportedProfileTarget(ctx context.Context, source localbrowser.Profile, requested string, nonInteractive bool) (string, string, error) {
+	existing, found, err := c.profileLookup(ctx, requested)
+	if err != nil {
+		return "", "", fmt.Errorf("check Kernel profile name %q: %w", requested, err)
+	}
+	if !found {
+		return requested, "", nil
+	}
+	if nonInteractive {
+		return "", "", fmt.Errorf("Kernel profile %q already exists; run interactively to update it or choose a different --profile-name", requested)
+	}
+
+	separateName, _, err := resolveImportedProfileName(ctx, requested, false, func(ctx context.Context, name string) (bool, error) {
+		_, found, err := c.profileLookup(ctx, name)
+		return found, err
+	})
+	if err != nil {
+		return "", "", err
+	}
+	updateOption := fmt.Sprintf("Update %q  (recommended; keeps existing Managed Auth connections)", existing.Name)
+	separateOption := fmt.Sprintf("Create a separate profile %q", separateName)
+	prompt := fmt.Sprintf("An earlier %s import already exists", source.Browser.Name)
+	options := []string{updateOption, separateOption}
+	var choice string
+	if c.selectProfileTarget != nil {
+		choice, err = c.selectProfileTarget(prompt, options, updateOption)
+	} else {
+		choice, err = c.prompter.SelectDefault("profile import destination", "choose whether to update or create a separate profile", prompt, options, updateOption)
+	}
+	if err != nil {
+		return "", "", err
+	}
+	if choice == updateOption {
+		return existing.Name, existing.ID, nil
+	}
+	return separateName, "", nil
 }
 
 func durationMilliseconds(values map[string]time.Duration) map[string]int64 {
@@ -1943,16 +2026,16 @@ func runProfilesImportLocalWithInput(cmd *cobra.Command, input ProfilesImportLoc
 		providers:           passwordmanager.Detect,
 		provisioner:         kernelManagedAuthProvisioner{credentials: &credentials, connections: &connections},
 		managedAuthCapacity: func(ctx context.Context) (managedAuthCapacity, error) { return loadManagedAuthCapacity(ctx, &limits) },
-		profileExists: func(ctx context.Context, name string) (bool, error) {
-			_, err := profiles.Get(ctx, name)
+		profileLookup: func(ctx context.Context, name string) (kernelProfileReference, bool, error) {
+			profile, err := profiles.Get(ctx, name)
 			if err == nil {
-				return true, nil
+				return kernelProfileReference{ID: profile.ID, Name: profile.Name}, true, nil
 			}
 			var apiErr *kernel.Error
 			if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
-				return false, nil
+				return kernelProfileReference{}, false, nil
 			}
-			return false, util.CleanedUpSdkError{Err: err}
+			return kernelProfileReference{}, false, util.CleanedUpSdkError{Err: err}
 		},
 	}
 	input.ProjectID = project.ID

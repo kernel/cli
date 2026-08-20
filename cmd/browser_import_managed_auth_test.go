@@ -160,6 +160,24 @@ func TestManagedAuthExistingUsesOnePasswordVaultIdentity(t *testing.T) {
 	assert.True(t, existing[candidateKey(candidate)])
 }
 
+func TestManagedAuthExistingProfilesFindsSameAccountOnAnotherProfile(t *testing.T) {
+	candidate := passwordmanager.Candidate{Provider: "bitwarden", ID: "item", Domain: "google.com"}
+	name := importedCredentialNameFor("bitwarden", "item", "google.com")
+	provisioner := kernelManagedAuthProvisioner{connections: fakeImportedConnections{
+		listFunc: func(params kernel.AuthConnectionListParams) (*pagination.OffsetPagination[kernel.ManagedAuth], error) {
+			require.False(t, params.ProfileName.Valid())
+			return &pagination.OffsetPagination[kernel.ManagedAuth]{Items: []kernel.ManagedAuth{
+				{ProfileName: "helium-you", Credential: kernel.ManagedAuthCredential{Name: name}},
+				{ProfileName: "helium-you-2", Credential: kernel.ManagedAuthCredential{Name: "another-account"}},
+			}}, nil
+		},
+	}}
+
+	profiles, err := provisioner.ExistingProfiles(t.Context(), "helium-you-2", []passwordmanager.Candidate{candidate})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"helium-you"}, profiles[candidateKey(candidate)])
+}
+
 func TestManagedAuthProvisionFindsMatchingConnectionAfterSiblingAccount(t *testing.T) {
 	record := passwordmanager.Record{Provider: "bitwarden", ID: "item", Domain: "example.com", Username: "me"}
 	name := importedCredentialName(record)

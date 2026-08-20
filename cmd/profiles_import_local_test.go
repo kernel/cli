@@ -107,6 +107,36 @@ func TestGroupedLoginLabelsUseIDsOnlyToResolveCollisions(t *testing.T) {
 	assert.NotContains(t, labels[0], "1  BW")
 }
 
+func TestManagedAuthAccountOnAnotherProfileDefaultsToKeepingExistingConnection(t *testing.T) {
+	candidate := passwordmanager.Candidate{Provider: "bitwarden", ID: "google", Domain: "google.com", Username: "me@example.com"}
+	sourced := sourcedPasswordManagerCandidate{provider: fakePasswordManager{name: "Bitwarden"}, candidate: candidate}
+	command := ProfilesImportLocalCmd{selectManagedAuthAccount: func(domain string, options []string, defaultOption string) (string, error) {
+		assert.Equal(t, "google.com", domain)
+		require.Len(t, options, 3)
+		assert.Contains(t, options[0], `Keep this account managed on "helium-you"`)
+		assert.Contains(t, options[1], `Also manage this account on "helium-you-2"`)
+		assert.Equal(t, options[0], defaultOption)
+		return defaultOption, nil
+	}}
+
+	approved, err := command.chooseManagedAuthAccountsByWebsite("helium-you-2", []string{"google.com"}, []sourcedPasswordManagerCandidate{sourced}, map[string]bool{}, map[string][]string{candidateKey(candidate): []string{"helium-you"}}, 1, 0, managedAuthCapacity{maximum: 2, remaining: 1}, true)
+	require.NoError(t, err)
+	assert.Empty(t, approved)
+}
+
+func TestManagedAuthAccountOnAnotherProfileCanUseNewSlot(t *testing.T) {
+	candidate := passwordmanager.Candidate{Provider: "bitwarden", ID: "google", Domain: "google.com", Username: "me@example.com"}
+	sourced := sourcedPasswordManagerCandidate{provider: fakePasswordManager{name: "Bitwarden"}, candidate: candidate}
+	command := ProfilesImportLocalCmd{selectManagedAuthAccount: func(_ string, options []string, _ string) (string, error) {
+		return options[1], nil
+	}}
+
+	approved, err := command.chooseManagedAuthAccountsByWebsite("helium-you-2", []string{"google.com"}, []sourcedPasswordManagerCandidate{sourced}, map[string]bool{}, map[string][]string{candidateKey(candidate): []string{"helium-you"}}, 1, 0, managedAuthCapacity{maximum: 2, remaining: 1}, true)
+	require.NoError(t, err)
+	require.Len(t, approved, 1)
+	assert.Equal(t, candidateKey(candidate), candidateKey(approved[0].candidate))
+}
+
 func TestManagedAuthNewChoiceCountDoesNotChargeExistingConnections(t *testing.T) {
 	provider := fakePasswordManager{name: "Bitwarden"}
 	existingCandidate := passwordmanager.Candidate{Provider: "bitwarden", ID: "existing", Domain: "one.com"}
@@ -648,6 +678,52 @@ func TestResolveImportedProfileNamePreservesMaximumLength(t *testing.T) {
 	assert.True(t, renamed)
 	assert.Len(t, name, 255)
 	assert.True(t, strings.HasSuffix(name, "-2"))
+}
+
+func TestChooseImportedProfileTargetDefaultsToUpdatingExistingProfile(t *testing.T) {
+	command := ProfilesImportLocalCmd{
+		profileLookup: func(_ context.Context, name string) (kernelProfileReference, bool, error) {
+			if name == "helium-you" {
+				return kernelProfileReference{ID: "profile-1", Name: name}, true, nil
+			}
+			return kernelProfileReference{}, false, nil
+		},
+		selectProfileTarget: func(_ string, options []string, defaultOption string) (string, error) {
+			require.Len(t, options, 2)
+			assert.Contains(t, options[0], `Update "helium-you"`)
+			assert.Contains(t, options[1], `"helium-you-2"`)
+			assert.Equal(t, options[0], defaultOption)
+			return defaultOption, nil
+		},
+	}
+	name, profileID, err := command.chooseImportedProfileTarget(t.Context(), localbrowser.Profile{Browser: localbrowser.Browser{Name: "Helium"}}, "helium-you", false)
+	require.NoError(t, err)
+	assert.Equal(t, "helium-you", name)
+	assert.Equal(t, "profile-1", profileID)
+}
+
+func TestChooseImportedProfileTargetCanCreateSeparateProfile(t *testing.T) {
+	command := ProfilesImportLocalCmd{
+		profileLookup: func(_ context.Context, name string) (kernelProfileReference, bool, error) {
+			if name == "helium-you" {
+				return kernelProfileReference{ID: "profile-1", Name: name}, true, nil
+			}
+			return kernelProfileReference{}, false, nil
+		},
+		selectProfileTarget: func(_ string, options []string, _ string) (string, error) { return options[1], nil },
+	}
+	name, profileID, err := command.chooseImportedProfileTarget(t.Context(), localbrowser.Profile{Browser: localbrowser.Browser{Name: "Helium"}}, "helium-you", false)
+	require.NoError(t, err)
+	assert.Equal(t, "helium-you-2", name)
+	assert.Empty(t, profileID)
+}
+
+func TestChooseImportedProfileTargetRequiresInteractiveDuplicateDecision(t *testing.T) {
+	command := ProfilesImportLocalCmd{profileLookup: func(_ context.Context, name string) (kernelProfileReference, bool, error) {
+		return kernelProfileReference{ID: "profile-1", Name: name}, true, nil
+	}}
+	_, _, err := command.chooseImportedProfileTarget(t.Context(), localbrowser.Profile{}, "helium-you", true)
+	require.EqualError(t, err, `Kernel profile "helium-you" already exists; run interactively to update it or choose a different --profile-name`)
 }
 
 func TestProfilesImportLocalRejectsUnsupportedOutputBeforeDiscovery(t *testing.T) {
