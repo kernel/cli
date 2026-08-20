@@ -144,9 +144,8 @@ type ApplyFailure struct {
 }
 
 type Applied struct {
-	Profiles            []AppliedProfile `json:"profiles"`
-	CredentialsImported int              `json:"credentials_imported"`
-	Failure             *ApplyFailure    `json:"failure,omitempty"`
+	Profiles []AppliedProfile `json:"profiles"`
+	Failure  *ApplyFailure    `json:"failure,omitempty"`
 }
 
 type Status struct {
