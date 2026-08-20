@@ -54,7 +54,7 @@ func TestClientRunsBrowserImportLifecycleWithScopedTokens(t *testing.T) {
 	require.NoError(t, err)
 	_, err = client.SubmitInventory(context.Background(), created.ID, created.HelperToken, Inventory{Sources: []Source{{ID: "chrome", Kind: "browser", Name: "Chrome", DataTypes: []string{"cookies"}}}})
 	require.NoError(t, err)
-	_, err = client.SubmitSelection(context.Background(), created.ID, Selection{Profiles: []ProfileSelection{}, CredentialSources: []string{}})
+	_, err = client.SubmitSelection(context.Background(), created.ID, Selection{Profiles: []ProfileSelection{}})
 	require.NoError(t, err)
 	_, err = client.Upload(context.Background(), created.ID, created.HelperToken, []byte("bundle"))
 	require.NoError(t, err)

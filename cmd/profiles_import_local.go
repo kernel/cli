@@ -181,7 +181,7 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	if err != nil {
 		return browserImportProgressError(created.ID, status.Phase, time.Since(phaseStarted), err)
 	}
-	selection := localbrowser.Selection{Profiles: []localbrowser.ProfileSelection{{SourceID: profile.ID, TargetName: targetName, Categories: []string{"cookies"}}}, CredentialSources: make([]string, 0)}
+	selection := localbrowser.Selection{Profiles: []localbrowser.ProfileSelection{{SourceID: profile.ID, TargetName: targetName, Categories: []string{"cookies"}}}}
 	status, err = client.SubmitSelection(ctx, created.ID, selection)
 	if err != nil {
 		return browserImportProgressError(created.ID, status.Phase, time.Since(phaseStarted), err)

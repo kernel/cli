@@ -66,8 +66,7 @@ type ProfileSelection struct {
 }
 
 type Selection struct {
-	Profiles          []ProfileSelection `json:"profiles"`
-	CredentialSources []string           `json:"credential_sources"`
+	Profiles []ProfileSelection `json:"profiles"`
 }
 
 type AppliedProfile struct {
