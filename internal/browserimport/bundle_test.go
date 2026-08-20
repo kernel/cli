@@ -12,6 +12,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestBundleLimitMatchesUploadContract(t *testing.T) {
+	require.Equal(t, 64<<20, maxBundleBytes)
+}
+
 func TestBuildProfileBundleIncludesOnlySelectedCategories(t *testing.T) {
 	profile := Profile{ID: "helium-default-1234", Name: "Personal", Browser: Browser{ID: "helium", Name: "Helium"}}
 	bundle, err := BuildProfileBundle(t.Context(), profile, "my-browser", "test", ProfileData{

@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	maxBundleBytes           = 128 << 20
+	maxBundleBytes           = 64 << 20
 	maxPortableFileBytes     = 64 << 20
 	maxPortableRecordBytes   = 1 << 20
 	maxPortableRecords       = 100_000
@@ -165,7 +165,7 @@ func encodeBundle(ctx context.Context, manifest []byte, files []bundleFile) ([]b
 		return nil, err
 	}
 	if output.Len() > maxBundleBytes {
-		return nil, fmt.Errorf("selected browser data exceeds the 128 MiB import limit")
+		return nil, fmt.Errorf("selected browser data exceeds the %d MiB import limit", maxBundleBytes>>20)
 	}
 	return output.Bytes(), nil
 }
