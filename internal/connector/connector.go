@@ -25,12 +25,16 @@ const (
 	connectorName = "Kernel Connector.app"
 )
 
-var projectIDPattern = regexp.MustCompile(`^[a-z0-9]{24}$`)
+var (
+	projectIDPattern = regexp.MustCompile(`^[a-z0-9]{24}$`)
+	importIDPattern  = regexp.MustCompile(`^bri_[a-z0-9]{8,64}$`)
+)
 
 // BrowserImportLink is the trusted, non-secret input carried by a dashboard
 // deep link. The CLI still authenticates and authorizes the project itself.
 type BrowserImportLink struct {
 	ProjectID string
+	ImportID  string
 }
 
 // ParseBrowserImportLink validates a Kernel browser-import deep link.
@@ -43,22 +47,32 @@ func ParseBrowserImportLink(raw string) (BrowserImportLink, error) {
 		return BrowserImportLink{}, errors.New("invalid Kernel browser import link")
 	}
 	query, err := url.ParseQuery(parsed.RawQuery)
-	if err != nil || len(query) != 1 || len(query["project_id"]) != 1 {
+	if err != nil || len(query) < 1 || len(query) > 2 || len(query["project_id"]) != 1 {
 		return BrowserImportLink{}, errors.New("invalid Kernel browser import link")
 	}
 	projectID := query.Get("project_id")
 	if !projectIDPattern.MatchString(projectID) {
 		return BrowserImportLink{}, errors.New("invalid Kernel project ID")
 	}
-	return BrowserImportLink{ProjectID: projectID}, nil
+	importID := query.Get("import_id")
+	if len(query) == 2 && (len(query["import_id"]) != 1 || !importIDPattern.MatchString(importID)) {
+		return BrowserImportLink{}, errors.New("invalid Kernel browser import ID")
+	}
+	return BrowserImportLink{ProjectID: projectID, ImportID: importID}, nil
 }
 
 // URL returns the canonical browser-import deep link for a project.
-func URL(projectID string) (string, error) {
+func URL(projectID string, importID ...string) (string, error) {
 	if !projectIDPattern.MatchString(projectID) {
 		return "", errors.New("invalid Kernel project ID")
 	}
 	query := url.Values{"project_id": []string{projectID}}
+	if len(importID) > 1 || (len(importID) == 1 && !importIDPattern.MatchString(importID[0])) {
+		return "", errors.New("invalid Kernel browser import ID")
+	}
+	if len(importID) == 1 {
+		query.Set("import_id", importID[0])
+	}
 	return Scheme + "://" + ImportHost + "?" + query.Encode(), nil
 }
 
@@ -224,12 +238,23 @@ func macOSAppleScript(executable string) string {
 	return `on «event GURLGURL» incomingURL
 set kernelExecutable to "` + appleScriptString(executable) + `"
 set commandText to "for variable in KERNEL_BASE_URL KERNEL_API_KEY KERNEL_AUTH_BASE_URL; do value=$(/bin/launchctl getenv \"$variable\"); if [[ -n \"$value\" ]]; then export \"$variable=$value\"; fi; done; exec " & quoted form of kernelExecutable & " connector open " & quoted form of incomingURL
-set scriptPath to «event sysoexec» "/usr/bin/mktemp /tmp/kernel-connector.XXXXXX"
-set scriptFile to «event rdwropen» POSIX file scriptPath with «class perm»
-«event rdwrwrit» "#!/bin/zsh" & linefeed & "rm -f " & quoted form of scriptPath & linefeed & "if [[ ! -x " & quoted form of kernelExecutable & " ]]; then echo 'Kernel CLI was removed. Reinstall it with: brew install kernel/tap/kernel'; read -k 1 '?Press any key to close'; exit 1; fi" & linefeed & "exec /bin/zsh -lic " & quoted form of commandText & linefeed given «class refn»:scriptFile
+set launcherPath to «event sysoexec» "/usr/bin/mktemp /tmp/kernel-connector.XXXXXX"
+set startedPath to launcherPath & ".started"
+set successPath to launcherPath & ".success"
+set donePath to launcherPath & ".done"
+set scriptFile to «event rdwropen» POSIX file launcherPath with «class perm»
+«event rdwrwrit» "#!/bin/zsh" & linefeed & "rm -f " & quoted form of launcherPath & " " & quoted form of startedPath & " " & quoted form of successPath & " " & quoted form of donePath & linefeed & "commandStatus=1" & linefeed & "finishConnector() { commandStatus=$?; if [[ $commandStatus -eq 0 ]]; then /usr/bin/touch " & quoted form of successPath & "; fi; /usr/bin/touch " & quoted form of donePath & "; }" & linefeed & "trap finishConnector EXIT" & linefeed & "/usr/bin/touch " & quoted form of startedPath & linefeed & "if [[ ! -x " & quoted form of kernelExecutable & " ]]; then echo 'Kernel CLI was removed. Reinstall it with: brew install kernel/tap/kernel'; read -k 1 '?Press any key to close'; exit 1; fi" & linefeed & "/bin/zsh -lc " & quoted form of commandText & linefeed & "commandStatus=$?" & linefeed & "exit $commandStatus" & linefeed given «class refn»:scriptFile
 «event rdwrclos» scriptFile
-«event sysoexec» "/bin/chmod 700 " & quoted form of scriptPath
-«event sysoexec» "/usr/bin/open -a Terminal " & quoted form of scriptPath
+«event sysoexec» "/bin/chmod 700 " & quoted form of launcherPath
+tell application "Terminal"
+activate
+set connectorTab to do script (quoted form of launcherPath & "; exit")
+set connectorWindow to front window
+set connectorWindowID to id of connectorWindow
+end tell
+set closeTerminalWindow to "tell application \"Terminal\" to close (first window whose id is " & connectorWindowID & ") saving no"
+set monitorCommand to "for i in {1..57600}; do if [[ -f " & quoted form of donePath & " ]]; then break; fi; /bin/sleep 0.5; done; if [[ -f " & quoted form of successPath & " ]]; then /bin/sleep 1; /usr/bin/osascript -e " & quoted form of closeTerminalWindow & "; fi; /bin/rm -f " & quoted form of startedPath & " " & quoted form of successPath & " " & quoted form of donePath
+«event sysoexec» "/usr/bin/nohup /bin/zsh -c " & quoted form of monitorCommand & " >/dev/null 2>&1 &"
 end «event GURLGURL»`
 }
 

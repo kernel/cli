@@ -440,19 +440,19 @@ func LocalStorageSites(ctx context.Context, profile Profile) ([]StorageSite, err
 	return sites, nil
 }
 
-func ExportLocalStorage(ctx context.Context, profile Profile, selectedOrigins []string) ([]StorageRecord, error) {
+func ExportLocalStorage(ctx context.Context, profile Profile, selectedOrigins []string) (StorageExport, error) {
 	database, cleanup, err := levelDBSnapshot(ctx, filepath.Join(profile.Path, "Local Storage", "leveldb"))
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return StorageExport{}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("snapshot browser local storage: %w", err)
+		return StorageExport{}, fmt.Errorf("snapshot browser local storage: %w", err)
 	}
 	defer cleanup()
 
 	db, err := leveldb.OpenFile(database, nil)
 	if err != nil {
-		return nil, fmt.Errorf("open browser local storage: %w", err)
+		return StorageExport{}, fmt.Errorf("open browser local storage: %w", err)
 	}
 	defer db.Close()
 
@@ -461,6 +461,8 @@ func ExportLocalStorage(ctx context.Context, profile Profile, selectedOrigins []
 		selected[origin] = struct{}{}
 	}
 	records := make([]StorageRecord, 0)
+	skippedOrigins := make(map[string]struct{})
+	skippedRecords := 0
 	encodedBytes := 0
 	iterator := db.NewIterator(util.BytesPrefix([]byte("_")), nil)
 	defer iterator.Release()
@@ -490,22 +492,24 @@ func ExportLocalStorage(ctx context.Context, profile Profile, selectedOrigins []
 		record := StorageRecord{Origin: origin, Kind: StorageKindLocal, Key: scriptKey, Value: value}
 		encoded, err := json.Marshal(record)
 		if err != nil {
-			return nil, fmt.Errorf("encode browser local storage: %w", err)
+			return StorageExport{}, fmt.Errorf("encode browser local storage: %w", err)
 		}
 		if len(encoded)+1 > maxStorageRecord {
-			return nil, fmt.Errorf("local storage key %q for %s exceeds the 1 MiB record limit", scriptKey, origin)
+			skippedRecords++
+			skippedOrigins[origin] = struct{}{}
+			continue
 		}
 		encodedBytes += len(encoded) + 1
 		if encodedBytes > maxStorageBytes {
-			return nil, fmt.Errorf("browser local storage exceeds the 64 MiB import limit; choose fewer websites")
+			return StorageExport{}, fmt.Errorf("browser local storage exceeds the 64 MiB import limit; choose fewer websites")
 		}
 		records = append(records, record)
 		if len(records) > maxStorageCount {
-			return nil, fmt.Errorf("browser local storage exceeds the 100000-record import limit; choose fewer websites")
+			return StorageExport{}, fmt.Errorf("browser local storage exceeds the 100000-record import limit; choose fewer websites")
 		}
 	}
 	if err := iterator.Error(); err != nil {
-		return nil, fmt.Errorf("read browser local storage: %w", err)
+		return StorageExport{}, fmt.Errorf("read browser local storage: %w", err)
 	}
 	sort.Slice(records, func(left, right int) bool {
 		if records[left].Origin == records[right].Origin {
@@ -513,7 +517,7 @@ func ExportLocalStorage(ctx context.Context, profile Profile, selectedOrigins []
 		}
 		return records[left].Origin < records[right].Origin
 	})
-	return records, nil
+	return StorageExport{Records: records, SkippedRecords: skippedRecords, SkippedOrigins: len(skippedOrigins)}, nil
 }
 
 func portableStorageOrigin(raw string) (string, bool) {

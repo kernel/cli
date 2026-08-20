@@ -90,6 +90,48 @@ func TestCreateRetriesWithSameIdempotencyKey(t *testing.T) {
 	assert.EqualValues(t, 2, calls.Load())
 }
 
+func TestClientRunsDashboardHandoffWithFreshScopedGrant(t *testing.T) {
+	var statusCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.Method + " " + request.URL.Path {
+		case "POST /browser-imports/bri_1/helper-grant":
+			assert.Equal(t, "Bearer user-token", request.Header.Get("Authorization"))
+			response.WriteHeader(http.StatusCreated)
+			fmt.Fprint(response, `{"helper_token":"fresh-helper","helper_token_expires_at":"2030-01-01T00:00:00Z"}`)
+		case "POST /browser-imports/bri_1/client-completion":
+			assert.Equal(t, "Bearer user-token", request.Header.Get("Authorization"))
+			response.WriteHeader(http.StatusAccepted)
+			fmt.Fprint(response, `{"id":"bri_1","phase":"awaiting_dashboard_ack"}`)
+		case "GET /browser-imports/bri_1":
+			phase := "awaiting_client_completion"
+			if statusCalls.Add(1) > 1 {
+				phase = "finishing_managed_auth"
+			}
+			fmt.Fprintf(response, `{"id":"bri_1","phase":%q}`, phase)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, "user-token", "proj_test")
+	require.NoError(t, err)
+	grant, err := client.AcquireHelperGrant(context.Background(), "bri_1")
+	require.NoError(t, err)
+	assert.Equal(t, "fresh-helper", grant.HelperToken)
+	status, err := client.WaitForProfile(context.Background(), "bri_1", time.Millisecond)
+	require.NoError(t, err)
+	assert.Equal(t, "awaiting_client_completion", status.Phase)
+	_, err = client.SubmitClientCompletion(context.Background(), "bri_1", ClientCompletion{
+		Outcome: "completed", ManagedAuthConnections: []ManagedAuthConnection{{ID: "auth-1", Domain: "github.com"}},
+	})
+	require.NoError(t, err)
+	waitCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	status, err = client.Wait(waitCtx, "bri_1", time.Millisecond)
+	require.NoError(t, err)
+	assert.Equal(t, "finishing_managed_auth", status.Phase)
+}
+
 func TestClientRejectsUntrustedPlaintextAPI(t *testing.T) {
 	_, err := NewClient("http://api.example.com", "token", "")
 	assert.EqualError(t, err, "Kernel API URL must use HTTPS or local development")

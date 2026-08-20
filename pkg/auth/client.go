@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	kernel "github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
@@ -20,6 +21,9 @@ func GetAuthenticatedClient(opts ...option.RequestOption) (*kernel.Client, error
 	token, err := BearerToken(context.Background())
 	if err != nil {
 		return nil, err
+	}
+	if baseURL := strings.TrimSpace(os.Getenv("KERNEL_BASE_URL")); baseURL != "" {
+		opts = append(opts, option.WithBaseURL(baseURL))
 	}
 	authOpts := append(opts, option.WithHeader("Authorization", "Bearer "+token))
 	client := kernel.NewClient(authOpts...)

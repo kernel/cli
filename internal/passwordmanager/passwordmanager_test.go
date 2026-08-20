@@ -162,6 +162,52 @@ func TestBitwardenCandidateQueriesAreBoundedOrderedAndCanceled(t *testing.T) {
 	}
 }
 
+func TestBitwardenApprovedItemReadsAreBoundedOrderedDeduplicatedAndCanceled(t *testing.T) {
+	selected := []Candidate{
+		{ID: "one", Name: "One"}, {ID: "two", Name: "Two"}, {ID: "three", Name: "Three"},
+		{ID: "four", Name: "Four"}, {ID: "five", Name: "Five"}, {ID: "one", Name: "One again"},
+	}
+	var active, peak, oneReads atomic.Int32
+	items, err := fetchBitwardenApprovedItems(t.Context(), selected, func(_ context.Context, candidate Candidate) (bitwardenItem, error) {
+		current := active.Add(1)
+		defer active.Add(-1)
+		if candidate.ID == "one" {
+			oneReads.Add(1)
+		}
+		for {
+			previous := peak.Load()
+			if current <= previous || peak.CompareAndSwap(previous, current) {
+				break
+			}
+		}
+		time.Sleep(time.Duration(len(selected)-stringIndex([]string{"one", "two", "three", "four", "five"}, candidate.ID)) * time.Millisecond)
+		return bitwardenItem{ID: candidate.ID}, nil
+	})
+	require.NoError(t, err)
+	assert.LessOrEqual(t, peak.Load(), int32(4))
+	assert.Equal(t, int32(1), oneReads.Load())
+	for index, candidate := range selected {
+		assert.Equal(t, candidate.ID, items[index].ID)
+	}
+
+	canceled := make(chan struct{}, 1)
+	_, err = fetchBitwardenApprovedItems(t.Context(), []Candidate{{ID: "fail"}, {ID: "slow"}}, func(ctx context.Context, candidate Candidate) (bitwardenItem, error) {
+		if candidate.ID == "fail" {
+			time.Sleep(10 * time.Millisecond)
+			return bitwardenItem{}, assert.AnError
+		}
+		<-ctx.Done()
+		canceled <- struct{}{}
+		return bitwardenItem{}, ctx.Err()
+	})
+	require.Error(t, err)
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("sibling approved-item read was not canceled")
+	}
+}
+
 func stringIndex(values []string, target string) int {
 	for index, value := range values {
 		if value == target {
