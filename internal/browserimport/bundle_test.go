@@ -34,6 +34,23 @@ func TestBundleTooLargeErrorReportsMiBWithoutLosingCause(t *testing.T) {
 	require.ErrorIs(t, err, ErrBundleTooLarge)
 }
 
+func TestBuildProfileBundleAcceptsEachCategoryAlone(t *testing.T) {
+	profile := Profile{ID: "helium-default-1234", Name: "Personal", Browser: Browser{ID: "helium", Name: "Helium"}}
+	tests := map[string]ProfileData{
+		"cookies":   {Cookies: []Cookie{{Domain: ".example.com", Path: "/", Name: "session", Value: "secret"}}},
+		"storage":   {Storage: []StorageRecord{{Origin: "https://example.com", Kind: StorageKindLocal, Key: "theme", Value: "dark"}}},
+		"bookmarks": {Bookmarks: &BookmarkDocument{Roots: []BookmarkRoot{}}},
+		"history":   {History: []HistoryRecord{{URL: "https://example.com", Title: "Example"}}},
+	}
+	for name, data := range tests {
+		t.Run(name, func(t *testing.T) {
+			bundle, err := BuildProfileBundle(t.Context(), profile, "my-browser", "test", data)
+			require.NoError(t, err)
+			require.NotEmpty(t, bundle)
+		})
+	}
+}
+
 func TestBuildProfileBundleIncludesOnlySelectedCategories(t *testing.T) {
 	profile := Profile{ID: "helium-default-1234", Name: "Personal", Browser: Browser{ID: "helium", Name: "Helium"}}
 	bundle, err := BuildProfileBundle(t.Context(), profile, "my-browser", "test", ProfileData{
