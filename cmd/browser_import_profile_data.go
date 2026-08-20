@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -24,6 +26,143 @@ type localProfileDataSelection struct {
 	storage       bool
 	storageSites  []string
 	storageBytes  int64
+}
+
+type profileBundleBuilder func(localbrowser.ProfileData) ([]byte, error)
+
+type profileBundleFit struct {
+	bundle                []byte
+	data                  localbrowser.ProfileData
+	itemCounts            map[string]int
+	originalSize          int64
+	limit                 int64
+	skippedStorageOrigins []string
+	skippedStorageRecords int
+	skippedStorageBytes   int64
+	skippedHistoryRecords int
+}
+
+type storageOriginGroup struct {
+	origin  string
+	bytes   int64
+	records int
+}
+
+func fitBrowserImportBundle(data localbrowser.ProfileData, itemCounts map[string]int, build profileBundleBuilder) (profileBundleFit, error) {
+	bundle, err := build(data)
+	if err == nil {
+		return profileBundleFit{bundle: bundle, data: data, itemCounts: cloneItemCounts(itemCounts)}, nil
+	}
+	var originalTooLarge *localbrowser.BundleTooLargeError
+	if !errors.As(err, &originalTooLarge) {
+		return profileBundleFit{}, err
+	}
+
+	groups := groupedStorageOrigins(data.Storage)
+	fit, found, err := fitBrowserImportStorage(data, itemCounts, groups, false, originalTooLarge, build)
+	if err != nil {
+		return profileBundleFit{}, err
+	}
+	if !found && len(data.History) > 0 {
+		fit, found, err = fitBrowserImportStorage(data, itemCounts, groups, true, nil, build)
+		if err != nil {
+			return profileBundleFit{}, err
+		}
+	}
+	if !found {
+		return profileBundleFit{}, fmt.Errorf("cookies and bookmarks do not fit in the browser import bundle: %w", originalTooLarge)
+	}
+	fit.originalSize = originalTooLarge.Size
+	fit.limit = originalTooLarge.Limit
+	return fit, nil
+}
+
+func fitBrowserImportStorage(data localbrowser.ProfileData, itemCounts map[string]int, groups []storageOriginGroup, dropHistory bool, pendingTooLarge *localbrowser.BundleTooLargeError, build profileBundleBuilder) (profileBundleFit, bool, error) {
+	fit := profileBundleFit{data: data, itemCounts: cloneItemCounts(itemCounts)}
+	if dropHistory {
+		fit.skippedHistoryRecords = len(data.History)
+		fit.data.History = nil
+		delete(fit.itemCounts, "history")
+	}
+	removed := make(map[string]struct{}, len(groups))
+	nextGroup := 0
+	for {
+		if pendingTooLarge == nil {
+			bundle, err := build(fit.data)
+			if err == nil {
+				fit.bundle = bundle
+				return fit, true, nil
+			}
+			if !errors.As(err, &pendingTooLarge) {
+				return profileBundleFit{}, false, err
+			}
+		}
+		if nextGroup == len(groups) {
+			return profileBundleFit{}, false, nil
+		}
+
+		bytesToRemove := pendingTooLarge.Size - pendingTooLarge.Limit
+		var removedBytes int64
+		for nextGroup < len(groups) && removedBytes < bytesToRemove {
+			group := groups[nextGroup]
+			nextGroup++
+			removed[group.origin] = struct{}{}
+			removedBytes += group.bytes
+			fit.skippedStorageOrigins = append(fit.skippedStorageOrigins, group.origin)
+			fit.skippedStorageRecords += group.records
+			fit.skippedStorageBytes += group.bytes
+		}
+		fit.data.Storage = filterStorageOrigins(data.Storage, removed)
+		if len(fit.data.Storage) == 0 {
+			delete(fit.itemCounts, "storage")
+		} else {
+			fit.itemCounts["storage"] = len(fit.data.Storage)
+		}
+		pendingTooLarge = nil
+	}
+}
+
+func groupedStorageOrigins(records []localbrowser.StorageRecord) []storageOriginGroup {
+	byOrigin := make(map[string]*storageOriginGroup)
+	for _, record := range records {
+		group := byOrigin[record.Origin]
+		if group == nil {
+			group = &storageOriginGroup{origin: record.Origin}
+			byOrigin[record.Origin] = group
+		}
+		encoded, _ := json.Marshal(record)
+		group.bytes += int64(len(encoded) + 1)
+		group.records++
+	}
+	groups := make([]storageOriginGroup, 0, len(byOrigin))
+	for _, group := range byOrigin {
+		groups = append(groups, *group)
+	}
+	sort.Slice(groups, func(left, right int) bool {
+		if groups[left].bytes == groups[right].bytes {
+			return groups[left].origin < groups[right].origin
+		}
+		return groups[left].bytes > groups[right].bytes
+	})
+	return groups
+}
+
+func filterStorageOrigins(records []localbrowser.StorageRecord, removed map[string]struct{}) []localbrowser.StorageRecord {
+	filtered := make([]localbrowser.StorageRecord, 0, len(records))
+	for _, record := range records {
+		if _, skip := removed[record.Origin]; !skip {
+			filtered = append(filtered, record)
+		}
+	}
+	return filtered
+}
+
+func cloneItemCounts(counts map[string]int) map[string]int {
+	cloned := make(map[string]int, len(counts))
+	for category, count := range counts {
+		cloned[category] = count
+	}
+	return cloned
 }
 
 func (c ProfilesImportLocalCmd) chooseLocalProfileData(ctx context.Context, profile localbrowser.Profile, since time.Time, includeHistory, nonInteractive, humanOutput bool) (localProfileDataSelection, error) {
@@ -123,6 +262,25 @@ func (c ProfilesImportLocalCmd) confirmBrowserImport(targetName string, cookies 
 	}
 	pterm.Println()
 	return c.prompter.ConfirmDefault("import browser data", "Proceed?", true)
+}
+
+func (c ProfilesImportLocalCmd) confirmBundleFallback(fit profileBundleFit) (bool, error) {
+	pterm.Println()
+	pterm.Warning.Printf("Browser data is %s; Kernel supports %s.\n\n", formatBinaryBytes(fit.originalSize), formatBinaryBytes(fit.limit))
+	pterm.Println("To fit, Kernel will skip:")
+	if fit.skippedStorageRecords > 0 {
+		originCount := len(fit.skippedStorageOrigins)
+		pterm.Printf(
+			"  Local storage — %d key%s from %d origin%s (%s)\n",
+			fit.skippedStorageRecords, pluralSuffix(fit.skippedStorageRecords),
+			originCount, pluralSuffix(originCount), formatBinaryBytes(fit.skippedStorageBytes),
+		)
+	}
+	if fit.skippedHistoryRecords > 0 {
+		pterm.Printf("  History — %d visit%s\n", fit.skippedHistoryRecords, pluralSuffix(fit.skippedHistoryRecords))
+	}
+	pterm.Println("\nCookies and selected bookmarks will remain included.")
+	return c.prompter.ConfirmDefault("fit browser import", "Continue with these changes?", true)
 }
 
 func selectedCookieCount(sites []localbrowser.Site, selected []string) int {

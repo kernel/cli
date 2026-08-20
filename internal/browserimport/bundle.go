@@ -5,10 +5,28 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/klauspost/compress/zstd"
 )
+
+// ErrBundleTooLarge identifies a complete compressed bundle that exceeds the upload limit.
+var ErrBundleTooLarge = errors.New("browser import bundle is too large")
+
+// BundleTooLargeError reports the compressed bundle size and allowed limit.
+type BundleTooLargeError struct {
+	Size  int64
+	Limit int64
+}
+
+func (e *BundleTooLargeError) Error() string {
+	return fmt.Sprintf("selected browser data is %.1f MiB; Kernel supports %.0f MiB: %v", float64(e.Size)/(1<<20), float64(e.Limit)/(1<<20), ErrBundleTooLarge)
+}
+
+func (e *BundleTooLargeError) Unwrap() error {
+	return ErrBundleTooLarge
+}
 
 const (
 	maxBundleBytes           = 64 << 20
@@ -134,6 +152,10 @@ func encodeJSONL[T any](label string, records []T) ([]byte, error) {
 }
 
 func encodeBundle(ctx context.Context, manifest []byte, files []bundleFile) ([]byte, error) {
+	return encodeBundleWithLimit(ctx, manifest, files, maxBundleBytes)
+}
+
+func encodeBundleWithLimit(ctx context.Context, manifest []byte, files []bundleFile, maxBytes int64) ([]byte, error) {
 	var output bytes.Buffer
 	zstdWriter, err := zstd.NewWriter(&output, zstd.WithEncoderConcurrency(1))
 	if err != nil {
@@ -164,8 +186,8 @@ func encodeBundle(ctx context.Context, manifest []byte, files []bundleFile) ([]b
 	if err := zstdWriter.Close(); err != nil {
 		return nil, err
 	}
-	if output.Len() > maxBundleBytes {
-		return nil, fmt.Errorf("selected browser data exceeds the %d MiB import limit", maxBundleBytes>>20)
+	if int64(output.Len()) > maxBytes {
+		return nil, &BundleTooLargeError{Size: int64(output.Len()), Limit: maxBytes}
 	}
 	return output.Bytes(), nil
 }

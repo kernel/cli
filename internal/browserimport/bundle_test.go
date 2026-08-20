@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -14,6 +15,17 @@ import (
 
 func TestBundleLimitMatchesUploadContract(t *testing.T) {
 	require.Equal(t, 64<<20, maxBundleBytes)
+}
+
+func TestEncodeBundleReportsActualCompressedSize(t *testing.T) {
+	_, err := encodeBundleWithLimit(t.Context(), []byte(`{"version":1}`), nil, 1)
+	require.Error(t, err)
+
+	var tooLarge *BundleTooLargeError
+	require.ErrorAs(t, err, &tooLarge)
+	require.Equal(t, int64(1), tooLarge.Limit)
+	require.Greater(t, tooLarge.Size, tooLarge.Limit)
+	require.True(t, errors.Is(err, ErrBundleTooLarge))
 }
 
 func TestBuildProfileBundleIncludesOnlySelectedCategories(t *testing.T) {

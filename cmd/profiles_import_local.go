@@ -244,12 +244,30 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	if err != nil {
 		return err
 	}
-	categories := selectedProfileCategories(itemCounts)
-	bundle, err := localbrowser.BuildProfileBundle(ctx, profile, targetName, version, profileData)
+	fit, err := fitBrowserImportBundle(profileData, itemCounts, func(candidate localbrowser.ProfileData) ([]byte, error) {
+		return localbrowser.BuildProfileBundle(ctx, profile, targetName, version, candidate)
+	})
 	timings["bundle"] = time.Since(phaseStarted)
 	if err != nil {
 		return err
 	}
+	if fit.originalSize > 0 {
+		if nonInteractive {
+			return fmt.Errorf("%w; run interactively to review optional browser data that can be skipped", &localbrowser.BundleTooLargeError{Size: fit.originalSize, Limit: fit.limit})
+		}
+		proceed, err := c.confirmBundleFallback(fit)
+		if err != nil {
+			return err
+		}
+		if !proceed {
+			pterm.Info.Println("Browser import canceled; no Kernel resources were changed")
+			return nil
+		}
+	}
+	profileData = fit.data
+	itemCounts = fit.itemCounts
+	bundle := fit.bundle
+	categories := selectedProfileCategories(itemCounts)
 	token, err := auth.BearerToken(ctx)
 	if err != nil {
 		return err
