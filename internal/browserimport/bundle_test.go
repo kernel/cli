@@ -28,6 +28,12 @@ func TestEncodeBundleReportsActualCompressedSize(t *testing.T) {
 	require.True(t, errors.Is(err, ErrBundleTooLarge))
 }
 
+func TestBundleTooLargeErrorReportsMiBWithoutLosingCause(t *testing.T) {
+	err := &BundleTooLargeError{Size: 96 << 20, Limit: 64 << 20}
+	require.Equal(t, "selected browser data is 96.0 MiB; Kernel supports 64 MiB: browser import bundle is too large", err.Error())
+	require.ErrorIs(t, err, ErrBundleTooLarge)
+}
+
 func TestBuildProfileBundleIncludesOnlySelectedCategories(t *testing.T) {
 	profile := Profile{ID: "helium-default-1234", Name: "Personal", Browser: Browser{ID: "helium", Name: "Helium"}}
 	bundle, err := BuildProfileBundle(t.Context(), profile, "my-browser", "test", ProfileData{
