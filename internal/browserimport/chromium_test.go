@@ -6,6 +6,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,9 +14,11 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/syndtr/goleveldb/leveldb"
 )
 
 func TestDiscoverMacOSProfilesFindsChromeAndHelium(t *testing.T) {
@@ -229,6 +232,74 @@ INSERT INTO cookies VALUES
 	assert.Equal(t, []string{"github", "google"}, []string{cookies[0].Name, cookies[1].Name})
 }
 
+func TestExportBookmarksNormalizesPortableRoots(t *testing.T) {
+	profile := sqliteProfileFixture(t)
+	payload := `{"roots":{"bookmark_bar":{"children":[{"type":"url","name":"Kernel","url":"https://onkernel.com","date_added":"13400000000000000"},{"type":"url","name":"Local","url":"chrome://settings"}]},"other":{"children":[{"type":"folder","name":"Work","children":[{"type":"url","name":"GitHub","url":"https://github.com"}]}]}}}`
+	require.NoError(t, os.WriteFile(filepath.Join(profile.Path, "Bookmarks"), []byte(payload), 0o600))
+
+	document, count, err := ExportBookmarks(profile)
+	require.NoError(t, err)
+	require.Equal(t, 3, count)
+	require.Len(t, document.Roots, 2)
+	require.Equal(t, "https://onkernel.com", document.Roots[0].Children[0].URL)
+	require.Len(t, document.Roots[0].Children, 1, "non-http bookmarks must not leave the laptop")
+}
+
+func TestExportHistoryUsesRequestedWindow(t *testing.T) {
+	profile := sqliteProfileFixture(t)
+	database := filepath.Join(profile.Path, "History")
+	runSQLite(t, database, `
+CREATE TABLE urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, last_visit_time INTEGER, visit_count INTEGER);
+CREATE TABLE visits (id INTEGER PRIMARY KEY, url INTEGER, visit_time INTEGER);
+INSERT INTO urls VALUES
+  (1, 'https://recent.example', 'Recent', 13400000000000000, 4),
+  (2, 'chrome://settings', 'Private', 13400000001000000, 2),
+  (3, 'https://old.example', 'Old', 12000000000000000, 1);
+INSERT INTO visits VALUES
+  (1, 1, 13400000000000000),
+  (2, 1, 13400000000000001),
+  (3, 2, 13400000001000000),
+  (4, 3, 12000000000000000);
+`)
+
+	records, err := ExportHistory(t.Context(), profile, time.UnixMicro(13400000000000000-11_644_473_600_000_000))
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	require.Equal(t, "https://recent.example", records[0].URL)
+	require.Equal(t, 2, records[0].VisitCount)
+	count, err := HistoryCount(t.Context(), profile, time.UnixMicro(13400000000000000-11_644_473_600_000_000))
+	require.NoError(t, err)
+	require.Equal(t, 2, count)
+}
+
+func TestLocalStorageSitesAndExportUseLivePortableRecords(t *testing.T) {
+	profile := sqliteProfileFixture(t)
+	databasePath := filepath.Join(profile.Path, "Local Storage", "leveldb")
+	require.NoError(t, os.MkdirAll(filepath.Dir(databasePath), 0o755))
+	database, err := leveldb.OpenFile(databasePath, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+	require.NoError(t, database.Put([]byte("META:https://example.com"), localStorageMetadataFixture(1234), nil))
+	require.NoError(t, database.Put(localStorageRecordKeyFixture("https://example.com", "theme"), chromiumStorageStringFixture("dark"), nil))
+	require.NoError(t, database.Put(localStorageRecordKeyFixture("https://other.example", "emoji"), chromiumStorageStringFixture("hello 世界"), nil))
+	require.NoError(t, database.Put(localStorageRecordKeyFixture("chrome-extension://abcdefghijklmnopabcdefghijklmnop", "private"), chromiumStorageStringFixture("skip"), nil))
+	sites, err := LocalStorageSites(t.Context(), profile)
+	require.NoError(t, err)
+	require.Len(t, sites, 2)
+	require.Equal(t, StorageSite{Origin: "https://example.com", Bytes: 1234}, sites[0])
+	require.Equal(t, "https://other.example", sites[1].Origin)
+	require.Positive(t, sites[1].Bytes)
+
+	records, err := ExportLocalStorage(t.Context(), profile, []string{"https://example.com"})
+	require.NoError(t, err)
+	require.Equal(t, []StorageRecord{{Origin: "https://example.com", Kind: StorageKindLocal, Key: "theme", Value: "dark"}}, records)
+
+	records, err = ExportLocalStorage(t.Context(), profile, nil)
+	require.NoError(t, err)
+	require.Len(t, records, 2)
+	require.Equal(t, "hello 世界", records[1].Value)
+}
+
 func TestSelectedCookieFilterEscapesInput(t *testing.T) {
 	cte, clause := selectedCookieFilter([]string{"example.com' OR 1=1 --"}, false)
 	assert.Contains(t, cte, "example.com'' or 1=1 --")
@@ -313,4 +384,41 @@ func bytesRepeat(value byte, count int) []byte {
 		result[i] = value
 	}
 	return result
+}
+
+func localStorageRecordKeyFixture(origin, key string) []byte {
+	result := append([]byte("_"+origin+"\x00"), chromiumStorageStringFixture(key)...)
+	return result
+}
+
+func chromiumStorageStringFixture(value string) []byte {
+	runes := []rune(value)
+	latin1 := true
+	for _, value := range runes {
+		if value > 255 {
+			latin1 = false
+			break
+		}
+	}
+	if latin1 {
+		result := make([]byte, 1, len(runes)+1)
+		result[0] = 1
+		for _, value := range runes {
+			result = append(result, byte(value))
+		}
+		return result
+	}
+	units := utf16.Encode(runes)
+	result := make([]byte, 1+len(units)*2)
+	for index, value := range units {
+		binary.LittleEndian.PutUint16(result[1+index*2:], value)
+	}
+	return result
+}
+
+func localStorageMetadataFixture(size uint64) []byte {
+	result := []byte{8, 1, 16}
+	buffer := make([]byte, binary.MaxVarintLen64)
+	written := binary.PutUvarint(buffer, size)
+	return append(result, buffer[:written]...)
 }

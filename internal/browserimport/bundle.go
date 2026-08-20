@@ -5,13 +5,36 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"sort"
 
 	"github.com/klauspost/compress/zstd"
 )
 
-const maxBundleBytes = 128 << 20
+// ErrBundleTooLarge identifies a complete compressed bundle that exceeds the upload limit.
+var ErrBundleTooLarge = errors.New("browser import bundle is too large")
+
+// BundleTooLargeError reports the compressed bundle size and allowed limit.
+type BundleTooLargeError struct {
+	Size  int64
+	Limit int64
+}
+
+func (e *BundleTooLargeError) Error() string {
+	return fmt.Sprintf("selected browser data is %.1f MiB; Kernel supports %.0f MiB: %v", float64(e.Size)/(1<<20), float64(e.Limit)/(1<<20), ErrBundleTooLarge)
+}
+
+func (e *BundleTooLargeError) Unwrap() error {
+	return ErrBundleTooLarge
+}
+
+const (
+	maxBundleBytes           = 64 << 20
+	maxPortableFileBytes     = 64 << 20
+	maxPortableRecordBytes   = 1 << 20
+	maxPortableRecords       = 100_000
+	maxPortableDocumentBytes = 16 << 20
+)
 
 type Manifest struct {
 	Version  int             `json:"version"`
@@ -33,37 +56,106 @@ type BundleProfile struct {
 }
 
 type ProfileFiles struct {
-	Cookies string `json:"cookies,omitempty"`
+	Cookies   string `json:"cookies,omitempty"`
+	Storage   string `json:"storage,omitempty"`
+	Bookmarks string `json:"bookmarks,omitempty"`
+	History   string `json:"history,omitempty"`
 }
 
-func BuildCookieBundle(ctx context.Context, profile Profile, targetName, version string, cookies []Cookie) ([]byte, error) {
-	if len(cookies) == 0 {
-		return nil, fmt.Errorf("no cookies were selected")
+type bundleFile struct {
+	path string
+	data []byte
+}
+
+func BuildProfileBundle(ctx context.Context, profile Profile, targetName, version string, data ProfileData) ([]byte, error) {
+	if len(data.Cookies) == 0 && len(data.Storage) == 0 && data.Bookmarks == nil && len(data.History) == 0 {
+		return nil, fmt.Errorf("no browser data was selected")
 	}
-	cookiePath := "profiles/" + profile.ID + "/cookies.jsonl"
+	files := ProfileFiles{}
+	payloads := make([]bundleFile, 0, 5)
+	addJSON := func(path, label string, value any) error {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return fmt.Errorf("encode browser %s: %w", label, err)
+		}
+		if len(encoded) > maxPortableDocumentBytes {
+			return fmt.Errorf("browser %s exceeds the 16 MiB import limit", label)
+		}
+		payloads = append(payloads, bundleFile{path: path, data: encoded})
+		return nil
+	}
+	if len(data.Cookies) > 0 {
+		files.Cookies = "profiles/" + profile.ID + "/cookies.jsonl"
+		encoded, err := encodeJSONL("cookies", data.Cookies)
+		if err != nil {
+			return nil, fmt.Errorf("encode browser cookies: %w", err)
+		}
+		payloads = append(payloads, bundleFile{path: files.Cookies, data: encoded})
+	}
+	if len(data.Storage) > 0 {
+		files.Storage = "profiles/" + profile.ID + "/storage.jsonl"
+		encoded, err := encodeJSONL("local storage", data.Storage)
+		if err != nil {
+			return nil, fmt.Errorf("encode browser local storage: %w", err)
+		}
+		payloads = append(payloads, bundleFile{path: files.Storage, data: encoded})
+	}
+	if data.Bookmarks != nil {
+		files.Bookmarks = "profiles/" + profile.ID + "/bookmarks.json"
+		if err := addJSON(files.Bookmarks, "bookmarks", data.Bookmarks); err != nil {
+			return nil, err
+		}
+	}
+	if len(data.History) > 0 {
+		files.History = "profiles/" + profile.ID + "/history.jsonl"
+		encoded, err := encodeJSONL("history", data.History)
+		if err != nil {
+			return nil, fmt.Errorf("encode browser history: %w", err)
+		}
+		payloads = append(payloads, bundleFile{path: files.History, data: encoded})
+	}
 	manifest := Manifest{
 		Version: BundleVersion,
 		Source:  BundleSource{OS: "macos", HelperVersion: version},
 		Profiles: []BundleProfile{{
 			ID: profile.ID, Browser: profile.Browser.ID, SourceName: profile.DisplayName(), TargetName: targetName,
-			Files: ProfileFiles{Cookies: cookiePath},
+			Files: files,
 		}},
 	}
 	manifestData, err := json.Marshal(manifest)
 	if err != nil {
 		return nil, fmt.Errorf("encode import manifest: %w", err)
 	}
-	var cookieData bytes.Buffer
-	encoder := json.NewEncoder(&cookieData)
-	for _, cookie := range cookies {
-		if err := encoder.Encode(cookie); err != nil {
-			return nil, fmt.Errorf("encode browser cookie: %w", err)
-		}
-	}
-	return encodeBundle(ctx, manifestData, map[string][]byte{cookiePath: cookieData.Bytes()})
+	return encodeBundle(ctx, manifestData, payloads)
 }
 
-func encodeBundle(ctx context.Context, manifest []byte, files map[string][]byte) ([]byte, error) {
+func encodeJSONL[T any](label string, records []T) ([]byte, error) {
+	if len(records) > maxPortableRecords {
+		return nil, fmt.Errorf("browser %s exceeds the %d record import limit", label, maxPortableRecords)
+	}
+	var output bytes.Buffer
+	for _, record := range records {
+		encoded, err := json.Marshal(record)
+		if err != nil {
+			return nil, err
+		}
+		if len(encoded)+1 > maxPortableRecordBytes {
+			return nil, fmt.Errorf("one browser %s record exceeds the 1 MiB import limit", label)
+		}
+		if output.Len()+len(encoded)+1 > maxPortableFileBytes {
+			return nil, fmt.Errorf("browser %s exceeds the 64 MiB import limit", label)
+		}
+		output.Write(encoded)
+		output.WriteByte('\n')
+	}
+	return output.Bytes(), nil
+}
+
+func encodeBundle(ctx context.Context, manifest []byte, files []bundleFile) ([]byte, error) {
+	return encodeBundleWithLimit(ctx, manifest, files, maxBundleBytes)
+}
+
+func encodeBundleWithLimit(ctx context.Context, manifest []byte, files []bundleFile, maxBytes int64) ([]byte, error) {
 	var output bytes.Buffer
 	zstdWriter, err := zstd.NewWriter(&output, zstd.WithEncoderConcurrency(1))
 	if err != nil {
@@ -83,13 +175,8 @@ func encodeBundle(ctx context.Context, manifest []byte, files map[string][]byte)
 	if err := write("manifest.json", manifest); err != nil {
 		return nil, err
 	}
-	paths := make([]string, 0, len(files))
-	for path := range files {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	for _, path := range paths {
-		if err := write(path, files[path]); err != nil {
+	for _, file := range files {
+		if err := write(file.path, file.data); err != nil {
 			return nil, err
 		}
 	}
@@ -99,8 +186,8 @@ func encodeBundle(ctx context.Context, manifest []byte, files map[string][]byte)
 	if err := zstdWriter.Close(); err != nil {
 		return nil, err
 	}
-	if output.Len() > maxBundleBytes {
-		return nil, fmt.Errorf("selected browser data exceeds the 128 MiB import limit")
+	if int64(output.Len()) > maxBytes {
+		return nil, &BundleTooLargeError{Size: int64(output.Len()), Limit: maxBytes}
 	}
 	return output.Bytes(), nil
 }

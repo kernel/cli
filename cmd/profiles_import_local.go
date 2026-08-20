@@ -41,6 +41,7 @@ type ProfilesImportLocalInput struct {
 	PasswordManager    string
 	InstallAgentSkills bool
 	DashboardLaunch    bool
+	ImportHistory      bool
 	Project            *kernel.Project
 }
 
@@ -185,6 +186,11 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	if len(cookieSelection.sites) == 0 {
 		return fmt.Errorf("select at least one website")
 	}
+	since := c.now().AddDate(0, 0, -in.Days)
+	profileDataSelection, err := c.chooseLocalProfileData(ctx, profile, since, in.ImportHistory, nonInteractive, humanOutput)
+	if err != nil {
+		return err
+	}
 	pendingLogins := pendingManagedAuth{}
 	if managedAuthImportRequested(in.PasswordManager, nonInteractive) {
 		phaseStarted = time.Now()
@@ -194,6 +200,16 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		timings["password_manager_discovery"] = time.Since(phaseStarted)
 		if err != nil {
 			return err
+		}
+	}
+	if !nonInteractive {
+		proceed, err := c.confirmBrowserImport(targetName, cookieSelection, cookieSites, profileDataSelection, pendingLogins)
+		if err != nil {
+			return err
+		}
+		if !proceed {
+			pterm.Info.Println("Browser import canceled; no Kernel resources were changed")
+			return nil
 		}
 	}
 	if humanOutput {
@@ -224,11 +240,34 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		version = "dev"
 	}
 	phaseStarted = time.Now()
-	bundle, err := localbrowser.BuildCookieBundle(ctx, profile, targetName, version, cookies)
+	profileData, itemCounts, err := buildSelectedProfileData(ctx, profile, profileDataSelection, cookies, since)
+	if err != nil {
+		return err
+	}
+	fit, err := fitBrowserImportBundle(profileData, itemCounts, func(candidate localbrowser.ProfileData) ([]byte, error) {
+		return localbrowser.BuildProfileBundle(ctx, profile, targetName, version, candidate)
+	})
 	timings["bundle"] = time.Since(phaseStarted)
 	if err != nil {
 		return err
 	}
+	if fit.originalSize > 0 {
+		if nonInteractive {
+			return fmt.Errorf("%w; run interactively to review optional browser data that can be skipped", &localbrowser.BundleTooLargeError{Size: fit.originalSize, Limit: fit.limit})
+		}
+		proceed, err := c.confirmBundleFallback(fit)
+		if err != nil {
+			return err
+		}
+		if !proceed {
+			pterm.Info.Println("Browser import canceled; no Kernel resources were changed")
+			return nil
+		}
+	}
+	profileData = fit.data
+	itemCounts = fit.itemCounts
+	bundle := fit.bundle
+	categories := selectedProfileCategories(itemCounts)
 	token, err := auth.BearerToken(ctx)
 	if err != nil {
 		return err
@@ -247,13 +286,13 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	}
 	inventory := localbrowser.Inventory{Sources: []localbrowser.Source{{
 		ID: profile.ID, Kind: "browser", Name: profile.DisplayName(), Browser: profile.Browser.ID,
-		DataTypes: []string{"cookies"}, ItemCounts: map[string]int{"cookies": len(cookies)},
+		DataTypes: categories, ItemCounts: itemCounts,
 	}}}
 	status, err := client.SubmitInventory(ctx, created.ID, created.HelperToken, inventory)
 	if err != nil {
 		return browserImportProgressError(created.ID, status.Phase, time.Since(phaseStarted), err)
 	}
-	selection := localbrowser.Selection{Profiles: []localbrowser.ProfileSelection{{SourceID: profile.ID, TargetName: targetName, Categories: []string{"cookies"}}}}
+	selection := localbrowser.Selection{Profiles: []localbrowser.ProfileSelection{{SourceID: profile.ID, TargetName: targetName, Categories: categories}}}
 	status, err = client.SubmitSelection(ctx, created.ID, selection)
 	if err != nil {
 		return browserImportProgressError(created.ID, status.Phase, time.Since(phaseStarted), err)
@@ -275,6 +314,15 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	profileID := status.Applied.Profiles[0].ProfileID
 	if humanOutput {
 		pterm.Success.Printf("Imported %d cookies from %d websites\n", len(cookies), importedCookieSites)
+		if count := itemCounts["bookmarks"]; count > 0 {
+			pterm.Success.Printf("Imported %d bookmarks\n", count)
+		}
+		if count := itemCounts["history"]; count > 0 {
+			pterm.Success.Printf("Imported %d history entries\n", count)
+		}
+		if count := itemCounts["storage"]; count > 0 {
+			pterm.Success.Printf("Imported %d local storage keys from %d origins\n", count, importedStorageOriginCount(profileData.Storage))
+		}
 	}
 	connectionIDs := make([]string, 0)
 	approvedLogins := make([]passwordmanager.Record, 0)
@@ -325,7 +373,7 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		}
 	}
 	if in.Output == "json" {
-		data, err := json.MarshalIndent(map[string]any{"profile_id": profileID, "profile_name": targetName, "sites": cookieSelection.sites, "cookies_imported": len(cookies), "managed_auth_connections": connectionIDs, "agent_skills_installed": installedSkills, "agent_skill_warning": skillWarning, "duration_ms": time.Since(startedAt).Milliseconds(), "timings_ms": durationMilliseconds(timings)}, "", "  ")
+		data, err := json.MarshalIndent(map[string]any{"profile_id": profileID, "profile_name": targetName, "sites": cookieSelection.sites, "cookies_imported": itemCounts["cookies"], "browser_data_imported": itemCounts, "managed_auth_connections": connectionIDs, "agent_skills_installed": installedSkills, "agent_skill_warning": skillWarning, "duration_ms": time.Since(startedAt).Milliseconds(), "timings_ms": durationMilliseconds(timings)}, "", "  ")
 		if err != nil {
 			return err
 		}
@@ -1405,8 +1453,8 @@ var cuidLikeProfileName = regexp.MustCompile(`^[a-z0-9]{24}$`)
 
 var profilesImportLocalCmd = &cobra.Command{
 	Use:   "import-local",
-	Short: "Import cookies from a local browser",
-	Long:  "Import all cookies or selected websites from a local Google Chrome or Helium profile on macOS into a Kernel browser profile.",
+	Short: "Import a local browser profile",
+	Long:  "Import cookies and selected portable data from a local Google Chrome or Helium profile on macOS into a Kernel browser profile.",
 	Args:  cobra.NoArgs,
 	RunE:  runProfilesImportLocal,
 }
@@ -1427,6 +1475,7 @@ func init() {
 	profilesImportLocalCmd.Flags().Int("days", 30, "Rank websites used during the last number of days (1-90)")
 	profilesImportLocalCmd.Flags().Duration("wait-timeout", 30*time.Minute, "Maximum time to wait for the import to complete")
 	profilesImportLocalCmd.Flags().BoolP("yes", "y", false, "Import all cookies and use unambiguous defaults without prompting")
+	profilesImportLocalCmd.Flags().Bool("history", true, "Include browsing history from the selected --days window")
 	profilesImportLocalCmd.Flags().String("password-manager", "", "Password managers to search: bitwarden, 1password, both comma-separated, all, or none")
 	profilesImportLocalCmd.Flags().Bool("install-agent-skills", false, "Install the Kernel Managed Auth skill into detected agent directories")
 	addJSONOutputFlag(profilesImportLocalCmd)
@@ -1442,12 +1491,13 @@ func runProfilesImportLocal(cmd *cobra.Command, _ []string) error {
 	skipConfirm, _ := cmd.Flags().GetBool("yes")
 	passwordManager, _ := cmd.Flags().GetString("password-manager")
 	installAgentSkills, _ := cmd.Flags().GetBool("install-agent-skills")
+	importHistory, _ := cmd.Flags().GetBool("history")
 	output, _ := cmd.Flags().GetString("output")
 	project, _ := cmd.Flags().GetString("project")
 	return runProfilesImportLocalWithInput(cmd, ProfilesImportLocalInput{
 		BrowserProfile: browserProfile, ProfileName: profileName, Sites: sites, Days: days,
 		SkipConfirm: skipConfirm, Output: output, ProjectID: resolveProjectSelection(project), Version: metadata.Version,
-		WaitTimeout: waitTimeout, PasswordManager: passwordManager, InstallAgentSkills: installAgentSkills,
+		WaitTimeout: waitTimeout, PasswordManager: passwordManager, InstallAgentSkills: installAgentSkills, ImportHistory: importHistory,
 	})
 }
 

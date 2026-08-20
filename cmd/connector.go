@@ -59,6 +59,7 @@ func runConnectorOpen(cmd *cobra.Command, args []string) error {
 		Version:         metadata.Version,
 		WaitTimeout:     30 * time.Minute,
 		DashboardLaunch: true,
+		ImportHistory:   true,
 	}
 	project, err := validateConnectorProject(cmd, input.ProjectID)
 	if err != nil {
