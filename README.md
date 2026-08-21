@@ -619,6 +619,7 @@ Managed auth connections (`kernel auth connections`). The commands below are new
 - `kernel auth connections submit <id>` - New flags:
   - `--field-value <id=value>` - Canonical field-id=value pair from the connection's `fields` list (repeatable); preferred over the legacy `--field`
   - `--choice-id <id>` - Canonical choice ID from the connection's `choices` list
+  - `--interaction-id <id>` - Canonical interaction the submitted values answer. Only valid with `--field-value` or `--choice-id`; omit it and the CLI reads the connection's current interaction ID for you. Pass it to pin the submission, so the API rejects it if the flow has already moved on.
 
 `kernel auth connections get` and `follow` list those IDs alongside the metadata the API captured for them, so you can tell the options apart before submitting. Fields show their type, ref, and any hint (which names the masked destination a one-time code was sent to); choices show their type, semantic MFA method (`sms`, `totp`, `push`, …), and masked destination.
 

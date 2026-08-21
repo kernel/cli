@@ -130,7 +130,11 @@ type AuthConnectionSubmitInput struct {
 	// canonical `field_values` keyed by the field IDs the API returned.
 	CanonicalFieldValues map[string]string
 	// SelectedChoiceID is the canonical choice ID from the API's `choices` list.
-	SelectedChoiceID  string
+	SelectedChoiceID string
+	// InteractionID pins the submission to the canonical interaction the values
+	// were read from. Left empty, the CLI reads the connection's current
+	// interaction ID, since the API requires one for canonical submissions.
+	InteractionID     string
 	MfaOptionID       string
 	SignInOptionID    string
 	SSOButtonSelector string
@@ -414,13 +418,13 @@ func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateIn
 // models the one on `get` and the one on the `follow` event stream as two
 // identical but distinct types, so both are converted to this before rendering.
 type managedAuthInputField struct {
-	ID              string
-	Label           string
-	Type            string
-	Ref             string
-	Hint            string
-	Required        bool
-	ReplaceExisting bool
+	ID       string
+	Label    string
+	Type     string
+	Ref      string
+	Hint     string
+	Reason   string
+	Required bool
 }
 
 // managedAuthInputChoice is the choice counterpart of managedAuthInputField.
@@ -448,8 +452,8 @@ func formatManagedAuthField(f managedAuthInputField) string {
 	if f.Required {
 		meta = append(meta, "required")
 	}
-	if f.ReplaceExisting {
-		meta = append(meta, "replace-existing")
+	if f.Reason != "" {
+		meta = append(meta, "reason="+f.Reason)
 	}
 	if f.Hint != "" {
 		meta = append(meta, fmt.Sprintf("hint=%q", f.Hint))
@@ -538,17 +542,22 @@ func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) e
 	// Canonical fields/choices supersede discovered_fields, mfa_options and
 	// pending_sso_buttons. Show them first so the IDs needed by `submit
 	// --field-value` and `submit --choice-id` are the first thing visible.
+	// The interaction ID scopes those submissions and only accompanies canonical
+	// input, so show it alongside them.
+	if auth.InteractionID != "" {
+		tableData = append(tableData, []string{"Interaction ID", auth.InteractionID})
+	}
 	if len(auth.Fields) > 0 {
 		fields := make([]string, 0, len(auth.Fields))
 		for _, f := range auth.Fields {
 			fields = append(fields, formatManagedAuthField(managedAuthInputField{
-				ID:              f.ID,
-				Label:           f.Label,
-				Type:            f.Type,
-				Ref:             f.Ref,
-				Hint:            f.Hint,
-				Required:        f.Required,
-				ReplaceExisting: f.ReplaceExisting,
+				ID:       f.ID,
+				Label:    f.Label,
+				Type:     f.Type,
+				Ref:      f.Ref,
+				Hint:     f.Hint,
+				Reason:   f.Reason,
+				Required: f.Required,
 			}))
 		}
 		tableData = append(tableData, []string{"Fields", strings.Join(fields, "; ")})
@@ -838,6 +847,28 @@ func (c AuthConnectionCmd) Submit(ctx context.Context, in AuthConnectionSubmitIn
 		return fmt.Errorf("provide exactly one of: %s", submitModeFlags)
 	}
 
+	// The API binds canonical submissions to the interaction the values were read
+	// from, and rejects an interaction ID sent with a legacy submit mode.
+	isCanonical := hasCanonicalFields || hasChoice
+	if in.InteractionID != "" && !isCanonical {
+		return fmt.Errorf("the --interaction-id flag is only valid with --field-value or --choice-id")
+	}
+	if isCanonical && in.InteractionID == "" {
+		// Resolve the current interaction rather than making the user copy it out
+		// of `get` or `follow` first. The ID changes on every actionable pause, so
+		// the freshly read one is the only one worth defaulting to; passing
+		// --interaction-id explicitly pins the submission to an older interaction
+		// and lets the API reject it as stale.
+		conn, err := c.svc.Get(ctx, in.ID)
+		if err != nil {
+			return util.CleanedUpSdkError{Err: fmt.Errorf("failed to fetch connection for interaction ID resolution: %w", err)}
+		}
+		if conn == nil || conn.InteractionID == "" {
+			return fmt.Errorf("connection %s has no canonical interaction awaiting input; run 'kernel auth connections get %s' to see what the flow is waiting on", in.ID, in.ID)
+		}
+		in.InteractionID = conn.InteractionID
+	}
+
 	// Resolve MFA option: the user may pass the label (e.g. "Get a text"), the
 	// type (e.g. "sms"), or the display string ("Get a text (sms)"). The API
 	// expects the type, so look up the connection's available options and map
@@ -883,6 +914,9 @@ func (c AuthConnectionCmd) Submit(ctx context.Context, in AuthConnectionSubmitIn
 	}
 	if hasChoice {
 		params.SubmitFieldsRequest.SelectedChoiceID = kernel.Opt(in.SelectedChoiceID)
+	}
+	if in.InteractionID != "" {
+		params.SubmitFieldsRequest.InteractionID = kernel.Opt(in.InteractionID)
 	}
 	if hasMfaOption {
 		params.SubmitFieldsRequest.MfaOptionID = kernel.Opt(in.MfaOptionID)
@@ -1063,17 +1097,20 @@ func (c AuthConnectionCmd) Follow(ctx context.Context, in AuthConnectionFollowIn
 				state.Timestamp.Local().Format(time.RFC3339),
 				state.FlowStatus,
 				state.FlowStep)
+			if state.InteractionID != "" {
+				pterm.Info.Printf("  Interaction ID: %s\n", state.InteractionID)
+			}
 			if len(state.Fields) > 0 {
 				fields := make([]string, 0, len(state.Fields))
 				for _, f := range state.Fields {
 					fields = append(fields, formatManagedAuthField(managedAuthInputField{
-						ID:              f.ID,
-						Label:           f.Label,
-						Type:            f.Type,
-						Ref:             f.Ref,
-						Hint:            f.Hint,
-						Required:        f.Required,
-						ReplaceExisting: f.ReplaceExisting,
+						ID:       f.ID,
+						Label:    f.Label,
+						Type:     f.Type,
+						Ref:      f.Ref,
+						Hint:     f.Hint,
+						Reason:   f.Reason,
+						Required: f.Required,
 					}))
 				}
 				pterm.Info.Printf("  Fields: %s\n", strings.Join(fields, ", "))
@@ -1181,8 +1218,18 @@ var authConnectionsSubmitCmd = &cobra.Command{
 	Short: "Submit field values to a login flow",
 	Long: `Submit field values for the login form. Poll the managed auth to track progress.
 
+Canonical submissions (--field-value, --choice-id) are bound to the interaction
+they answer. The CLI reads the connection's current interaction ID for you; pass
+--interaction-id to pin the submission to a specific interaction instead.
+
 Examples:
-  # Submit field values
+  # Submit canonical field values from the connection's fields list
+  kernel auth connections submit <id> --field-value field_email=me@example.com --field-value field_password=secret
+
+  # Answer a specific interaction (rejected if the flow has moved on)
+  kernel auth connections submit <id> --choice-id mfa_sms --interaction-id mai_abc123xyz
+
+  # Submit legacy field values
   kernel auth connections submit <id> --field username=myuser --field password=mypass
 
   # Select an MFA option
@@ -1291,6 +1338,7 @@ func init() {
 	addJSONOutputFlag(authConnectionsSubmitCmd)
 	authConnectionsSubmitCmd.Flags().StringArray("field-value", []string{}, "Canonical field-id=value pair from the connection's `fields` list (repeatable)")
 	authConnectionsSubmitCmd.Flags().String("choice-id", "", "Canonical choice ID from the connection's `choices` list")
+	authConnectionsSubmitCmd.Flags().String("interaction-id", "", "Canonical interaction ID the submitted values belong to; defaults to the connection's current interaction. Only valid with --field-value or --choice-id")
 	authConnectionsSubmitCmd.Flags().StringArray("field", []string{}, "Legacy field name=value pair (repeatable); prefer --field-value")
 	authConnectionsSubmitCmd.Flags().String("mfa-option-id", "", "MFA option ID if user selected an MFA method")
 	authConnectionsSubmitCmd.Flags().String("sign-in-option-id", "", "Sign-in option ID if the flow returned non-MFA choices")
@@ -1516,6 +1564,7 @@ func runAuthConnectionsSubmit(cmd *cobra.Command, args []string) error {
 	fieldPairs, _ := cmd.Flags().GetStringArray("field")
 	canonicalFieldPairs, _ := cmd.Flags().GetStringArray("field-value")
 	choiceID, _ := cmd.Flags().GetString("choice-id")
+	interactionID, _ := cmd.Flags().GetString("interaction-id")
 	mfaOptionID, _ := cmd.Flags().GetString("mfa-option-id")
 	signInOptionID, _ := cmd.Flags().GetString("sign-in-option-id")
 	ssoButtonSelector, _ := cmd.Flags().GetString("sso-button-selector")
@@ -1543,6 +1592,7 @@ func runAuthConnectionsSubmit(cmd *cobra.Command, args []string) error {
 		FieldValues:          fieldValues,
 		CanonicalFieldValues: canonicalFieldValues,
 		SelectedChoiceID:     choiceID,
+		InteractionID:        interactionID,
 		MfaOptionID:          mfaOptionID,
 		SignInOptionID:       signInOptionID,
 		SSOButtonSelector:    ssoButtonSelector,
