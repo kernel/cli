@@ -76,9 +76,7 @@ func parseTelemetryCategories(s string) (kernel.BrowserTelemetryCategoriesConfig
 		case "interaction":
 			p.Interaction = on()
 		case "control":
-			p.Control = kernel.BrowserTelemetryControlConfigParam{Enabled: kernel.Opt(true)}
-		case "platform":
-			p.Platform = on()
+			p.Control = on()
 		case "connection":
 			p.Connection = on()
 		case "system":
@@ -94,112 +92,20 @@ func parseTelemetryCategories(s string) (kernel.BrowserTelemetryCategoriesConfig
 	return p, nil
 }
 
-// cdpCommandMethods are the browser-control commands the CDP proxy reports as
-// cdp_command events, and so the values --telemetry-cdp-exclude accepts.
-var cdpCommandMethods = []string{
-	"Input.dispatchMouseEvent",
-	"Input.dispatchKeyEvent",
-	"Input.insertText",
-	"Input.imeSetComposition",
-	"Input.dispatchTouchEvent",
-	"Input.dispatchDragEvent",
-	"Input.cancelDragging",
-	"Input.emulateTouchFromMouseEvent",
-	"Input.synthesizePinchGesture",
-	"Input.synthesizeScrollGesture",
-	"Input.synthesizeTapGesture",
-	"DOM.setFileInputFiles",
-	"DOM.focus",
-	"DOM.scrollIntoViewIfNeeded",
-	"Page.bringToFront",
-	"Page.captureScreenshot",
-	"Page.captureSnapshot",
-	"Page.handleJavaScriptDialog",
-	"Page.navigate",
-	"Page.navigateToHistoryEntry",
-	"Page.reload",
-	"Page.printToPDF",
-	"Page.startScreencast",
-	"Page.stopScreencast",
-	"Page.stopLoading",
-	"Page.close",
-	"Page.setWebLifecycleState",
-	"Target.activateTarget",
-	"Target.closeTarget",
-	"Target.createTarget",
-	"Target.createBrowserContext",
-	"Target.disposeBrowserContext",
-	"Target.openDevTools",
-	"Browser.cancelDownload",
-	"Browser.close",
-	"Browser.setWindowBounds",
-	"Browser.setContentsSize",
-	"Autofill.trigger",
-}
-
-// telemetryCdpExcludeNone is the --telemetry-cdp-exclude value that clears the
-// exclusion list rather than naming methods to drop.
-const telemetryCdpExcludeNone = "none"
-
-// parseTelemetryCdpExcludedMethods parses a --telemetry-cdp-exclude value into the
-// exclusion list carried by the control category. "none" resolves to an empty list,
-// which tells the API to report every supported method again. Method names are
-// matched case-insensitively and returned in their canonical CDP spelling.
-func parseTelemetryCdpExcludedMethods(s string) ([]kernel.BrowserCdpCommandMethod, error) {
-	methods := []kernel.BrowserCdpCommandMethod{}
-	if strings.TrimSpace(s) == telemetryCdpExcludeNone {
-		return methods, nil
-	}
-	for _, part := range strings.Split(s, ",") {
-		name := strings.TrimSpace(part)
-		if name == "" {
-			continue
-		}
-		i := slices.IndexFunc(cdpCommandMethods, func(m string) bool { return strings.EqualFold(m, name) })
-		if i < 0 {
-			return nil, fmt.Errorf("unknown CDP method %q: must be one of %s, or %q to clear the exclusion list", name, strings.Join(cdpCommandMethods, ", "), telemetryCdpExcludeNone)
-		}
-		methods = append(methods, kernel.BrowserCdpCommandMethod(cdpCommandMethods[i]))
-	}
-	return methods, nil
-}
-
-// resolveTelemetryFlag interprets the --telemetry and --telemetry-cdp-exclude flag
-// values shared by every browser and browser-pool command: "all" enables the default
-// set, "off" disables capture, and a comma-separated list opts into exactly those
-// categories. Excluded CDP methods are merged into the control category independently
-// of the selection, so they survive a later update that only names categories. It
-// returns the resolved (enabled, browser) pair so each endpoint can assemble its own
-// param type.
-func resolveTelemetryFlag(s, cdpExclude string) (param.Opt[bool], kernel.BrowserTelemetryCategoriesConfigParam, error) {
-	var enabled param.Opt[bool]
-	var p kernel.BrowserTelemetryCategoriesConfigParam
+// resolveTelemetryFlag interprets a --telemetry flag value shared by every browser
+// and browser-pool command: "all" enables the default set, "off" disables capture,
+// and a comma-separated list opts into exactly those categories. It returns the
+// resolved (enabled, browser) pair so each endpoint can assemble its own param type.
+func resolveTelemetryFlag(s string) (param.Opt[bool], kernel.BrowserTelemetryCategoriesConfigParam, error) {
 	switch s {
 	case "all":
-		enabled = kernel.Opt(true)
+		return kernel.Opt(true), kernel.BrowserTelemetryCategoriesConfigParam{}, nil
 	case "off":
-		enabled = kernel.Opt(false)
+		return kernel.Opt(false), kernel.BrowserTelemetryCategoriesConfigParam{}, nil
 	default:
-		var err error
-		if p, err = parseTelemetryCategories(s); err != nil {
-			return enabled, p, err
-		}
+		p, err := parseTelemetryCategories(s)
+		return param.Opt[bool]{}, p, err
 	}
-	if cdpExclude == "" {
-		return enabled, p, nil
-	}
-	// Exclusion is a control-telemetry setting, so it has no meaning in a request
-	// that turns capture off. Error messages never lead with a flag token — the
-	// error style title-cases the first word.
-	if s == "off" {
-		return enabled, p, fmt.Errorf("cannot combine --telemetry=off with --telemetry-cdp-exclude: excluding CDP methods only applies while control telemetry is captured")
-	}
-	methods, err := parseTelemetryCdpExcludedMethods(cdpExclude)
-	if err != nil {
-		return enabled, p, err
-	}
-	p.Control.Cdp.ExcludedMethods = methods
-	return enabled, p, nil
 }
 
 // telemetryExportOff is the --telemetry-export-otlp value that turns export off
@@ -261,10 +167,10 @@ func validateTelemetryExportCombo(telemetry, id, name string, canImply bool) err
 	return nil
 }
 
-// buildNewTelemetryParam converts --telemetry, --telemetry-cdp-exclude and
-// --telemetry-export-otlp flag values to the create API param.
-func buildNewTelemetryParam(s, cdpExclude, export string) (kernel.BrowserNewParamsTelemetry, error) {
-	enabled, browser, err := resolveTelemetryFlag(s, cdpExclude)
+// buildNewTelemetryParam converts --telemetry and --telemetry-export-otlp flag
+// values to the create API param.
+func buildNewTelemetryParam(s, export string) (kernel.BrowserNewParamsTelemetry, error) {
+	enabled, browser, err := resolveTelemetryFlag(s)
 	p := kernel.BrowserNewParamsTelemetry{Enabled: enabled, Browser: browser}
 	if err != nil || export == "" {
 		return p, err
@@ -301,36 +207,25 @@ func optIfSet(s string) param.Opt[string] {
 	return kernel.Opt(s)
 }
 
-// buildUpdateTelemetryParam converts --telemetry and --telemetry-cdp-exclude flag
-// values to the update API param.
-func buildUpdateTelemetryParam(s, cdpExclude string) (kernel.BrowserUpdateParamsTelemetry, error) {
-	enabled, browser, err := resolveTelemetryFlag(s, cdpExclude)
+// buildUpdateTelemetryParam converts a --telemetry flag value to the update API param.
+func buildUpdateTelemetryParam(s string) (kernel.BrowserUpdateParamsTelemetry, error) {
+	enabled, browser, err := resolveTelemetryFlag(s)
 	return kernel.BrowserUpdateParamsTelemetry{Enabled: enabled, Browser: browser}, err
 }
 
-// buildManagedAuthTelemetryParam converts --telemetry, --telemetry-cdp-exclude and
-// --telemetry-export-otlp flag values to the browser telemetry config carried by an
-// auth connection's browser settings, shared by create, update, and login.
+// buildManagedAuthTelemetryParam converts --telemetry and --telemetry-export-otlp
+// flag values to the browser telemetry config carried by an auth connection's
+// browser settings, shared by create, update, and login.
 //
 // canImply is true only on create, where there is no stored selection to clobber
 // and capture can safely be turned on for the user so a destination works on its
 // own. On update and login it is false: enabling capture there would replace the
 // connection's current category selection rather than merge onto it.
-func buildManagedAuthTelemetryParam(s, cdpExclude, export string, canImply bool) (kernel.ManagedAuthBrowserConfigTelemetryParam, error) {
-	enabled, browser, err := resolveTelemetryFlag(s, cdpExclude)
+func buildManagedAuthTelemetryParam(s, export string, canImply bool) (kernel.ManagedAuthBrowserConfigTelemetryParam, error) {
+	enabled, browser, err := resolveTelemetryFlag(s)
 	p := kernel.ManagedAuthBrowserConfigTelemetryParam{Enabled: enabled, Browser: browser}
-	if err != nil {
+	if err != nil || export == "" {
 		return p, err
-	}
-	// A connection stores the browser config as sent rather than resolving it, so a
-	// request carrying only CDP exclusions would drop the connection's category
-	// selection. On update and login the user has to restate what to capture; on
-	// create there is nothing to lose.
-	if cdpExclude != "" && s == "" && !canImply {
-		return p, fmt.Errorf("setting --telemetry-cdp-exclude also requires --telemetry in the same command: the connection stores its browser config as sent, so exclusions on their own would drop its category selection")
-	}
-	if export == "" {
-		return p, nil
 	}
 	exEnabled, id, name, err := resolveTelemetryExportFlag(export)
 	if err != nil {
@@ -369,9 +264,6 @@ func formatManagedAuthTelemetry(cfg kernel.ManagedAuthBrowserConfigTelemetry) st
 		}
 		return "disabled"
 	}()
-	if ex := formatCdpExcludedMethods(cfg.Browser.Control.Cdp.ExcludedMethods); ex != "" {
-		base += " (excluding CDP methods: " + ex + ")"
-	}
 	if dest := managedAuthExportDestination(cfg.Export); dest != "" {
 		return base + " (exporting to " + dest + ")"
 	}
@@ -395,7 +287,7 @@ func managedAuthExportDestination(ex kernel.ManagedAuthBrowserConfigTelemetryExp
 // flows automatically whenever a CDP category is captured.
 var settableCategories = []string{
 	"console", "network", "page", "interaction",
-	"control", "connection", "system", "screenshot", "platform", "captcha",
+	"control", "connection", "system", "screenshot", "captcha",
 }
 
 // streamFilterCategories are the categories accepted by `telemetry stream --categories`.
@@ -418,7 +310,6 @@ func telemetryEnabledCategories(cfg kernel.BrowserTelemetryConfig) []string {
 		{"connection", b.Connection.Enabled},
 		{"system", b.System.Enabled},
 		{"screenshot", b.Screenshot.Enabled},
-		{"platform", b.Platform.Enabled},
 		{"captcha", b.Captcha.Enabled},
 	}
 	on := make([]string, 0, len(ordered))
@@ -439,9 +330,6 @@ func printTelemetrySummary(cfg kernel.BrowserTelemetryConfig) {
 		return
 	}
 	pterm.Info.Printf("Telemetry capturing: %s\n", strings.Join(on, ", "))
-	if ex := formatCdpExcludedMethods(cfg.Browser.Control.Cdp.ExcludedMethods); ex != "" {
-		pterm.Info.Printf("Telemetry excluding CDP methods: %s\n", ex)
-	}
 	if cfg.Export.Otlp.Enabled {
 		// The response reports the resolved destination by ID even when the request
 		// selected it by name.
@@ -451,19 +339,6 @@ func printTelemetrySummary(cfg kernel.BrowserTelemetryConfig) {
 			pterm.Info.Println("Telemetry exporting over OTLP")
 		}
 	}
-}
-
-// formatCdpExcludedMethods renders the CDP methods left out of control
-// telemetry's cdp_command stream, or "" when every supported method is reported.
-func formatCdpExcludedMethods(methods []kernel.BrowserCdpCommandMethod) string {
-	if len(methods) == 0 {
-		return ""
-	}
-	names := make([]string, 0, len(methods))
-	for _, m := range methods {
-		names = append(names, string(m))
-	}
-	return strings.Join(names, ", ")
 }
 
 // shouldEmit applies client-side category/type filters to a telemetry event.

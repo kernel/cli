@@ -239,7 +239,7 @@ func TestBrowserPoolsCreate_PrivateHostNormalization(t *testing.T) {
 // forwarding used by both `browser-pools acquire` and the `browsers create
 // --pool-id` lease path.
 func TestBuildAcquireParams(t *testing.T) {
-	p, err := buildAcquireParams("lease", map[string]string{"env": "prod"}, 30, "console,network", "", "https://example.com")
+	p, err := buildAcquireParams("lease", map[string]string{"env": "prod"}, 30, "console,network", "https://example.com")
 	assert.NoError(t, err)
 	assert.True(t, p.Name.Valid())
 	assert.Equal(t, "lease", p.Name.Value)
@@ -252,7 +252,7 @@ func TestBuildAcquireParams(t *testing.T) {
 	assert.True(t, p.Telemetry.Browser.Network.Enabled.Value)
 
 	// Unset inputs produce an empty params struct (nothing forwarded).
-	empty, err := buildAcquireParams("", nil, 0, "", "", "")
+	empty, err := buildAcquireParams("", nil, 0, "", "")
 	assert.NoError(t, err)
 	assert.False(t, empty.Name.Valid())
 	assert.Len(t, empty.Tags, 0)
@@ -260,7 +260,7 @@ func TestBuildAcquireParams(t *testing.T) {
 	assert.False(t, empty.StartURL.Valid())
 
 	// An invalid category surfaces an error rather than a partial param.
-	_, err = buildAcquireParams("", nil, 0, "bogus", "", "")
+	_, err = buildAcquireParams("", nil, 0, "bogus", "")
 	assert.Error(t, err)
 }
 
