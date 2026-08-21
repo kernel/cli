@@ -108,21 +108,24 @@ func (c BrowserPoolsCmd) List(ctx context.Context, in BrowserPoolsListInput) err
 	return nil
 }
 
-// buildPoolNewTelemetryParam converts a --telemetry flag value to the pool create param.
-func buildPoolNewTelemetryParam(s string) (kernel.BrowserPoolNewParamsTelemetry, error) {
-	enabled, browser, err := resolveTelemetryFlag(s)
+// buildPoolNewTelemetryParam converts --telemetry and --telemetry-cdp-exclude flag
+// values to the pool create param.
+func buildPoolNewTelemetryParam(s, cdpExclude string) (kernel.BrowserPoolNewParamsTelemetry, error) {
+	enabled, browser, err := resolveTelemetryFlag(s, cdpExclude)
 	return kernel.BrowserPoolNewParamsTelemetry{Enabled: enabled, Browser: browser}, err
 }
 
-// buildPoolUpdateTelemetryParam converts a --telemetry flag value to the pool update param.
-func buildPoolUpdateTelemetryParam(s string) (kernel.BrowserPoolUpdateParamsTelemetry, error) {
-	enabled, browser, err := resolveTelemetryFlag(s)
+// buildPoolUpdateTelemetryParam converts --telemetry and --telemetry-cdp-exclude flag
+// values to the pool update param.
+func buildPoolUpdateTelemetryParam(s, cdpExclude string) (kernel.BrowserPoolUpdateParamsTelemetry, error) {
+	enabled, browser, err := resolveTelemetryFlag(s, cdpExclude)
 	return kernel.BrowserPoolUpdateParamsTelemetry{Enabled: enabled, Browser: browser}, err
 }
 
-// buildPoolAcquireTelemetryParam converts a --telemetry flag value to the acquire override param.
-func buildPoolAcquireTelemetryParam(s string) (kernel.BrowserPoolAcquireParamsTelemetry, error) {
-	enabled, browser, err := resolveTelemetryFlag(s)
+// buildPoolAcquireTelemetryParam converts --telemetry and --telemetry-cdp-exclude flag
+// values to the acquire override param.
+func buildPoolAcquireTelemetryParam(s, cdpExclude string) (kernel.BrowserPoolAcquireParamsTelemetry, error) {
+	enabled, browser, err := resolveTelemetryFlag(s, cdpExclude)
 	return kernel.BrowserPoolAcquireParamsTelemetry{Enabled: enabled, Browser: browser}, err
 }
 
@@ -132,7 +135,11 @@ func formatPoolTelemetry(cfg kernel.BrowserTelemetryConfig) string {
 	if len(on) == 0 {
 		return "disabled"
 	}
-	return strings.Join(on, ", ")
+	base := strings.Join(on, ", ")
+	if ex := formatCdpExcludedMethods(cfg.Browser.Control.Cdp.ExcludedMethods); ex != "" {
+		return base + " (excluding CDP methods: " + ex + ")"
+	}
+	return base
 }
 
 type BrowserPoolsCreateInput struct {
@@ -155,6 +162,7 @@ type BrowserPoolsCreateInput struct {
 	ChromePolicy           string
 	ChromePolicyFile       string
 	Telemetry              string
+	TelemetryCdpExclude    string
 	Output                 string
 }
 
@@ -247,8 +255,8 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 		params.ChromePolicy = chromePolicy
 	}
 
-	if in.Telemetry != "" {
-		t, err := buildPoolNewTelemetryParam(in.Telemetry)
+	if in.Telemetry != "" || in.TelemetryCdpExclude != "" {
+		t, err := buildPoolNewTelemetryParam(in.Telemetry, in.TelemetryCdpExclude)
 		if err != nil {
 			return err
 		}
@@ -269,7 +277,7 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 	} else {
 		pterm.Success.Printf("Created browser pool %s\n", pool.ID)
 	}
-	if in.Telemetry != "" {
+	if in.Telemetry != "" || in.TelemetryCdpExclude != "" {
 		printTelemetrySummary(pool.BrowserPoolConfig.Telemetry)
 	}
 	return nil
@@ -350,6 +358,7 @@ type BrowserPoolsUpdateInput struct {
 	ChromePolicyFile       string
 	ClearChromePolicy      bool
 	Telemetry              string
+	TelemetryCdpExclude    string
 	DiscardAllIdle         BoolFlag
 	Output                 string
 }
@@ -488,8 +497,8 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 		params.SetExtraFields(extraFields)
 	}
 
-	if in.Telemetry != "" {
-		t, err := buildPoolUpdateTelemetryParam(in.Telemetry)
+	if in.Telemetry != "" || in.TelemetryCdpExclude != "" {
+		t, err := buildPoolUpdateTelemetryParam(in.Telemetry, in.TelemetryCdpExclude)
 		if err != nil {
 			return err
 		}
@@ -510,7 +519,7 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 	} else {
 		pterm.Success.Printf("Updated browser pool %s\n", pool.ID)
 	}
-	if in.Telemetry != "" {
+	if in.Telemetry != "" || in.TelemetryCdpExclude != "" {
 		printTelemetrySummary(pool.BrowserPoolConfig.Telemetry)
 	}
 	return nil
@@ -535,13 +544,14 @@ func (c BrowserPoolsCmd) Delete(ctx context.Context, in BrowserPoolsDeleteInput)
 }
 
 type BrowserPoolsAcquireInput struct {
-	IDOrName       string
-	TimeoutSeconds int64
-	Name           string
-	StartURL       string
-	Tags           map[string]string
-	Telemetry      string
-	Output         string
+	IDOrName            string
+	TimeoutSeconds      int64
+	Name                string
+	StartURL            string
+	Tags                map[string]string
+	Telemetry           string
+	TelemetryCdpExclude string
+	Output              string
 }
 
 // buildAcquireParams builds the SDK params for acquiring a browser from a pool.
@@ -549,7 +559,7 @@ type BrowserPoolsAcquireInput struct {
 // path so the per-lease name/tags/start-url/telemetry forwarding cannot silently
 // diverge between them. The telemetry override merges onto the pool's config for
 // this lease.
-func buildAcquireParams(name string, tags map[string]string, timeoutSeconds int64, telemetry, startURL string) (kernel.BrowserPoolAcquireParams, error) {
+func buildAcquireParams(name string, tags map[string]string, timeoutSeconds int64, telemetry, telemetryCdpExclude, startURL string) (kernel.BrowserPoolAcquireParams, error) {
 	params := kernel.BrowserPoolAcquireParams{}
 	if timeoutSeconds > 0 {
 		params.AcquireTimeoutSeconds = kernel.Int(timeoutSeconds)
@@ -563,8 +573,8 @@ func buildAcquireParams(name string, tags map[string]string, timeoutSeconds int6
 	if len(tags) > 0 {
 		params.Tags = kernel.Tags(tags)
 	}
-	if telemetry != "" {
-		t, err := buildPoolAcquireTelemetryParam(telemetry)
+	if telemetry != "" || telemetryCdpExclude != "" {
+		t, err := buildPoolAcquireTelemetryParam(telemetry, telemetryCdpExclude)
 		if err != nil {
 			return kernel.BrowserPoolAcquireParams{}, err
 		}
@@ -578,7 +588,7 @@ func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInpu
 		return err
 	}
 
-	params, err := buildAcquireParams(in.Name, in.Tags, in.TimeoutSeconds, in.Telemetry, in.StartURL)
+	params, err := buildAcquireParams(in.Name, in.Tags, in.TimeoutSeconds, in.Telemetry, in.TelemetryCdpExclude, in.StartURL)
 	if err != nil {
 		return err
 	}
@@ -749,6 +759,7 @@ func init() {
 	browserPoolsCreateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
 	browserPoolsCreateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
 	browserPoolsCreateCmd.Flags().String("telemetry", "", "Configure telemetry for browsers warmed into the pool (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
+	browserPoolsCreateCmd.Flags().String("telemetry-cdp-exclude", "", "Leave the named CDP methods out of control telemetry's cdp_command events, comma-separated (e.g. Input.dispatchMouseEvent,Page.captureScreenshot); --telemetry-cdp-exclude=none clears the list. Excluded commands are still relayed to the browser, they just produce no event")
 	browserPoolsCreateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
 
 	addJSONOutputFlag(browserPoolsGetCmd)
@@ -779,6 +790,7 @@ func init() {
 	browserPoolsUpdateCmd.MarkFlagsMutuallyExclusive("chrome-policy", "chrome-policy-file")
 	browserPoolsUpdateCmd.MarkFlagsMutuallyExclusive("private-host", "clear-private-hosts")
 	browserPoolsUpdateCmd.Flags().String("telemetry", "", "Update pool telemetry: --telemetry=all (reset to default set), --telemetry=off (disable), or --telemetry=console,network (merge those categories into the current selection). Applies only to browsers warmed after the update.")
+	browserPoolsUpdateCmd.Flags().String("telemetry-cdp-exclude", "", "Leave the named CDP methods out of control telemetry's cdp_command events, comma-separated (e.g. Input.dispatchMouseEvent,Page.captureScreenshot); --telemetry-cdp-exclude=none clears the list. Excluded commands are still relayed to the browser, they just produce no event")
 	browserPoolsUpdateCmd.Flags().Bool("discard-all-idle", false, "Discard all idle browsers")
 	addJSONOutputFlag(browserPoolsUpdateCmd)
 
@@ -789,6 +801,7 @@ func init() {
 	browserPoolsAcquireCmd.Flags().String("start-url", "", "URL to navigate the acquired browser to, overriding the pool's start URL for this acquire only (best-effort)")
 	browserPoolsAcquireCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the acquired session (repeatable; applies to this lease)")
 	browserPoolsAcquireCmd.Flags().String("telemetry", "", "Telemetry override for this lease only, merged onto the pool's config: --telemetry=all, --telemetry=off, or --telemetry=console,network")
+	browserPoolsAcquireCmd.Flags().String("telemetry-cdp-exclude", "", "Leave the named CDP methods out of control telemetry's cdp_command events, comma-separated (e.g. Input.dispatchMouseEvent,Page.captureScreenshot); --telemetry-cdp-exclude=none clears the list. Excluded commands are still relayed to the browser, they just produce no event")
 	addJSONOutputFlag(browserPoolsAcquireCmd)
 
 	browserPoolsReleaseCmd.Flags().String("session-id", "", "Browser session ID to release")
@@ -845,6 +858,7 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
 	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
+	telemetryCdpExclude, _ := cmd.Flags().GetString("telemetry-cdp-exclude")
 	output, _ := cmd.Flags().GetString("output")
 
 	in := BrowserPoolsCreateInput{
@@ -867,6 +881,7 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 		ChromePolicy:           chromePolicy,
 		ChromePolicyFile:       chromePolicyFile,
 		Telemetry:              telemetry,
+		TelemetryCdpExclude:    telemetryCdpExclude,
 		Output:                 output,
 	}
 
@@ -908,6 +923,7 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
 	clearChromePolicy, _ := cmd.Flags().GetBool("clear-chrome-policy")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
+	telemetryCdpExclude, _ := cmd.Flags().GetString("telemetry-cdp-exclude")
 	discardIdle, _ := cmd.Flags().GetBool("discard-all-idle")
 	output, _ := cmd.Flags().GetString("output")
 
@@ -937,6 +953,7 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 		ChromePolicyFile:       chromePolicyFile,
 		ClearChromePolicy:      clearChromePolicy,
 		Telemetry:              telemetry,
+		TelemetryCdpExclude:    telemetryCdpExclude,
 		DiscardAllIdle:         BoolFlag{Set: cmd.Flags().Changed("discard-all-idle"), Value: discardIdle},
 		Output:                 output,
 	}
@@ -959,16 +976,18 @@ func runBrowserPoolsAcquire(cmd *cobra.Command, args []string) error {
 	startURL, _ := cmd.Flags().GetString("start-url")
 	tags, _ := tagsFromFlag(cmd, "tag")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
+	telemetryCdpExclude, _ := cmd.Flags().GetString("telemetry-cdp-exclude")
 	output, _ := cmd.Flags().GetString("output")
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
 	return c.Acquire(cmd.Context(), BrowserPoolsAcquireInput{
-		IDOrName:       args[0],
-		TimeoutSeconds: timeout,
-		Name:           name,
-		StartURL:       startURL,
-		Tags:           tags,
-		Telemetry:      telemetry,
-		Output:         output,
+		IDOrName:            args[0],
+		TimeoutSeconds:      timeout,
+		Name:                name,
+		StartURL:            startURL,
+		Tags:                tags,
+		Telemetry:           telemetry,
+		TelemetryCdpExclude: telemetryCdpExclude,
+		Output:              output,
 	})
 }
 
