@@ -24,6 +24,7 @@ Supported targets:
   vscode      - Visual Studio Code
   goose       - Goose AI
   zed         - Zed editor
+  fx          - fx coding agent
 
 Examples:
   # Install for Cursor
@@ -135,5 +136,11 @@ func printPostInstallInstructions(target Target) {
 		pterm.Println("  1. Restart Zed")
 		pterm.Println("  2. The Kernel context server will be available")
 		pterm.Println("  3. You'll be prompted to authenticate when first using Kernel tools")
+
+	case TargetFx:
+		pterm.Info.Println("Next steps:")
+		pterm.Println("  1. Start fx, or run '/mcp reload' in an existing session")
+		pterm.Println("  2. Run '/mcp auth kernel --open' to authenticate")
+		pterm.Println("  3. Run '/mcp list' to verify that Kernel is connected")
 	}
 }

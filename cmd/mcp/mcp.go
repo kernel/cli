@@ -34,6 +34,7 @@ const (
 	TargetVSCode     Target = "vscode"
 	TargetGoose      Target = "goose"
 	TargetZed        Target = "zed"
+	TargetFx         Target = "fx"
 )
 
 // KernelMCPURL is the URL for the Kernel MCP server
@@ -49,6 +50,7 @@ func AllTargets() []Target {
 		TargetVSCode,
 		TargetGoose,
 		TargetZed,
+		TargetFx,
 	}
 }
 
@@ -103,6 +105,8 @@ func getConfigPath(target Target) (string, error) {
 		return filepath.Join(homeDir, ".config", "goose", "config.yaml"), nil
 	case TargetZed:
 		return filepath.Join(homeDir, ".config", "zed", "settings.json"), nil
+	case TargetFx:
+		return filepath.Join(homeDir, ".fx", "mcp.json"), nil
 	default:
 		return "", fmt.Errorf("unsupported target: %s", target)
 	}
@@ -232,6 +236,28 @@ func writeJSONFile(path string, config map[string]interface{}) error {
 
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
+	}
+	return nil
+}
+
+func writePrivateJSONFile(path string, config map[string]interface{}) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		return fmt.Errorf("failed to secure directory: %w", err)
+	}
+
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal JSON: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		return fmt.Errorf("failed to secure file: %w", err)
 	}
 	return nil
 }
@@ -394,6 +420,28 @@ func installForZed(configPath string) error {
 	return writeJSONFile(configPath, config)
 }
 
+// installForFx installs MCP config for fx
+func installForFx(configPath string) error {
+	config, err := readJSONFile(configPath)
+	if err != nil {
+		return err
+	}
+
+	mcpServers, ok := config["mcp"].(map[string]interface{})
+	if !ok {
+		mcpServers = make(map[string]interface{})
+	}
+
+	mcpServers["kernel"] = map[string]interface{}{
+		"type":  "http",
+		"url":   KernelMCPURL,
+		"oauth": map[string]interface{}{},
+	}
+	config["mcp"] = mcpServers
+
+	return writePrivateJSONFile(configPath, config)
+}
+
 // Install configures the MCP server for the specified target
 func Install(target Target) error {
 	configPath, err := getConfigPath(target)
@@ -416,6 +464,8 @@ func Install(target Target) error {
 		return installForGoose(configPath)
 	case TargetZed:
 		return installForZed(configPath)
+	case TargetFx:
+		return installForFx(configPath)
 	default:
 		return fmt.Errorf("unsupported target: %s", target)
 	}
