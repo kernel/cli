@@ -245,9 +245,6 @@ func writePrivateJSONFile(path string, config map[string]interface{}) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
-	if err := os.Chmod(dir, 0700); err != nil {
-		return fmt.Errorf("failed to secure directory: %w", err)
-	}
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {

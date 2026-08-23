@@ -83,8 +83,39 @@ func TestInstallForFx(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := dirInfo.Mode().Perm(); got != 0700 {
-			t.Fatalf("config directory permissions = %o, want 700", got)
+		if got := dirInfo.Mode().Perm(); got != 0755 {
+			t.Fatalf("config directory permissions = %o, want preserved 755", got)
 		}
+	}
+}
+
+func TestInstallForFxClean(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	if err := Install(TargetFx); err != nil {
+		t.Fatal(err)
+	}
+
+	if runtime.GOOS == "windows" {
+		return
+	}
+
+	configPath := filepath.Join(home, ".fx", "mcp.json")
+	fileInfo, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0600 {
+		t.Fatalf("config permissions = %o, want 600", got)
+	}
+
+	dirInfo, err := os.Stat(filepath.Dir(configPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0700 {
+		t.Fatalf("config directory permissions = %o, want 700", got)
 	}
 }
