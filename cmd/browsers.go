@@ -360,31 +360,32 @@ func formatTags(tags kernel.Tags) string {
 
 // Inputs for each command
 type BrowsersCreateInput struct {
-	TimeoutSeconds     int
-	Stealth            BoolFlag
-	Headless           BoolFlag
-	GPU                BoolFlag
-	Memory             string
-	InvocationID       string
-	Kiosk              BoolFlag
-	ProfileID          string
-	ProfileName        string
-	ProfileSaveChanges BoolFlag
-	ProxyID            string
-	ProxyName          string
-	ProxyMode          string
-	Region             string
-	PrivateHosts       []string
-	StartURL           string
-	Extensions         []string
-	Viewport           string
-	Telemetry          string
-	TelemetryExport    string
-	ChromePolicy       string
-	ChromePolicyFile   string
-	Name               string
-	Tags               map[string]string
-	Output             string
+	TimeoutSeconds      int
+	Stealth             BoolFlag
+	Headless            BoolFlag
+	GPU                 BoolFlag
+	Memory              string
+	InvocationID        string
+	Kiosk               BoolFlag
+	ProfileID           string
+	ProfileName         string
+	ProfileSaveChanges  BoolFlag
+	ProxyID             string
+	ProxyName           string
+	ProxyMode           string
+	Region              string
+	PrivateHosts        []string
+	StartURL            string
+	Extensions          []string
+	Viewport            string
+	Telemetry           string
+	TelemetryCdpExclude string
+	TelemetryExport     string
+	ChromePolicy        string
+	ChromePolicyFile    string
+	Name                string
+	Tags                map[string]string
+	Output              string
 }
 
 type BrowsersDeleteInput struct {
@@ -415,6 +416,7 @@ type BrowsersUpdateInput struct {
 	Viewport            string
 	Force               bool
 	Telemetry           string
+	TelemetryCdpExclude string
 	Name                string
 	SetName             bool
 	ClearName           bool
@@ -669,8 +671,8 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		}
 	}
 
-	if in.Telemetry != "" || in.TelemetryExport != "" {
-		t, err := buildNewTelemetryParam(in.Telemetry, in.TelemetryExport)
+	if in.Telemetry != "" || in.TelemetryCdpExclude != "" || in.TelemetryExport != "" {
+		t, err := buildNewTelemetryParam(in.Telemetry, in.TelemetryCdpExclude, in.TelemetryExport)
 		if err != nil {
 			return err
 		}
@@ -705,7 +707,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 
 	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.ProfileSaveChanges, browser.StartURL, browser.Name, browser.Tags)
-	if in.Telemetry != "" || in.TelemetryExport != "" {
+	if in.Telemetry != "" || in.TelemetryCdpExclude != "" || in.TelemetryExport != "" {
 		printTelemetrySummary(browser.Telemetry)
 	}
 	return nil
@@ -941,8 +943,8 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	// Validate that at least one update option is provided
-	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && !hasNameChange && !hasTagsChange {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --name, --clear-name, --tag, or --clear-tags")
+	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && in.TelemetryCdpExclude == "" && !hasNameChange && !hasTagsChange {
+		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --telemetry-cdp-exclude, --name, --clear-name, --tag, or --clear-tags")
 	}
 
 	params := kernel.BrowserUpdateParams{}
@@ -985,8 +987,8 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	// Handle telemetry changes
-	if in.Telemetry != "" {
-		t, err := buildUpdateTelemetryParam(in.Telemetry)
+	if in.Telemetry != "" || in.TelemetryCdpExclude != "" {
+		t, err := buildUpdateTelemetryParam(in.Telemetry, in.TelemetryCdpExclude)
 		if err != nil {
 			return err
 		}
@@ -1036,7 +1038,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	if hasProfileChange {
 		pterm.Info.Printf("Profile save changes: %t\n", browser.ProfileSaveChanges)
 	}
-	if in.Telemetry != "" {
+	if in.Telemetry != "" || in.TelemetryCdpExclude != "" {
 		printTelemetrySummary(browser.Telemetry)
 	}
 	return nil
@@ -2682,6 +2684,7 @@ func init() {
 	browsersUpdateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersUpdateCmd.Flags().Bool("force", false, "Force viewport resize even when a live view or recording/replay is active")
 	browsersUpdateCmd.Flags().String("telemetry", "", "Update telemetry: --telemetry=all (reset to default set), --telemetry=off (disable), or --telemetry=console,network (merge those categories into the current selection)")
+	browsersUpdateCmd.Flags().String("telemetry-cdp-exclude", "", "Leave the named CDP methods out of control telemetry's cdp_command events, comma-separated (e.g. Input.dispatchMouseEvent,Page.captureScreenshot); --telemetry-cdp-exclude=none clears the list. Excluded commands are still relayed to the browser, they just produce no event")
 	browsersUpdateCmd.Flags().String("name", "", "Set a new unique name for the browser session (mutually exclusive with --clear-name)")
 	browsersUpdateCmd.Flags().Bool("clear-name", false, "Clear the browser session name")
 	browsersUpdateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE (repeatable; up to 50 pairs). Replaces the entire tag set; mutually exclusive with --clear-tags")
@@ -2963,6 +2966,7 @@ func init() {
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
 	browsersCreateCmd.Flags().String("telemetry", "", "Configure telemetry (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
+	browsersCreateCmd.Flags().String("telemetry-cdp-exclude", "", "Leave the named CDP methods out of control telemetry's cdp_command events, comma-separated (e.g. Input.dispatchMouseEvent,Page.captureScreenshot); --telemetry-cdp-exclude=none clears the list. Excluded commands are still relayed to the browser, they just produce no event")
 	browsersCreateCmd.Flags().String("telemetry-export-otlp", "", "Export captured telemetry over OTLP to one of the org's configured destinations, by ID or name; --telemetry-export-otlp=off disables export. Implies --telemetry=all when --telemetry is not set, since export requires capture")
 	browsersCreateCmd.Flags().String("name", "", "Optional unique name for the browser session (used to find it later; can be changed with 'browsers update --name')")
 	browsersCreateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the session (repeatable; up to 50 pairs)")
@@ -3094,6 +3098,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	poolID, _ := cmd.Flags().GetString("pool-id")
 	poolName, _ := cmd.Flags().GetString("pool-name")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
+	telemetryCdpExclude, _ := cmd.Flags().GetString("telemetry-cdp-exclude")
 	telemetryExport, _ := cmd.Flags().GetString("telemetry-export-otlp")
 	name, _ := cmd.Flags().GetString("name")
 	tags, _ := tagsFromFlag(cmd, "tag")
@@ -3160,7 +3165,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("timeout") && timeout > 0 {
 			acquireTimeout = int64(timeout)
 		}
-		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry, startURL)
+		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry, telemetryCdpExclude, startURL)
 		if err != nil {
 			return err
 		}
@@ -3202,31 +3207,32 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	in := BrowsersCreateInput{
-		TimeoutSeconds:     timeout,
-		Stealth:            BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealthVal},
-		Headless:           BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headlessVal},
-		GPU:                BoolFlag{Set: cmd.Flags().Changed("gpu"), Value: gpuVal},
-		Memory:             memory,
-		InvocationID:       invocationID,
-		Kiosk:              BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kioskVal},
-		ProfileID:          profileID,
-		ProfileName:        profileName,
-		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
-		ProxyID:            proxyID,
-		ProxyName:          proxyName,
-		ProxyMode:          proxyMode,
-		Region:             region,
-		PrivateHosts:       privateHosts,
-		StartURL:           startURL,
-		Extensions:         extensions,
-		Viewport:           viewport,
-		Telemetry:          telemetry,
-		TelemetryExport:    telemetryExport,
-		ChromePolicy:       chromePolicy,
-		ChromePolicyFile:   chromePolicyFile,
-		Name:               name,
-		Tags:               tags,
-		Output:             output,
+		TimeoutSeconds:      timeout,
+		Stealth:             BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealthVal},
+		Headless:            BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headlessVal},
+		GPU:                 BoolFlag{Set: cmd.Flags().Changed("gpu"), Value: gpuVal},
+		Memory:              memory,
+		InvocationID:        invocationID,
+		Kiosk:               BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kioskVal},
+		ProfileID:           profileID,
+		ProfileName:         profileName,
+		ProfileSaveChanges:  BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
+		ProxyID:             proxyID,
+		ProxyName:           proxyName,
+		ProxyMode:           proxyMode,
+		Region:              region,
+		PrivateHosts:        privateHosts,
+		StartURL:            startURL,
+		Extensions:          extensions,
+		Viewport:            viewport,
+		Telemetry:           telemetry,
+		TelemetryCdpExclude: telemetryCdpExclude,
+		TelemetryExport:     telemetryExport,
+		ChromePolicy:        chromePolicy,
+		ChromePolicyFile:    chromePolicyFile,
+		Name:                name,
+		Tags:                tags,
+		Output:              output,
 	}
 
 	svc := client.Browsers
@@ -3288,6 +3294,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	viewport, _ := cmd.Flags().GetString("viewport")
 	force, _ := cmd.Flags().GetBool("force")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
+	telemetryCdpExclude, _ := cmd.Flags().GetString("telemetry-cdp-exclude")
 	name, _ := cmd.Flags().GetString("name")
 	clearName, _ := cmd.Flags().GetBool("clear-name")
 	tags, tagsProvided := tagsFromFlag(cmd, "tag")
@@ -3308,6 +3315,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 		Viewport:            viewport,
 		Force:               force,
 		Telemetry:           telemetry,
+		TelemetryCdpExclude: telemetryCdpExclude,
 		Name:                name,
 		SetName:             cmd.Flags().Changed("name"),
 		ClearName:           clearName,
