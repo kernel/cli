@@ -299,17 +299,14 @@ func TestShouldEmit(t *testing.T) {
 }
 
 func TestParseTelemetryCategories_OptInList(t *testing.T) {
-	p, err := parseTelemetryCategories("network,control,captcha,platform")
+	p, err := parseTelemetryCategories("network,control,captcha")
 
 	assert.NoError(t, err)
 	// Listed categories are enabled.
-	for _, c := range []kernel.BrowserTelemetryCategoryConfigParam{p.Network, p.Captcha, p.Platform} {
+	for _, c := range []kernel.BrowserTelemetryCategoryConfigParam{p.Network, p.Control, p.Captcha} {
 		assert.True(t, c.Enabled.Valid())
 		assert.True(t, c.Enabled.Value)
 	}
-	// Control carries its own config type, so it is checked separately.
-	assert.True(t, p.Control.Enabled.Valid())
-	assert.True(t, p.Control.Enabled.Value)
 	// Unlisted categories are omitted (opt-in: the instance treats them as off).
 	assert.False(t, p.Console.Enabled.Valid())
 	assert.False(t, p.Page.Enabled.Valid())
@@ -339,21 +336,21 @@ func TestParseTelemetryCategories_WhitespaceTolerance(t *testing.T) {
 // listed categories enabled (Enabled unset).
 func TestBuildTelemetryParam_WireEncoding(t *testing.T) {
 	t.Run("all", func(t *testing.T) {
-		p, err := buildNewTelemetryParam("all", "", "")
+		p, err := buildNewTelemetryParam("all", "")
 		assert.NoError(t, err)
 		assert.True(t, p.Enabled.Valid())
 		assert.True(t, p.Enabled.Value)
 		assert.False(t, p.Browser.Network.Enabled.Valid())
 	})
 	t.Run("off", func(t *testing.T) {
-		p, err := buildNewTelemetryParam("off", "", "")
+		p, err := buildNewTelemetryParam("off", "")
 		assert.NoError(t, err)
 		assert.True(t, p.Enabled.Valid())
 		assert.False(t, p.Enabled.Value)
 		assert.False(t, p.Browser.Network.Enabled.Valid())
 	})
 	t.Run("opt-in list sets only Browser", func(t *testing.T) {
-		p, err := buildNewTelemetryParam("network,control", "", "")
+		p, err := buildNewTelemetryParam("network,control", "")
 		assert.NoError(t, err)
 		assert.False(t, p.Enabled.Valid(), "Enabled must be unset for an opt-in selection")
 		assert.True(t, p.Browser.Network.Enabled.Valid())
@@ -369,7 +366,7 @@ func TestBuildTelemetryParam_WireEncoding(t *testing.T) {
 // enabled=false combined with one.
 func TestBuildTelemetryParam_ExportWireEncoding(t *testing.T) {
 	t.Run("destination by CUID sets id", func(t *testing.T) {
-		p, err := buildNewTelemetryParam("", "", "abcdefghijklmnopqrstuvwx")
+		p, err := buildNewTelemetryParam("", "abcdefghijklmnopqrstuvwx")
 		assert.NoError(t, err)
 		otlp := p.Export.Otlp
 		assert.True(t, otlp.Destination.ID.Valid())
@@ -378,7 +375,7 @@ func TestBuildTelemetryParam_ExportWireEncoding(t *testing.T) {
 		assert.False(t, otlp.Enabled.Valid(), "a destination implies enabled server-side")
 	})
 	t.Run("destination by name sets name", func(t *testing.T) {
-		p, err := buildNewTelemetryParam("", "", "my-collector")
+		p, err := buildNewTelemetryParam("", "my-collector")
 		assert.NoError(t, err)
 		otlp := p.Export.Otlp
 		assert.True(t, otlp.Destination.Name.Valid())
@@ -386,20 +383,20 @@ func TestBuildTelemetryParam_ExportWireEncoding(t *testing.T) {
 		assert.False(t, otlp.Destination.ID.Valid(), "id must be unset when name is sent")
 	})
 	t.Run("destination implies capture on create", func(t *testing.T) {
-		p, err := buildNewTelemetryParam("", "", "my-collector")
+		p, err := buildNewTelemetryParam("", "my-collector")
 		assert.NoError(t, err)
 		assert.True(t, p.Enabled.Valid(), "export requires capture, so create implies it")
 		assert.True(t, p.Enabled.Value)
 	})
 	t.Run("explicit --telemetry selection is preserved", func(t *testing.T) {
-		p, err := buildNewTelemetryParam("network,control", "", "my-collector")
+		p, err := buildNewTelemetryParam("network,control", "my-collector")
 		assert.NoError(t, err)
 		assert.False(t, p.Enabled.Valid(), "an opt-in selection must not be overridden")
 		assert.True(t, p.Browser.Network.Enabled.Value)
 		assert.Equal(t, "my-collector", p.Export.Otlp.Destination.Name.Value)
 	})
 	t.Run("off disables export without a destination", func(t *testing.T) {
-		p, err := buildNewTelemetryParam("all", "", "off")
+		p, err := buildNewTelemetryParam("all", "off")
 		assert.NoError(t, err)
 		otlp := p.Export.Otlp
 		assert.True(t, otlp.Enabled.Valid())
@@ -408,7 +405,7 @@ func TestBuildTelemetryParam_ExportWireEncoding(t *testing.T) {
 		assert.False(t, otlp.Destination.Name.Valid())
 	})
 	t.Run("off does not imply capture", func(t *testing.T) {
-		p, err := buildNewTelemetryParam("", "", "off")
+		p, err := buildNewTelemetryParam("", "off")
 		assert.NoError(t, err)
 		assert.False(t, p.Enabled.Valid(), "disabling export must not turn capture on")
 	})
@@ -417,44 +414,44 @@ func TestBuildTelemetryParam_ExportWireEncoding(t *testing.T) {
 	// same request. Update and login refuse to supply one: doing so would replace
 	// the connection's current category selection.
 	t.Run("update requires an explicit --telemetry alongside a destination", func(t *testing.T) {
-		_, err := buildManagedAuthTelemetryParam("", "", "my-collector", false)
+		_, err := buildManagedAuthTelemetryParam("", "my-collector", false)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "also requires --telemetry")
 	})
 	t.Run("login requires an explicit --telemetry alongside a destination", func(t *testing.T) {
-		_, err := buildManagedAuthTelemetryParam("", "", "my-collector", false)
+		_, err := buildManagedAuthTelemetryParam("", "my-collector", false)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "also requires --telemetry")
 	})
 	t.Run("update never implies capture when --telemetry is given", func(t *testing.T) {
-		p, err := buildManagedAuthTelemetryParam("console", "", "my-collector", false)
+		p, err := buildManagedAuthTelemetryParam("console", "my-collector", false)
 		assert.NoError(t, err)
 		assert.False(t, p.Enabled.Valid(), "an opt-in selection must not be widened to the default set")
 		assert.True(t, p.Browser.Console.Enabled.Value)
 		assert.Equal(t, "my-collector", p.Export.Otlp.Destination.Name.Value)
 	})
 	t.Run("login never implies capture when --telemetry is given", func(t *testing.T) {
-		p, err := buildManagedAuthTelemetryParam("console", "", "my-collector", false)
+		p, err := buildManagedAuthTelemetryParam("console", "my-collector", false)
 		assert.NoError(t, err)
 		assert.False(t, p.Enabled.Valid())
 		assert.Equal(t, "my-collector", p.Export.Otlp.Destination.Name.Value)
 	})
 	t.Run("update and login allow export=off without --telemetry", func(t *testing.T) {
-		u, err := buildManagedAuthTelemetryParam("", "", "off", false)
+		u, err := buildManagedAuthTelemetryParam("", "off", false)
 		assert.NoError(t, err)
 		assert.False(t, u.Export.Otlp.Enabled.Value)
-		l, err := buildManagedAuthTelemetryParam("", "", "off", false)
+		l, err := buildManagedAuthTelemetryParam("", "off", false)
 		assert.NoError(t, err)
 		assert.False(t, l.Export.Otlp.Enabled.Value)
 	})
 	t.Run("auth connection create implies capture", func(t *testing.T) {
-		p, err := buildManagedAuthTelemetryParam("", "", "my-collector", true)
+		p, err := buildManagedAuthTelemetryParam("", "my-collector", true)
 		assert.NoError(t, err)
 		assert.True(t, p.Enabled.Valid())
 		assert.True(t, p.Enabled.Value)
 	})
 	t.Run("invalid category still errors with export set", func(t *testing.T) {
-		_, err := buildNewTelemetryParam("bogus", "", "my-collector")
+		_, err := buildNewTelemetryParam("bogus", "my-collector")
 		assert.Error(t, err)
 	})
 	t.Run("telemetry=off with a destination is rejected", func(t *testing.T) {
@@ -462,9 +459,9 @@ func TestBuildTelemetryParam_ExportWireEncoding(t *testing.T) {
 			name string
 			fn   func() error
 		}{
-			{"create", func() error { _, e := buildNewTelemetryParam("off", "", "my-collector"); return e }},
-			{"auth create", func() error { _, e := buildManagedAuthTelemetryParam("off", "", "my-collector", true); return e }},
-			{"auth update/login", func() error { _, e := buildManagedAuthTelemetryParam("off", "", "my-collector", false); return e }},
+			{"create", func() error { _, e := buildNewTelemetryParam("off", "my-collector"); return e }},
+			{"auth create", func() error { _, e := buildManagedAuthTelemetryParam("off", "my-collector", true); return e }},
+			{"auth update/login", func() error { _, e := buildManagedAuthTelemetryParam("off", "my-collector", false); return e }},
 		} {
 			err := tc.fn()
 			assert.Error(t, err, tc.name)
@@ -472,13 +469,13 @@ func TestBuildTelemetryParam_ExportWireEncoding(t *testing.T) {
 		}
 	})
 	t.Run("telemetry=off with export=off is allowed", func(t *testing.T) {
-		p, err := buildNewTelemetryParam("off", "", "off")
+		p, err := buildNewTelemetryParam("off", "off")
 		assert.NoError(t, err)
 		assert.False(t, p.Enabled.Value)
 		assert.False(t, p.Export.Otlp.Enabled.Value)
 	})
 	t.Run("empty export value errors", func(t *testing.T) {
-		_, err := buildNewTelemetryParam("all", "", "   ")
+		_, err := buildNewTelemetryParam("all", "   ")
 		assert.Error(t, err)
 	})
 }
@@ -720,83 +717,4 @@ func TestTelemetryEvents_FullScanIgnoresOffsetUsesSince(t *testing.T) {
 	assert.False(t, gotQuery.Offset.Valid(), "--all must not forward --offset")
 	assert.Equal(t, "5m", gotQuery.Since.Value, "--all walks the window from --since")
 	_ = buf
-}
-
-func TestParseTelemetryCategories_Platform(t *testing.T) {
-	p, err := parseTelemetryCategories("platform")
-
-	assert.NoError(t, err)
-	assert.True(t, p.Platform.Enabled.Valid())
-	assert.True(t, p.Platform.Enabled.Value)
-	// platform is opt-in only, so it must be offered by the flag's error message too.
-	_, err = parseTelemetryCategories("bogus")
-	assert.ErrorContains(t, err, "platform")
-}
-
-func TestTelemetryEnabledCategories_Platform(t *testing.T) {
-	cfg := kernel.BrowserTelemetryConfig{Browser: kernel.BrowserTelemetryCategoriesConfig{}}
-	cfg.Browser.Platform.Enabled = true
-
-	assert.Equal(t, []string{"platform"}, telemetryEnabledCategories(cfg))
-}
-
-func TestParseTelemetryCdpExcludedMethods(t *testing.T) {
-	t.Run("canonicalizes and trims", func(t *testing.T) {
-		got, err := parseTelemetryCdpExcludedMethods(" input.dispatchmouseevent , Page.captureScreenshot ")
-		assert.NoError(t, err)
-		assert.Equal(t, []kernel.BrowserCdpCommandMethod{
-			kernel.BrowserCdpCommandMethodInputDispatchMouseEvent,
-			kernel.BrowserCdpCommandMethodPageCaptureScreenshot,
-		}, got)
-	})
-	t.Run("none clears the list", func(t *testing.T) {
-		got, err := parseTelemetryCdpExcludedMethods("none")
-		assert.NoError(t, err)
-		assert.NotNil(t, got, "an empty list must still be sent, so the API reports every method again")
-		assert.Empty(t, got)
-	})
-	t.Run("rejects unknown methods", func(t *testing.T) {
-		_, err := parseTelemetryCdpExcludedMethods("Page.doesNotExist")
-		assert.ErrorContains(t, err, "unknown CDP method")
-	})
-}
-
-func TestBuildTelemetryParam_CdpExclude(t *testing.T) {
-	t.Run("merges into control without enabling it", func(t *testing.T) {
-		p, err := buildNewTelemetryParam("", "Input.dispatchMouseEvent", "")
-		assert.NoError(t, err)
-		assert.False(t, p.Enabled.Valid())
-		assert.False(t, p.Browser.Control.Enabled.Valid(), "exclusions must not silently flip the control category")
-		assert.Equal(t, []kernel.BrowserCdpCommandMethod{
-			kernel.BrowserCdpCommandMethodInputDispatchMouseEvent,
-		}, p.Browser.Control.Cdp.ExcludedMethods)
-	})
-	t.Run("combines with a category selection", func(t *testing.T) {
-		p, err := buildUpdateTelemetryParam("control,network", "Page.captureScreenshot")
-		assert.NoError(t, err)
-		assert.True(t, p.Browser.Control.Enabled.Value)
-		assert.Equal(t, []kernel.BrowserCdpCommandMethod{
-			kernel.BrowserCdpCommandMethodPageCaptureScreenshot,
-		}, p.Browser.Control.Cdp.ExcludedMethods)
-	})
-	t.Run("rejects combining with telemetry off", func(t *testing.T) {
-		_, err := buildNewTelemetryParam("off", "Page.captureScreenshot", "")
-		assert.ErrorContains(t, err, "cannot combine --telemetry=off with --telemetry-cdp-exclude")
-	})
-}
-
-func TestBuildManagedAuthTelemetryParam_CdpExcludeNeedsCategories(t *testing.T) {
-	// The connection stores the config verbatim, so exclusions on their own would
-	// replace its category selection — allowed on create, rejected on update/login.
-	_, err := buildManagedAuthTelemetryParam("", "Page.navigate", "", false)
-	assert.ErrorContains(t, err, "also requires --telemetry in the same command")
-
-	p, err := buildManagedAuthTelemetryParam("", "Page.navigate", "", true)
-	assert.NoError(t, err)
-	assert.Equal(t, []kernel.BrowserCdpCommandMethod{
-		kernel.BrowserCdpCommandMethodPageNavigate,
-	}, p.Browser.Control.Cdp.ExcludedMethods)
-
-	_, err = buildManagedAuthTelemetryParam("control", "Page.navigate", "", false)
-	assert.NoError(t, err)
 }

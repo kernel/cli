@@ -9,7 +9,7 @@ require (
 	github.com/charmbracelet/lipgloss/v2 v2.0.0-beta.1
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/joho/godotenv v1.5.1
-	github.com/kernel/kernel-go-sdk v0.93.1-0.20260824182203-5e48c587a312
+	github.com/kernel/kernel-go-sdk v0.93.1-0.20260824200655-26309b6ff244
 	github.com/klauspost/compress v1.18.5
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/pterm/pterm v0.12.80
