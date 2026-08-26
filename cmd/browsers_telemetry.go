@@ -77,8 +77,6 @@ func parseTelemetryCategories(s string) (kernel.BrowserTelemetryCategoriesConfig
 			p.Interaction = on()
 		case "control":
 			p.Control = kernel.BrowserTelemetryControlConfigParam{Enabled: kernel.Opt(true)}
-		case "platform":
-			p.Platform = on()
 		case "connection":
 			p.Connection = on()
 		case "system":

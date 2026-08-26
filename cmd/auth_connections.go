@@ -554,13 +554,13 @@ func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) e
 		fields := make([]string, 0, len(auth.Fields))
 		for _, f := range auth.Fields {
 			fields = append(fields, formatManagedAuthField(managedAuthInputField{
-				ID:       f.ID,
-				Label:    f.Label,
-				Type:     f.Type,
-				Ref:      f.Ref,
-				Hint:     f.Hint,
-				Reason:   f.Reason,
-				Required: f.Required,
+				ID:              f.ID,
+				Label:           f.Label,
+				Type:            f.Type,
+				Ref:             f.Ref,
+				Hint:            f.Hint,
+				Required:        f.Required,
+				ReplaceExisting: f.Reason == "rejected",
 			}))
 		}
 		tableData = append(tableData, []string{"Fields", strings.Join(fields, "; ")})
@@ -1107,13 +1107,13 @@ func (c AuthConnectionCmd) Follow(ctx context.Context, in AuthConnectionFollowIn
 				fields := make([]string, 0, len(state.Fields))
 				for _, f := range state.Fields {
 					fields = append(fields, formatManagedAuthField(managedAuthInputField{
-						ID:       f.ID,
-						Label:    f.Label,
-						Type:     f.Type,
-						Ref:      f.Ref,
-						Hint:     f.Hint,
-						Reason:   f.Reason,
-						Required: f.Required,
+						ID:              f.ID,
+						Label:           f.Label,
+						Type:            f.Type,
+						Ref:             f.Ref,
+						Hint:            f.Hint,
+						Required:        f.Required,
+						ReplaceExisting: f.Reason == "rejected",
 					}))
 				}
 				pterm.Info.Printf("  Fields: %s\n", strings.Join(fields, ", "))

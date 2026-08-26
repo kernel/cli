@@ -467,9 +467,9 @@ func TestBrowsersList_WithRegion_PassesParam(t *testing.T) {
 	}
 	b := BrowsersCmd{browsers: fake}
 
-	err := b.List(context.Background(), BrowsersListInput{Region: "eu-west"})
+	err := b.List(context.Background(), BrowsersListInput{Region: "ap-southeast"})
 	assert.NoError(t, err)
-	assert.Equal(t, kernel.BrowserListParamsRegionEuWest, captured.Region)
+	assert.Equal(t, kernel.BrowserListParamsRegionApSoutheast, captured.Region)
 
 	// Omitting the flag leaves the param unset, so all regions are listed.
 	captured = kernel.BrowserListParams{}
@@ -573,13 +573,13 @@ func TestBrowsersCreate_WithRegion(t *testing.T) {
 	}
 	b := BrowsersCmd{browsers: fake}
 
-	err := b.Create(context.Background(), BrowsersCreateInput{Region: "eu-west"})
+	err := b.Create(context.Background(), BrowsersCreateInput{Region: "ap-southeast"})
 	require.NoError(t, err)
-	assert.Equal(t, kernel.BrowserNewParamsRegionEuWest, captured.Region)
+	assert.Equal(t, kernel.BrowserNewParamsRegionApSoutheast, captured.Region)
 
 	raw, err := captured.MarshalJSON()
 	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"region":"eu-west"`)
+	assert.Contains(t, string(raw), `"region":"ap-southeast"`)
 
 	// Omitting the flag sends nothing; the server defaults to us-east.
 	err = b.Create(context.Background(), BrowsersCreateInput{})

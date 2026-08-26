@@ -303,11 +303,10 @@ func TestParseTelemetryCategories_OptInList(t *testing.T) {
 
 	assert.NoError(t, err)
 	// Listed categories are enabled.
-	for _, c := range []kernel.BrowserTelemetryCategoryConfigParam{p.Network, p.Captcha, p.Platform} {
+	for _, c := range []kernel.BrowserTelemetryCategoryConfigParam{p.Network, p.Captcha} {
 		assert.True(t, c.Enabled.Valid())
 		assert.True(t, c.Enabled.Value)
 	}
-	// Control carries its own config type, so it is checked separately.
 	assert.True(t, p.Control.Enabled.Valid())
 	assert.True(t, p.Control.Enabled.Value)
 	// Unlisted categories are omitted (opt-in: the instance treats them as off).
