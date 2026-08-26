@@ -95,7 +95,7 @@ export class SystemTools {
     const result = await this.kernel.browsers.process.exec(this.sessionId, {
       command: 'bash',
       args: ['-lc', script],
-      ...(this.cwd ? { cwd: this.cwd } : {}),
+      cwd: this.cwd ?? null,
       timeout_sec: timeoutSec,
     });
 
@@ -167,9 +167,11 @@ export class SystemTools {
       );
     }
 
+    // The replacer function form is required — a string replacement would
+    // expand `$$`, `$&`, and friends inside n2's new_string.
     const updated = args.replace_all
       ? original.split(oldString).join(newString)
-      : original.replace(oldString, newString);
+      : original.replace(oldString, () => newString);
 
     await this.kernel.browsers.fs.writeFile(this.sessionId, updated, { path: filePath });
 
@@ -183,7 +185,7 @@ export class SystemTools {
     const result = await this.kernel.browsers.process.exec(this.sessionId, {
       command: 'bash',
       args: ['-lc', script],
-      ...(this.cwd ? { cwd: this.cwd } : {}),
+      cwd: this.cwd ?? null,
     });
 
     const pid = decode(result.stdout_b64).trim();
