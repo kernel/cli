@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/onkernel/kernel-images/main/static/images/Kernel-Wordmark_Accent.svg" alt="Kernel Logo" width="55%">
+  <img src="https://raw.githubusercontent.com/kernel/kernel-images/main/static/images/logo-kernel-light.svg" alt="Kernel Logo" width="55%">
 </p>
 
 <p align="center">
