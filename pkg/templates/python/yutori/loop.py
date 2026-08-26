@@ -1,14 +1,15 @@
 """
-Yutori n1.5 Sampling Loop
+Yutori n2 Sampling Loop
 
-Implements the agent loop for Yutori's n1.5-latest computer use model.
-n1.5-latest uses an OpenAI-compatible API with tool_calls:
-- Actions are returned via tool_calls in the assistant message
-- Tool results use role: "tool" with matching tool_call_id
+Implements the agent loop for Yutori's n2 computer use model.
+n2 uses an OpenAI-compatible API with tool_calls:
+- GUI actions arrive as a single `computer_batch` call holding an action list
+- `bash`, `read`, `write`, and `edit` arrive as their own calls
+- Every call needs one tool result with a matching tool_call_id
 - The model stops by returning content without tool_calls
 - Coordinates are returned in 1000x1000 space and need scaling
 
-@see https://docs.yutori.com/reference/n1-5
+@see https://docs.yutori.com/reference/n2
 """
 
 from __future__ import annotations
@@ -23,107 +24,96 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from kernel import Kernel
 from openai import OpenAI
 
-from tools import ComputerTool, N15Action, ToolResult
+from tools import ComputerTool, SystemTools
 
-# Tools that require a Playwright page / DOM access. The default core tool set
-# already excludes them, but we also list them in `disable_tools` so the
-# exclusion is explicit and survives if the default ever changes.
-DISABLED_TOOLS = ["extract_elements", "find", "set_element_value", "execute_js"]
-TOOL_SET = "browser_tools_core-20260403"
+# Pin the tool set so a change to the server default can't change which tools
+# this run exposes. n2 rejects `disable_tools`, so the set is served whole.
+TOOL_SET = "computer_use_tools-20260825"
 
-NAVIGATOR_COORDINATE_SCALE = 1000
-
-# Screenshot-trimming defaults mirror Yutori's reference loop:
-# https://github.com/yutori-ai/yutori-sdk-python/blob/main/yutori/navigator/payload.py
-# Trimming is size-triggered — we only drop old screenshots when the payload
-# exceeds MAX_REQUEST_BYTES, and we always keep at least KEEP_RECENT_SCREENSHOTS.
+# Requests are capped at 10 MB. n2 also only reads images from the last 2
+# image-bearing messages, so anything older is dropped before sending rather
+# than paying to upload screenshots the model will discard server-side.
 MAX_REQUEST_BYTES = 9_500_000
-KEEP_RECENT_SCREENSHOTS = 6
+KEEP_IMAGE_MESSAGES = 2
 
 
 async def sampling_loop(
     *,
-    model: str = "n1.5-latest",
+    model: str = "n2",
     task: str,
     api_key: str,
     kernel: Kernel,
     session_id: str,
-    max_completion_tokens: int = 4096,
+    # Shared by the reasoning trace and the tool call, so a low value truncates
+    # the call.
+    max_completion_tokens: int = 16384,
     max_iterations: int = 100,
-    viewport_width: int = 1280,
-    viewport_height: int = 800,
-    kiosk_mode: bool = False,
+    screen_width: int = 1280,
+    screen_height: int = 800,
+    reasoning_effort: Optional[str] = None,
     user_timezone: str = "America/Los_Angeles",
     user_location: str = "San Francisco, CA, US",
 ) -> dict[str, Any]:
-    """Run the n1.5 sampling loop until the model stops calling tools or max iterations."""
-    client = OpenAI(
-        api_key=api_key,
-        base_url="https://api.yutori.com/v1",
-    )
+    """Run the n2 sampling loop until the model stops calling tools or max iterations."""
+    client = OpenAI(api_key=api_key, base_url="https://api.yutori.com/v1")
 
-    computer_tool = ComputerTool(kernel, session_id, viewport_width, viewport_height, kiosk_mode=kiosk_mode)
-
-    initial_screenshot = await computer_tool.screenshot()
+    computer_tool = ComputerTool(kernel, session_id, screen_width, screen_height)
+    system_tools = SystemTools(kernel, session_id)
 
     # Append location/timezone/current-date context to the task — mirrors Yutori's
     # format_task_with_context helper and helps the model with date-sensitive
     # judgments. https://github.com/yutori-ai/yutori-sdk-python/blob/main/yutori/navigator/context.py
-    task_with_context = _format_task_with_context(task, user_timezone, user_location)
-
-    user_content: list[dict[str, Any]] = [{"type": "text", "text": task_with_context}]
-    if initial_screenshot.get("base64_image"):
-        user_content.append({
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:image/webp;base64,{initial_screenshot['base64_image']}"
-            },
-        })
-
     conversation_messages: list[dict[str, Any]] = [
-        {"role": "user", "content": user_content}
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": _format_task_with_context(task, user_timezone, user_location)},
+                _image_part(await computer_tool.screenshot()),
+            ],
+        }
     ]
 
     iteration = 0
     final_answer: Optional[str] = None
+    prev_request_id: Optional[str] = None
 
     while iteration < max_iterations:
         iteration += 1
         print(f"\n=== Iteration {iteration} ===")
 
-        request_messages, dropped = _trimmed_for_request(conversation_messages)
-        if dropped:
-            print(f"Trimmed {dropped} old screenshot(s) to fit request size limit")
+        request_messages = _trimmed_for_request(conversation_messages)
+
+        # n2-specific knobs go in extra_body.
+        extra_body: dict[str, Any] = {"tool_set": TOOL_SET}
+        if reasoning_effort:
+            extra_body["reasoning_effort"] = reasoning_effort
+        if prev_request_id:
+            # Groups the trajectory into one conversation for usage reporting.
+            extra_body["prev_request_id"] = prev_request_id
 
         try:
             response = client.chat.completions.create(
                 model=model,
                 messages=request_messages,
                 max_completion_tokens=max_completion_tokens,
-                temperature=0.3,
-                # n1.5-specific knobs go in extra_body.
-                # tool_set selects the core (coordinate-based) tools.
-                # disable_tools is a defense-in-depth exclusion of DOM/Playwright tools.
-                extra_body={
-                    "tool_set": TOOL_SET,
-                    "disable_tools": DISABLED_TOOLS,
-                },
+                temperature=0.6,
+                extra_body=extra_body,
             )
         except Exception as api_error:
             print(f"API call failed: {api_error}")
             raise
 
-        if not response.choices or len(response.choices) == 0:
-            print(f"No choices in response: {response}")
-            raise ValueError("No choices in API response")
+        prev_request_id = getattr(response, "_request_id", None) or prev_request_id
 
-        choice = response.choices[0]
-        assistant_message = choice.message
-        if not assistant_message:
+        if not response.choices:
+            print(f"No choices in response: {response}")
             raise ValueError("No response from model")
 
+        assistant_message = response.choices[0].message
         print("Assistant content:", assistant_message.content or "(none)")
 
+        # Push the assistant message unchanged — `reasoning_content` rides along
+        # on it, and n2 needs it echoed back to keep its reasoning across turns.
         conversation_messages.append(assistant_message.model_dump(exclude_none=True))
 
         tool_calls = assistant_message.tool_calls
@@ -134,56 +124,25 @@ async def sampling_loop(
             print(f"No tool_calls, model is done. Final answer: {final_answer}")
             break
 
-        for tc in tool_calls:
-            action_name = tc.function.name
-            try:
-                args = json.loads(tc.function.arguments)
-            except json.JSONDecodeError:
-                print(f"Failed to parse tool_call arguments: {tc.function.arguments}")
+        for index, tool_call in enumerate(tool_calls):
+            # n2 usually answers with one call, but `parallel_tool_calls` is
+            # pinned on server-side so a turn can carry several. Only the first
+            # one was planned against the screenshot the model actually saw, so
+            # run it and make the rest re-plan.
+            if index > 0:
                 conversation_messages.append({
                     "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": "Error: failed to parse arguments",
+                    "tool_call_id": tool_call.id,
+                    "content": (
+                        "Not executed: planned against a screenshot the previous call already "
+                        "changed. Re-plan from the latest screenshot."
+                    ),
                 })
                 continue
 
-            action: N15Action = {"action_type": action_name, **args}
-            print(f"Executing action: {action_name}", args)
-
-            scaled_action = _scale_coordinates(action, viewport_width, viewport_height)
-
-            result: ToolResult
-            try:
-                result = await computer_tool.execute(scaled_action)
-            except Exception as e:
-                print(f"Action failed: {e}")
-                result = {"error": str(e)}
-
-            if result.get("base64_image"):
-                conversation_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/webp;base64,{result['base64_image']}"
-                            },
-                        }
-                    ],
-                })
-            elif result.get("error"):
-                conversation_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": f"Action failed: {result['error']}",
-                })
-            else:
-                conversation_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result.get("output", "OK"),
-                })
+            conversation_messages.append(
+                await _run_tool_call(tool_call, computer_tool, system_tools)
+            )
 
     # If the loop exhausted iterations, prompt the model for a final summary so
     # the caller gets a usable answer instead of empty content. Mirrors Yutori's
@@ -191,29 +150,23 @@ async def sampling_loop(
     if iteration >= max_iterations and not final_answer:
         print("Max iterations reached — requesting summary")
         try:
-            final_screenshot = await computer_tool.screenshot()
-            stop_content: list[dict[str, Any]] = [
-                {"type": "text", "text": _format_stop_and_summarize(task)}
-            ]
-            if final_screenshot.get("base64_image"):
-                stop_content.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/webp;base64,{final_screenshot['base64_image']}"
-                    },
-                })
-            conversation_messages.append({"role": "user", "content": stop_content})
+            conversation_messages.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": _format_stop_and_summarize(task)},
+                    _image_part(await computer_tool.screenshot()),
+                ],
+            })
 
-            summary_messages, _ = _trimmed_for_request(conversation_messages)
             summary_response = client.chat.completions.create(
                 model=model,
-                messages=summary_messages,
+                messages=_trimmed_for_request(conversation_messages),
                 max_completion_tokens=max_completion_tokens,
-                temperature=0.3,
-                extra_body={"tool_set": TOOL_SET, "disable_tools": DISABLED_TOOLS},
+                temperature=0.6,
+                extra_body={"tool_set": TOOL_SET},
             )
-            summary = summary_response.choices[0].message if summary_response.choices else None
-            if summary:
+            if summary_response.choices:
+                summary = summary_response.choices[0].message
                 conversation_messages.append(summary.model_dump(exclude_none=True))
                 final_answer = summary.content or None
         except Exception as summary_error:
@@ -222,6 +175,52 @@ async def sampling_loop(
     return {
         "messages": conversation_messages,
         "final_answer": final_answer,
+    }
+
+
+async def _run_tool_call(
+    tool_call: Any,
+    computer_tool: ComputerTool,
+    system_tools: SystemTools,
+) -> dict[str, Any]:
+    name = tool_call.function.name
+
+    try:
+        args = json.loads(tool_call.function.arguments)
+    except json.JSONDecodeError:
+        print(f"Failed to parse tool_call arguments: {tool_call.function.arguments}")
+        return {
+            "role": "tool",
+            "tool_call_id": tool_call.id,
+            "content": "Error: failed to parse arguments",
+        }
+
+    print(f"Executing tool: {name}", json.dumps(args)[:500])
+
+    if name == "computer_batch":
+        outcome = await computer_tool.run_batch(args.get("actions") or [])
+        return {
+            "role": "tool",
+            "tool_call_id": tool_call.id,
+            "content": [
+                {"type": "text", "text": outcome.describe()},
+                _image_part(await computer_tool.screenshot()),
+            ],
+        }
+
+    try:
+        content = system_tools.execute(name, args)
+    except Exception as error:
+        print(f"{name} failed: {error}")
+        content = f"{name} failed: {error}"
+
+    return {"role": "tool", "tool_call_id": tool_call.id, "content": content}
+
+
+def _image_part(base64_image: str) -> dict[str, Any]:
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:image/webp;base64,{base64_image}"},
     }
 
 
@@ -260,48 +259,28 @@ def _format_stop_and_summarize(task: str) -> str:
     )
 
 
-def _trimmed_for_request(
-    messages: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], int]:
-    """Return a deep-copied messages list with old screenshots stripped to fit MAX_REQUEST_BYTES.
+def _trimmed_for_request(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop the screenshots n2 will not look at, keeping the text of every turn.
 
-    The most recent KEEP_RECENT_SCREENSHOTS screenshots are protected. The full
-    `messages` list is preserved unchanged for the caller's return value.
+    The model reads images from the last KEEP_IMAGE_MESSAGES image-bearing
+    messages and ignores the rest, so those are stripped every request. If the
+    payload is still over the cap after that, the previous screenshot goes too —
+    the latest one is never dropped, since a request without one badly degrades
+    grounding.
     """
     trimmed = copy.deepcopy(messages)
-    size = _estimate_size(trimmed)
-    if size <= MAX_REQUEST_BYTES:
-        return trimmed, 0
-
     image_indices = [i for i, m in enumerate(trimmed) if _message_has_image(m)]
-    if not image_indices:
-        return trimmed, 0
 
-    protected = set(image_indices[-max(1, KEEP_RECENT_SCREENSHOTS):])
-    removed = 0
+    for idx in image_indices[:-KEEP_IMAGE_MESSAGES]:
+        _strip_images(trimmed[idx])
 
-    for idx in image_indices:
-        if size <= MAX_REQUEST_BYTES:
+    for idx in image_indices[-KEEP_IMAGE_MESSAGES:-1]:
+        if _estimate_size(trimmed) <= MAX_REQUEST_BYTES:
             break
-        if idx in protected:
-            continue
-        if _strip_one_image(trimmed[idx]):
-            removed += 1
-            size = _estimate_size(trimmed)
+        print("Payload still over the 10 MB cap — dropping the previous screenshot too")
+        _strip_images(trimmed[idx])
 
-    # If still over, strip from the protected window too — but always keep the latest.
-    if size > MAX_REQUEST_BYTES:
-        last_idx = image_indices[-1]
-        for idx in image_indices:
-            if size <= MAX_REQUEST_BYTES:
-                break
-            if idx == last_idx:
-                continue
-            if _strip_one_image(trimmed[idx]):
-                removed += 1
-                size = _estimate_size(trimmed)
-
-    return trimmed, removed
+    return trimmed
 
 
 def _estimate_size(messages: list[dict[str, Any]]) -> int:
@@ -315,50 +294,18 @@ def _message_has_image(msg: dict[str, Any]) -> bool:
     return any(isinstance(p, dict) and p.get("type") == "image_url" for p in content)
 
 
-def _strip_one_image(msg: dict[str, Any]) -> bool:
+def _strip_images(msg: dict[str, Any]) -> None:
     content = msg.get("content")
     if not isinstance(content, list):
-        return False
+        return
 
-    removed = False
-    new_content: list[dict[str, Any]] = []
-    for part in content:
-        if not removed and isinstance(part, dict) and part.get("type") == "image_url":
-            removed = True
-            continue
-        new_content.append(part)
-
-    if not removed:
-        return False
+    new_content = [
+        part for part in content
+        if not (isinstance(part, dict) and part.get("type") == "image_url")
+    ]
 
     has_text = any(isinstance(p, dict) and p.get("type") == "text" for p in new_content)
     if not has_text:
-        new_content.append({"type": "text", "text": "Screenshot omitted to stay under request size limit."})
+        new_content.append({"type": "text", "text": "Screenshot omitted — superseded by a newer one."})
 
     msg["content"] = new_content
-    return True
-
-
-def _scale_coordinates(action: N15Action, viewport_width: int, viewport_height: int) -> N15Action:
-    scaled = dict(action)
-
-    if "coordinates" in scaled and scaled["coordinates"]:
-        scaled["coordinates"] = _denormalize(scaled["coordinates"], viewport_width, viewport_height)
-
-    if "start_coordinates" in scaled and scaled["start_coordinates"]:
-        scaled["start_coordinates"] = _denormalize(scaled["start_coordinates"], viewport_width, viewport_height)
-
-    return scaled
-
-
-def _denormalize(coords: list[int] | tuple[int, int], width: int, height: int) -> list[int]:
-    """Map [0, 1000] coordinates to viewport pixels and clamp to [0, dim-1].
-
-    Clamping prevents a boundary value like 1000 from landing one pixel outside
-    the viewport on a 1280x800 display.
-    """
-    raw_x = round((coords[0] / NAVIGATOR_COORDINATE_SCALE) * width)
-    raw_y = round((coords[1] / NAVIGATOR_COORDINATE_SCALE) * height)
-    x = max(0, min(width - 1, raw_x))
-    y = max(0, min(height - 1, raw_y))
-    return [x, y]
