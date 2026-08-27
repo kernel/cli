@@ -560,7 +560,7 @@ func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) e
 				Ref:             f.Ref,
 				Hint:            f.Hint,
 				Required:        f.Required,
-				ReplaceExisting: f.Reason == "rejected",
+				Reason:          string(f.Reason),
 			}))
 		}
 		tableData = append(tableData, []string{"Fields", strings.Join(fields, "; ")})
@@ -1113,7 +1113,7 @@ func (c AuthConnectionCmd) Follow(ctx context.Context, in AuthConnectionFollowIn
 						Ref:             f.Ref,
 						Hint:            f.Hint,
 						Required:        f.Required,
-						ReplaceExisting: f.Reason == "rejected",
+						Reason:          string(f.Reason),
 					}))
 				}
 				pterm.Info.Printf("  Fields: %s\n", strings.Join(fields, ", "))

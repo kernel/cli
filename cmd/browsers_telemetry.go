@@ -83,6 +83,8 @@ func parseTelemetryCategories(s string) (kernel.BrowserTelemetryCategoriesConfig
 			p.System = on()
 		case "screenshot":
 			p.Screenshot = on()
+		case "platform":
+			p.Platform = on()
 		case "captcha":
 			p.Captcha = on()
 		default:
