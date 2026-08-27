@@ -570,7 +570,7 @@ anywhere a project ID does.
   - `--city <name>` - City name (no spaces, e.g. sanfrancisco) (residential, mobile; requires `--country`)
   - `--state <code>` - Two-letter state code (residential, mobile)
   - `--zip <zip>` - US ZIP code (residential)
-  - `--asn <asn>` - Autonomous system number (e.g., AS15169) (residential)
+  - `--asn <asn>` - Autonomous system number, e.g. AS6079 (isp, residential). The ISP pool is a fixed set of static IPs, so only ASNs present in it can be requested; an unsupported value is rejected with the list of available ASNs.
   - `--os <os>` - Operating system: windows, macos, android (residential)
   - `--host <host>` - Proxy host (custom; required)
   - `--port <port>` - Proxy port (custom; required)
@@ -957,6 +957,9 @@ kernel proxies create --type custom --host proxy.example.com --port 8080 --ca-bu
 
 # Create a residential proxy with location and OS
 kernel proxies create --type residential --country US --city sanfrancisco --state CA --zip 94107 --asn AS15169 --os windows --name "SF Residential"
+
+# Create an ISP proxy pinned to a specific ASN
+kernel proxies create --type isp --asn AS6079 --name "RCN ISP"
 
 # Create a mobile proxy
 kernel proxies create --type mobile --country US --city sanfrancisco --name "US Mobile"
