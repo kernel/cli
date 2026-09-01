@@ -1044,7 +1044,7 @@ wheels = [
 
 [[package]]
 name = "kernel"
-version = "0.23.0"
+version = "0.97.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1054,9 +1054,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9f/84/917ef7d15d8b05660d72728771e662c870b9ab0adcc8eaf3bc64a3809b95/kernel-0.23.0.tar.gz", hash = "sha256:2cea5de91ddb4fc0882e2dadaa1c62e659d23c8acafd5c7df814c36007f73eb9", size = 170960, upload-time = "2025-12-11T20:19:26.62Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9d/fa/c54492e906001512840b82b22bd235b72cc0b06b99a060dabafa64fdd135/kernel-0.97.0.tar.gz", hash = "sha256:cc6f51b03915da722f80fbc055c279bfdf6b8b86d05d38f276c49383faefaf1a", size = 320383, upload-time = "2026-08-31T01:08:35.076Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2b/e2/04abb962657c06b87d3469fd0bf355470588d12ecfa57f7bafa96aa7d10b/kernel-0.23.0-py3-none-any.whl", hash = "sha256:c5b7055bfc4bef6b36d984a870a3c779eb1018766ab0fe2845b11f130e88d83d", size = 199616, upload-time = "2025-12-11T20:19:24.24Z" },
+    { url = "https://files.pythonhosted.org/packages/05/0b/de94064681be2c7422dd2452e83e67062a26ea142f3a8ac68a3e67c98c92/kernel-0.97.0-py3-none-any.whl", hash = "sha256:c08ea74cf794eacedcead1fa0b73de3bc1a5f6323fdf652ef70365feec2ad728", size = 426429, upload-time = "2026-08-31T01:08:33.705Z" },
 ]
 
 [[package]]
@@ -4673,7 +4673,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "browser-use", specifier = ">=0.13.8" },
-    { name = "kernel", specifier = ">=0.23.0" },
+    { name = "kernel", specifier = ">=0.97.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
 ]
 

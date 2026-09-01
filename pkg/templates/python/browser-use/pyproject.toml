@@ -6,6 +6,6 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "browser-use>=0.13.8",
-    "kernel>=0.23.0",
+    "kernel>=0.97.0",
     "pydantic>=2.12.5",
 ]
