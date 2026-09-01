@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,10 @@ const (
 	KeyringService = "kernel-cli"
 	KeyringUser    = "oauth-tokens"
 )
+
+// ErrNoStoredCredentials reports that neither keychain nor file credentials
+// exist. Callers may offer login for this error without hiding storage faults.
+var ErrNoStoredCredentials = errors.New("no stored credentials found")
 
 // TokenStorage represents stored authentication tokens
 type TokenStorage struct {
@@ -51,11 +56,22 @@ func SaveTokens(tokens *TokenStorage) error {
 
 // LoadTokens retrieves authentication tokens from secure storage
 func LoadTokens() (*TokenStorage, error) {
+	return loadTokens(keyring.Get)
+}
+
+func loadTokens(get func(string, string) (string, error)) (*TokenStorage, error) {
 	// Try to load from OS keychain first
-	data, err := keyring.Get(KeyringService, KeyringUser)
+	data, err := get(KeyringService, KeyringUser)
 	if err != nil {
 		// Fallback to file storage
-		return loadTokensFromFile()
+		tokens, fileErr := loadTokensFromFile()
+		if fileErr == nil {
+			return tokens, nil
+		}
+		if errors.Is(err, keyring.ErrNotFound) {
+			return nil, fileErr
+		}
+		return nil, fmt.Errorf("failed to load tokens from keychain: %w", err)
 	}
 
 	var tokens TokenStorage
@@ -126,7 +142,7 @@ func loadTokensFromFile() (*TokenStorage, error) {
 	data, err := os.ReadFile(tokenFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("no stored credentials found")
+			return nil, ErrNoStoredCredentials
 		}
 		return nil, fmt.Errorf("failed to read tokens from file: %w", err)
 	}

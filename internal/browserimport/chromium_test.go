@@ -7,6 +7,7 @@ import (
 	"crypto/cipher"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -207,13 +208,7 @@ INSERT INTO cookies VALUES ('.google.com', '/', 'parent', 'selected', X'', 0, 1,
 	assert.Equal(t, "parent", cookies[0].Name)
 }
 
-func TestSelectedCookieClauseEscapesInput(t *testing.T) {
-	clause := selectedCookieClause([]string{"example.com' OR 1=1 --"}, false)
-	assert.Contains(t, clause, "example.com'' or 1=1 --")
-	assert.NotContains(t, clause, "example.com' OR 1=1 --'")
-}
-
-func TestCountCookiesForSitesDoesNotDecryptValues(t *testing.T) {
+func TestExportCookiesWithNoSiteFilterImportsAllEligibleCookies(t *testing.T) {
 	profile := sqliteProfileFixture(t)
 	database := filepath.Join(profile.Path, "Network", "Cookies")
 	require.NoError(t, os.MkdirAll(filepath.Dir(database), 0o755))
@@ -222,13 +217,69 @@ CREATE TABLE cookies (
   host_key TEXT, path TEXT, name TEXT, value TEXT, encrypted_value BLOB,
   expires_utc INTEGER, is_httponly INTEGER, is_secure INTEGER, samesite INTEGER
 );
-INSERT INTO cookies VALUES ('.google.com', '/', 'encrypted', '', X'DEADBEEF', 0, 1, 1, 1);
+INSERT INTO cookies VALUES
+  ('.github.com', '/', 'github', 'one', X'', 0, 1, 1, 1),
+  ('.google.com', '/', 'google', 'two', X'', 0, 1, 1, 1),
+  ('localhost', '/', 'local-only', 'skip', X'', 0, 1, 1, 1);
 `)
 
-	sites, err := CountCookiesForSites(t.Context(), profile, []Site{{Domain: "google.com"}, {Domain: "github.com"}})
+	cookies, err := ExportCookies(t.Context(), profile, nil)
 	require.NoError(t, err)
-	assert.Equal(t, 1, sites[0].CookieCount)
-	assert.Zero(t, sites[1].CookieCount)
+	require.Len(t, cookies, 2)
+	assert.Equal(t, []string{"github", "google"}, []string{cookies[0].Name, cookies[1].Name})
+}
+
+func TestSelectedCookieFilterEscapesInput(t *testing.T) {
+	cte, clause := selectedCookieFilter([]string{"example.com' OR 1=1 --"}, false)
+	assert.Contains(t, cte, "example.com'' or 1=1 --")
+	assert.NotContains(t, cte, "example.com' OR 1=1 --'")
+	assert.Contains(t, clause, "EXISTS")
+}
+
+func TestExportCookiesSupportsLargeCustomSelection(t *testing.T) {
+	profile := sqliteProfileFixture(t)
+	database := filepath.Join(profile.Path, "Network", "Cookies")
+	require.NoError(t, os.MkdirAll(filepath.Dir(database), 0o755))
+	runSQLite(t, database, `
+CREATE TABLE cookies (
+  host_key TEXT, path TEXT, name TEXT, value TEXT, encrypted_value BLOB,
+  expires_utc INTEGER, is_httponly INTEGER, is_secure INTEGER, samesite INTEGER
+);
+INSERT INTO cookies VALUES ('.site-1999.com', '/', 'selected', 'yes', X'', 0, 1, 1, 1);
+`)
+	sites := make([]string, 2000)
+	for i := range sites {
+		sites[i] = fmt.Sprintf("site-%d.com", i)
+	}
+
+	cookies, err := ExportCookies(t.Context(), profile, sites)
+	require.NoError(t, err)
+	require.Len(t, cookies, 1)
+	assert.Equal(t, "selected", cookies[0].Name)
+}
+
+func TestCookieSitesFindsEveryImportableDomainWithoutDecryptingValues(t *testing.T) {
+	profile := sqliteProfileFixture(t)
+	database := filepath.Join(profile.Path, "Network", "Cookies")
+	require.NoError(t, os.MkdirAll(filepath.Dir(database), 0o755))
+	runSQLite(t, database, `
+CREATE TABLE cookies (
+  host_key TEXT, path TEXT, name TEXT, value TEXT, encrypted_value BLOB,
+  expires_utc INTEGER, is_httponly INTEGER, is_secure INTEGER, samesite INTEGER,
+  top_frame_site_key TEXT
+);
+INSERT INTO cookies VALUES
+  ('.github.com', '/', 'one', '', X'DEADBEEF', 0, 1, 1, 1, ''),
+  ('api.github.com', '/', 'two', '', X'DEADBEEF', 0, 1, 1, 1, ''),
+  ('.older-site.com', '/', 'three', '', X'DEADBEEF', 0, 1, 1, 1, ''),
+  ('.partitioned.com', '/', 'skip', '', X'DEADBEEF', 0, 1, 1, 1, 'https://top.example');
+`)
+
+	sites, err := CookieSites(t.Context(), profile, []Site{{Domain: "github.com", Visits: 42}})
+	require.NoError(t, err)
+	require.Len(t, sites, 2)
+	assert.Equal(t, Site{Domain: "github.com", Visits: 42, CookieCount: 2}, sites[0])
+	assert.Equal(t, Site{Domain: "older-site.com", CookieCount: 1}, sites[1])
 }
 
 func writeBrowserFixture(t *testing.T, home, rootSuffix, directory, name string) {

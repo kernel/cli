@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -13,8 +14,52 @@ import (
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
 )
 
+type managedAuthCapacity struct {
+	remaining int
+	unlimited bool
+}
+
+type orgLimitsGetter interface {
+	Get(context.Context, ...option.RequestOption) (*kernel.OrgLimits, error)
+}
+
+func loadManagedAuthCapacity(ctx context.Context, limits orgLimitsGetter) (managedAuthCapacity, error) {
+	orgLimits, err := limits.Get(ctx)
+	if err != nil {
+		return managedAuthCapacity{}, err
+	}
+	return decodeManagedAuthCapacity(orgLimits.RawJSON())
+}
+
+func decodeManagedAuthCapacity(raw string) (managedAuthCapacity, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
+		return managedAuthCapacity{}, fmt.Errorf("decode organization limits: %w", err)
+	}
+	maxRaw, hasMax := fields["max_auth_connections"]
+	usedRaw, hasUsed := fields["auth_connections_used"]
+	if !hasMax || !hasUsed {
+		return managedAuthCapacity{}, fmt.Errorf("Kernel API does not expose Managed Auth capacity; deploy the organization entitlements API first")
+	}
+	if string(maxRaw) == "null" {
+		return managedAuthCapacity{unlimited: true}, nil
+	}
+	var maxConnections, usedConnections int
+	if err := json.Unmarshal(maxRaw, &maxConnections); err != nil {
+		return managedAuthCapacity{}, fmt.Errorf("decode max auth connections: %w", err)
+	}
+	if err := json.Unmarshal(usedRaw, &usedConnections); err != nil {
+		return managedAuthCapacity{}, fmt.Errorf("decode used auth connections: %w", err)
+	}
+	if maxConnections < 0 || usedConnections < 0 {
+		return managedAuthCapacity{}, fmt.Errorf("Kernel API returned invalid Managed Auth capacity")
+	}
+	return managedAuthCapacity{remaining: max(0, maxConnections-usedConnections)}, nil
+}
+
 type managedAuthProvisioner interface {
 	Provision(context.Context, string, []passwordmanager.Record) ([]string, error)
+	Existing(context.Context, string, []passwordmanager.Candidate) (map[string]bool, error)
 }
 
 type kernelManagedAuthProvisioner struct {
@@ -81,6 +126,35 @@ func (p kernelManagedAuthProvisioner) Provision(ctx context.Context, profileName
 	return connectionIDs, nil
 }
 
+func (p kernelManagedAuthProvisioner) Existing(ctx context.Context, profileName string, candidates []passwordmanager.Candidate) (map[string]bool, error) {
+	existingNames := make(map[string]struct{})
+	const pageSize = 100
+	for offset := int64(0); ; offset += pageSize {
+		page, err := p.connections.List(ctx, kernel.AuthConnectionListParams{
+			ProfileName: kernel.Opt(profileName), Limit: kernel.Opt(int64(pageSize)), Offset: kernel.Opt(offset),
+		})
+		if err != nil {
+			return nil, err
+		}
+		if page == nil {
+			break
+		}
+		for _, connection := range page.Items {
+			existingNames[connection.Credential.Name] = struct{}{}
+		}
+		if len(page.Items) < pageSize {
+			break
+		}
+	}
+
+	result := make(map[string]bool, len(candidates))
+	for _, candidate := range candidates {
+		name := importedCredentialNameFor(candidate.Provider, candidateImportID(candidate), candidate.Domain)
+		_, result[candidateKey(candidate)] = existingNames[name]
+	}
+	return result, nil
+}
+
 type connectionLookup struct {
 	match    *kernel.ManagedAuth
 	conflict *kernel.ManagedAuth
@@ -129,13 +203,28 @@ func (p kernelManagedAuthProvisioner) refreshCredential(ctx context.Context, nam
 var importedCredentialCharacters = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 
 func importedCredentialName(record passwordmanager.Record) string {
-	digest := sha256.Sum256([]byte(record.Provider + "\x00" + record.ID))
-	prefix := strings.Trim(importedCredentialCharacters.ReplaceAllString(strings.ToLower("import-"+record.Provider), "-"), "-")
-	domain := strings.Trim(importedCredentialCharacters.ReplaceAllString(strings.ToLower(record.Domain), "-"), "-")
+	return importedCredentialNameFor(record.Provider, record.ID, record.Domain)
+}
+
+func importedCredentialNameFor(provider, id, recordDomain string) string {
+	digest := sha256.Sum256([]byte(provider + "\x00" + id))
+	prefix := strings.Trim(importedCredentialCharacters.ReplaceAllString(strings.ToLower("import-"+provider), "-"), "-")
+	domain := strings.Trim(importedCredentialCharacters.ReplaceAllString(strings.ToLower(recordDomain), "-"), "-")
 	suffix := fmt.Sprintf("-%x", digest[:5])
 	maxDomainLength := 255 - len(prefix) - len(suffix) - 1
 	if len(domain) > maxDomainLength {
 		domain = strings.Trim(domain[:maxDomainLength], "-")
 	}
 	return prefix + "-" + domain + suffix
+}
+
+func candidateKey(candidate passwordmanager.Candidate) string {
+	return candidate.Provider + "\x00" + candidateImportID(candidate) + "\x00" + candidate.Domain
+}
+
+func candidateImportID(candidate passwordmanager.Candidate) string {
+	if candidate.Provider == "1password" && candidate.VaultID != "" {
+		return candidate.VaultID + ":" + candidate.ID
+	}
+	return candidate.ID
 }

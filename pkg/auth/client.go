@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -9,6 +10,10 @@ import (
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/pterm/pterm"
 )
+
+// ErrAuthenticationRequired reports credentials that can be repaired by an
+// interactive OAuth login.
+var ErrAuthenticationRequired = errors.New("authentication required")
 
 // GetAuthenticatedClient returns a Kernel client with appropriate authentication
 func GetAuthenticatedClient(opts ...option.RequestOption) (*kernel.Client, error) {
@@ -32,7 +37,10 @@ func BearerToken(ctx context.Context) (string, error) {
 
 	tokens, err := LoadTokens()
 	if err != nil {
-		return "", fmt.Errorf("no authentication available. Please run 'kernel login' or set KERNEL_API_KEY environment variable")
+		if !errors.Is(err, ErrNoStoredCredentials) {
+			return "", err
+		}
+		return "", fmt.Errorf("%w: run 'kernel login' or set KERNEL_API_KEY", ErrAuthenticationRequired)
 	}
 	if !tokens.IsExpired() || tokens.RefreshToken == "" {
 		return tokens.AccessToken, nil
@@ -42,12 +50,20 @@ func BearerToken(ctx context.Context) (string, error) {
 	refreshedTokens, refreshErr := RefreshTokens(ctx, tokens)
 	if refreshErr != nil {
 		pterm.Warning.Printf("Failed to refresh tokens: %v\n", refreshErr)
-		pterm.Info.Println("Please run 'kernel login' to re-authenticate")
-		return "", fmt.Errorf("expired credentials, please re-authenticate: %w", refreshErr)
+		if refreshRequiresLogin(refreshErr) {
+			pterm.Info.Println("Please run 'kernel login' to re-authenticate")
+			return "", fmt.Errorf("%w: expired credentials: %v", ErrAuthenticationRequired, refreshErr)
+		}
+		return "", fmt.Errorf("refresh credentials: %w", refreshErr)
 	}
 	if saveErr := SaveTokens(refreshedTokens); saveErr != nil {
 		pterm.Warning.Printf("Failed to save credentials: %v\n", saveErr)
 	}
 	pterm.Debug.Println("Successfully refreshed access token")
 	return refreshedTokens.AccessToken, nil
+}
+
+func refreshRequiresLogin(err error) bool {
+	var rejected *TokenRefreshError
+	return errors.As(err, &rejected) && (rejected.StatusCode == 400 || rejected.StatusCode == 401)
 }
