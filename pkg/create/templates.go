@@ -12,7 +12,6 @@ const (
 	TemplateCaptchaSolver        = "captcha-solver"
 	TemplateAnthropicComputerUse = "anthropic-computer-use"
 	TemplateOpenAIComputerUse    = "openai-computer-use"
-	TemplateMagnitude            = "magnitude"
 	TemplateGeminiComputerUse    = "gemini-computer-use"
 	TemplateBrowserUse           = "browser-use"
 	TemplateStagehand            = "stagehand"
@@ -55,11 +54,6 @@ var Templates = map[string]TemplateInfo{
 		Name:        "OpenAI Computer Use",
 		Description: "Implements an OpenAI computer use agent",
 		Languages:   []string{LanguageTypeScript, LanguagePython},
-	},
-	TemplateMagnitude: {
-		Name:        "Magnitude",
-		Description: "Implements the Magnitude.run SDK",
-		Languages:   []string{LanguageTypeScript},
 	},
 	TemplateGeminiComputerUse: {
 		Name:        "Gemini Computer Use",
@@ -195,11 +189,6 @@ var Commands = map[string]map[string]DeployConfig{
 			EntryPoint:    "index.ts",
 			NeedsEnvFile:  true,
 			InvokeCommand: `kernel invoke ts-anthropic-cua cua-task --payload '{"query": "Navigate to http://magnitasks.com and click on Tasks in the sidebar"}'`,
-		},
-		TemplateMagnitude: {
-			EntryPoint:    "index.ts",
-			NeedsEnvFile:  true,
-			InvokeCommand: `kernel invoke ts-magnitude mag-url-extract --payload '{"url": "https://en.wikipedia.org/wiki/Special:Random"}'`,
 		},
 		TemplateOpenAIComputerUse: {
 			EntryPoint:    "index.ts",

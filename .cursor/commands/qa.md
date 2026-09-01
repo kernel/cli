@@ -54,7 +54,6 @@ Here are all valid language + template combinations:
 | typescript | captcha-solver         | ts-captcha-solver | ts-captcha-solver     | No             | -                              |
 | typescript | stagehand              | ts-stagehand      | ts-stagehand          | Yes            | OPENAI_API_KEY                 |
 | typescript | anthropic-computer-use | ts-anthropic-cua  | ts-anthropic-cua      | Yes            | ANTHROPIC_API_KEY              |
-| typescript | magnitude              | ts-magnitude      | ts-magnitude          | Yes            | ANTHROPIC_API_KEY              |
 | typescript | openai-computer-use    | ts-openai-cua     | ts-openai-cua         | Yes            | OPENAI_API_KEY                 |
 | typescript | gemini-computer-use    | ts-gemini-cua     | ts-gemini-cua         | Yes            | GOOGLE_API_KEY                 |
 | typescript | claude-agent-sdk       | ts-claude-agent-sdk | ts-claude-agent-sdk | Yes            | ANTHROPIC_API_KEY              |
@@ -82,7 +81,6 @@ Run each of these (they are non-interactive when all flags are provided):
 ../bin/kernel create -n ts-captcha-solver -l typescript -t captcha-solver
 ../bin/kernel create -n ts-stagehand -l typescript -t stagehand
 ../bin/kernel create -n ts-anthropic-cua -l typescript -t anthropic-computer-use
-../bin/kernel create -n ts-magnitude -l typescript -t magnitude
 ../bin/kernel create -n ts-openai-cua -l typescript -t openai-computer-use
 ../bin/kernel create -n ts-gemini-cua -l typescript -t gemini-computer-use
 ../bin/kernel create -n ts-claude-agent-sdk -l typescript -t claude-agent-sdk
@@ -144,15 +142,6 @@ cd ..
 
 ```bash
 cd ts-anthropic-cua
-echo "ANTHROPIC_API_KEY=<value from human>" > .env
-../bin/kernel deploy index.ts --env-file .env
-cd ..
-```
-
-**ts-magnitude** (needs ANTHROPIC_API_KEY):
-
-```bash
-cd ts-magnitude
 echo "ANTHROPIC_API_KEY=<value from human>" > .env
 ../bin/kernel deploy index.ts --env-file .env
 cd ..
@@ -267,7 +256,6 @@ kernel invoke ts-basic get-page-title --payload '{"url": "https://www.google.com
 kernel invoke ts-captcha-solver test-captcha-solver
 kernel invoke ts-stagehand teamsize-task --payload '{"company": "Kernel"}'
 kernel invoke ts-anthropic-cua cua-task --payload '{"query": "Go to https://www.magnitasks.com, Click the Tasks option in the left-side bar, and move the 5 items in the To Do and In Progress items to the Done section of the Kanban board. You are done successfully when the items are moved.", "record_replay": true}'
-kernel invoke ts-magnitude mag-url-extract --payload '{"url": "https://en.wikipedia.org/wiki/Special:Random"}'
 kernel invoke ts-openai-cua cua-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 5 articles"}'
 kernel invoke ts-gemini-cua cua-task --payload '{"query": "Go to https://www.magnitasks.com, Click the Tasks option in the left-side bar, and move the 5 items in the To Do and In Progress items to the Done section of the Kanban board. You are done successfully when the items are moved.", "record_replay": true}'
 kernel invoke ts-claude-agent-sdk agent-task --payload '{"task": "Go to https://news.ycombinator.com and get the top 3 stories"}'
@@ -289,7 +277,7 @@ kernel invoke python-yutori-cua cua-task --payload '{"query": "Go to https://www
 
 ## Step 7: Automated Runtime Testing (Optional)
 
-**STOP and ask the human:** "Would you like me to automatically invoke all 21 test cases and report back on their runtime status?"
+**STOP and ask the human:** "Would you like me to automatically invoke all 20 test cases and report back on their runtime status?"
 
 If the human agrees, invoke each template use the Kernel CLI and collect results. Present findings in this format:
 
@@ -305,7 +293,6 @@ If the human agrees, invoke each template use the Kernel CLI and collect results
 | ts-captcha-solver | ts-captcha-solver     |         |       |
 | ts-stagehand      | ts-stagehand          |         |       |
 | ts-anthropic-cua  | ts-anthropic-cua      |         |       |
-| ts-magnitude      | ts-magnitude          |         |       |
 | ts-openai-cua     | ts-openai-cua         |         |       |
 | ts-gemini-cua     | ts-gemini-cua         |         |       |
 | ts-claude-agent-sdk | ts-claude-agent-sdk |         |       |
