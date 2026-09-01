@@ -2,6 +2,7 @@ import { Kernel, type KernelContext } from '@onkernel/sdk';
 import { CuaAgent } from '@onkernel/cua-agent';
 import type { AssistantMessage } from '@onkernel/cua-ai';
 import { maybeStartReplay, maybeStopReplay } from './lib/replay';
+import { logAgentEvent } from './lib/logging';
 
 const kernel = new Kernel();
 const app = kernel.app('ts-openai-cua');
@@ -52,6 +53,7 @@ app.action<CuaInput, CuaOutput>(
           systemPrompt: `You are operating a Chromium browser on a Kernel cloud VM. Use the navigation tool to open URLs directly, and review the screenshot after each action before continuing. The current date and time is ${new Date().toISOString()}.`,
         },
       });
+      agent.subscribe(logAgentEvent);
 
       await agent.prompt(payload.task);
 
