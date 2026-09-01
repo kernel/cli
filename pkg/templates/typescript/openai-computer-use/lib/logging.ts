@@ -9,7 +9,10 @@ export function logAgentEvent(event: AgentEvent): void {
     return;
   }
   if (event.type === 'tool_execution_end') {
-    console.log(`[tool:end] ${event.toolName} error=${event.isError} result=${formatJson(event.result)}`);
+    // Log the structured `details` rather than the full result: `result.content`
+    // is what's sent back to the model and includes screenshot image bytes.
+    const details = (event.result as { details?: unknown } | undefined)?.details;
+    console.log(`[tool:end] ${event.toolName} error=${event.isError} details=${formatJson(details)}`);
   }
 }
 
