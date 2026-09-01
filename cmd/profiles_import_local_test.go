@@ -2,9 +2,15 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
@@ -101,6 +107,36 @@ func TestGroupedLoginLabelsUseIDsOnlyToResolveCollisions(t *testing.T) {
 	assert.NotContains(t, labels[0], "1  BW")
 }
 
+func TestManagedAuthAccountOnAnotherProfileDefaultsToKeepingExistingConnection(t *testing.T) {
+	candidate := passwordmanager.Candidate{Provider: "bitwarden", ID: "google", Domain: "google.com", Username: "me@example.com"}
+	sourced := sourcedPasswordManagerCandidate{provider: fakePasswordManager{name: "Bitwarden"}, candidate: candidate}
+	command := ProfilesImportLocalCmd{selectManagedAuthAccount: func(domain string, options []string, defaultOption string) (string, error) {
+		assert.Equal(t, "google.com", domain)
+		require.Len(t, options, 3)
+		assert.Contains(t, options[0], `Keep this account managed on "helium-you"`)
+		assert.Contains(t, options[1], `Also manage this account on "helium-you-2"`)
+		assert.Equal(t, options[0], defaultOption)
+		return defaultOption, nil
+	}}
+
+	approved, err := command.chooseManagedAuthAccountsByWebsite("helium-you-2", []string{"google.com"}, []sourcedPasswordManagerCandidate{sourced}, map[string]bool{}, map[string][]string{candidateKey(candidate): []string{"helium-you"}}, 1, 0, managedAuthCapacity{maximum: 2, remaining: 1}, true)
+	require.NoError(t, err)
+	assert.Empty(t, approved)
+}
+
+func TestManagedAuthAccountOnAnotherProfileCanUseNewSlot(t *testing.T) {
+	candidate := passwordmanager.Candidate{Provider: "bitwarden", ID: "google", Domain: "google.com", Username: "me@example.com"}
+	sourced := sourcedPasswordManagerCandidate{provider: fakePasswordManager{name: "Bitwarden"}, candidate: candidate}
+	command := ProfilesImportLocalCmd{selectManagedAuthAccount: func(_ string, options []string, _ string) (string, error) {
+		return options[1], nil
+	}}
+
+	approved, err := command.chooseManagedAuthAccountsByWebsite("helium-you-2", []string{"google.com"}, []sourcedPasswordManagerCandidate{sourced}, map[string]bool{}, map[string][]string{candidateKey(candidate): []string{"helium-you"}}, 1, 0, managedAuthCapacity{maximum: 2, remaining: 1}, true)
+	require.NoError(t, err)
+	require.Len(t, approved, 1)
+	assert.Equal(t, candidateKey(candidate), candidateKey(approved[0].candidate))
+}
+
 func TestManagedAuthNewChoiceCountDoesNotChargeExistingConnections(t *testing.T) {
 	provider := fakePasswordManager{name: "Bitwarden"}
 	existingCandidate := passwordmanager.Candidate{Provider: "bitwarden", ID: "existing", Domain: "one.com"}
@@ -152,6 +188,14 @@ type fakePasswordManager struct {
 	candidates []passwordmanager.Candidate
 	err        error
 }
+
+type lockedFakePasswordManager struct{ fakePasswordManager }
+
+func (lockedFakePasswordManager) AuthorizationRequired(context.Context) (bool, error) {
+	return true, nil
+}
+
+func (lockedFakePasswordManager) Authorize(context.Context) error { return nil }
 
 type fakeManagedAuthProvisioner struct {
 	existing map[string]bool
@@ -308,47 +352,133 @@ func TestManagedAuthUsesExplicitCookieSitesWithoutHistoryRanking(t *testing.T) {
 	assert.Equal(t, selected, rankedManagedAuthSites([]localbrowser.Site{{Domain: "github.com"}, {Domain: "google.com"}}, selected, 10))
 }
 
-func TestManagedAuthWebsiteDiscoveryDefaultsStaySelectedAtLimitedCapacity(t *testing.T) {
-	sites := []string{"one.com", "two.com", "three.com"}
-	prompt, defaults := managedAuthSitePrompt(sites, managedAuthCapacity{remaining: 2}, true)
+func TestManagedAuthAccountHeaderExplainsConnectionCapacity(t *testing.T) {
+	assert.Equal(t, `Managed Auth
+3 of 5 connections used · 2 new connections available
 
-	assert.Contains(t, prompt, "2 new connection slots available")
-	assert.Equal(t, sites, defaults)
+Choose accounts to make available to agents:`, managedAuthAccountHeader(managedAuthCapacity{maximum: 5, used: 3, remaining: 2}, true))
+	assert.Equal(t, `Managed Auth
+Unlimited connections · 7 currently used
+
+Choose accounts to make available to agents:`, managedAuthAccountHeader(managedAuthCapacity{used: 7, unlimited: true}, true))
+	assert.Equal(t, `Managed Auth
+Connection capacity will be checked before creating new connections
+
+Choose accounts to make available to agents:`, managedAuthAccountHeader(managedAuthCapacity{}, false))
 }
 
-func TestManagedAuthWebsiteDefaultsStayOpenWhenCapacityIsUnknownOrUnlimited(t *testing.T) {
-	sites := []string{"one.com", "two.com", "three.com"}
-	_, unknownDefaults := managedAuthSitePrompt(sites, managedAuthCapacity{}, false)
-	_, unlimitedDefaults := managedAuthSitePrompt(sites, managedAuthCapacity{unlimited: true}, true)
-
-	assert.Equal(t, sites, unknownDefaults)
-	assert.Equal(t, sites, unlimitedDefaults)
+func TestCompletedDashboardImportMessage(t *testing.T) {
+	for _, phase := range []string{"staged", "applying", "awaiting_client_completion"} {
+		message, handled := completedDashboardImportMessage(phase)
+		assert.True(t, handled, phase)
+		assert.Contains(t, message, "already running", phase)
+	}
+	for _, phase := range []string{"awaiting_dashboard_ack", "finishing_managed_auth", "completed"} {
+		message, handled := completedDashboardImportMessage(phase)
+		assert.True(t, handled, phase)
+		assert.Contains(t, message, "already finished", phase)
+	}
+	for _, phase := range []string{"awaiting_inventory", "awaiting_selection", "awaiting_bundle", "failed"} {
+		message, handled := completedDashboardImportMessage(phase)
+		assert.False(t, handled, phase)
+		assert.Empty(t, message, phase)
+	}
 }
 
-func TestManagedAuthRecommendationOptionsShowRecentUse(t *testing.T) {
-	options, domains := managedAuthRecommendationOptions(
-		[]string{"github.com", "example.com"},
-		[]localbrowser.Site{{Domain: "github.com", Visits: 1475}},
-	)
+func TestManagedAuthWebsiteDefaultsRespectCapacityWithoutRemovingChoice(t *testing.T) {
+	candidates := []sourcedPasswordManagerCandidate{
+		{candidate: passwordmanager.Candidate{Provider: "bitwarden", ID: "existing", Domain: "existing.com"}},
+		{candidate: passwordmanager.Candidate{Provider: "bitwarden", ID: "one", Domain: "one.com"}},
+		{candidate: passwordmanager.Candidate{Provider: "bitwarden", ID: "two", Domain: "two.com"}},
+		{candidate: passwordmanager.Candidate{Provider: "bitwarden", ID: "three", Domain: "three.com"}},
+	}
+	existing := map[string]bool{candidateKey(candidates[0].candidate): true}
+	sites := []string{"existing.com", "one.com", "two.com", "three.com"}
 
-	require.Len(t, options, 2)
-	assert.Contains(t, options[0], "github.com")
-	assert.Contains(t, options[0], "1475 visits")
-	assert.Equal(t, "github.com", domains[options[0]])
-	assert.NotContains(t, options[1], "visits")
+	assert.Equal(t, []string{"existing.com", "one.com", "two.com"}, defaultManagedAuthWebsites(sites, candidates, existing, 2, managedAuthCapacity{remaining: 2}))
+	assert.Equal(t, []string{"existing.com"}, defaultManagedAuthWebsites(sites, candidates, existing, 0, managedAuthCapacity{}))
+	assert.Equal(t, sites, defaultManagedAuthWebsites(sites, candidates, existing, 0, managedAuthCapacity{unlimited: true}))
+	options, _ := managedAuthWebsiteOptions(sites, candidates, existing)
+	assert.Contains(t, options[0], "existing connection")
 }
 
-func TestManagedAuthSearchOptionsExcludeSelectedWebsites(t *testing.T) {
+func TestApprovedCredentialReadMessageNamesProviders(t *testing.T) {
+	pending := pendingManagedAuth{providers: []pendingProviderLogins{
+		{provider: fakePasswordManager{name: "Bitwarden"}, candidates: []passwordmanager.Candidate{{ID: "one"}, {ID: "two"}}},
+		{provider: fakePasswordManager{name: "1Password"}, candidates: []passwordmanager.Candidate{{ID: "three"}}},
+	}}
+
+	assert.Equal(t, 3, pendingCredentialCount(pending))
+	assert.Equal(t, "Reading 3 approved credentials from Bitwarden and 1Password...", approvedCredentialReadMessage(pending))
+}
+
+func TestManagedAuthSearchOptionsExcludeWebsitesAlreadySearched(t *testing.T) {
 	options, domains := managedAuthSearchOptions([]localbrowser.Site{
 		{Domain: "google.com", Visits: 20},
 		{Domain: "github.com", Visits: 10},
 	}, []string{"google.com"})
 
-	require.Len(t, options, 2)
-	assert.Equal(t, backOption, options[0])
-	assert.NotContains(t, domains, backOption)
-	assert.Contains(t, options[1], "github.com")
-	assert.Equal(t, "github.com", domains[options[1]])
+	require.Len(t, options, 1)
+	assert.Contains(t, options[0], "github.com")
+	assert.Equal(t, "github.com", domains[options[0]])
+}
+
+func TestFilterManagedAuthSearchOptionsSupportsMultipleTerms(t *testing.T) {
+	options, domains := managedAuthSearchOptions([]localbrowser.Site{
+		{Domain: "dashboard-git-browser-import.example", Visits: 9},
+		{Domain: "github.com", Visits: 10},
+		{Domain: "example.com", Visits: 20},
+	}, nil)
+
+	filtered := filterManagedAuthSearchOptions(options, domains, "git browser")
+	require.Len(t, filtered, 1)
+	assert.Equal(t, "dashboard-git-browser-import.example", domains[filtered[0]])
+	assert.Empty(t, filterManagedAuthSearchOptions(options, domains, "missing"))
+}
+
+func TestManagedAuthBrowseOptionsKeepScrollableSitesAndOptionalSearch(t *testing.T) {
+	options := []string{"1  reddit.com  149 visits", "2  openai.com  99 visits"}
+
+	browseOptions := managedAuthBrowseOptions(options)
+
+	assert.Equal(t, []string{
+		"1  reddit.com  149 visits",
+		"2  openai.com  99 visits",
+		searchManagedAuthWebsites,
+	}, browseOptions)
+	assert.Equal(t, []string{"1  reddit.com  149 visits", "2  openai.com  99 visits"}, options)
+}
+
+func TestManagedAuthBrowseSelectionSeparatesSearchAction(t *testing.T) {
+	selected, searchRequested := managedAuthBrowseSelection([]string{
+		"1  reddit.com  149 visits",
+		searchManagedAuthWebsites,
+		"2  openai.com  99 visits",
+		"1  reddit.com  149 visits",
+	})
+
+	assert.True(t, searchRequested)
+	assert.Equal(t, []string{"1  reddit.com  149 visits", "2  openai.com  99 visits"}, selected)
+}
+
+func TestEffectiveStorageImportSummaryUsesAppliedCounts(t *testing.T) {
+	importedOrigins, importedEntries := 4, 8
+	skippedOrigins, skippedEntries := 2, 3
+
+	summary := effectiveStorageImportSummary(localbrowser.AppliedProfile{
+		StorageOriginsImported: &importedOrigins,
+		StorageEntriesImported: &importedEntries,
+		StorageOriginsSkipped:  &skippedOrigins,
+		StorageEntriesSkipped:  &skippedEntries,
+	}, 11, 6)
+
+	require.Equal(t, storageImportSummary{importedOrigins: 4, importedEntries: 8, skippedOrigins: 2, skippedEntries: 3}, summary)
+}
+
+func TestEffectiveStorageImportSummaryFallsBackForOlderAPI(t *testing.T) {
+	summary := effectiveStorageImportSummary(localbrowser.AppliedProfile{}, 11, 6)
+
+	require.Equal(t, storageImportSummary{importedOrigins: 6, importedEntries: 11}, summary)
 }
 
 func TestSelectedSiteMetadataPreservesRankAndExplicitSites(t *testing.T) {
@@ -366,22 +496,31 @@ func TestDecodeManagedAuthCapacity(t *testing.T) {
 	t.Run("remaining", func(t *testing.T) {
 		capacity, err := decodeManagedAuthCapacity(`{"max_auth_connections":5,"auth_connections_used":3}`)
 		require.NoError(t, err)
-		assert.Equal(t, managedAuthCapacity{remaining: 2}, capacity)
+		assert.Equal(t, managedAuthCapacity{maximum: 5, used: 3, remaining: 2}, capacity)
 	})
 	t.Run("at limit", func(t *testing.T) {
 		capacity, err := decodeManagedAuthCapacity(`{"max_auth_connections":3,"auth_connections_used":4}`)
 		require.NoError(t, err)
-		assert.Equal(t, managedAuthCapacity{}, capacity)
+		assert.Equal(t, managedAuthCapacity{maximum: 3, used: 4}, capacity)
 	})
 	t.Run("unlimited", func(t *testing.T) {
 		capacity, err := decodeManagedAuthCapacity(`{"max_auth_connections":null,"auth_connections_used":329}`)
 		require.NoError(t, err)
-		assert.Equal(t, managedAuthCapacity{unlimited: true}, capacity)
+		assert.Equal(t, managedAuthCapacity{used: 329, unlimited: true}, capacity)
 	})
 	t.Run("old API", func(t *testing.T) {
 		_, err := decodeManagedAuthCapacity(`{"max_concurrent_sessions":10}`)
-		require.ErrorContains(t, err, "deploy the organization entitlements API first")
+		require.ErrorContains(t, err, "does not expose Managed Auth capacity through organization limits")
 	})
+}
+
+func TestProfileImportProgressStagesDescribeCompletedServerMilestones(t *testing.T) {
+	assert.Equal(t, []string{
+		"Preparing import",
+		"Uploading encrypted browser data",
+		"Applying and saving browser profile",
+		"Profile ready",
+	}, profileImportProgressStages)
 }
 
 func TestChooseManagedAuthLoginsRejectsExplicitBatchAboveRemainingConnections(t *testing.T) {
@@ -513,10 +652,124 @@ func TestDefaultImportedProfileName(t *testing.T) {
 	assert.Equal(t, "chrome-ilyaas-personal", defaultImportedProfileName(profile))
 }
 
+func TestResolveImportedProfileNameUsesFirstAvailableSuffix(t *testing.T) {
+	existing := map[string]bool{"helium-you": true, "helium-you-2": true}
+	name, renamed, err := resolveImportedProfileName(t.Context(), "helium-you", false, func(_ context.Context, name string) (bool, error) {
+		return existing[name], nil
+	})
+	require.NoError(t, err)
+	assert.True(t, renamed)
+	assert.Equal(t, "helium-you-3", name)
+}
+
+func TestResolveImportedProfileNameRejectsExplicitDuplicate(t *testing.T) {
+	_, _, err := resolveImportedProfileName(t.Context(), "helium-you", true, func(context.Context, string) (bool, error) {
+		return true, nil
+	})
+	require.EqualError(t, err, `Kernel profile "helium-you" already exists; choose a different --profile-name`)
+}
+
+func TestResolveImportedProfileNamePreservesMaximumLength(t *testing.T) {
+	requested := strings.Repeat("a", 255)
+	name, renamed, err := resolveImportedProfileName(t.Context(), requested, false, func(_ context.Context, name string) (bool, error) {
+		return name == requested, nil
+	})
+	require.NoError(t, err)
+	assert.True(t, renamed)
+	assert.Len(t, name, 255)
+	assert.True(t, strings.HasSuffix(name, "-2"))
+}
+
+func TestChooseImportedProfileTargetDefaultsToUpdatingExistingProfile(t *testing.T) {
+	command := ProfilesImportLocalCmd{
+		profileLookup: func(_ context.Context, name string) (kernelProfileReference, bool, error) {
+			if name == "helium-you" {
+				return kernelProfileReference{ID: "profile-1", Name: name}, true, nil
+			}
+			return kernelProfileReference{}, false, nil
+		},
+		selectProfileTarget: func(_ string, options []string, defaultOption string) (string, error) {
+			require.Len(t, options, 2)
+			assert.Contains(t, options[0], `Update "helium-you"`)
+			assert.Contains(t, options[1], `"helium-you-2"`)
+			assert.Equal(t, options[0], defaultOption)
+			return defaultOption, nil
+		},
+	}
+	name, profileID, err := command.chooseImportedProfileTarget(t.Context(), localbrowser.Profile{Browser: localbrowser.Browser{Name: "Helium"}}, "helium-you", false)
+	require.NoError(t, err)
+	assert.Equal(t, "helium-you", name)
+	assert.Equal(t, "profile-1", profileID)
+}
+
+func TestChooseImportedProfileTargetCanCreateSeparateProfile(t *testing.T) {
+	command := ProfilesImportLocalCmd{
+		profileLookup: func(_ context.Context, name string) (kernelProfileReference, bool, error) {
+			if name == "helium-you" {
+				return kernelProfileReference{ID: "profile-1", Name: name}, true, nil
+			}
+			return kernelProfileReference{}, false, nil
+		},
+		selectProfileTarget: func(_ string, options []string, _ string) (string, error) { return options[1], nil },
+	}
+	name, profileID, err := command.chooseImportedProfileTarget(t.Context(), localbrowser.Profile{Browser: localbrowser.Browser{Name: "Helium"}}, "helium-you", false)
+	require.NoError(t, err)
+	assert.Equal(t, "helium-you-2", name)
+	assert.Empty(t, profileID)
+}
+
+func TestChooseImportedProfileTargetRequiresInteractiveDuplicateDecision(t *testing.T) {
+	command := ProfilesImportLocalCmd{profileLookup: func(_ context.Context, name string) (kernelProfileReference, bool, error) {
+		return kernelProfileReference{ID: "profile-1", Name: name}, true, nil
+	}}
+	_, _, err := command.chooseImportedProfileTarget(t.Context(), localbrowser.Profile{}, "helium-you", true)
+	require.EqualError(t, err, `Kernel profile "helium-you" already exists; run interactively to update it or choose a different --profile-name`)
+}
+
 func TestProfilesImportLocalRejectsUnsupportedOutputBeforeDiscovery(t *testing.T) {
 	command := ProfilesImportLocalCmd{prompter: interactive.NewPrompterWithTerminal(false)}
 	err := command.Run(t.Context(), ProfilesImportLocalInput{Output: "yaml", Days: 30})
 	assert.EqualError(t, err, `unsupported --output value "yaml"; use "json" or omit --output for human-readable output`)
+}
+
+func TestProfilesImportLocalChecksExplicitPasswordManagerBeforeRemoteMutation(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("local browser import is macOS-only")
+	}
+	home := t.TempDir()
+	root := filepath.Join(home, "Library/Application Support/net.imput.helium")
+	profilePath := filepath.Join(root, "Default")
+	require.NoError(t, os.MkdirAll(filepath.Join(profilePath, "Network"), 0o755))
+	state, err := json.Marshal(map[string]any{"profile": map[string]any{"info_cache": map[string]any{"Default": map[string]string{"name": "Personal"}}}})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "Local State"), state, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(profilePath, "History"), nil, 0o600))
+	createCookies := exec.Command("/usr/bin/sqlite3", filepath.Join(profilePath, "Network", "Cookies"), `
+CREATE TABLE cookies (
+  host_key TEXT, path TEXT, name TEXT, value TEXT, encrypted_value BLOB,
+  expires_utc INTEGER, is_httponly INTEGER, is_secure INTEGER, samesite INTEGER
+);
+INSERT INTO cookies VALUES ('.google.com', '/', 'session', 'secret', X'', 0, 1, 1, 1);
+`)
+	output, err := createCookies.CombinedOutput()
+	require.NoError(t, err, string(output))
+
+	t.Setenv("KERNEL_API_KEY", "test-api-key")
+	t.Setenv("KERNEL_BASE_URL", "http://127.0.0.1:1")
+	command := ProfilesImportLocalCmd{
+		prompter: interactive.NewPrompterWithTerminal(false),
+		homeDir:  func() (string, error) { return home, nil },
+		providers: func() []passwordmanager.Provider {
+			return []passwordmanager.Provider{lockedFakePasswordManager{fakePasswordManager{name: "Bitwarden"}}}
+		},
+	}
+	err = command.Run(t.Context(), ProfilesImportLocalInput{
+		BrowserProfile: "Helium / Personal", ProfileName: "test-profile", Sites: []string{"google.com"},
+		Days: 30, SkipConfirm: true, PasswordManager: "bitwarden",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "select Managed Auth setup before creating profile")
+	assert.Contains(t, err.Error(), "Bitwarden is locked")
 }
 
 func TestProfilesImportStatusRejectsUnsupportedOutputBeforeAuthentication(t *testing.T) {
@@ -524,6 +777,21 @@ func TestProfilesImportStatusRejectsUnsupportedOutputBeforeAuthentication(t *tes
 	t.Cleanup(func() { _ = profilesImportStatusCmd.Flags().Set("output", "") })
 	err := runProfilesImportStatus(profilesImportStatusCmd, []string{"imp_test"})
 	assert.EqualError(t, err, `unsupported --output value "yaml"; use "json" or omit --output for human-readable output`)
+}
+
+func TestManagedAuthCompletionConnectionsPreserveProvisionedPrefix(t *testing.T) {
+	connections := managedAuthCompletionConnections(
+		[]string{"ma_google", "ma_github"},
+		[]passwordmanager.Record{
+			{Domain: "google.com"},
+			{Domain: "github.com"},
+			{Domain: "x.com"},
+		},
+	)
+	assert.Equal(t, []localbrowser.ManagedAuthConnection{
+		{ID: "ma_google", Domain: "google.com"},
+		{ID: "ma_github", Domain: "github.com"},
+	}, connections)
 }
 
 func TestChooseProfileRejectsDuplicateFriendlyName(t *testing.T) {

@@ -25,6 +25,14 @@ func TestParseBrowserImportLink(t *testing.T) {
 	assert.Equal(t, testProjectID, link.ProjectID)
 }
 
+func TestParseBrowserImportLinkWithDashboardImport(t *testing.T) {
+	t.Parallel()
+	link, err := ParseBrowserImportLink("kernel://browser-import?project_id=" + testProjectID + "&import_id=bri_12345678abcdef")
+	require.NoError(t, err)
+	assert.Equal(t, testProjectID, link.ProjectID)
+	assert.Equal(t, "bri_12345678abcdef", link.ImportID)
+}
+
 func TestParseBrowserImportLinkRejectsUntrustedShapes(t *testing.T) {
 	t.Parallel()
 	for _, raw := range []string{
@@ -33,6 +41,7 @@ func TestParseBrowserImportLinkRejectsUntrustedShapes(t *testing.T) {
 		"kernel://browser-import/path?project_id=" + testProjectID,
 		"kernel://browser-import?project_id=" + testProjectID + "&next=https://evil.test",
 		"kernel://browser-import?project_id=" + testProjectID + "&project_id=" + testProjectID,
+		"kernel://browser-import?project_id=" + testProjectID + "&import_id=bad",
 		"kernel://browser-import?project_id=not-a-project",
 		"kernel://browser-import?project_id=" + testProjectID + "#fragment",
 	} {
@@ -52,6 +61,15 @@ func TestURLRoundTrip(t *testing.T) {
 	link, err := ParseBrowserImportLink(raw)
 	require.NoError(t, err)
 	assert.Equal(t, testProjectID, link.ProjectID)
+}
+
+func TestDashboardURLRoundTrip(t *testing.T) {
+	t.Parallel()
+	raw, err := URL(testProjectID, "bri_12345678abcdef")
+	require.NoError(t, err)
+	link, err := ParseBrowserImportLink(raw)
+	require.NoError(t, err)
+	assert.Equal(t, "bri_12345678abcdef", link.ImportID)
 }
 
 func TestInstallMacOSBuildsAndRegistersUserApp(t *testing.T) {
@@ -131,15 +149,27 @@ func TestMacOSAppleScriptShellQuotesURLAtRuntime(t *testing.T) {
 	script := macOSAppleScript(`/opt/homebrew/bin/kernel`)
 	assert.Contains(t, script, `quoted form of incomingURL`)
 	assert.Contains(t, script, `" connector open "`)
-	assert.Contains(t, script, `/usr/bin/open -a Terminal`)
-	assert.Contains(t, script, `/bin/zsh -lic`)
+	assert.Contains(t, script, `set connectorTab to do script (quoted form of launcherPath & "; exit")`)
+	assert.Contains(t, script, `set connectorWindow to front window`)
+	assert.Contains(t, script, `set connectorWindowID to id of connectorWindow`)
+	assert.Contains(t, script, `close (first window whose id is `)
+	assert.NotContains(t, script, `close connectorTab`)
+	assert.Contains(t, script, `set startedPath to launcherPath & ".started"`)
+	assert.Contains(t, script, `set donePath to launcherPath & ".done"`)
+	assert.Contains(t, script, `trap finishConnector EXIT`)
+	assert.Contains(t, script, `set monitorCommand to`)
+	assert.Contains(t, script, `/usr/bin/nohup /bin/zsh -c`)
+	assert.Contains(t, script, `if [[ -f " & quoted form of donePath`)
+	assert.Contains(t, script, `if [[ -f " & quoted form of successPath`)
+	assert.NotContains(t, script, `repeat 50 times`)
+	assert.Contains(t, script, `/bin/zsh -lc`)
+	assert.NotContains(t, script, `/bin/zsh -lic`)
 	assert.Contains(t, script, `/usr/bin/mktemp /tmp/kernel-connector.XXXXXX`)
 	assert.Contains(t, script, `/bin/launchctl getenv`)
 	assert.Contains(t, script, `KERNEL_BASE_URL KERNEL_API_KEY KERNEL_AUTH_BASE_URL`)
 	assert.NotContains(t, script, `XXXXXX.command`)
 	assert.Contains(t, script, `Kernel CLI was removed`)
 	assert.Contains(t, script, `«event GURLGURL»`)
-	assert.NotContains(t, script, `tell application "Terminal"`)
 	assert.NotContains(t, script, "project_id=")
 
 	escaped := macOSAppleScript(`/Applications/a\"b/kernel`)

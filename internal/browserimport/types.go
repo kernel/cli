@@ -87,11 +87,20 @@ type StorageSite struct {
 	Bytes  int64
 }
 
+// StorageExport contains portable records and records excluded by size limits.
+type StorageExport struct {
+	Records        []StorageRecord
+	SkippedRecords int
+	SkippedOrigins int
+}
+
 type ProfileData struct {
-	Cookies   []Cookie
-	Storage   []StorageRecord
-	Bookmarks *BookmarkDocument
-	History   []HistoryRecord
+	Cookies               []Cookie
+	Storage               []StorageRecord
+	StorageRecordsSkipped int
+	StorageOriginsSkipped int
+	Bookmarks             *BookmarkDocument
+	History               []HistoryRecord
 }
 
 type Source struct {
@@ -108,9 +117,10 @@ type Inventory struct {
 }
 
 type ProfileSelection struct {
-	SourceID   string   `json:"source_id"`
-	TargetName string   `json:"target_name"`
-	Categories []string `json:"categories"`
+	SourceID        string   `json:"source_id"`
+	TargetName      string   `json:"target_name"`
+	TargetProfileID string   `json:"target_profile_id,omitempty"`
+	Categories      []string `json:"categories"`
 }
 
 type Selection struct {
@@ -118,9 +128,13 @@ type Selection struct {
 }
 
 type AppliedProfile struct {
-	SourceID   string `json:"source_id"`
-	ProfileID  string `json:"profile_id"`
-	TargetName string `json:"target_name"`
+	SourceID               string `json:"source_id"`
+	ProfileID              string `json:"profile_id"`
+	TargetName             string `json:"target_name"`
+	StorageOriginsImported *int   `json:"storage_origins_imported,omitempty"`
+	StorageEntriesImported *int   `json:"storage_entries_imported,omitempty"`
+	StorageOriginsSkipped  *int   `json:"storage_origins_skipped,omitempty"`
+	StorageEntriesSkipped  *int   `json:"storage_entries_skipped,omitempty"`
 }
 
 type ApplyFailure struct {
@@ -130,21 +144,50 @@ type ApplyFailure struct {
 }
 
 type Applied struct {
-	Profiles            []AppliedProfile `json:"profiles"`
-	CredentialsImported int              `json:"credentials_imported"`
-	Failure             *ApplyFailure    `json:"failure,omitempty"`
+	Profiles []AppliedProfile `json:"profiles"`
+	Failure  *ApplyFailure    `json:"failure,omitempty"`
 }
 
 type Status struct {
-	ID        string     `json:"id"`
-	Phase     string     `json:"phase"`
-	Inventory *Inventory `json:"inventory,omitempty"`
-	Selection *Selection `json:"selection,omitempty"`
-	Applied   *Applied   `json:"applied,omitempty"`
+	ID        string            `json:"id"`
+	Phase     string            `json:"phase"`
+	Inventory *Inventory        `json:"inventory,omitempty"`
+	Selection *Selection        `json:"selection,omitempty"`
+	Applied   *Applied          `json:"applied,omitempty"`
+	Client    *ClientCompletion `json:"client,omitempty"`
 }
 
 type CreateResponse struct {
 	ID                   string    `json:"id"`
 	HelperToken          string    `json:"helper_token"`
 	HelperTokenExpiresAt time.Time `json:"helper_token_expires_at"`
+}
+
+type HelperGrant struct {
+	HelperToken          string    `json:"helper_token"`
+	HelperTokenExpiresAt time.Time `json:"helper_token_expires_at"`
+}
+
+type ManagedAuthConnection struct {
+	ID     string `json:"id"`
+	Domain string `json:"domain"`
+}
+
+type ClientCounts struct {
+	Cookies        int `json:"cookies"`
+	Bookmarks      int `json:"bookmarks"`
+	History        int `json:"history"`
+	StorageOrigins int `json:"storage_origins"`
+}
+
+type ClientFailure struct {
+	Stage   string `json:"stage"`
+	Message string `json:"message"`
+}
+
+type ClientCompletion struct {
+	Outcome                string                  `json:"outcome"`
+	Counts                 ClientCounts            `json:"counts"`
+	ManagedAuthConnections []ManagedAuthConnection `json:"managed_auth_connections"`
+	Failure                *ClientFailure          `json:"failure,omitempty"`
 }

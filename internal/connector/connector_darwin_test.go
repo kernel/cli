@@ -12,7 +12,8 @@ import (
 
 func TestMacOSAppleScriptCompiles(t *testing.T) {
 	app := filepath.Join(t.TempDir(), "Kernel Connector.app")
-	command := exec.Command("/usr/bin/osacompile", "-o", app, "-e", macOSAppleScript("/opt/homebrew/bin/kernel"))
+	script := macOSAppleScript("/opt/homebrew/bin/kernel")
+	command := exec.Command("/usr/bin/osacompile", "-o", app, "-e", script)
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))
 }

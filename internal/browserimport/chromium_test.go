@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 	"unicode/utf16"
@@ -290,14 +291,35 @@ func TestLocalStorageSitesAndExportUseLivePortableRecords(t *testing.T) {
 	require.Equal(t, "https://other.example", sites[1].Origin)
 	require.Positive(t, sites[1].Bytes)
 
-	records, err := ExportLocalStorage(t.Context(), profile, []string{"https://example.com"})
+	exported, err := ExportLocalStorage(t.Context(), profile, []string{"https://example.com"})
 	require.NoError(t, err)
-	require.Equal(t, []StorageRecord{{Origin: "https://example.com", Kind: StorageKindLocal, Key: "theme", Value: "dark"}}, records)
+	require.Equal(t, []StorageRecord{{Origin: "https://example.com", Kind: StorageKindLocal, Key: "theme", Value: "dark"}}, exported.Records)
 
-	records, err = ExportLocalStorage(t.Context(), profile, nil)
+	exported, err = ExportLocalStorage(t.Context(), profile, nil)
 	require.NoError(t, err)
-	require.Len(t, records, 2)
-	require.Equal(t, "hello 世界", records[1].Value)
+	require.Len(t, exported.Records, 2)
+	require.Equal(t, "hello 世界", exported.Records[1].Value)
+}
+
+func TestExportLocalStorageSkipsOversizedRecords(t *testing.T) {
+	profile := sqliteProfileFixture(t)
+	databasePath := filepath.Join(profile.Path, "Local Storage", "leveldb")
+	require.NoError(t, os.MkdirAll(filepath.Dir(databasePath), 0o755))
+	database, err := leveldb.OpenFile(databasePath, nil)
+	require.NoError(t, err)
+	require.NoError(t, database.Put(localStorageRecordKeyFixture("https://openai.com", "theme"), chromiumStorageStringFixture("dark"), nil))
+	require.NoError(t, database.Put(
+		localStorageRecordKeyFixture("https://openai.com", "statsig.cached.evaluations.2419098204"),
+		chromiumStorageStringFixture(strings.Repeat("x", maxStorageRecord)),
+		nil,
+	))
+	require.NoError(t, database.Close())
+
+	exported, err := ExportLocalStorage(t.Context(), profile, nil)
+	require.NoError(t, err)
+	require.Equal(t, []StorageRecord{{Origin: "https://openai.com", Kind: StorageKindLocal, Key: "theme", Value: "dark"}}, exported.Records)
+	require.Equal(t, 1, exported.SkippedRecords)
+	require.Equal(t, 1, exported.SkippedOrigins)
 }
 
 func TestSelectedCookieFilterEscapesInput(t *testing.T) {

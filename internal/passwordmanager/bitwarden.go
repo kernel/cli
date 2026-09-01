@@ -151,22 +151,63 @@ func (p *bitwardenProvider) Reveal(ctx context.Context, selected []Candidate) ([
 	if err != nil {
 		return nil, err
 	}
-	records := make([]Record, 0, len(selected))
-	for _, candidate := range selected {
+	items, err := fetchBitwardenApprovedItems(ctx, selected, func(ctx context.Context, candidate Candidate) (bitwardenItem, error) {
 		output, err := command(ctx, p.path, environment, "get", "item", candidate.ID)
 		if err != nil {
-			return nil, fmt.Errorf("read approved Bitwarden login %q: %w", candidate.Name, err)
+			return bitwardenItem{}, err
 		}
 		var item bitwardenItem
 		if err := json.Unmarshal(output, &item); err != nil {
-			return nil, fmt.Errorf("decode approved Bitwarden login: %w", err)
+			return bitwardenItem{}, fmt.Errorf("decode approved Bitwarden login: %w", err)
 		}
+		return item, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	records := make([]Record, 0, len(selected))
+	for index, candidate := range selected {
+		item := items[index]
 		if item.Login == nil || item.OrganizationID != "" {
 			continue
 		}
 		records = append(records, Record{Provider: "bitwarden", ID: item.ID, Name: item.Name, Domain: candidate.Domain, Username: item.Login.Username, Password: item.Login.Password, TOTPSecret: normalizeTOTP(item.Login.TOTP)})
 	}
 	return deduplicate(records), nil
+}
+
+func fetchBitwardenApprovedItems(ctx context.Context, selected []Candidate, fetch func(context.Context, Candidate) (bitwardenItem, error)) ([]bitwardenItem, error) {
+	unique := make([]Candidate, 0, len(selected))
+	indices := make(map[string]int, len(selected))
+	for _, candidate := range selected {
+		if _, exists := indices[candidate.ID]; exists {
+			continue
+		}
+		indices[candidate.ID] = len(unique)
+		unique = append(unique, candidate)
+	}
+	items := make([]bitwardenItem, len(unique))
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(min(4, len(unique)))
+	for index, candidate := range unique {
+		index, candidate := index, candidate
+		group.Go(func() error {
+			item, err := fetch(groupCtx, candidate)
+			if err != nil {
+				return fmt.Errorf("read approved Bitwarden login %q: %w", candidate.Name, err)
+			}
+			items[index] = item
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+	ordered := make([]bitwardenItem, len(selected))
+	for index, candidate := range selected {
+		ordered[index] = items[indices[candidate.ID]]
+	}
+	return ordered, nil
 }
 
 func (p *bitwardenProvider) authorizedEnvironment(ctx context.Context) (map[string]string, error) {

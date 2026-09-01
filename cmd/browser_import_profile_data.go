@@ -236,7 +236,7 @@ func warnUnavailableBrowserData(category string, err error) {
 	}
 }
 
-func (c ProfilesImportLocalCmd) confirmBrowserImport(targetName string, cookies cookieImportSelection, cookieSites []localbrowser.Site, profileData localProfileDataSelection, logins pendingManagedAuth) (bool, error) {
+func (c ProfilesImportLocalCmd) confirmBrowserImport(targetName string, cookies cookieImportSelection, cookieSites []localbrowser.Site, profileData localProfileDataSelection) (bool, error) {
 	pterm.Println()
 	pterm.Printf("Ready to import into profile %q\n\n", targetName)
 	if cookies.all {
@@ -252,13 +252,6 @@ func (c ProfilesImportLocalCmd) confirmBrowserImport(targetName string, cookies 
 	}
 	if profileData.storage {
 		pterm.Printf("  Local storage — %s across %d origins\n", formatBinaryBytes(profileData.storageBytes), len(profileData.storageSites))
-	}
-	loginCount := 0
-	for _, provider := range logins.providers {
-		loginCount += len(provider.candidates)
-	}
-	if loginCount > 0 {
-		pterm.Printf("  Managed Auth connections — %d\n", loginCount)
 	}
 	pterm.Println()
 	return c.prompter.ConfirmDefault("import browser data", "Proceed?", true)
@@ -359,12 +352,14 @@ func buildSelectedProfileData(ctx context.Context, profile localbrowser.Profile,
 		counts["history"] = len(history)
 	}
 	if selection.storage {
-		storage, err := localbrowser.ExportLocalStorage(ctx, profile, selection.storageSites)
+		exported, err := localbrowser.ExportLocalStorage(ctx, profile, selection.storageSites)
 		if err != nil {
 			return localbrowser.ProfileData{}, nil, err
 		}
-		data.Storage = storage
-		counts["storage"] = len(storage)
+		data.Storage = exported.Records
+		data.StorageRecordsSkipped = exported.SkippedRecords
+		data.StorageOriginsSkipped = exported.SkippedOrigins
+		counts["storage"] = len(exported.Records)
 	}
 	return data, counts, nil
 }
@@ -408,6 +403,30 @@ func importedStorageOriginCount(records []localbrowser.StorageRecord) int {
 		origins[record.Origin] = struct{}{}
 	}
 	return len(origins)
+}
+
+type storageImportSummary struct {
+	importedOrigins int
+	importedEntries int
+	skippedOrigins  int
+	skippedEntries  int
+}
+
+func effectiveStorageImportSummary(applied localbrowser.AppliedProfile, requestedEntries, requestedOrigins int) storageImportSummary {
+	if applied.StorageEntriesImported == nil || applied.StorageOriginsImported == nil {
+		return storageImportSummary{importedOrigins: requestedOrigins, importedEntries: requestedEntries}
+	}
+	summary := storageImportSummary{
+		importedOrigins: *applied.StorageOriginsImported,
+		importedEntries: *applied.StorageEntriesImported,
+	}
+	if applied.StorageOriginsSkipped != nil {
+		summary.skippedOrigins = *applied.StorageOriginsSkipped
+	}
+	if applied.StorageEntriesSkipped != nil {
+		summary.skippedEntries = *applied.StorageEntriesSkipped
+	}
+	return summary
 }
 
 func formatBinaryBytes(bytes int64) string {

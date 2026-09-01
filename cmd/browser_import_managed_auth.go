@@ -15,6 +15,8 @@ import (
 )
 
 type managedAuthCapacity struct {
+	maximum   int
+	used      int
 	remaining int
 	unlimited bool
 }
@@ -39,10 +41,17 @@ func decodeManagedAuthCapacity(raw string) (managedAuthCapacity, error) {
 	maxRaw, hasMax := fields["max_auth_connections"]
 	usedRaw, hasUsed := fields["auth_connections_used"]
 	if !hasMax || !hasUsed {
-		return managedAuthCapacity{}, fmt.Errorf("Kernel API does not expose Managed Auth capacity; deploy the organization entitlements API first")
+		return managedAuthCapacity{}, fmt.Errorf("Kernel API does not expose Managed Auth capacity through organization limits")
 	}
 	if string(maxRaw) == "null" {
-		return managedAuthCapacity{unlimited: true}, nil
+		var usedConnections int
+		if err := json.Unmarshal(usedRaw, &usedConnections); err != nil {
+			return managedAuthCapacity{}, fmt.Errorf("decode used auth connections: %w", err)
+		}
+		if usedConnections < 0 {
+			return managedAuthCapacity{}, fmt.Errorf("Kernel API returned invalid Managed Auth capacity")
+		}
+		return managedAuthCapacity{used: usedConnections, unlimited: true}, nil
 	}
 	var maxConnections, usedConnections int
 	if err := json.Unmarshal(maxRaw, &maxConnections); err != nil {
@@ -54,12 +63,20 @@ func decodeManagedAuthCapacity(raw string) (managedAuthCapacity, error) {
 	if maxConnections < 0 || usedConnections < 0 {
 		return managedAuthCapacity{}, fmt.Errorf("Kernel API returned invalid Managed Auth capacity")
 	}
-	return managedAuthCapacity{remaining: max(0, maxConnections-usedConnections)}, nil
+	return managedAuthCapacity{
+		maximum:   maxConnections,
+		used:      usedConnections,
+		remaining: max(0, maxConnections-usedConnections),
+	}, nil
 }
 
 type managedAuthProvisioner interface {
 	Provision(context.Context, string, []passwordmanager.Record) ([]string, error)
 	Existing(context.Context, string, []passwordmanager.Candidate) (map[string]bool, error)
+}
+
+type crossProfileManagedAuthFinder interface {
+	ExistingProfiles(context.Context, string, []passwordmanager.Candidate) (map[string][]string, error)
 }
 
 type kernelManagedAuthProvisioner struct {
@@ -151,6 +168,34 @@ func (p kernelManagedAuthProvisioner) Existing(ctx context.Context, profileName 
 	for _, candidate := range candidates {
 		name := importedCredentialNameFor(candidate.Provider, candidateImportID(candidate), candidate.Domain)
 		_, result[candidateKey(candidate)] = existingNames[name]
+	}
+	return result, nil
+}
+
+func (p kernelManagedAuthProvisioner) ExistingProfiles(ctx context.Context, profileName string, candidates []passwordmanager.Candidate) (map[string][]string, error) {
+	profilesByCredential := make(map[string][]string)
+	const pageSize = 100
+	for offset := int64(0); ; offset += pageSize {
+		page, err := p.connections.List(ctx, kernel.AuthConnectionListParams{Limit: kernel.Opt(int64(pageSize)), Offset: kernel.Opt(offset)})
+		if err != nil {
+			return nil, err
+		}
+		if page == nil {
+			break
+		}
+		for _, connection := range page.Items {
+			if connection.ProfileName != profileName {
+				profilesByCredential[connection.Credential.Name] = append(profilesByCredential[connection.Credential.Name], connection.ProfileName)
+			}
+		}
+		if len(page.Items) < pageSize {
+			break
+		}
+	}
+	result := make(map[string][]string, len(candidates))
+	for _, candidate := range candidates {
+		name := importedCredentialNameFor(candidate.Provider, candidateImportID(candidate), candidate.Domain)
+		result[candidateKey(candidate)] = profilesByCredential[name]
 	}
 	return result, nil
 }

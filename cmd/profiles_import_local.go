@@ -28,6 +28,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var profileImportProgressStages = []string{
+	"Preparing import",
+	"Uploading encrypted browser data",
+	"Applying and saving browser profile",
+	"Profile ready",
+}
+
 type ProfilesImportLocalInput struct {
 	BrowserProfile     string
 	ProfileName        string
@@ -36,6 +43,7 @@ type ProfilesImportLocalInput struct {
 	SkipConfirm        bool
 	Output             string
 	ProjectID          string
+	ImportID           string
 	Version            string
 	WaitTimeout        time.Duration
 	PasswordManager    string
@@ -46,12 +54,20 @@ type ProfilesImportLocalInput struct {
 }
 
 type ProfilesImportLocalCmd struct {
-	prompter            interactive.Prompter
-	homeDir             func() (string, error)
-	now                 func() time.Time
-	providers           func() []passwordmanager.Provider
-	provisioner         managedAuthProvisioner
-	managedAuthCapacity func(context.Context) (managedAuthCapacity, error)
+	prompter                 interactive.Prompter
+	homeDir                  func() (string, error)
+	now                      func() time.Time
+	providers                func() []passwordmanager.Provider
+	provisioner              managedAuthProvisioner
+	managedAuthCapacity      func(context.Context) (managedAuthCapacity, error)
+	profileLookup            func(context.Context, string) (kernelProfileReference, bool, error)
+	selectProfileTarget      func(string, []string, string) (string, error)
+	selectManagedAuthAccount func(string, []string, string) (string, error)
+}
+
+type kernelProfileReference struct {
+	ID   string
+	Name string
 }
 
 type pendingManagedAuth struct {
@@ -90,7 +106,7 @@ func dashboardProjectUnauthorized(err error) bool {
 	return errors.As(err, &apiError) && apiError.StatusCode == http.StatusUnauthorized
 }
 
-func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalInput) error {
+func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalInput) (returnErr error) {
 	startedAt := time.Now()
 	timings := make(map[string]time.Duration)
 	if err := validateJSONOutput(in.Output); err != nil {
@@ -118,6 +134,53 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	}
 	humanOutput := in.Output != "json"
 	nonInteractive := in.SkipConfirm || !humanOutput
+	dashboardHandoff := in.DashboardLaunch && in.ImportID != ""
+	var handoffClient *localbrowser.Client
+	clientCompletion := localbrowser.ClientCompletion{
+		Outcome: "failed", ManagedAuthConnections: make([]localbrowser.ManagedAuthConnection, 0),
+	}
+	clientFailureStage := "local"
+	clientCompletionReported := false
+	if dashboardHandoff {
+		token, err := auth.BearerToken(ctx)
+		if err != nil {
+			return err
+		}
+		handoffClient, err = localbrowser.NewClient(util.GetBaseURL(), token, in.ProjectID)
+		if err != nil {
+			return err
+		}
+		status, err := handoffClient.Status(ctx, in.ImportID)
+		if err != nil {
+			return fmt.Errorf("check browser import before starting local work: %w", err)
+		}
+		if message, handled := completedDashboardImportMessage(status.Phase); handled {
+			if humanOutput {
+				pterm.Info.Println(message)
+			}
+			clientCompletionReported = true
+			return nil
+		}
+		if status.Phase == "failed" {
+			return fmt.Errorf("browser import %s has already failed; start a new import from Kernel", in.ImportID)
+		}
+		defer func() {
+			if returnErr == nil || clientCompletionReported {
+				return
+			}
+			reportCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			status, statusErr := handoffClient.Status(reportCtx, in.ImportID)
+			if statusErr == nil && status.Phase == "failed" {
+				return
+			}
+			clientCompletion.Outcome = "failed"
+			clientCompletion.Failure = &localbrowser.ClientFailure{Stage: clientFailureStage, Message: "Local browser import did not finish."}
+			if _, reportErr := handoffClient.SubmitClientCompletion(reportCtx, in.ImportID, clientCompletion); reportErr != nil {
+				returnErr = errors.Join(returnErr, fmt.Errorf("report browser import failure: %w", reportErr))
+			}
+		}()
+	}
 	if humanOutput {
 		pterm.Info.Println("Looking for local browser profiles...")
 	}
@@ -139,11 +202,18 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		pterm.Success.Printf("Found %s\n", profile.DisplayName())
 	}
 	targetName := in.ProfileName
+	targetProfileID := ""
 	if targetName == "" {
 		targetName = defaultImportedProfileName(profile)
 	}
 	if targetName == "" || len(targetName) > 255 || profileIDNameCharacters.MatchString(targetName) || cuidLikeProfileName.MatchString(targetName) {
 		return fmt.Errorf("profile name must be 1-255 letters, numbers, dots, underscores, or hyphens and cannot be a cuid-like string")
+	}
+	if c.profileLookup != nil {
+		targetName, targetProfileID, err = c.chooseImportedProfileTarget(ctx, profile, targetName, nonInteractive)
+		if err != nil {
+			return err
+		}
 	}
 	explicitSites := in.Sites
 	if len(explicitSites) > 0 {
@@ -191,24 +261,21 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	if err != nil {
 		return err
 	}
-	pendingLogins := pendingManagedAuth{}
-	if managedAuthImportRequested(in.PasswordManager, nonInteractive) {
-		phaseStarted = time.Now()
-		loginSites := rankedManagedAuthSites(cookieSites, cookieSelection.sites, managedAuthSiteLimit)
-		availableLoginSites := selectedSiteMetadata(cookieSites, cookieSelection.sites)
-		pendingLogins, err = c.chooseManagedAuthLogins(ctx, targetName, loginSites, availableLoginSites, in.PasswordManager, nonInteractive, humanOutput)
-		timings["password_manager_discovery"] = time.Since(phaseStarted)
-		if err != nil {
-			return err
-		}
-	}
 	if !nonInteractive {
-		proceed, err := c.confirmBrowserImport(targetName, cookieSelection, cookieSites, profileDataSelection, pendingLogins)
+		proceed, err := c.confirmBrowserImport(targetName, cookieSelection, cookieSites, profileDataSelection)
 		if err != nil {
 			return err
 		}
 		if !proceed {
 			pterm.Info.Println("Browser import canceled; no Kernel resources were changed")
+			if dashboardHandoff {
+				clientCompletion.Outcome = "canceled"
+				clientCompletion.Failure = &localbrowser.ClientFailure{Stage: "local", Message: "Browser import was canceled locally."}
+				if _, err := handoffClient.SubmitClientCompletion(ctx, in.ImportID, clientCompletion); err != nil {
+					return fmt.Errorf("report browser import cancellation: %w", err)
+				}
+				clientCompletionReported = true
+			}
 			return nil
 		}
 	}
@@ -261,6 +328,14 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		}
 		if !proceed {
 			pterm.Info.Println("Browser import canceled; no Kernel resources were changed")
+			if dashboardHandoff {
+				clientCompletion.Outcome = "canceled"
+				clientCompletion.Failure = &localbrowser.ClientFailure{Stage: "local", Message: "Browser import was canceled locally."}
+				if _, err := handoffClient.SubmitClientCompletion(ctx, in.ImportID, clientCompletion); err != nil {
+					return fmt.Errorf("report browser import cancellation: %w", err)
+				}
+				clientCompletionReported = true
+			}
 			return nil
 		}
 	}
@@ -268,50 +343,97 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	itemCounts = fit.itemCounts
 	bundle := fit.bundle
 	categories := selectedProfileCategories(itemCounts)
-	token, err := auth.BearerToken(ctx)
-	if err != nil {
-		return err
+	clientCompletion.Counts = localbrowser.ClientCounts{
+		Cookies: itemCounts["cookies"], Bookmarks: itemCounts["bookmarks"], History: itemCounts["history"], StorageOrigins: importedStorageOriginCount(profileData.Storage),
 	}
-	client, err := localbrowser.NewClient(util.GetBaseURL(), token, in.ProjectID)
-	if err != nil {
-		return err
+	pendingLogins := pendingManagedAuth{}
+	var managedAuthSelectionErr error
+	managedAuthRequested := managedAuthImportRequested(in.PasswordManager, nonInteractive)
+	if managedAuthRequested && nonInteractive {
+		phaseStarted = time.Now()
+		loginSites := rankedManagedAuthSites(cookieSites, cookieSelection.sites, managedAuthSiteLimit)
+		availableLoginSites := selectedSiteMetadata(cookieSites, cookieSelection.sites)
+		pendingLogins, managedAuthSelectionErr = c.chooseManagedAuthLogins(ctx, targetName, loginSites, availableLoginSites, in.PasswordManager, true, humanOutput)
+		timings["password_manager_discovery"] = time.Since(phaseStarted)
+		if managedAuthSelectionErr != nil {
+			return fmt.Errorf("select Managed Auth setup before creating profile: %w", managedAuthSelectionErr)
+		}
 	}
-	if humanOutput {
-		pterm.Info.Printf("Creating Kernel profile %q...\n", targetName)
+
+	client := handoffClient
+	if client == nil {
+		token, err := auth.BearerToken(ctx)
+		if err != nil {
+			return err
+		}
+		client, err = localbrowser.NewClient(util.GetBaseURL(), token, in.ProjectID)
+		if err != nil {
+			return err
+		}
 	}
-	phaseStarted = time.Now()
-	created, err := client.Create(ctx)
-	if err != nil {
-		return err
+	importID := in.ImportID
+	helperToken := ""
+	if dashboardHandoff {
+		grant, err := client.AcquireHelperGrant(ctx, importID)
+		if err != nil {
+			status, statusErr := client.Status(ctx, importID)
+			if statusErr == nil {
+				if message, handled := completedDashboardImportMessage(status.Phase); handled {
+					if humanOutput {
+						pterm.Info.Println(message)
+					}
+					clientCompletionReported = true
+					return nil
+				}
+			}
+			return fmt.Errorf("get scoped browser import grant: %w", err)
+		}
+		helperToken = grant.HelperToken
+	} else {
+		created, err := client.Create(ctx)
+		if err != nil {
+			return err
+		}
+		importID = created.ID
+		helperToken = created.HelperToken
 	}
+	clientFailureStage = "profile"
 	inventory := localbrowser.Inventory{Sources: []localbrowser.Source{{
 		ID: profile.ID, Kind: "browser", Name: profile.DisplayName(), Browser: profile.Browser.ID,
 		DataTypes: categories, ItemCounts: itemCounts,
 	}}}
-	status, err := client.SubmitInventory(ctx, created.ID, created.HelperToken, inventory)
-	if err != nil {
-		return browserImportProgressError(created.ID, status.Phase, time.Since(phaseStarted), err)
+	selection := localbrowser.Selection{Profiles: []localbrowser.ProfileSelection{{SourceID: profile.ID, TargetName: targetName, TargetProfileID: targetProfileID, Categories: categories}}}
+	profileJob := startProfileImport(ctx, client, profileImportRequest{
+		importID: importID, helperToken: helperToken, dashboardHandoff: dashboardHandoff,
+		inventory: inventory, selection: selection, bundle: bundle, waitTimeout: in.WaitTimeout,
+	})
+	defer profileJob.Cancel()
+
+	if managedAuthRequested && !nonInteractive {
+		phaseStarted = time.Now()
+		loginSites := rankedManagedAuthSites(cookieSites, cookieSelection.sites, managedAuthSiteLimit)
+		availableLoginSites := selectedSiteMetadata(cookieSites, cookieSelection.sites)
+		pendingLogins, managedAuthSelectionErr = c.chooseManagedAuthLogins(ctx, targetName, loginSites, availableLoginSites, in.PasswordManager, false, humanOutput)
+		timings["password_manager_discovery"] = time.Since(phaseStarted)
 	}
-	selection := localbrowser.Selection{Profiles: []localbrowser.ProfileSelection{{SourceID: profile.ID, TargetName: targetName, Categories: categories}}}
-	status, err = client.SubmitSelection(ctx, created.ID, selection)
+
+	profileResult, err := waitForProfileImport(ctx, profileJob, targetName, humanOutput)
+	timings["upload_and_apply"] = profileResult.duration
 	if err != nil {
-		return browserImportProgressError(created.ID, status.Phase, time.Since(phaseStarted), err)
+		return err
 	}
-	status, err = client.Upload(ctx, created.ID, created.HelperToken, bundle)
-	if err != nil {
-		return browserImportProgressError(created.ID, status.Phase, time.Since(phaseStarted), err)
-	}
-	waitCtx, cancelWait := context.WithTimeout(ctx, in.WaitTimeout)
-	defer cancelWait()
-	status, err = client.Wait(waitCtx, created.ID, 2*time.Second)
-	timings["upload_and_apply"] = time.Since(phaseStarted)
-	if err != nil {
-		return fmt.Errorf("browser import %s did not complete: %w; check it with: kernel profiles import-status %s", created.ID, err, created.ID)
-	}
+	status := profileResult.status
 	if status.Applied == nil || len(status.Applied.Profiles) == 0 {
 		return fmt.Errorf("browser import completed without a profile")
 	}
-	profileID := status.Applied.Profiles[0].ProfileID
+	if managedAuthSelectionErr != nil {
+		return fmt.Errorf("profile %s is ready, but Managed Auth setup could not be selected: %w", targetName, managedAuthSelectionErr)
+	}
+	appliedProfile := status.Applied.Profiles[0]
+	profileID := appliedProfile.ProfileID
+	storageSummary := effectiveStorageImportSummary(appliedProfile, itemCounts["storage"], importedStorageOriginCount(profileData.Storage))
+	clientCompletion.Counts.StorageOrigins = storageSummary.importedOrigins
+	clientFailureStage = "managed_auth"
 	if humanOutput {
 		pterm.Success.Printf("Imported %d cookies from %d websites\n", len(cookies), importedCookieSites)
 		if count := itemCounts["bookmarks"]; count > 0 {
@@ -320,13 +442,23 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		if count := itemCounts["history"]; count > 0 {
 			pterm.Success.Printf("Imported %d history entries\n", count)
 		}
-		if count := itemCounts["storage"]; count > 0 {
-			pterm.Success.Printf("Imported %d local storage keys from %d origins\n", count, importedStorageOriginCount(profileData.Storage))
+		if storageSummary.importedEntries > 0 {
+			pterm.Success.Printf("Imported %d local storage keys from %d origins\n", storageSummary.importedEntries, storageSummary.importedOrigins)
+		}
+		if storageSummary.skippedEntries > 0 {
+			pterm.Warning.Printf("Skipped %d local storage keys from %d origins that could not be restored\n", storageSummary.skippedEntries, storageSummary.skippedOrigins)
+		}
+		if profileData.StorageRecordsSkipped > 0 {
+			pterm.Warning.Printf("Skipped %d oversized local storage keys from %d origins (1 MiB maximum per key)\n", profileData.StorageRecordsSkipped, profileData.StorageOriginsSkipped)
 		}
 	}
 	connectionIDs := make([]string, 0)
 	approvedLogins := make([]passwordmanager.Record, 0)
+	approvedCredentialCount := pendingCredentialCount(pendingLogins)
 	if len(pendingLogins.providers) > 0 {
+		if humanOutput {
+			pterm.Info.Println(approvedCredentialReadMessage(pendingLogins))
+		}
 		phaseStarted = time.Now()
 		for _, pendingProvider := range pendingLogins.providers {
 			records, revealErr := pendingProvider.provider.Reveal(ctx, pendingProvider.candidates)
@@ -336,6 +468,9 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 			approvedLogins = append(approvedLogins, records...)
 		}
 		timings["password_manager_reveal"] = time.Since(phaseStarted)
+		if skipped := approvedCredentialCount - len(approvedLogins); skipped > 0 && humanOutput {
+			pterm.Warning.Printf("Skipped %d approved password-manager item%s without a usable username or password\n", skipped, pluralSuffix(skipped))
+		}
 	}
 	if len(approvedLogins) > 0 {
 		if c.provisioner == nil {
@@ -347,6 +482,7 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 		}
 		phaseStarted = time.Now()
 		connectionIDs, err = c.provisioner.Provision(ctx, targetName, approvedLogins)
+		clientCompletion.ManagedAuthConnections = managedAuthCompletionConnections(connectionIDs, approvedLogins)
 		timings["managed_auth"] = time.Since(phaseStarted)
 		if err != nil {
 			if humanOutput {
@@ -365,11 +501,29 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	installedSkills := 0
 	skillWarning := ""
 	if len(connectionIDs) > 0 {
+		clientFailureStage = "agent_skills"
 		phaseStarted = time.Now()
 		installedSkills, err = c.offerAgentSkills(home, in.InstallAgentSkills, nonInteractive, humanOutput)
 		timings["agent_skills"] = time.Since(phaseStarted)
 		if err != nil {
 			skillWarning = err.Error()
+		}
+	}
+	if dashboardHandoff {
+		clientCompletion.Outcome = "completed"
+		clientCompletion.Failure = nil
+		if humanOutput {
+			pterm.Info.Println("Opening Kernel to finish authentication...")
+		}
+		if _, err := client.SubmitClientCompletion(ctx, importID, clientCompletion); err != nil {
+			return fmt.Errorf("report browser import completion: %w", err)
+		}
+		clientCompletionReported = true
+		ackCtx, cancelAck := context.WithTimeout(ctx, in.WaitTimeout)
+		defer cancelAck()
+		status, err = client.Wait(ackCtx, importID, 2*time.Second)
+		if err != nil {
+			return fmt.Errorf("dashboard did not acknowledge browser import %s: %w; reopen Kernel to finish setup", importID, err)
 		}
 	}
 	if in.Output == "json" {
@@ -393,6 +547,49 @@ func (c ProfilesImportLocalCmd) Run(ctx context.Context, in ProfilesImportLocalI
 	return nil
 }
 
+func completedDashboardImportMessage(phase string) (string, bool) {
+	switch phase {
+	case "staged", "applying", "awaiting_client_completion":
+		return "This browser import is already running. Return to Kernel for progress.", true
+	case "awaiting_dashboard_ack", "finishing_managed_auth", "completed":
+		return "This browser import has already finished. Return to Kernel to continue.", true
+	default:
+		return "", false
+	}
+}
+
+func approvedCredentialReadMessage(pending pendingManagedAuth) string {
+	count := pendingCredentialCount(pending)
+	providers := make([]string, 0, len(pending.providers))
+	for _, pendingProvider := range pending.providers {
+		providers = append(providers, pendingProvider.provider.Name())
+	}
+	credential := "credentials"
+	if count == 1 {
+		credential = "credential"
+	}
+	return fmt.Sprintf("Reading %d approved %s from %s...", count, credential, strings.Join(providers, " and "))
+}
+
+func pendingCredentialCount(pending pendingManagedAuth) int {
+	count := 0
+	for _, pendingProvider := range pending.providers {
+		count += len(pendingProvider.candidates)
+	}
+	return count
+}
+
+func managedAuthCompletionConnections(ids []string, records []passwordmanager.Record) []localbrowser.ManagedAuthConnection {
+	connections := make([]localbrowser.ManagedAuthConnection, 0, min(len(ids), len(records)))
+	for index, id := range ids {
+		if index >= len(records) {
+			break
+		}
+		connections = append(connections, localbrowser.ManagedAuthConnection{ID: id, Domain: records[index].Domain})
+	}
+	return connections
+}
+
 func (c ProfilesImportLocalCmd) offerAgentSkills(home string, installRequested, nonInteractive, humanOutput bool) (int, error) {
 	workingDirectory, err := os.Getwd()
 	if err != nil {
@@ -406,7 +603,7 @@ func (c ProfilesImportLocalCmd) offerAgentSkills(home string, installRequested, 
 		if nonInteractive {
 			return 0, nil
 		}
-		approved, err := c.prompter.Confirm("install agent skill", "Install the Kernel Managed Auth skill for your local agents?")
+		approved, err := c.prompter.ConfirmDefault("install agent skill", "Install the Kernel Managed Auth skill for your local agents?", true)
 		if err != nil || !approved {
 			return 0, err
 		}
@@ -512,10 +709,6 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, pro
 		capacityHint, capacityHintErr = c.managedAuthCapacity(ctx)
 		capacityLoaded = capacityHintErr == nil
 	}
-	sites, err := c.chooseManagedAuthSites(sites, availableSites, nonInteractive, capacityHint, capacityLoaded && capacityHintErr == nil)
-	if err != nil {
-		return pendingManagedAuth{}, err
-	}
 	if len(sites) == 0 {
 		return pendingManagedAuth{}, nil
 	}
@@ -566,7 +759,7 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, pro
 			allCandidates = append(allCandidates, sourcedPasswordManagerCandidate{provider: provider, candidate: candidate})
 		}
 	}
-	if len(allCandidates) == 0 {
+	if len(allCandidates) == 0 && nonInteractive {
 		return pendingManagedAuth{}, nil
 	}
 	if c.provisioner == nil {
@@ -586,20 +779,39 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, pro
 		}
 		return pendingManagedAuth{}, nil
 	}
+	otherProfiles := make(map[string][]string)
+	if finder, ok := c.provisioner.(crossProfileManagedAuthFinder); ok {
+		otherProfiles, err = finder.ExistingProfiles(ctx, profileName, candidates)
+		if err != nil {
+			return pendingManagedAuth{}, fmt.Errorf("check Managed Auth connections on other profiles: %w", err)
+		}
+	}
 	hasExisting := false
 	hasNew := false
 	for _, candidate := range candidates {
-		if existing[candidateKey(candidate)] {
+		key := candidateKey(candidate)
+		if existing[key] || len(otherProfiles[key]) > 0 {
 			hasExisting = true
-		} else {
+		}
+		if !existing[key] {
 			hasNew = true
 		}
 	}
 	availableConnections := 0
 	capacityKnown := !hasNew
+	displayCapacity := capacityHint
+	displayCapacityKnown := capacityLoaded
 	var capacityLookupErr error
 	if !hasNew {
 		// Existing imports refresh their credential and do not consume quota.
+		// Interactive discovery may still add another website, so retain the
+		// known capacity for that choice without making refreshes depend on it.
+		if !nonInteractive && capacityLoaded {
+			availableConnections = capacityHint.remaining
+			if capacityHint.unlimited {
+				availableConnections = len(availableSites)
+			}
+		}
 	} else if c.managedAuthCapacity == nil {
 		if !hasExisting {
 			return pendingManagedAuth{}, fmt.Errorf("managed auth capacity is unavailable")
@@ -619,11 +831,11 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, pro
 			}
 		} else {
 			capacityKnown = true
+			displayCapacity = capacity
+			displayCapacityKnown = true
 			availableConnections = capacity.remaining
 			if capacity.unlimited {
 				availableConnections = len(sites)
-			} else if humanOutput {
-				pterm.Info.Printf("Your organization has %d Managed Auth connection slot%s available\n", availableConnections, pluralSuffix(availableConnections))
 			}
 		}
 	}
@@ -638,7 +850,7 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, pro
 	if availableConnections == 0 && hasNew && requested != "" && nonInteractive {
 		return pendingManagedAuth{}, fmt.Errorf("your organization has no Managed Auth connection slots available for new logins; delete a connection or upgrade your plan, then retry")
 	}
-	if capacityKnown && availableConnections == 0 && !hasExisting {
+	if hasNew && capacityKnown && availableConnections == 0 && !hasExisting && nonInteractive {
 		if requested != "" {
 			return pendingManagedAuth{}, fmt.Errorf("your organization has no Managed Auth connection slots available; delete a connection or upgrade your plan, then retry")
 		}
@@ -666,6 +878,15 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, pro
 		}
 		return left.candidate.Name < right.candidate.Name
 	})
+	if !nonInteractive {
+		sites, allCandidates, err = c.chooseManagedAuthWebsites(ctx, profileName, sites, availableSites, chosenProviders, allCandidates, existing, availableConnections, displayCapacity, displayCapacityKnown, humanOutput)
+		if err != nil {
+			return pendingManagedAuth{}, err
+		}
+		if len(sites) == 0 {
+			return pendingManagedAuth{}, nil
+		}
+	}
 	domainCounts := make(map[string]int, len(sites))
 	for _, sourced := range allCandidates {
 		domainCounts[sourced.candidate.Domain]++
@@ -706,7 +927,7 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, pro
 			approvedCandidates = append(approvedCandidates, sourced)
 		}
 	} else {
-		approvedCandidates, err = c.chooseManagedAuthAccountsByWebsite(sites, allCandidates, existing, availableConnections)
+		approvedCandidates, err = c.chooseManagedAuthAccountsByWebsite(profileName, sites, allCandidates, existing, otherProfiles, availableConnections, 0, displayCapacity, displayCapacityKnown)
 		if err != nil {
 			return pendingManagedAuth{}, err
 		}
@@ -730,14 +951,14 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthLogins(ctx context.Context, pro
 	return pending, nil
 }
 
-func (c ProfilesImportLocalCmd) chooseManagedAuthAccountsByWebsite(sites []string, candidates []sourcedPasswordManagerCandidate, existing map[string]bool, availableConnections int) ([]sourcedPasswordManagerCandidate, error) {
+func (c ProfilesImportLocalCmd) chooseManagedAuthAccountsByWebsite(profileName string, sites []string, candidates []sourcedPasswordManagerCandidate, existing map[string]bool, otherProfiles map[string][]string, availableConnections, alreadySelectedNew int, capacity managedAuthCapacity, capacityKnown bool) ([]sourcedPasswordManagerCandidate, error) {
 	byDomain := make(map[string][]sourcedPasswordManagerCandidate, len(sites))
 	for _, candidate := range candidates {
 		byDomain[candidate.candidate.Domain] = append(byDomain[candidate.candidate.Domain], candidate)
 	}
 
 	pterm.Println()
-	pterm.Println("Choose one login per website for Managed Auth:")
+	pterm.Println(managedAuthAccountHeader(capacity, capacityKnown))
 	pterm.Println()
 	domains := make([]string, 0, len(sites))
 	for _, domain := range sites {
@@ -749,10 +970,10 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthAccountsByWebsite(sites []strin
 	for domainIndex := 0; domainIndex < len(domains); {
 		domain := domains[domainIndex]
 		domainCandidates := byDomain[domain]
-		if len(domainCandidates) == 1 {
+		if len(domainCandidates) == 1 && len(otherProfiles[candidateKey(domainCandidates[0].candidate)]) == 0 {
 			chosen := domainCandidates[0]
 			delete(choices, domain)
-			if !existing[candidateKey(chosen.candidate)] && managedAuthNewChoiceCount(choices, existing) >= availableConnections {
+			if !existing[candidateKey(chosen.candidate)] && managedAuthCapacityReached(alreadySelectedNew+managedAuthNewChoiceCount(choices, existing), availableConnections, capacity) {
 				pterm.Warning.Printf("Skipping %s: no Managed Auth connection slots remain\n", domain)
 				domainIndex++
 				continue
@@ -762,12 +983,38 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthAccountsByWebsite(sites []strin
 			domainIndex++
 			continue
 		}
-		labels := make([]string, 0, len(domainCandidates))
+		labels := make([]string, 0, len(domainCandidates)*2)
 		byLabel := make(map[string]sourcedPasswordManagerCandidate, len(domainCandidates))
+		keepExisting := make(map[string]bool)
 		existingLabels := make([]string, 0, len(domainCandidates))
-		labels = groupedLoginLabels(domainCandidates)
+		candidateLabels := groupedLoginLabels(domainCandidates)
+		accountPrompt := domain + " — ↑/↓ move, Enter chooses"
+		if len(domainCandidates) == 1 {
+			profiles := otherProfiles[candidateKey(domainCandidates[0].candidate)]
+			if len(profiles) > 0 && !existing[candidateKey(domainCandidates[0].candidate)] {
+				pterm.Printf("%s\nAlready managed on %q with this account\n\n", domain, profiles[0])
+				accountPrompt = "Choose how to use this account — ↑/↓ move, Enter chooses"
+			}
+		}
 		for index, sourced := range domainCandidates {
-			label := labels[index]
+			label := candidateLabels[index]
+			profiles := otherProfiles[candidateKey(sourced.candidate)]
+			if len(profiles) > 0 && !existing[candidateKey(sourced.candidate)] {
+				keepLabel := fmt.Sprintf("Keep this account managed on %q  · 0 new slots", profiles[0])
+				alsoLabel := fmt.Sprintf("Also manage this account on %q  · uses 1 slot", profileName)
+				if len(domainCandidates) > 1 {
+					keepLabel = fmt.Sprintf("Keep %s on %q  · 0 new slots", label, profiles[0])
+					alsoLabel = fmt.Sprintf("Also manage %s on %q  · uses 1 slot", label, profileName)
+				}
+				labels = append(labels, keepLabel, alsoLabel)
+				keepExisting[keepLabel] = true
+				byLabel[alsoLabel] = sourced
+				continue
+			}
+			if existing[candidateKey(sourced.candidate)] {
+				label += "  ✓ existing · no new slot"
+			}
+			labels = append(labels, label)
 			byLabel[label] = sourced
 			if existing[candidateKey(sourced.candidate)] {
 				existingLabels = append(existingLabels, label)
@@ -788,10 +1035,16 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthAccountsByWebsite(sites []strin
 			}
 		} else if len(existingLabels) == 1 {
 			defaultOption = existingLabels[0]
-		} else if managedAuthNewChoiceCount(choices, existing) >= availableConnections {
+		} else if managedAuthCapacityReached(alreadySelectedNew+managedAuthNewChoiceCount(choices, existing), availableConnections, capacity) {
 			defaultOption = "Skip this website"
 		}
-		selected, err := c.prompter.SelectDefault("login for "+domain, "use arrow keys and press Enter", domain+" — ↑/↓ move, Enter chooses", options, defaultOption)
+		var selected string
+		var err error
+		if c.selectManagedAuthAccount != nil {
+			selected, err = c.selectManagedAuthAccount(domain, options, defaultOption)
+		} else {
+			selected, err = c.prompter.SelectDefault("login for "+domain, "use arrow keys and press Enter", accountPrompt, options, defaultOption)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -811,10 +1064,15 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthAccountsByWebsite(sites []strin
 			domainIndex++
 			continue
 		}
+		if keepExisting[selected] {
+			delete(choices, domain)
+			domainIndex++
+			continue
+		}
 		chosen := byLabel[selected]
 		previous, hadPrevious := choices[domain]
 		delete(choices, domain)
-		if !existing[candidateKey(chosen.candidate)] && managedAuthNewChoiceCount(choices, existing) >= availableConnections {
+		if !existing[candidateKey(chosen.candidate)] && managedAuthCapacityReached(alreadySelectedNew+managedAuthNewChoiceCount(choices, existing), availableConnections, capacity) {
 			if hadPrevious {
 				choices[domain] = previous
 			}
@@ -831,7 +1089,289 @@ func (c ProfilesImportLocalCmd) chooseManagedAuthAccountsByWebsite(sites []strin
 			approved = append(approved, chosen)
 		}
 	}
+	selectedNew := alreadySelectedNew + managedAuthNewChoiceCount(choices, existing)
+	if capacity.unlimited {
+		pterm.Printf("New connections selected: %d · unlimited plan\n", selectedNew)
+	} else {
+		pterm.Printf("New connections selected: %d of %d\n", selectedNew, availableConnections)
+	}
 	return approved, nil
+}
+
+func (c ProfilesImportLocalCmd) chooseManagedAuthWebsites(
+	ctx context.Context,
+	profileName string,
+	sites []string,
+	availableSites []localbrowser.Site,
+	providers []passwordmanager.Provider,
+	candidates []sourcedPasswordManagerCandidate,
+	existing map[string]bool,
+	availableConnections int,
+	capacity managedAuthCapacity,
+	capacityKnown bool,
+	humanOutput bool,
+) ([]string, []sourcedPasswordManagerCandidate, error) {
+	searchedSites := append([]string(nil), sites...)
+	selectedSites := defaultManagedAuthWebsites(sites, candidates, existing, availableConnections, capacity)
+	const findAnother = "+ Find another website"
+	for {
+		matchedSites := managedAuthMatchedSites(searchedSites, candidates)
+		labels, byLabel := managedAuthWebsiteOptions(matchedSites, candidates, existing)
+		labels = append(labels, findAnother)
+		selectedSet := make(map[string]struct{}, len(selectedSites))
+		for _, site := range selectedSites {
+			selectedSet[site] = struct{}{}
+		}
+		defaults := make([]string, 0, len(selectedSites))
+		for _, label := range labels {
+			if _, selected := selectedSet[byLabel[label]]; selected {
+				defaults = append(defaults, label)
+			}
+		}
+		prompt := managedAuthWebsiteHeader(capacity, capacityKnown) + "\nSpace toggles websites · Enter continues"
+		selectedLabels, err := c.prompter.MultiSelect("Managed Auth websites", "select websites or continue without Managed Auth", prompt, labels, defaults)
+		if err != nil {
+			return nil, nil, err
+		}
+		selectedSites = selectedSites[:0]
+		findRequested := false
+		for _, label := range selectedLabels {
+			if label == findAnother {
+				findRequested = true
+				continue
+			}
+			selectedSites = append(selectedSites, byLabel[label])
+		}
+		if !capacity.unlimited && managedAuthNewWebsiteCount(selectedSites, candidates, existing) > availableConnections {
+			pterm.Warning.Printf("Choose at most %d website%s that need a new connection; existing connections do not use a slot\n", availableConnections, pluralSuffix(availableConnections))
+			continue
+		}
+		if !findRequested {
+			selected := make(map[string]struct{}, len(selectedSites))
+			for _, site := range selectedSites {
+				selected[site] = struct{}{}
+			}
+			filtered := make([]sourcedPasswordManagerCandidate, 0, len(candidates))
+			for _, candidate := range candidates {
+				if _, ok := selected[candidate.candidate.Domain]; ok {
+					filtered = append(filtered, candidate)
+				}
+			}
+			return selectedSites, filtered, nil
+		}
+		options, domains := managedAuthSearchOptions(availableSites, searchedSites)
+		if len(options) == 0 {
+			pterm.Info.Println("Every browser website has already been searched")
+			continue
+		}
+		browseOptions := managedAuthBrowseOptions(options)
+		selected, err := c.prompter.MultiSelect(
+			"Managed Auth websites",
+			"select websites",
+			"Choose browser websites to add\nScroll with ↑/↓ · Space toggles websites · Enter continues",
+			browseOptions,
+			nil,
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+		selected, searchRequested := managedAuthBrowseSelection(selected)
+		if searchRequested {
+			query, err := c.prompter.TextInput("browser website search", "type a website domain", "Search browser websites (leave blank to go back)")
+			if err != nil {
+				return nil, nil, err
+			}
+			if strings.TrimSpace(query) != "" {
+				filtered := filterManagedAuthSearchOptions(options, domains, query)
+				if len(filtered) == 0 {
+					pterm.Info.Printf("No browser website matched %q\n", strings.TrimSpace(query))
+				} else {
+					searched, err := c.prompter.MultiSelect(
+						"Managed Auth websites",
+						"select websites",
+						"Choose matching websites to add\nSpace toggles websites · Enter continues",
+						filtered,
+						nil,
+					)
+					if err != nil {
+						return nil, nil, err
+					}
+					selected = append(selected, searched...)
+				}
+			}
+		}
+		for _, chosen := range selected {
+			domain := domains[chosen]
+			searchedSites = append(searchedSites, domain)
+			matches := make([]sourcedPasswordManagerCandidate, 0)
+			for _, provider := range providers {
+				discovered, err := discoverProviderCandidates(ctx, provider, []string{domain}, false, humanOutput)
+				if err != nil {
+					return nil, nil, err
+				}
+				for _, candidate := range discovered {
+					matches = append(matches, sourcedPasswordManagerCandidate{provider: provider, candidate: candidate})
+				}
+			}
+			if len(matches) == 0 {
+				pterm.Info.Printf("No password-manager login matched %s\n", domain)
+				continue
+			}
+			candidateRecords := make([]passwordmanager.Candidate, 0, len(matches))
+			for _, match := range matches {
+				candidateRecords = append(candidateRecords, match.candidate)
+			}
+			domainExisting, err := c.provisioner.Existing(ctx, profileName, candidateRecords)
+			if err != nil {
+				return nil, nil, fmt.Errorf("check existing Managed Auth connection for %s: %w", domain, err)
+			}
+			for key, value := range domainExisting {
+				existing[key] = value
+			}
+			candidates = append(candidates, matches...)
+			if domainHasExistingManagedAuth(domain, candidates, existing) || capacity.unlimited || managedAuthNewWebsiteCount(selectedSites, candidates, existing) < availableConnections {
+				selectedSites = append(selectedSites, domain)
+			}
+		}
+	}
+}
+
+const searchManagedAuthWebsites = "+ Search websites"
+
+func managedAuthBrowseOptions(options []string) []string {
+	return append(append([]string(nil), options...), searchManagedAuthWebsites)
+}
+
+func managedAuthBrowseSelection(selected []string) ([]string, bool) {
+	websites := make([]string, 0, len(selected))
+	seen := make(map[string]struct{}, len(selected))
+	searchRequested := false
+	for _, label := range selected {
+		if label == searchManagedAuthWebsites {
+			searchRequested = true
+			continue
+		}
+		if _, exists := seen[label]; exists {
+			continue
+		}
+		seen[label] = struct{}{}
+		websites = append(websites, label)
+	}
+	return websites, searchRequested
+}
+
+func managedAuthMatchedSites(sites []string, candidates []sourcedPasswordManagerCandidate) []string {
+	matched := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		matched[candidate.candidate.Domain] = struct{}{}
+	}
+	result := make([]string, 0, len(matched))
+	for _, site := range sites {
+		if _, ok := matched[site]; ok {
+			result = append(result, site)
+		}
+	}
+	return result
+}
+
+func domainHasExistingManagedAuth(domain string, candidates []sourcedPasswordManagerCandidate, existing map[string]bool) bool {
+	for _, candidate := range candidates {
+		if candidate.candidate.Domain == domain && existing[candidateKey(candidate.candidate)] {
+			return true
+		}
+	}
+	return false
+}
+
+func managedAuthNewWebsiteCount(sites []string, candidates []sourcedPasswordManagerCandidate, existing map[string]bool) int {
+	count := 0
+	for _, site := range sites {
+		if !domainHasExistingManagedAuth(site, candidates, existing) {
+			count++
+		}
+	}
+	return count
+}
+
+func defaultManagedAuthWebsites(sites []string, candidates []sourcedPasswordManagerCandidate, existing map[string]bool, availableConnections int, capacity managedAuthCapacity) []string {
+	defaults := make([]string, 0, len(sites))
+	newConnections := 0
+	for _, site := range managedAuthMatchedSites(sites, candidates) {
+		if domainHasExistingManagedAuth(site, candidates, existing) {
+			defaults = append(defaults, site)
+			continue
+		}
+		if capacity.unlimited || newConnections < availableConnections {
+			defaults = append(defaults, site)
+			newConnections++
+		}
+	}
+	return defaults
+}
+
+func managedAuthWebsiteOptions(sites []string, candidates []sourcedPasswordManagerCandidate, existing map[string]bool) ([]string, map[string]string) {
+	counts := make(map[string]int, len(sites))
+	for _, candidate := range candidates {
+		counts[candidate.candidate.Domain]++
+	}
+	options := make([]string, 0, len(sites))
+	byOption := make(map[string]string, len(sites))
+	for index, site := range sites {
+		label := fmt.Sprintf("%2d  %-28s %d matching login%s", index+1, compactField(site, 28), counts[site], pluralSuffix(counts[site]))
+		if domainHasExistingManagedAuth(site, candidates, existing) {
+			label += " · existing connection"
+		}
+		options = append(options, label)
+		byOption[label] = site
+	}
+	return options, byOption
+}
+
+func managedAuthWebsiteHeader(capacity managedAuthCapacity, capacityKnown bool) string {
+	header := managedAuthAccountHeader(capacity, capacityKnown)
+	return strings.Replace(header, "Choose accounts to make available to agents:", "Choose websites to make available to agents:", 1)
+}
+
+func managedAuthCapacityReached(selected, available int, capacity managedAuthCapacity) bool {
+	return !capacity.unlimited && selected >= available
+}
+
+func managedAuthSearchOptions(available []localbrowser.Site, selected []string) ([]string, map[string]string) {
+	selectedSet := make(map[string]struct{}, len(selected))
+	for _, domain := range selected {
+		selectedSet[domain] = struct{}{}
+	}
+	options := make([]string, 0, len(available))
+	byOption := make(map[string]string, len(available))
+	for index, site := range available {
+		if _, exists := selectedSet[site.Domain]; exists {
+			continue
+		}
+		label := fmt.Sprintf("%d  %-28s %s visits", index+1, compactField(site.Domain, 28), boundedCount(site.Visits))
+		label = ansi.Truncate(label, 64, "…")
+		options = append(options, label)
+		byOption[label] = site.Domain
+	}
+	return options, byOption
+}
+
+func filterManagedAuthSearchOptions(options []string, domains map[string]string, query string) []string {
+	terms := strings.Fields(strings.ToLower(strings.TrimSpace(query)))
+	filtered := make([]string, 0, len(options))
+	for _, option := range options {
+		domain := strings.ToLower(domains[option])
+		matches := true
+		for _, term := range terms {
+			if !strings.Contains(domain, term) {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			filtered = append(filtered, option)
+		}
+	}
+	return filtered
 }
 
 func previousAmbiguousDomainIndex(domains []string, candidates map[string][]sourcedPasswordManagerCandidate, current int) int {
@@ -853,135 +1393,14 @@ func managedAuthNewChoiceCount(choices map[string]sourcedPasswordManagerCandidat
 	return count
 }
 
-func (c ProfilesImportLocalCmd) chooseManagedAuthSites(sites []string, availableSites []localbrowser.Site, nonInteractive bool, capacity managedAuthCapacity, capacityKnown bool) ([]string, error) {
-	if nonInteractive || len(sites) == 0 {
-		return sites, nil
+func managedAuthAccountHeader(capacity managedAuthCapacity, capacityKnown bool) string {
+	capacityLine := "Connection capacity will be checked before creating new connections"
+	if capacityKnown && capacity.unlimited {
+		capacityLine = fmt.Sprintf("Unlimited connections · %d currently used", capacity.used)
+	} else if capacityKnown {
+		capacityLine = fmt.Sprintf("%d of %d connections used · %d new connections available", capacity.used, capacity.maximum, capacity.remaining)
 	}
-	prompt, defaultDomains := managedAuthSitePrompt(sites, capacity, capacityKnown)
-	recommendedSet := make(map[string]struct{}, len(sites))
-	for _, domain := range sites {
-		recommendedSet[domain] = struct{}{}
-	}
-	selected := append([]string(nil), defaultDomains...)
-	const findAnotherOption = "+ Find another website"
-	for {
-		labels, byLabel := managedAuthRecommendationOptions(sites, availableSites)
-		for _, domain := range selected {
-			if _, recommended := recommendedSet[domain]; recommended {
-				continue
-			}
-			label := managedAuthSiteOption(len(labels), domain, siteMetadata(availableSites, domain))
-			labels = append(labels, label)
-			byLabel[label] = domain
-		}
-		labels = append(labels, findAnotherOption)
-		currentSet := make(map[string]struct{}, len(selected))
-		for _, domain := range selected {
-			currentSet[domain] = struct{}{}
-		}
-		selectedDefaults := make([]string, 0, len(selected))
-		for _, label := range labels {
-			if _, checked := currentSet[byLabel[label]]; checked {
-				selectedDefaults = append(selectedDefaults, label)
-			}
-		}
-		sectionPrompt := prompt + "\nSpace toggles websites · check + Find another website to search · Enter continues"
-		selectedLabels, err := c.prompter.MultiSelect("Managed Auth websites", "pass --yes to use the suggested websites", sectionPrompt, labels, selectedDefaults)
-		if err != nil {
-			return nil, err
-		}
-		result := make([]string, 0, len(selectedLabels))
-		findAnother := false
-		for _, label := range selectedLabels {
-			if label == findAnotherOption {
-				findAnother = true
-				continue
-			}
-			result = append(result, byLabel[label])
-		}
-		selected = result
-		if !findAnother {
-			return selected, nil
-		}
-		options, domains := managedAuthSearchOptions(availableSites, selected)
-		if len(options) == 1 {
-			pterm.Info.Println("Every browser website is already selected")
-			continue
-		}
-		chosen, err := c.prompter.Select("Managed Auth website", "select a website", "Find another website — type to search, Enter adds, Back returns", options)
-		if err != nil {
-			return nil, err
-		}
-		if chosen != backOption && !containsString(selected, domains[chosen]) {
-			selected = append(selected, domains[chosen])
-		}
-	}
-}
-
-func managedAuthSitePrompt(sites []string, capacity managedAuthCapacity, capacityKnown bool) (string, []string) {
-	defaults := sites
-	prompt := "Choose recent websites to find Managed Auth logins"
-	if capacityKnown && !capacity.unlimited {
-		prompt = fmt.Sprintf("Choose recent websites to find Managed Auth logins (%d new connection slot%s available)", capacity.remaining, pluralSuffix(capacity.remaining))
-	}
-	return prompt, defaults
-}
-
-func managedAuthRecommendationOptions(sites []string, available []localbrowser.Site) ([]string, map[string]string) {
-	metadata := make(map[string]localbrowser.Site, len(available))
-	for _, site := range available {
-		metadata[site.Domain] = site
-	}
-	options := make([]string, 0, len(sites))
-	byOption := make(map[string]string, len(sites))
-	for index, domain := range sites {
-		label := managedAuthSiteOption(index, domain, metadata[domain])
-		options = append(options, label)
-		byOption[label] = domain
-	}
-	return options, byOption
-}
-
-func managedAuthSiteOption(index int, domain string, site localbrowser.Site) string {
-	label := fmt.Sprintf("%d  %s", index+1, domain)
-	if site.Visits > 0 {
-		label += fmt.Sprintf("  %s visits", boundedCount(site.Visits))
-	}
-	return label
-}
-
-func siteMetadata(sites []localbrowser.Site, domain string) localbrowser.Site {
-	for _, site := range sites {
-		if site.Domain == domain {
-			return site
-		}
-	}
-	return localbrowser.Site{Domain: domain}
-}
-
-func managedAuthSearchOptions(available []localbrowser.Site, selected []string) ([]string, map[string]string) {
-	options := make([]string, 0, len(available)+1)
-	options = append(options, backOption)
-	byOption := make(map[string]string, len(available))
-	for index, site := range available {
-		if containsString(selected, site.Domain) {
-			continue
-		}
-		label := fmt.Sprintf("%d  %-28s %s visits", index+1, compactField(site.Domain, 28), boundedCount(site.Visits))
-		label = ansi.Truncate(label, 64, "…")
-		options = append(options, label)
-		byOption[label] = site.Domain
-	}
-	return options, byOption
-}
-
-func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
+	return fmt.Sprintf("Managed Auth\n%s\n\nChoose accounts to make available to agents:", capacityLine)
 }
 
 func managedAuthDiscoveryFailure(requested, action string, err error) error {
@@ -1042,6 +1461,73 @@ func browserImportProgressError(importID, phase string, elapsed time.Duration, e
 		phase = "unknown"
 	}
 	return fmt.Errorf("browser import %s stopped after %s in phase %s: %w; check it with: kernel profiles import-status %s", importID, elapsed.Round(time.Millisecond), phase, err, importID)
+}
+
+func resolveImportedProfileName(ctx context.Context, requested string, explicit bool, exists func(context.Context, string) (bool, error)) (string, bool, error) {
+	found, err := exists(ctx, requested)
+	if err != nil {
+		return "", false, fmt.Errorf("check Kernel profile name %q: %w", requested, err)
+	}
+	if !found {
+		return requested, false, nil
+	}
+	if explicit {
+		return "", false, fmt.Errorf("Kernel profile %q already exists; choose a different --profile-name", requested)
+	}
+	for suffixNumber := 2; suffixNumber < 10000; suffixNumber++ {
+		suffix := fmt.Sprintf("-%d", suffixNumber)
+		base := requested
+		if len(base)+len(suffix) > 255 {
+			base = base[:255-len(suffix)]
+		}
+		candidate := base + suffix
+		found, err = exists(ctx, candidate)
+		if err != nil {
+			return "", false, fmt.Errorf("check Kernel profile name %q: %w", candidate, err)
+		}
+		if !found {
+			return candidate, true, nil
+		}
+	}
+	return "", false, fmt.Errorf("could not find an available Kernel profile name based on %q; use --profile-name", requested)
+}
+
+func (c ProfilesImportLocalCmd) chooseImportedProfileTarget(ctx context.Context, source localbrowser.Profile, requested string, nonInteractive bool) (string, string, error) {
+	existing, found, err := c.profileLookup(ctx, requested)
+	if err != nil {
+		return "", "", fmt.Errorf("check Kernel profile name %q: %w", requested, err)
+	}
+	if !found {
+		return requested, "", nil
+	}
+	if nonInteractive {
+		return "", "", fmt.Errorf("Kernel profile %q already exists; run interactively to update it or choose a different --profile-name", requested)
+	}
+
+	separateName, _, err := resolveImportedProfileName(ctx, requested, false, func(ctx context.Context, name string) (bool, error) {
+		_, found, err := c.profileLookup(ctx, name)
+		return found, err
+	})
+	if err != nil {
+		return "", "", err
+	}
+	updateOption := fmt.Sprintf("Update %q  (recommended; keeps existing Managed Auth connections)", existing.Name)
+	separateOption := fmt.Sprintf("Create a separate profile %q", separateName)
+	prompt := fmt.Sprintf("An earlier %s import already exists", source.Browser.Name)
+	options := []string{updateOption, separateOption}
+	var choice string
+	if c.selectProfileTarget != nil {
+		choice, err = c.selectProfileTarget(prompt, options, updateOption)
+	} else {
+		choice, err = c.prompter.SelectDefault("profile import destination", "choose whether to update or create a separate profile", prompt, options, updateOption)
+	}
+	if err != nil {
+		return "", "", err
+	}
+	if choice == updateOption {
+		return existing.Name, existing.ID, nil
+	}
+	return separateName, "", nil
 }
 
 func durationMilliseconds(values map[string]time.Duration) map[string]int64 {
@@ -1337,6 +1823,11 @@ func compactField(value string, limit int) string {
 	return ansi.Truncate(strings.Join(strings.Fields(value), " "), limit, "…")
 }
 
+func paddedCompactField(value string, width int) string {
+	value = compactField(value, width)
+	return value + strings.Repeat(" ", max(0, width-ansi.StringWidth(value)))
+}
+
 func groupedLoginCandidateLabel(provider string, candidate passwordmanager.Candidate) string {
 	idSuffix := candidate.ID
 	if len(idSuffix) > 6 {
@@ -1529,11 +2020,23 @@ func runProfilesImportLocalWithInput(cmd *cobra.Command, input ProfilesImportLoc
 	credentials := projectClient.Credentials
 	connections := projectClient.Auth.Connections
 	limits := projectClient.Organization.Limits
+	profiles := projectClient.Profiles
 	c := ProfilesImportLocalCmd{
 		prompter:            interactive.NewPrompter(),
 		providers:           passwordmanager.Detect,
 		provisioner:         kernelManagedAuthProvisioner{credentials: &credentials, connections: &connections},
 		managedAuthCapacity: func(ctx context.Context) (managedAuthCapacity, error) { return loadManagedAuthCapacity(ctx, &limits) },
+		profileLookup: func(ctx context.Context, name string) (kernelProfileReference, bool, error) {
+			profile, err := profiles.Get(ctx, name)
+			if err == nil {
+				return kernelProfileReference{ID: profile.ID, Name: profile.Name}, true, nil
+			}
+			var apiErr *kernel.Error
+			if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+				return kernelProfileReference{}, false, nil
+			}
+			return kernelProfileReference{}, false, util.CleanedUpSdkError{Err: err}
+		},
 	}
 	input.ProjectID = project.ID
 	if input.Version == "" {
