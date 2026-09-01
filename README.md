@@ -155,7 +155,6 @@ Commands with JSON output support:
   - `openai-computer-use` - OpenAI Computer Use Agent sample
   - `gemini-computer-use` - Implements a Gemini computer use agent (TypeScript only)
   - `openagi-computer-use` - OpenAGI Lux computer-use models (Python only)
-  - `magnitude` - Magnitude framework sample (TypeScript only)
   - `claude-agent-sdk` - Claude Agent SDK browser automation agent
 
 ### App Deployment
