@@ -53,7 +53,6 @@ async def bu_task(ctx: kernel.KernelContext, input_data: TaskInput):
             # task="Compare the price of gpt-4o and DeepSeek-V3",
             task=input_data["task"],
             llm=llm,
-            # browser_session=BrowserSessionCustomResize(cdp_url=kernel_browser.cdp_ws_url)
             browser_session=browser,
         )
         result = await agent.run()
