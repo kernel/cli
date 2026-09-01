@@ -134,6 +134,8 @@ func TestMacOSAppleScriptShellQuotesURLAtRuntime(t *testing.T) {
 	assert.Contains(t, script, `/usr/bin/open -a Terminal`)
 	assert.Contains(t, script, `/bin/zsh -lic`)
 	assert.Contains(t, script, `/usr/bin/mktemp /tmp/kernel-connector.XXXXXX`)
+	assert.Contains(t, script, `/bin/launchctl getenv`)
+	assert.Contains(t, script, `KERNEL_BASE_URL KERNEL_API_KEY KERNEL_AUTH_BASE_URL`)
 	assert.NotContains(t, script, `XXXXXX.command`)
 	assert.Contains(t, script, `Kernel CLI was removed`)
 	assert.Contains(t, script, `«event GURLGURL»`)
