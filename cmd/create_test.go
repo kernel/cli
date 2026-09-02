@@ -434,12 +434,6 @@ func TestCreateCommand_InvalidLanguageTemplateCombinations(t *testing.T) {
 			errContains: "template not found: python/stagehand",
 		},
 		{
-			name:        "magnitude not available for python",
-			language:    create.LanguagePython,
-			template:    create.TemplateMagnitude,
-			errContains: "template not found: python/magnitude",
-		},
-		{
 			name:        "invalid language",
 			language:    "ruby",
 			template:    create.TemplateSampleApp,
@@ -551,7 +545,6 @@ func TestCreateCommand_TemplateNotAvailableForLanguage(t *testing.T) {
 	unavailableCombinations := map[string][]string{
 		create.TemplateBrowserUse: {create.LanguageTypeScript},
 		create.TemplateStagehand:  {create.LanguagePython},
-		create.TemplateMagnitude:  {create.LanguagePython},
 	}
 
 	for template, unavailableLanguages := range unavailableCombinations {
