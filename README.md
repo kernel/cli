@@ -478,9 +478,11 @@ Destinations are the OTLP/HTTP endpoints sessions export to, managed per project
 
 - `kernel browsers computer press-key <id>` - Press one or more keys
 
-  - `--key <key>` - Key symbols to press (repeatable)
+  - `--key <key>` - One X11 keysym or chord, such as `Return`, `Ctrl+t`, or `Ctrl+minus` (repeatable)
   - `--duration <ms>` - Duration to hold keys down in ms (0=tap)
   - `--hold-key <key>` - Modifier keys to hold (repeatable)
+
+  Pass sequential or repeated key presses as separate `--key` values, for example `--key BackSpace --key BackSpace`. Use `computer type --text` to enter text instead of passing text to `press-key`.
 
 - `kernel browsers computer scroll <id>` - Scroll the mouse wheel
 

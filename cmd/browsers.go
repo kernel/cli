@@ -2879,7 +2879,7 @@ func init() {
 
 	// computer press-key
 	computerPressKey := &cobra.Command{Use: "press-key <id>", Short: "Press one or more keys", Args: cobra.ExactArgs(1), RunE: runBrowsersComputerPressKey}
-	computerPressKey.Flags().StringSlice("key", []string{}, "Key symbols to press (repeatable)")
+	computerPressKey.Flags().StringSlice("key", []string{}, "One X11 keysym or chord per value, e.g. Return, Ctrl+t, or Ctrl+minus (repeatable)")
 	_ = computerPressKey.MarkFlagRequired("key")
 	computerPressKey.Flags().Int64("duration", 0, "Duration to hold keys down in ms (0=tap)")
 	computerPressKey.Flags().StringSlice("hold-key", []string{}, "Modifier keys to hold (repeatable)")
