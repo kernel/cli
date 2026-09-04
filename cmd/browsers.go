@@ -252,6 +252,24 @@ func formatPrivateHosts(network kernel.BrowserNetworkConfig) string {
 	return strings.Join(network.PrivateHosts, ", ")
 }
 
+// formatVaultReferences renders the vaults linked to a session for table output,
+// preferring each vault's name and falling back to its ID. It returns an empty
+// string when no vaults are linked, so the row can be omitted entirely.
+func formatVaultReferences(vaults []kernel.VaultReference) string {
+	if len(vaults) == 0 {
+		return ""
+	}
+	labels := make([]string, 0, len(vaults))
+	for _, vault := range vaults {
+		if vault.Name != "" {
+			labels = append(labels, vault.Name)
+			continue
+		}
+		labels = append(labels, vault.ID)
+	}
+	return strings.Join(labels, ", ")
+}
+
 // parseStringMapFlag parses repeated KEY=value flag values into a map. It returns a nil
 // map when no values were given, so callers can distinguish "flag absent" from "flag set
 // to an empty map".
@@ -383,6 +401,7 @@ type BrowsersCreateInput struct {
 	PrivateHosts        []string
 	StartURL            string
 	Extensions          []string
+	Vaults              []string
 	Viewport            string
 	Telemetry           string
 	TelemetryCdpExclude string
@@ -662,6 +681,24 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		}
 	}
 
+	// Map vaults (IDs or names) into params.Vaults. Links are immutable once the
+	// session is created.
+	if len(in.Vaults) > 0 {
+		for _, vault := range in.Vaults {
+			val := strings.TrimSpace(vault)
+			if val == "" {
+				continue
+			}
+			item := kernel.VaultReferenceParam{}
+			if cuidRegex.MatchString(val) {
+				item.ID = kernel.Opt(val)
+			} else {
+				item.Name = kernel.Opt(val)
+			}
+			params.Vaults = append(params.Vaults, item)
+		}
+	}
+
 	// Add viewport if specified
 	if in.Viewport != "" {
 		width, height, refreshRate, err := parseViewport(in.Viewport)
@@ -848,8 +885,16 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		tableData = append(tableData, []string{"Proxy", proxy})
 	}
 	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)})
+	if vaults := formatVaultReferences(browser.Vaults); vaults != "" {
+		tableData = append(tableData, []string{"Vaults", vaults})
+	}
 	if !browser.DeletedAt.IsZero() {
 		tableData = append(tableData, []string{"Deleted At", util.FormatLocal(browser.DeletedAt)})
+	}
+	// Only populated for deleted sessions, where "pending" means the usage figures
+	// above are not yet the final billed ones.
+	if browser.UsageStatus != "" {
+		tableData = append(tableData, []string{"Usage Status", string(browser.UsageStatus)})
 	}
 
 	PrintTableNoPad(tableData, true)
@@ -3088,6 +3133,7 @@ func init() {
 	browsersCreateCmd.Flags().StringSlice("private-host", nil, "Destinations the browser reaches directly through its own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel the session joins (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Replaces the default private ranges (RFC1918, 100.64.0.0/10, fc00::/7); omit to keep them. Fixed once the session is created")
 	browsersCreateCmd.Flags().String("start-url", "", "Initial page to open on launch")
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
+	browsersCreateCmd.Flags().StringSlice("vault", []string{}, "Vault IDs or names to link to the session (repeatable; may be passed multiple times or comma-separated). Fixed once the session is created")
 	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersCreateCmd.Flags().Bool("viewport-interactive", false, "Interactively select viewport size from list")
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
@@ -3220,6 +3266,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
+	vaults, _ := cmd.Flags().GetStringSlice("vault")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	viewportInteractive, _ := cmd.Flags().GetBool("viewport-interactive")
 	poolID, _ := cmd.Flags().GetString("pool-id")
@@ -3351,6 +3398,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		PrivateHosts:        privateHosts,
 		StartURL:            startURL,
 		Extensions:          extensions,
+		Vaults:              vaults,
 		Viewport:            viewport,
 		Telemetry:           telemetry,
 		TelemetryCdpExclude: telemetryCdpExclude,
