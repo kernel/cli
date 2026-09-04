@@ -112,10 +112,10 @@ func (c VaultsCmd) Delete(ctx context.Context, vault, key string, yes bool) erro
 	} else {
 		err = c.vaults.Items.Delete(ctx, key, kernel.VaultItemDeleteParams{IDOrName: vault}, option.WithMaxRetries(0))
 	}
-	if err != nil {
+	if err != nil && !util.IsNotFound(err) {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	pterm.Success.Println("Deleted: " + label)
+	pterm.Success.Println("Deleted or not found: " + label)
 	return nil
 }
 

@@ -412,9 +412,9 @@ func TestVaultNoSDKRetriesAndAPIErrorMessages(t *testing.T) {
 func TestVaultInvalidProjectErrors(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
 	commands := [][]string{
-		{"list"}, {"get", "checkout"}, {"create", "--name", "checkout"}, {"delete", "checkout", "--yes"},
+		{"list"}, {"get", "checkout"}, {"create", "--name", "checkout"},
 		{"items", "list", "checkout"}, {"items", "get", "checkout", "order-1"},
-		{"items", "events", "checkout", "order-1"}, {"items", "delete", "checkout", "order-1", "--yes"},
+		{"items", "events", "checkout", "order-1"},
 		{"wallets", "create", "checkout", "wallet-1", "--provider", "link"},
 		{"wallets", "payment-methods", "checkout", "wallet-1"},
 		append([]string{"cards", "create", "checkout", "order-1"}, linkCardArgs()...),
@@ -492,17 +492,45 @@ func TestVaultGetWaitExpansionAndEvents(t *testing.T) {
 	assert.NotContains(t, human, "SECRET")
 }
 
-func TestVaultDeleteAndEmptyItemLists(t *testing.T) {
+func TestVaultDeleteResponses(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "project-test")
 	for _, path := range []string{"vaults delete checkout --yes", "vaults items delete checkout order-1 --yes"} {
-		client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-			assert.Equal(t, http.MethodDelete, r.Method)
-			w.WriteHeader(http.StatusNoContent)
-		})
-		_, human, err := executeVaultCommand(t, client, strings.Fields(path)...)
-		require.NoError(t, err)
-		assert.Contains(t, human, "Deleted")
+		for _, response := range []struct {
+			status int
+			code   string
+		}{
+			{204, ""}, {404, "not_found"}, {404, "project_not_found"}, {403, "forbidden"}, {409, "conflict"}, {500, "internal_error"},
+		} {
+			t.Run(fmt.Sprintf("%s/%d/%s", path, response.status, response.code), func(t *testing.T) {
+				calls := 0
+				client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					assert.Equal(t, http.MethodDelete, r.Method)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(response.status)
+					if response.code != "" {
+						_, _ = fmt.Fprintf(w, `{"code":%q,"message":"API error details"}`, response.code)
+					}
+				})
+				out, human, err := executeVaultCommand(t, client, strings.Fields(path)...)
+				assert.Equal(t, 1, calls)
+				assert.Empty(t, out)
+				if response.status == http.StatusNoContent || response.status == http.StatusNotFound {
+					require.NoError(t, err)
+					assert.Contains(t, human, "Deleted or not found: vault")
+					assert.Contains(t, human, "checkout")
+				} else {
+					require.Error(t, err)
+					assert.Equal(t, response.code+": API error details", util.CleanedUpSdkError{Err: err}.Error())
+					assert.Empty(t, human)
+				}
+			})
+		}
 	}
+}
+
+func TestVaultEmptyItemLists(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "project-test")
 	for _, path := range []string{"vaults items list checkout", "vaults items events checkout order-1"} {
 		client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")

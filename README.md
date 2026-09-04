@@ -301,8 +301,9 @@ JSON preserves field presence and API-returned aliases, while omitting unknown f
 opaque metadata, and unrecognized event data. Human output labels aliases as non-secret
 checkout values and distinguishes card readiness from checkout authorization/payment outcomes.
 API failures use the CLI's standard error formatter, preserving the API's code and message.
-Delete failures, including invalid-project and missing-resource responses, return an error rather
-than claiming success.
+`vaults delete` and `vaults items delete` treat HTTP 404 as success and print
+`Deleted or not found`, whether the missing object is the project, vault, or item.
+Other API errors still return a nonzero exit status.
 
 **Card flags:** `--provider`, `--wallet <key>`, `--amount <minor-units>`, `--currency <code>`,
 and `--merchant <name>` are required. Currency is normalized to lowercase.
