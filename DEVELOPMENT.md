@@ -56,33 +56,6 @@ A typical workflow we encounter is updating the API and integrating those change
 ./scripts/go-mod-replace-kernel.sh <commit | branch name>
 ```
 
-### Maintaining the vault commands
-
-Wallet creation and card creation/update accept `--provider` and raw `--spec` JSON.
-Provider-specific fields are validated by the API, not duplicated as CLI flags or local
-schema validators. Preserve JSON values, including large integers, explicit `false`, nulls,
-and omitted fields; do not introduce defaults while converting requests for the SDK.
-
-Item operations use `items invoke <vault> <key> <operation>`. Gate invocations on the
-server's `available_operations`, not local provider/type/state rules or an operation registry.
-The current operation schema only accepts `{"type":"authorize"}` with no extra fields;
-add operation parameters only when the API supports them. GET output should retain the
-selected project in copyable invocation hints and shell-quote arguments safely.
-
-- Keep the types in `cmd/vaults_help.go` aligned with the
-  [published API spec](https://api.onkernel.com/spec.yaml), including nested optional types.
-- Update the README examples and payment-method selection hints when changing this interface.
-- Run `make test`, `make build`, and `go test -race ./cmd -run TestVault -count=1`.
-  Use local HTTP fixtures for request/output tests; do not create live payment credentials.
-- Action and approval URLs must remain outside the terminal-width-limited tables. Check
-  complete URLs at narrow terminal widths as well as in piped and JSON output.
-
-#### SDK dependency
-
-Vault commands use the published `github.com/kernel/kernel-go-sdk` v0.100.0 dependency.
-No preview replacement, private SDK access, or special CI authentication is required.
-When upgrading the SDK, run `go mod tidy`, tests, build, and lint against the released module.
-
 ### Releasing a new version
 
 Releases are automated via GitHub Actions. Simply push a version tag and the release workflow will handle the rest.
