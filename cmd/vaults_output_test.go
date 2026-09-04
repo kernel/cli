@@ -144,13 +144,14 @@ func TestVaultCancellationDoesNotLeakTransportDetails(t *testing.T) {
 		require.Error(t, err)
 		assert.NotContains(t, util.CleanedUpSdkError{Err: err}.Error(), "SECRET")
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	var calls atomic.Int32
 	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+		cancel()
 		<-r.Context().Done()
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
 	c := VaultsCmd{vaults: &client.Vaults}
 	err := c.GetItem(ctx, "checkout", "order-1", 60, nil, "json", false)
 	require.Error(t, err)

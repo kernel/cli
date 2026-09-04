@@ -61,7 +61,8 @@ func TestVaultCommandConstruction(t *testing.T) {
 			if cmd.Name() == "delete" {
 				assert.NotNil(t, cmd.Flags().Lookup("yes"))
 			} else {
-				assert.NotNil(t, cmd.Flags().Lookup("output"))
+				require.NotNil(t, cmd.Flags().Lookup("output"))
+				assert.Contains(t, cmd.Flags().Lookup("output").Usage, "display-safe")
 			}
 		})
 	}

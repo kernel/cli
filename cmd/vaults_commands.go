@@ -22,6 +22,11 @@ func getVaultsHandler(cmd *cobra.Command) VaultsCmd {
 	return VaultsCmd{vaults: &client.Vaults, prompter: interactive.NewPrompter(), openURL: browser.OpenURL}
 }
 
+func addVaultJSONOutputFlag(cmd *cobra.Command) {
+	addJSONOutputFlag(cmd)
+	cmd.Flags().Lookup("output").Usage = "Output format: json for display-safe API fields"
+}
+
 func vaultOutput(cmd *cobra.Command) string {
 	output, _ := cmd.Flags().GetString("output")
 	return output
@@ -78,7 +83,7 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 		}}
 	create.Flags().String("name", "", "Immutable vault name (required)")
 	_ = create.MarkFlagRequired("name")
-	addJSONOutputFlag(create)
+	addVaultJSONOutputFlag(create)
 
 	list := &cobra.Command{Use: "list", Short: "List vaults in the selected project", Args: cobra.NoArgs, PreRunE: vaultPreRun,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -89,13 +94,13 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 		}}
 	list.Flags().Int64("limit", 20, "Maximum vaults to return (1-100)")
 	list.Flags().Int64("offset", 0, "Number of vaults to skip")
-	addJSONOutputFlag(list)
+	addVaultJSONOutputFlag(list)
 
 	get := &cobra.Command{Use: "get <vault>", Short: "Get a vault by ID or name", Args: cobra.ExactArgs(1), PreRunE: vaultPreRun,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return getVaultsHandler(cmd).Get(cmd.Context(), args[0], vaultOutput(cmd))
 		}}
-	addJSONOutputFlag(get)
+	addVaultJSONOutputFlag(get)
 	cmd.AddCommand(create, list, get, newVaultDeleteCommand(false))
 
 	items := &cobra.Command{Use: "items", Short: "Inspect vault item state, actions, aliases, and outcomes"}
@@ -103,7 +108,7 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return getVaultsHandler(cmd).ListItems(cmd.Context(), args[0], vaultOutput(cmd))
 		}}
-	addJSONOutputFlag(itemList)
+	addVaultJSONOutputFlag(itemList)
 	itemGet := &cobra.Command{Use: "get <vault> <key>", Short: "Get item state and any required action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
 		Long: "Get item state, available operations, provider actions, and returned checkout aliases.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nAn item still pending after the wait is returned as-is; ready does not mean paid.",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -115,7 +120,7 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 	itemGet.Flags().Int64("wait", 0, "Hold while pending for up to this many seconds (0-60); observe only")
 	itemGet.Flags().StringSlice("expand", nil, "Advertised live data to fetch: payment_methods")
 	itemGet.Flags().Bool("open", false, "Open a returned HTTPS action URL in your browser")
-	addJSONOutputFlag(itemGet)
+	addVaultJSONOutputFlag(itemGet)
 	itemEvents := &cobra.Command{Use: "events <vault> <key>", Short: "Read immutable item events without retrying payments", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			after, _ := cmd.Flags().GetString("after")
@@ -124,7 +129,7 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 		}}
 	itemEvents.Flags().String("after", "", "Return events after this event ID (use the last ID from the previous response)")
 	itemEvents.Flags().Int64("wait", 0, "Long-poll once for new events (0-60 seconds)")
-	addJSONOutputFlag(itemEvents)
+	addVaultJSONOutputFlag(itemEvents)
 	items.AddCommand(itemList, itemGet, itemEvents, newVaultDeleteCommand(true))
 
 	wallets := &cobra.Command{Use: "wallets", Short: "Connect provider wallets and inspect funding methods"}
@@ -140,13 +145,13 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 	_ = walletCreate.MarkFlagRequired("provider")
 	walletCreate.Flags().String("user-id", "", "Already enrolled AgentCard user ID in this organization (optional)")
 	walletCreate.Flags().Bool("open", false, "Open the returned HTTPS connection/enrollment URL")
-	addJSONOutputFlag(walletCreate)
+	addVaultJSONOutputFlag(walletCreate)
 	methods := &cobra.Command{Use: "payment-methods <vault> <key>", Short: "Fetch advertised live wallet payment methods", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
 		Long: "Fetch payment_methods through the item's GET expansion. The wallet must advertise this expansion.\nDisplays selectable IDs and advisory capabilities; never automatically chooses a funding method.\nJSON returns the item with expanded.payment_methods, like items get --expand payment_methods.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return getVaultsHandler(cmd).GetItem(cmd.Context(), args[0], args[1], 0, []string{"payment_methods"}, vaultOutput(cmd), false)
 		}}
-	addJSONOutputFlag(methods)
+	addVaultJSONOutputFlag(methods)
 	wallets.AddCommand(walletCreate, methods)
 
 	cards := &cobra.Command{Use: "cards", Short: "Configure card requests and explicitly authorize requested Link cards"}
@@ -157,7 +162,7 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 			return getVaultsHandler(cmd).Authorize(cmd.Context(), args[0], args[1], vaultOutput(cmd), open)
 		}}
 	authorize.Flags().Bool("open", false, "Open the returned HTTPS approval URL")
-	addJSONOutputFlag(authorize)
+	addVaultJSONOutputFlag(authorize)
 	cards.AddCommand(newVaultCardCommand(false), newVaultCardCommand(true), authorize)
 	cmd.AddCommand(items, wallets, cards)
 	return cmd
@@ -196,8 +201,7 @@ Permitted domains come from the provider and cannot be configured by this API.
 Neither create nor update authorizes a Link card. The API enforces update eligibility,
 provider/wallet invariants, and immutable item keys. Update replaces the entire spec;
 optional purchase details set outside the CLI are removed when omitted.
-Never reconfigure to retry a failed,
-timed-out, rejected, or indeterminate payment.`,
+Never reconfigure to retry a failed, timed-out, rejected, or indeterminate payment.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			spec, err := vaultCardSpecFromFlags(cmd)
 			if err != nil {
@@ -220,7 +224,7 @@ timed-out, rejected, or indeterminate payment.`,
 	cmd.Flags().Bool("live", false, "Request a live Link payment credential (explicit opt-in)")
 	cmd.MarkFlagsMutuallyExclusive("test", "live")
 	cmd.Flags().String("card-id", "", "AgentCard vaulted card ID; omit to let the cardholder select during approval")
-	addJSONOutputFlag(cmd)
+	addVaultJSONOutputFlag(cmd)
 	return cmd
 }
 
