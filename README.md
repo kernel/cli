@@ -285,10 +285,10 @@ cannot switch projects.
 | `kernel vaults list` | `--limit 1..100` (default 20), `--offset`; JSON includes `vaults` and optional `next_offset` |
 | `kernel vaults get <vault>` | Get by ID or name |
 | `kernel vaults delete <vault>` | Invalidate the vault and all its items; `--yes` skips confirmation |
-| `kernel vaults wallets create <vault> <key> --provider link\|agentcard` | Connect/enroll a wallet; `--open` opens a returned HTTPS action URL; AgentCard optionally accepts `--user-id` for an already enrolled user in this organization |
+| `kernel vaults wallets create <vault> <key> --provider link\|agentcard --spec '<json>'` | Connect/enroll a wallet using its provider's spec; `--open` opens a returned HTTPS action URL |
 | `kernel vaults wallets payment-methods <vault> <key>` | Fetch advertised live payment methods; JSON is the item with `expanded.payment_methods` |
-| `kernel vaults cards create <vault> <key>` | Create a card request with the typed flags below; never implicitly authorize Link |
-| `kernel vaults cards update <vault> <key>` | Replace the full card spec using the same flags; the API enforces state/provider constraints |
+| `kernel vaults cards create <vault> <key> --provider link\|agentcard --spec '<json>'` | Create a card request; never implicitly authorize Link |
+| `kernel vaults cards update <vault> <key> --provider link\|agentcard --spec '<json>'` | Replace the full card spec; the API enforces state/provider constraints |
 | `kernel vaults cards authorize <vault> <key>` | After explicit user approval, GET the requested Link card and POST `authorize` only if advertised; optional `--open` |
 | `kernel vaults items list <vault>` | List item keys, types, providers, status, and required actions |
 | `kernel vaults items get <vault> <key>` | Inspect state/actions/returned aliases; `--wait 0..60`, `--expand payment_methods`, `--open` |
@@ -306,22 +306,22 @@ API failures use the CLI's standard error formatter, preserving the API's code a
 `Deleted or not found`, whether the missing object is the project, vault, or item.
 Other API errors still return a nonzero exit status.
 
-**Card flags:** `--provider`, `--wallet <key>`, `--amount <minor-units>`, `--currency <code>`,
-and `--merchant <name>` are required. Currency is normalized to lowercase.
+**Provider specifications:** wallet creation and card creation/update require `--provider`
+and `--spec '<json>'`. Supply only the spec object, not a `{type, spec}` envelope. The command
+sets the item type and injects `provider`; if JSON also contains `provider`, it must match.
+Other values are forwarded unchanged, including optional fields, without defaults or normalization.
+The API validates the provider-specific schema. Each command's `--help` includes its raw
+TypeScript-style types, which must stay in sync with the [API spec](https://api.onkernel.com/spec.yaml).
 
-- **Link:** also requires `--payment-method-id`, `--merchant-url`, `--context` (at least 100
-  characters describing the purchase), and exactly one of `--test` or `--live`. Amount is
-  1–500000 minor units. Choose the payment-method ID from the wallet listing; capability
-  hints are advisory, and missing hints mean unknown rather than ineligible.
-- **AgentCard:** optionally accepts `--card-id` from the wallet listing; otherwise the
-  cardholder selects a card at approval. Sandbox/live mode is set by the deployment;
-  there is no per-item test flag. AgentCard authorization happens at checkout, not through
-  `cards authorize`. A reusable card being `ready` does not mean the last payment succeeded.
-- Permitted checkout domains are provider-assigned and displayed when returned. The API
-  does **not** accept a domain-setting flag. The merchant URL is not a domain allowlist.
-- Advanced optional Link line items, totals, metadata, and expiry are not configurable in
-  this initial CLI surface. `cards update` replaces the entire spec, so omitted optional
-  details previously set through another client are removed.
+- **Link wallet:** supply `authorization: {method: "oauth", client: {type: "kernel_managed"}}`.
+- **AgentCard wallet:** use `{}` to enroll, or supply `user_id` for an already enrolled user.
+- **Link card:** include an explicit `test: true` or `test: false` and the required fields shown
+  in help. Optional `line_items`, `totals`, `metadata`, and `expires_at` are supported through JSON.
+- **AgentCard card:** uses `merchant`, not Link's `merchant_name`. Its optional `card_id` selects
+  a vaulted card; otherwise the cardholder selects one at approval. Mode is deployment-controlled.
+
+`cards update` replaces the entire spec, so omitted optional details are removed. Permitted
+checkout domains remain provider-assigned. Neither command submits a merchant payment.
 
 #### Link checkout preparation
 
@@ -329,7 +329,8 @@ and `--merchant <name>` are required. Currency is normalized to lowercase.
 
    ```bash
    kernel vaults create --name checkout
-   kernel vaults wallets create checkout wallet-1 --provider link --open
+   kernel vaults wallets create checkout wallet-1 --provider link \
+     --spec '{"authorization":{"method":"oauth","client":{"type":"kernel_managed"}}}' --open
    kernel vaults items get checkout wallet-1 --wait 60
    ```
 
@@ -337,12 +338,16 @@ and `--merchant <name>` are required. Currency is normalized to lowercase.
 
    ```bash
    kernel vaults wallets payment-methods checkout wallet-1
-   kernel vaults cards create checkout order-1 \
-     --provider link --wallet wallet-1 --payment-method-id <returned-id> \
-     --amount 1234 --currency USD --merchant 'Example Shop' \
-     --merchant-url https://shop.example \
-     --context 'Purchase the selected office supplies from Example Shop for the approved order, with a total spending limit of 1234 minor currency units.' \
-     --test
+   kernel vaults cards create checkout order-1 --provider link --spec '{
+     "wallet": "wallet-1",
+     "payment_method_id": "<returned-id>",
+     "amount": 1234,
+     "currency": "usd",
+     "merchant_name": "Example Shop",
+     "merchant_url": "https://shop.example",
+     "context": "Purchase the selected office supplies from Example Shop for the approved order, with a total spending limit of 1234 minor currency units.",
+     "test": true
+   }'
    ```
 
 3. After explicit user approval, authorize **only if the item advertises it**. Follow the

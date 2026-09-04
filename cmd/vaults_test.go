@@ -19,6 +19,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const linkWalletSpecFixture = `{"authorization":{"method":"oauth","client":{"type":"kernel_managed"}}}`
+
 const vaultFixture = `{"id":"vault-1","name":"checkout","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}`
 const requestedCardFixture = `{"id":"item-1","key":"order-1","type":"card","spec":{"provider":"link","wallet":"wallet-1","payment_method_id":"pm-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://shop.example","context":"Purchase description","test":true},"state":{"provider":"link","status":"requested"},"available_operations":[{"type":"authorize","description":"Use only after explicit user approval."}],"available_expansions":[]}`
 const connectedWalletFixture = `{"id":"wallet-id","key":"wallet-1","type":"wallet","spec":{"provider":"link","authorization":{"method":"oauth","client":{"type":"kernel_managed"}}},"state":{"provider":"link","status":"connected"},"available_operations":[],"available_expansions":[{"type":"payment_methods","description":"Select a payment method explicitly."}]}`
@@ -98,7 +100,10 @@ func TestVaultRequiredAndInvalidFlags(t *testing.T) {
 		{"vaults items events checkout wallet-1 --wait 61", "--wait"},
 		{"vaults items get checkout wallet-1 --expand secret", "--expand"},
 		{"vaults wallets create checkout wallet-1", "required flag"},
-		{"vaults wallets create checkout wallet-1 --provider unknown", "--provider"},
+		{"vaults wallets create checkout wallet-1 --provider unknown --spec {}", "--provider"},
+		{"vaults wallets create checkout wallet-1 --provider link", "required flag"},
+		{"vaults cards create checkout order-1 --provider link", "required flag"},
+		{"vaults cards update checkout order-1 --spec {}", "required flag"},
 		{"vaults wallets create checkout wallet-1 --provider link --user-id usr_123", "--user-id"},
 		{"vaults wallets create checkout wallet-1 --provider agentcard --user-id wrong", "--user-id"},
 		{"vaults cards create checkout order-1", "required flag"},
@@ -131,7 +136,7 @@ func TestVaultCommandsWithoutProject(t *testing.T) {
 		{[]string{"items", "get", "checkout", "order-1"}, requestedCardFixture, 1},
 		{[]string{"items", "delete", "checkout", "order-1", "--yes"}, "", 1},
 		{[]string{"items", "events", "checkout", "order-1"}, "[]", 1},
-		{[]string{"wallets", "create", "checkout", "wallet-1", "--provider", "link"}, connectedWalletFixture, 1},
+		{[]string{"wallets", "create", "checkout", "wallet-1", "--provider", "link", "--spec", linkWalletSpecFixture}, connectedWalletFixture, 1},
 		{[]string{"wallets", "payment-methods", "checkout", "wallet-1"}, connectedWalletFixture, 1},
 		{append([]string{"cards", "create", "checkout", "order-1"}, linkCardArgs()...), requestedCardFixture, 1},
 		{append([]string{"cards", "update", "checkout", "order-1"}, linkCardArgs()...), requestedCardFixture, 1},
@@ -160,60 +165,21 @@ func TestVaultCommandsWithoutProject(t *testing.T) {
 }
 
 func linkCardArgs() []string {
-	return []string{"--provider", "link", "--wallet", "wallet-1", "--amount", "1234", "--currency", "USD", "--merchant", "Example Shop", "--payment-method-id", "pm-1", "--merchant-url", "https://shop.example", "--context", strings.Repeat("Purchase purpose. ", 7), "--test"}
+	return []string{"--provider", "link", "--spec", fmt.Sprintf(`{"wallet":"wallet-1","amount":1234,"currency":"USD","merchant_name":"Example Shop","payment_method_id":"pm-1","merchant_url":"https://shop.example","context":%q,"test":true}`, strings.Repeat("Purchase purpose. ", 7))}
 }
 
-func TestVaultCardSpecValidation(t *testing.T) {
-	tests := []struct {
-		flag, value, want string
-	}{
-		{"provider", "other", "--provider"},
-		{"wallet", "", "--wallet"},
-		{"amount", "0", "--amount"},
-		{"amount", "-1", "--amount"},
-		{"amount", "500001", "--amount"},
-		{"currency", "US", "--currency"},
-		{"currency", "123", "--currency"},
-		{"merchant", " ", "--merchant"},
-		{"merchant", strings.Repeat("m", 256), "--merchant"},
-		{"payment-method-id", "", "--payment-method-id"},
-		{"merchant-url", "example.com", "--merchant-url"},
-		{"merchant-url", "https://user:secret@example.com", "--merchant-url"},
-		{"merchant-url", "javascript:alert(1)", "--merchant-url"},
-		{"context", strings.Repeat("x", 99), "--context"},
-		{"test", "false", "--test or --live"},
-		{"live", "true", "--test or --live"},
-		{"card-id", "vc_test", "--card-id"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.flag+tt.value, func(t *testing.T) {
-			cmd := newVaultCardCommand(false)
-			require.NoError(t, cmd.ParseFlags(linkCardArgs()))
-			require.NoError(t, cmd.Flags().Set(tt.flag, tt.value))
-			_, err := vaultCardSpecFromFlags(cmd)
-			require.ErrorContains(t, err, tt.want)
-		})
-	}
-	for _, update := range []bool{false, true} {
-		cmd := newVaultCardCommand(update)
-		args := linkCardArgs()
-		args[len(args)-1] = "--live"
-		require.NoError(t, cmd.ParseFlags(args))
-		spec, err := vaultCardSpecFromFlags(cmd)
-		require.NoError(t, err)
-		assert.False(t, spec.OfLink.Test)
-		assert.Equal(t, "usd", spec.OfLink.Currency)
-		assert.Equal(t, int64(1234), spec.OfLink.Amount)
-	}
-	for _, args := range [][]string{
-		{"--provider", "agentcard", "--wallet", "wallet-1", "--amount", "9007199254740992", "--currency", "USD", "--merchant", "Shop"},
-		{"--provider", "agentcard", "--wallet", "wallet-1", "--amount", "1", "--currency", "USD", "--merchant", "Shop", "--test=false"},
-		{"--provider", "agentcard", "--wallet", "wallet-1", "--amount", "1", "--currency", "USD", "--merchant", "Shop", "--card-id", ""},
-	} {
-		cmd := newVaultCardCommand(false)
-		require.NoError(t, cmd.ParseFlags(args))
-		_, err := vaultCardSpecFromFlags(cmd)
-		require.Error(t, err)
+func TestVaultSpecValidation(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Error("invalid JSON reached API") })
+	for _, path := range []string{"wallets create", "cards create", "cards update"} {
+		for _, spec := range []string{"", "null", "[]", "42", `"text"`, "{", "{} {}", `{"provider":"agentcard"}`, `{"provider":null}`, `{"provider":1}`} {
+			t.Run(path+"/"+spec, func(t *testing.T) {
+				args := append([]string{"vaults"}, strings.Fields(path)...)
+				args = append(args, "checkout", "item-1", "--provider", "link", "--spec", spec)
+				_, _, err := executeVaultCommand(t, client, args...)
+				require.Error(t, err)
+			})
+		}
 	}
 }
 
@@ -287,10 +253,7 @@ func TestVaultWalletRequestMapping(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = io.WriteString(w, connectedWalletFixture)
 			})
-			args := []string{"vaults", "wallets", "create", "checkout", "wallet-1", "--provider", tt.provider, "-o", "json"}
-			if tt.userID != "" {
-				args = append(args, "--user-id", tt.userID)
-			}
+			args := []string{"vaults", "wallets", "create", "checkout", "wallet-1", "--provider", tt.provider, "--spec", tt.spec, "-o", "json"}
 			out, human, err := executeVaultCommand(t, client, args...)
 			require.NoError(t, err)
 			assert.JSONEq(t, connectedWalletFixture, out)
@@ -322,7 +285,7 @@ func TestVaultCardRequestMapping(t *testing.T) {
 						assert.Len(t, body, 1)
 					}
 					if provider == "link" {
-						assert.JSONEq(t, fmt.Sprintf(`{"provider":"link","wallet":"wallet-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://shop.example","payment_method_id":"pm-1","context":%q,"test":true}`, strings.Repeat("Purchase purpose. ", 7)), string(body["spec"]))
+						assert.JSONEq(t, fmt.Sprintf(`{"provider":"link","wallet":"wallet-1","amount":1234,"currency":"USD","merchant_name":"Example Shop","merchant_url":"https://shop.example","payment_method_id":"pm-1","context":%q,"test":true}`, strings.Repeat("Purchase purpose. ", 7)), string(body["spec"]))
 					} else {
 						assert.JSONEq(t, `{"provider":"agentcard","wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop","card_id":"vc_chosen"}`, string(body["spec"]))
 					}
@@ -331,7 +294,7 @@ func TestVaultCardRequestMapping(t *testing.T) {
 				})
 				flags := linkCardArgs()
 				if provider == "agentcard" {
-					flags = []string{"--provider", provider, "--wallet", "wallet-1", "--amount", "1234", "--currency", "USD", "--merchant", "Example Shop", "--card-id", "vc_chosen"}
+					flags = []string{"--provider", provider, "--spec", `{"wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop","card_id":"vc_chosen"}`}
 				}
 				args := append([]string{"vaults", "cards", operation, "checkout", "order-1", "-o", "json"}, flags...)
 				out, human, err := executeVaultCommand(t, client, args...)
@@ -415,7 +378,7 @@ func TestVaultInvalidProjectErrors(t *testing.T) {
 		{"list"}, {"get", "checkout"}, {"create", "--name", "checkout"},
 		{"items", "list", "checkout"}, {"items", "get", "checkout", "order-1"},
 		{"items", "events", "checkout", "order-1"},
-		{"wallets", "create", "checkout", "wallet-1", "--provider", "link"},
+		{"wallets", "create", "checkout", "wallet-1", "--provider", "link", "--spec", linkWalletSpecFixture},
 		{"wallets", "payment-methods", "checkout", "wallet-1"},
 		append([]string{"cards", "create", "checkout", "order-1"}, linkCardArgs()...),
 		append([]string{"cards", "update", "checkout", "order-1"}, linkCardArgs()...),

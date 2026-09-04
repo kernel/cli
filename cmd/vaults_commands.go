@@ -1,14 +1,12 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
-	"net/url"
-	"regexp"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/kernel/cli/pkg/interactive"
 	kernel "github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/packages/param"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 )
@@ -59,7 +57,7 @@ Vault names, item keys, and project ownership are immutable.
 
 1. Create/select a vault, then create a provider wallet and follow its returned action.
 2. For Link, list wallet payment methods and select an ID explicitly.
-3. Create a card request. Link requires explicit --test or --live intent.
+3. Create a card request with --provider and --spec JSON. Link requires an explicit test boolean.
 4. For a requested Link card, use cards authorize only when advertised. Follow the
    returned approval action. AgentCard authorizes at checkout, not through this command.
 5. Attach the vault with browsers create --vault <id-or-name>. Use only returned
@@ -130,17 +128,27 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 	items.AddCommand(itemList, itemGet, itemEvents, newVaultDeleteCommand(true))
 
 	wallets := &cobra.Command{Use: "wallets", Short: "Connect provider wallets and inspect funding methods"}
-	walletCreate := &cobra.Command{Use: "create <vault> <key> --provider <link|agentcard>", Short: "Create a wallet and display its connection or enrollment action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: "Create a wallet at an immutable key. Link uses Kernel-managed OAuth; complete the returned URL outside the CLI.\nAgentCard returns a card-enrollment action, or may reference an already enrolled user in this organization.\nAgentCard sandbox/live mode is fixed by the deployment; there is no per-item test flag.",
+	walletCreate := &cobra.Command{Use: "create <vault> <key> --provider <link|agentcard> --spec '<json>'", Short: "Create a wallet and display its connection or enrollment action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+		Long: "Create a wallet at an immutable key and follow the returned provider action.\n" + vaultSpecHelp + vaultWalletSpecHelp,
+		Example: `  kernel vaults wallets create checkout wallet-1 \
+    --provider link --spec '{
+      "authorization": {
+        "method": "oauth",
+        "client": {"type": "kernel_managed"}
+      }
+    }' --open
+
+  kernel vaults wallets create checkout wallet-1 \
+    --provider agentcard --spec '{}'`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			provider, _ := cmd.Flags().GetString("provider")
-			userID, _ := cmd.Flags().GetString("user-id")
+			spec, err := vaultSpecFromFlags(cmd)
+			if err != nil {
+				return err
+			}
 			open, _ := cmd.Flags().GetBool("open")
-			return getVaultsHandler(cmd).CreateWallet(cmd.Context(), args[0], args[1], provider, userID, vaultOutput(cmd), open)
+			return getVaultsHandler(cmd).CreateWallet(cmd.Context(), args[0], args[1], param.Override[kernel.WalletVaultItemSpecUnionParam](spec), vaultOutput(cmd), open)
 		}}
-	walletCreate.Flags().String("provider", "", "Wallet provider: link or agentcard (required)")
-	_ = walletCreate.MarkFlagRequired("provider")
-	walletCreate.Flags().String("user-id", "", "Already enrolled AgentCard user ID in this organization (optional)")
+	addVaultSpecFlags(walletCreate)
 	walletCreate.Flags().Bool("open", false, "Open the returned HTTPS connection/enrollment URL")
 	addVaultJSONOutputFlag(walletCreate)
 	methods := &cobra.Command{Use: "payment-methods <vault> <key>", Short: "Fetch advertised live wallet payment methods", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
@@ -188,109 +196,53 @@ func newVaultCardCommand(update bool) *cobra.Command {
 	if update {
 		use, short = "update", "Replace a card spec when the API permits configuration"
 	}
-	cmd := &cobra.Command{Use: use + " <vault> <key>", Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: short + `. Supply the complete specification, including all required flags.
-Link requires --payment-method-id, --merchant-url, --context (at least 100 characters),
-and exactly one of --test or --live. Amount is an integer in minor currency units.
-AgentCard uses --merchant as its approval-screen name; --card-id is optional.
-AgentCard mode is deployment-controlled; --test/--live are not supported for it.
-Permitted domains come from the provider and cannot be configured by this API.
-Neither create nor update authorizes a Link card. The API enforces update eligibility,
-provider/wallet invariants, and immutable item keys. Update replaces the entire spec;
-optional purchase details set outside the CLI are removed when omitted.
-Never reconfigure to retry a failed, timed-out, rejected, or indeterminate payment.`,
+	cmd := &cobra.Command{Use: use + " <vault> <key> --provider <link|agentcard> --spec '<json>'", Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+		Long: short + `. Neither create nor update authorizes a Link card.
+Update replaces the entire spec; omitted optional details are removed.
+Never reconfigure to retry a failed, timed-out, rejected, or indeterminate payment.
+` + vaultSpecHelp + vaultCardSpecHelp,
+		Example: "  kernel vaults cards " + use + ` checkout order-1 \
+    --provider agentcard --spec '{
+      "wallet": "wallet-1",
+      "merchant": "Example Shop",
+      "amount": 1234,
+      "currency": "usd"
+    }'`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			spec, err := vaultCardSpecFromFlags(cmd)
+			spec, err := vaultSpecFromFlags(cmd)
 			if err != nil {
 				return err
 			}
-			return getVaultsHandler(cmd).SaveCard(cmd.Context(), args[0], args[1], spec, update, vaultOutput(cmd))
+			return getVaultsHandler(cmd).SaveCard(cmd.Context(), args[0], args[1], param.Override[kernel.CardVaultItemSpecUnionParam](spec), update, vaultOutput(cmd))
 		}}
-	cmd.Flags().String("provider", "", "Card provider: link or agentcard (required)")
-	cmd.Flags().String("wallet", "", "Wallet item key in this vault (required)")
-	cmd.Flags().Int64("amount", 0, "Amount in minor currency units, not a decimal (required)")
-	cmd.Flags().String("currency", "", "Three-letter currency code (required)")
-	cmd.Flags().String("merchant", "", "Merchant name for approval (required)")
-	for _, flag := range []string{"provider", "wallet", "amount", "currency", "merchant"} {
-		_ = cmd.MarkFlagRequired(flag)
-	}
-	cmd.Flags().String("payment-method-id", "", "Explicit ID from wallets payment-methods (required for Link)")
-	cmd.Flags().String("merchant-url", "", "Absolute HTTP(S) merchant URL (required for Link)")
-	cmd.Flags().String("context", "", "Purchase purpose, at least 100 characters (required for Link); no secrets")
-	cmd.Flags().Bool("test", false, "Request Link test credentials (explicitly choose --test or --live)")
-	cmd.Flags().Bool("live", false, "Request a live Link payment credential (explicit opt-in)")
-	cmd.MarkFlagsMutuallyExclusive("test", "live")
-	cmd.Flags().String("card-id", "", "AgentCard vaulted card ID; omit to let the cardholder select during approval")
+	addVaultSpecFlags(cmd)
 	addVaultJSONOutputFlag(cmd)
 	return cmd
 }
 
-func vaultCardSpecFromFlags(cmd *cobra.Command) (kernel.CardVaultItemSpecUnionParam, error) {
-	var spec kernel.CardVaultItemSpecUnionParam
+func addVaultSpecFlags(cmd *cobra.Command) {
+	cmd.Flags().String("provider", "", "Provider: link or agentcard (required)")
+	cmd.Flags().String("spec", "", "Raw JSON specification object (required); see types and examples above")
+	_ = cmd.MarkFlagRequired("provider")
+	_ = cmd.MarkFlagRequired("spec")
+}
+
+func vaultSpecFromFlags(cmd *cobra.Command) (map[string]json.RawMessage, error) {
 	provider, _ := cmd.Flags().GetString("provider")
-	wallet, _ := cmd.Flags().GetString("wallet")
-	amount, _ := cmd.Flags().GetInt64("amount")
-	currency, _ := cmd.Flags().GetString("currency")
-	merchant, _ := cmd.Flags().GetString("merchant")
-	if err := validateVaultName(wallet, "--wallet"); err != nil {
-		return spec, err
+	if provider != "link" && provider != "agentcard" {
+		return nil, fmt.Errorf("--provider must be link or agentcard")
 	}
-	if !regexp.MustCompile(`^[A-Za-z]{3}$`).MatchString(currency) {
-		return spec, fmt.Errorf("--currency must be a three-letter currency code")
+	raw, _ := cmd.Flags().GetString("spec")
+	var spec map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &spec); err != nil || spec == nil {
+		return nil, fmt.Errorf("--spec must be a JSON object")
 	}
-	currency = strings.ToLower(currency)
-	if amount < 1 {
-		return spec, fmt.Errorf("--amount must be positive, in minor currency units")
+	if value, ok := spec["provider"]; ok {
+		var embedded string
+		if err := json.Unmarshal(value, &embedded); err != nil || embedded != provider {
+			return nil, fmt.Errorf("spec.provider must match --provider")
+		}
 	}
-	if strings.TrimSpace(merchant) == "" {
-		return spec, fmt.Errorf("--merchant is required")
-	}
-	switch provider {
-	case "link":
-		if cmd.Flags().Changed("card-id") {
-			return spec, fmt.Errorf("--card-id is only supported by agentcard")
-		}
-		if amount > 500000 || utf8.RuneCountInString(merchant) > 255 {
-			return spec, fmt.Errorf("link requires --amount <= 500000 and --merchant <= 255 characters")
-		}
-		test, _ := cmd.Flags().GetBool("test")
-		live, _ := cmd.Flags().GetBool("live")
-		if test == live || (cmd.Flags().Changed("test") && cmd.Flags().Changed("live")) {
-			return spec, fmt.Errorf("link requires exactly one of --test or --live (set to true)")
-		}
-		method, _ := cmd.Flags().GetString("payment-method-id")
-		merchantURL, _ := cmd.Flags().GetString("merchant-url")
-		contextText, _ := cmd.Flags().GetString("context")
-		if strings.TrimSpace(method) == "" {
-			return spec, fmt.Errorf("--payment-method-id is required; select an ID from wallets payment-methods")
-		}
-		u, err := url.Parse(merchantURL)
-		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" || u.User != nil {
-			return spec, fmt.Errorf("--merchant-url must be an absolute HTTP(S) URL without credentials")
-		}
-		if utf8.RuneCountInString(strings.TrimSpace(contextText)) < 100 {
-			return spec, fmt.Errorf("--context must describe the purchase in at least 100 characters")
-		}
-		spec.OfLink = &kernel.CardVaultItemSpecLinkParam{Wallet: wallet, Amount: amount, Currency: currency, MerchantName: merchant, MerchantURL: merchantURL, PaymentMethodID: method, Context: contextText, Test: test}
-	case "agentcard":
-		for _, flag := range []string{"test", "live", "payment-method-id", "merchant-url", "context"} {
-			if cmd.Flags().Changed(flag) {
-				return spec, fmt.Errorf("--%s is only supported by Link; AgentCard mode is deployment-controlled", flag)
-			}
-		}
-		if amount > 9007199254740991 || utf8.RuneCountInString(merchant) > 120 {
-			return spec, fmt.Errorf("agentcard requires --amount <= 9007199254740991 and --merchant <= 120 characters")
-		}
-		spec.OfAgentcard = &kernel.CardVaultItemSpecAgentcardParam{Wallet: wallet, Amount: amount, Currency: currency, Merchant: merchant}
-		cardID, _ := cmd.Flags().GetString("card-id")
-		if cmd.Flags().Changed("card-id") {
-			if !regexp.MustCompile(`^vc_[A-Za-z0-9_]+$`).MatchString(cardID) {
-				return spec, fmt.Errorf("--card-id must be an AgentCard vaulted card ID (vc_...)")
-			}
-			spec.OfAgentcard.CardID = kernel.Opt(cardID)
-		}
-	default:
-		return spec, fmt.Errorf("--provider must be link or agentcard")
-	}
+	spec["provider"], _ = json.Marshal(provider)
 	return spec, nil
 }

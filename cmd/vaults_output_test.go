@@ -86,7 +86,7 @@ func TestVaultOutputPaymentMethodsAdvisoryUnknownVsFalse(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &item))
 	buf := capturePtermOutput(t)
 	require.NoError(t, printVaultItem(&item, ""))
-	for _, text := range []string{"Payment method ID", "pm-unknown", "unknown", "pm-ineligible", "false", "not_supported", "--payment-method-id", "advisory"} {
+	for _, text := range []string{"Payment method ID", "pm-unknown", "unknown", "pm-ineligible", "false", "not_supported", "payment_method_id", "--spec JSON", "advisory"} {
 		assert.Contains(t, buf.String(), text)
 	}
 	out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })

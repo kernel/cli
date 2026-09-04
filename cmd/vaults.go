@@ -168,27 +168,7 @@ func (c VaultsCmd) GetItem(ctx context.Context, vault, key string, wait int64, e
 	return c.showItem(item, output, open)
 }
 
-func (c VaultsCmd) CreateWallet(ctx context.Context, vault, key, provider, userID, output string, open bool) error {
-	var spec kernel.WalletVaultItemSpecUnionParam
-	switch provider {
-	case "link":
-		if userID != "" {
-			return fmt.Errorf("--user-id is only supported by agentcard")
-		}
-		spec = kernel.WalletVaultItemSpecParamOfLink(kernel.WalletVaultItemSpecLinkAuthorizationParam{
-			Method: "oauth", Client: kernel.WalletVaultItemSpecLinkAuthorizationClientParam{Type: "kernel_managed"},
-		})
-	case "agentcard":
-		spec.OfAgentcard = &kernel.WalletVaultItemSpecAgentcardParam{}
-		if userID != "" {
-			if !regexp.MustCompile(`^usr_[A-Za-z0-9_]+$`).MatchString(userID) {
-				return fmt.Errorf("--user-id must be an enrolled AgentCard user ID (usr_...)")
-			}
-			spec.OfAgentcard.UserID = kernel.Opt(userID)
-		}
-	default:
-		return fmt.Errorf("--provider must be link or agentcard")
-	}
+func (c VaultsCmd) CreateWallet(ctx context.Context, vault, key string, spec kernel.WalletVaultItemSpecUnionParam, output string, open bool) error {
 	item, err := c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfWallet: &kernel.VaultItemUpsertParamsBodyWallet{Spec: spec}}, option.WithMaxRetries(0))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}

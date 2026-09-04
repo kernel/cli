@@ -284,7 +284,7 @@ func printVaultPaymentMethods(methods []kernel.VaultPaymentMethod) {
 		rows = append(rows, []string{m.ID, m.Provider, m.Type, m.Display.Label, m.Display.Brand, m.Display.Last4, fmt.Sprint(m.IsDefault), eligible, strings.Join(capability.Reasons, ", ")})
 	}
 	PrintTableNoPad(rows, true)
-	pterm.Info.Println("Select an ID explicitly: Link uses cards create --payment-method-id; AgentCard uses --card-id (or omit it for cardholder selection). Capabilities are advisory; missing means unknown, not ineligible.")
+	pterm.Info.Println("Select an ID explicitly in the card --spec JSON: Link uses payment_method_id; AgentCard uses card_id (or omit it for cardholder selection). Capabilities are advisory; missing means unknown, not ineligible.")
 }
 
 func printVaultEvents(events []kernel.VaultItemEvent, data []vaultJSON) {
