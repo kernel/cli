@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -31,28 +30,13 @@ func validateVaultName(value, label string) error {
 	return nil
 }
 
-// Do not unwrap provider errors: the root error renderer otherwise prints their bodies.
-func vaultRequestError(err error) error {
-	if err == nil {
-		return nil
-	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Errorf("vault request interrupted; inspect item state and events before taking further action; do not retry payments")
-	}
-	var apiErr *kernel.Error
-	if errors.As(err, &apiErr) {
-		return fmt.Errorf("vault request failed (HTTP %d); response body withheld; inspect item state and events; do not retry payments", apiErr.StatusCode)
-	}
-	return fmt.Errorf("vault request failed; details withheld; inspect item state and events; do not retry payments")
-}
-
 func (c VaultsCmd) Create(ctx context.Context, name, output string) error {
 	if err := validateVaultName(name, "--name"); err != nil {
 		return err
 	}
 	v, err := c.vaults.Upsert(ctx, kernel.VaultUpsertParams{Name: name}, option.WithMaxRetries(0))
 	if err != nil {
-		return vaultRequestError(err)
+		return util.CleanedUpSdkError{Err: err}
 	}
 	return printVault(v, output)
 }
@@ -60,7 +44,7 @@ func (c VaultsCmd) Create(ctx context.Context, name, output string) error {
 func (c VaultsCmd) Get(ctx context.Context, vault, output string) error {
 	v, err := c.vaults.Get(ctx, vault, option.WithMaxRetries(0))
 	if err != nil {
-		return vaultRequestError(err)
+		return util.CleanedUpSdkError{Err: err}
 	}
 	return printVault(v, output)
 }
@@ -72,7 +56,7 @@ func (c VaultsCmd) List(ctx context.Context, limit, offset int64, project, outpu
 	var response *http.Response
 	page, err := c.vaults.List(ctx, kernel.VaultListParams{Limit: kernel.Opt(limit), Offset: kernel.Opt(offset)}, option.WithMaxRetries(0), option.WithResponseInto(&response))
 	if err != nil {
-		return vaultRequestError(err)
+		return util.CleanedUpSdkError{Err: err}
 	}
 	pagination, err := parseProjectListPagination(response)
 	if err != nil {
@@ -128,17 +112,17 @@ func (c VaultsCmd) Delete(ctx context.Context, vault, key string, yes bool) erro
 	} else {
 		err = c.vaults.Items.Delete(ctx, key, kernel.VaultItemDeleteParams{IDOrName: vault}, option.WithMaxRetries(0))
 	}
-	if err != nil && !util.IsNotFound(err) {
-		return vaultRequestError(err)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
 	}
-	pterm.Success.Println("Deleted (or already absent): " + label)
+	pterm.Success.Println("Deleted: " + label)
 	return nil
 }
 
 func (c VaultsCmd) ListItems(ctx context.Context, vault, output string) error {
 	items, err := c.vaults.Items.List(ctx, vault, option.WithMaxRetries(0))
 	if err != nil {
-		return vaultRequestError(err)
+		return util.CleanedUpSdkError{Err: err}
 	}
 	if output == "json" {
 		data, err := vaultSafeJSONSlice(*items, vaultItemFields)
@@ -179,7 +163,7 @@ func (c VaultsCmd) GetItem(ctx context.Context, vault, key string, wait int64, e
 	defer cancel()
 	item, err := c.vaults.Items.Get(ctx, key, kernel.VaultItemGetParams{IDOrName: vault, Wait: kernel.Opt(wait), Expand: expand}, option.WithMaxRetries(0))
 	if err != nil {
-		return vaultRequestError(err)
+		return util.CleanedUpSdkError{Err: err}
 	}
 	return c.showItem(item, output, open)
 }
@@ -207,7 +191,7 @@ func (c VaultsCmd) CreateWallet(ctx context.Context, vault, key, provider, userI
 	}
 	item, err := c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfWallet: &kernel.VaultItemUpsertParamsBodyWallet{Spec: spec}}, option.WithMaxRetries(0))
 	if err != nil {
-		return vaultRequestError(err)
+		return util.CleanedUpSdkError{Err: err}
 	}
 	return c.showItem(item, output, open)
 }
@@ -221,7 +205,7 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 		item, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCard: &kernel.VaultItemUpsertParamsBodyCard{Spec: spec}}, option.WithMaxRetries(0))
 	}
 	if err != nil {
-		return vaultRequestError(err)
+		return util.CleanedUpSdkError{Err: err}
 	}
 	return c.showItem(item, output, false)
 }
@@ -229,7 +213,7 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 func (c VaultsCmd) Authorize(ctx context.Context, vault, key, output string, open bool) error {
 	item, err := c.vaults.Items.Get(ctx, key, kernel.VaultItemGetParams{IDOrName: vault}, option.WithMaxRetries(0))
 	if err != nil {
-		return vaultRequestError(err)
+		return util.CleanedUpSdkError{Err: err}
 	}
 	if item.Type != "card" || item.Spec.Provider != "link" || item.State.Status != "requested" {
 		return fmt.Errorf("authorization requires a requested Link card; inspect item state and events; do not retry payments or resume indeterminate authorizations")
@@ -248,7 +232,7 @@ func (c VaultsCmd) Authorize(ctx context.Context, vault, key, output string, ope
 	}
 	item, err = c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, Type: kernel.VaultItemPerformOperationParamsTypeAuthorize}, option.WithMaxRetries(0))
 	if err != nil {
-		return vaultRequestError(err)
+		return util.CleanedUpSdkError{Err: err}
 	}
 	return c.showItem(item, output, open)
 }
@@ -265,7 +249,7 @@ func (c VaultsCmd) Events(ctx context.Context, vault, key, after string, wait in
 	defer cancel()
 	events, err := c.vaults.Items.Events(ctx, key, params, option.WithMaxRetries(0))
 	if err != nil {
-		return vaultRequestError(err)
+		return util.CleanedUpSdkError{Err: err}
 	}
 	data, err := vaultSafeJSONSlice(*events, vaultEventFields)
 	if err != nil {

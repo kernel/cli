@@ -300,6 +300,9 @@ hyphens (1–255 characters; not `.` or `..`). All commands except delete suppor
 JSON preserves field presence and API-returned aliases, while omitting unknown fields,
 opaque metadata, and unrecognized event data. Human output labels aliases as non-secret
 checkout values and distinguishes card readiness from checkout authorization/payment outcomes.
+API failures use the CLI's standard error formatter, preserving the API's code and message.
+Delete failures, including invalid-project and missing-resource responses, return an error rather
+than claiming success.
 
 **Card flags:** `--provider`, `--wallet <key>`, `--amount <minor-units>`, `--currency <code>`,
 and `--merchant <name>` are required. Currency is normalized to lowercase.

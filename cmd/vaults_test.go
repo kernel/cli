@@ -382,7 +382,7 @@ func TestVaultAuthorizeRequiresAdvertisedRequestedLinkCard(t *testing.T) {
 	}
 }
 
-func TestVaultNoSDKRetriesOrSensitiveErrors(t *testing.T) {
+func TestVaultNoSDKRetriesAndAPIErrorMessages(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "project-test")
 	for _, status := range []int{409, 429, 500} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
@@ -395,19 +395,64 @@ func TestVaultNoSDKRetriesOrSensitiveErrors(t *testing.T) {
 					return
 				}
 				w.WriteHeader(status)
-				_, _ = io.WriteString(w, `{"message":"provider-secret; retry shortly","code":"sensitive-provider-code"}`)
+				_, _ = io.WriteString(w, `{"message":"Authorization service unavailable","code":"authorization_failed"}`)
 			})
 			out, _, err := executeVaultCommand(t, client, "vaults", "cards", "authorize", "checkout", "order-1", "-o", "json")
 			require.Error(t, err)
 			assert.Equal(t, 2, calls)
 			assert.Empty(t, out)
-			assert.Contains(t, err.Error(), fmt.Sprintf("HTTP %d", status))
-			rendered := util.CleanedUpSdkError{Err: err}.Error()
-			assert.NotContains(t, rendered, "provider-secret")
-			assert.NotContains(t, rendered, "sensitive-provider-code")
-			assert.NotContains(t, rendered, "retry shortly")
+			var apiErr *kernel.Error
+			require.ErrorAs(t, err, &apiErr)
+			assert.Equal(t, status, apiErr.StatusCode)
+			assert.Equal(t, "authorization_failed: Authorization service unavailable", util.CleanedUpSdkError{Err: err}.Error())
 		})
 	}
+}
+
+func TestVaultInvalidProjectErrors(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	commands := [][]string{
+		{"list"}, {"get", "checkout"}, {"create", "--name", "checkout"}, {"delete", "checkout", "--yes"},
+		{"items", "list", "checkout"}, {"items", "get", "checkout", "order-1"},
+		{"items", "events", "checkout", "order-1"}, {"items", "delete", "checkout", "order-1", "--yes"},
+		{"wallets", "create", "checkout", "wallet-1", "--provider", "link"},
+		{"wallets", "payment-methods", "checkout", "wallet-1"},
+		append([]string{"cards", "create", "checkout", "order-1"}, linkCardArgs()...),
+		append([]string{"cards", "update", "checkout", "order-1"}, linkCardArgs()...),
+		{"cards", "authorize", "checkout", "order-1"},
+	}
+	for _, project := range []string{"doesntexist", "abcdefghijklmnopqrstuvwx"} {
+		for _, args := range commands {
+			t.Run(project+"/"+strings.Join(args[:min(2, len(args))], " "), func(t *testing.T) {
+				calls := 0
+				client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					assert.Equal(t, project, r.Header.Get("X-Kernel-Project"))
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = io.WriteString(w, `{"code":"project_not_found","message":"Project not found or inactive"}`)
+				})
+				out, human, err := executeVaultCommand(t, client, append([]string{"--project", project, "vaults"}, args...)...)
+				require.Error(t, err)
+				assert.Equal(t, "project_not_found: Project not found or inactive", util.CleanedUpSdkError{Err: err}.Error())
+				assert.Equal(t, 1, calls)
+				assert.Empty(t, out)
+				assert.NotContains(t, human, "Deleted")
+			})
+		}
+	}
+}
+
+func TestVaultPlainTextAPIError(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Credential is scoped to a different project", http.StatusForbidden)
+	})
+	out, _, err := executeVaultCommand(t, client, "vaults", "list", "--project", "other-project", "-o", "json")
+	require.Error(t, err)
+	assert.Empty(t, out)
+	assert.Contains(t, util.CleanedUpSdkError{Err: err}.Error(), "Credential is scoped to a different project")
+	assert.NotContains(t, err.Error(), "withheld")
 }
 
 func TestVaultGetWaitExpansionAndEvents(t *testing.T) {
