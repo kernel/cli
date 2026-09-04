@@ -2,6 +2,7 @@ import { Kernel, type KernelContext } from '@onkernel/sdk';
 import { CuaAgent } from '@onkernel/cua-agent';
 import type { AssistantMessage } from '@onkernel/cua-ai';
 import { KernelBrowserSession } from './session';
+import { logAgentEvent } from './logging';
 
 const kernel = new Kernel();
 
@@ -67,6 +68,7 @@ The current date is ${currentDate}.`;
           systemPrompt,
         },
       });
+      agent.subscribe(logAgentEvent);
 
       await agent.prompt(payload.query);
 

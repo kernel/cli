@@ -2,6 +2,7 @@ import { Kernel, type KernelContext } from '@onkernel/sdk';
 import { CuaAgent } from '@onkernel/cua-agent';
 import type { AssistantMessage } from '@onkernel/cua-ai';
 import { KernelBrowserSession } from './session';
+import { logAgentEvent } from './logging';
 
 const kernel = new Kernel();
 
@@ -82,6 +83,7 @@ app.action<QueryInput, QueryOutput>(
           systemPrompt: SYSTEM_PROMPT,
         },
       });
+      agent.subscribe(logAgentEvent);
 
       await agent.prompt(payload.query);
 
