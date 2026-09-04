@@ -223,6 +223,7 @@ Commands with JSON output support:
   - `--proxy-mode direct|default` - Egress mode instead of a selected proxy: `direct` for no proxy regardless of stealth, `default` for the stealth-derived default (Kernel's stealth proxy with `--stealth`, direct egress otherwise). Omit all proxy flags to get the default.
   - `--name <name>` - Optional unique name for the session (used to find it later by name; can be changed with `browsers update --name`)
   - `--tag <KEY=VALUE>` - Set a tag on the session, repeatable; up to 50 pairs
+  - `--vault <id-or-name>` - Link a project-scoped vault to the session so it can use the vault's items (repeatable or comma-separated). Fixed once the session is created; `browsers get` lists the linked vaults.
   - `--pool-id <id>` - Acquire a browser from the specified pool (mutually exclusive with --pool-name; ignores other session flags). `--name`/`--tag` still apply to the acquired session.
   - `--pool-name <name>` - Acquire a browser from the pool name (mutually exclusive with --pool-id; ignores other session flags)
   - `--telemetry=all` - Enable telemetry for all categories
@@ -511,6 +512,71 @@ Destinations are the OTLP/HTTP endpoints sessions export to, managed per project
   - `--to <dir>` - Directory to extract the profile into (required)
   - `--format <format>` - Archive format to request: `tar.zst` (compressed, default) or `tar` (decompressed server-side)
 
+### Vaults
+
+A vault is a named, project-scoped container for payment items. Vault names and
+item keys are immutable, so `create` behaves as an upsert: creating with a name
+or key that already exists returns what is there rather than failing. Link
+vaults to a session with `kernel browsers create --vault <id-or-name>`.
+
+- `kernel vaults list` - List vaults in the current project
+  - `--page <n>` - Page number, 1-based (default 1)
+  - `--per-page <n>` - Items per page (default 20)
+  - `--output json`, `-o json` - Output raw JSON array
+  - When more vaults are available, the CLI prints the exact command to fetch the next page
+- `kernel vaults get <id-or-name>` - Get a vault by ID or name
+  - `--output json`, `-o json` - Output raw JSON object
+- `kernel vaults create --name <name>` - Create or retrieve a vault by name
+  - `--name <name>` - Immutable vault name (required)
+  - `--output json`, `-o json` - Output raw JSON object
+- `kernel vaults delete <id-or-name>` - Delete a vault; every item it holds is invalidated
+  - `-y, --yes` - Skip confirmation prompt
+
+#### Vault Items
+
+An item is either a wallet (an authorized funding source) or a card (a payment
+credential minted from a wallet). Items advertise the operations valid in their
+current state, so run `kernel vaults items get` and read `Available Operations`
+before invoking one.
+
+- `kernel vaults items list <vault-id-or-name>` - List a vault's items; secret values are never returned
+  - `--output json`, `-o json` - Output raw JSON array
+- `kernel vaults items get <vault-id-or-name> <key>` - Get an item and the operations currently valid for it
+  - `--wait <seconds>` - Hold for up to this many seconds while the item is pending authorization or approval (max 60)
+  - `--expand <type>` - Request live provider data listed under `Available Expansions`, e.g. `payment_methods` (repeatable or comma-separated). Expanded data is fetched from the provider and is not persisted in the item.
+  - `--output json`, `-o json` - Output raw JSON object
+- `kernel vaults items create <vault-id-or-name> <key> --type <wallet|card> --spec <json>` - Create or retrieve an item by key
+  - `--type wallet|card` - Item type (required)
+  - `--spec <json>` - Provider-specific spec as a JSON object, discriminated by its `provider` field. Amounts are integers in minor currency units (`1250` = $12.50).
+  - `--spec-file <path>` - Read the spec from a file (use `-` for stdin). Mutually exclusive with `--spec`.
+  - `--output json`, `-o json` - Output raw JSON object
+
+  Examples:
+
+  ```bash
+  kernel vaults items create my-vault my-wallet --type wallet \
+    --spec '{"provider":"agentcard","user_id":"usr_123"}'
+
+  kernel vaults items create my-vault my-wallet --type wallet \
+    --spec '{"provider":"link","authorization":{"method":"oauth","client":{"type":"kernel_managed"}}}'
+
+  kernel vaults items create my-vault my-card --type card \
+    --spec '{"provider":"agentcard","wallet":"my-wallet","merchant":"Acme","amount":1250,"currency":"USD"}'
+  ```
+
+- `kernel vaults items update <vault-id-or-name> <key> --spec <json>` - Update a card item's spec before or between authorizations
+  - `--spec <json>` / `--spec-file <path>` - Full replacement card spec (only card items can be updated)
+  - `--output json`, `-o json` - Output raw JSON object
+- `kernel vaults items perform-operation <vault-id-or-name> <key>` - Perform an operation the item advertises
+  - `--type <type>` - Operation to perform (default `authorize`). Operations may call an external provider and return the item's updated state.
+  - `--output json`, `-o json` - Output raw JSON object
+- `kernel vaults items events <vault-id-or-name> <key>` - List an item's immutable audit events, oldest first
+  - `--after <event-id>` - Return only events after this event ID
+  - `--wait <seconds>` - Long-poll for new events for up to this many seconds (max 60). Together with `--after`, this follows an item's progress.
+  - `--output json`, `-o json` - Output raw JSON array
+- `kernel vaults items delete <vault-id-or-name> <key>` - Delete an item; its secret value is invalidated
+  - `-y, --yes` - Skip confirmation prompt
+
 ### Projects
 
 - `kernel projects list` - List projects (up to 100 by default)
@@ -618,6 +684,7 @@ Managed auth connections (`kernel auth connections`). The commands below are new
 - `kernel auth connections submit <id>` - New flags:
   - `--field-value <id=value>` - Canonical field-id=value pair from the connection's `fields` list (repeatable); preferred over the legacy `--field`
   - `--choice-id <id>` - Canonical choice ID from the connection's `choices` list
+  - `--interaction-id <id>` - Canonical interaction the submitted values answer. Only valid with `--field-value` or `--choice-id`; omit it and the CLI reads the connection's current interaction ID for you. Pass it to pin the submission, so the API rejects it if the flow has already moved on.
 
 `kernel auth connections get` and `follow` list those IDs alongside the metadata the API captured for them, so you can tell the options apart before submitting. Fields show their type, ref, and any hint (which names the masked destination a one-time code was sent to); choices show their type, semantic MFA method (`sms`, `totp`, `push`, …), and masked destination.
 

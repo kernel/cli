@@ -39,39 +39,39 @@ type BrowsersService interface {
 	Update(ctx context.Context, idOrName string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (res *kernel.BrowserUpdateResponse, err error)
 	DeleteByID(ctx context.Context, idOrName string, opts ...option.RequestOption) (err error)
 	HTTPClient(id string, opts ...option.RequestOption) (*http.Client, error)
-	LoadExtensions(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) (err error)
+	LoadExtensions(ctx context.Context, idOrName string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) (err error)
 }
 
 // BrowserReplaysService defines the subset we use for browser replays.
 type BrowserReplaysService interface {
-	List(ctx context.Context, id string, opts ...option.RequestOption) (res *[]kernel.BrowserReplayListResponse, err error)
+	List(ctx context.Context, idOrName string, opts ...option.RequestOption) (res *[]kernel.BrowserReplayListResponse, err error)
 	Download(ctx context.Context, replayID string, query kernel.BrowserReplayDownloadParams, opts ...option.RequestOption) (res *http.Response, err error)
-	Start(ctx context.Context, id string, body kernel.BrowserReplayStartParams, opts ...option.RequestOption) (res *kernel.BrowserReplayStartResponse, err error)
+	Start(ctx context.Context, idOrName string, body kernel.BrowserReplayStartParams, opts ...option.RequestOption) (res *kernel.BrowserReplayStartResponse, err error)
 	Stop(ctx context.Context, replayID string, body kernel.BrowserReplayStopParams, opts ...option.RequestOption) (err error)
 }
 
 // BrowserFSService defines the subset we use for browser filesystem APIs.
 type BrowserFSService interface {
-	NewDirectory(ctx context.Context, id string, body kernel.BrowserFNewDirectoryParams, opts ...option.RequestOption) (err error)
-	DeleteDirectory(ctx context.Context, id string, body kernel.BrowserFDeleteDirectoryParams, opts ...option.RequestOption) (err error)
-	DeleteFile(ctx context.Context, id string, body kernel.BrowserFDeleteFileParams, opts ...option.RequestOption) (err error)
-	DownloadDirZip(ctx context.Context, id string, query kernel.BrowserFDownloadDirZipParams, opts ...option.RequestOption) (res *http.Response, err error)
-	FileInfo(ctx context.Context, id string, query kernel.BrowserFFileInfoParams, opts ...option.RequestOption) (res *kernel.BrowserFFileInfoResponse, err error)
-	ListFiles(ctx context.Context, id string, query kernel.BrowserFListFilesParams, opts ...option.RequestOption) (res *[]kernel.BrowserFListFilesResponse, err error)
-	Move(ctx context.Context, id string, body kernel.BrowserFMoveParams, opts ...option.RequestOption) (err error)
-	ReadFile(ctx context.Context, id string, query kernel.BrowserFReadFileParams, opts ...option.RequestOption) (res *http.Response, err error)
-	SetFilePermissions(ctx context.Context, id string, body kernel.BrowserFSetFilePermissionsParams, opts ...option.RequestOption) (err error)
-	Upload(ctx context.Context, id string, body kernel.BrowserFUploadParams, opts ...option.RequestOption) (err error)
-	UploadZip(ctx context.Context, id string, body kernel.BrowserFUploadZipParams, opts ...option.RequestOption) (err error)
-	WriteFile(ctx context.Context, id string, contents io.Reader, body kernel.BrowserFWriteFileParams, opts ...option.RequestOption) (err error)
+	NewDirectory(ctx context.Context, idOrName string, body kernel.BrowserFNewDirectoryParams, opts ...option.RequestOption) (err error)
+	DeleteDirectory(ctx context.Context, idOrName string, body kernel.BrowserFDeleteDirectoryParams, opts ...option.RequestOption) (err error)
+	DeleteFile(ctx context.Context, idOrName string, body kernel.BrowserFDeleteFileParams, opts ...option.RequestOption) (err error)
+	DownloadDirZip(ctx context.Context, idOrName string, query kernel.BrowserFDownloadDirZipParams, opts ...option.RequestOption) (res *http.Response, err error)
+	FileInfo(ctx context.Context, idOrName string, query kernel.BrowserFFileInfoParams, opts ...option.RequestOption) (res *kernel.BrowserFFileInfoResponse, err error)
+	ListFiles(ctx context.Context, idOrName string, query kernel.BrowserFListFilesParams, opts ...option.RequestOption) (res *[]kernel.BrowserFListFilesResponse, err error)
+	Move(ctx context.Context, idOrName string, body kernel.BrowserFMoveParams, opts ...option.RequestOption) (err error)
+	ReadFile(ctx context.Context, idOrName string, query kernel.BrowserFReadFileParams, opts ...option.RequestOption) (res *http.Response, err error)
+	SetFilePermissions(ctx context.Context, idOrName string, body kernel.BrowserFSetFilePermissionsParams, opts ...option.RequestOption) (err error)
+	Upload(ctx context.Context, idOrName string, body kernel.BrowserFUploadParams, opts ...option.RequestOption) (err error)
+	UploadZip(ctx context.Context, idOrName string, body kernel.BrowserFUploadZipParams, opts ...option.RequestOption) (err error)
+	WriteFile(ctx context.Context, idOrName string, contents io.Reader, body kernel.BrowserFWriteFileParams, opts ...option.RequestOption) (err error)
 }
 
 // BrowserProcessService defines the subset we use for browser process APIs.
 type BrowserProcessService interface {
-	Exec(ctx context.Context, id string, body kernel.BrowserProcessExecParams, opts ...option.RequestOption) (res *kernel.BrowserProcessExecResponse, err error)
+	Exec(ctx context.Context, idOrName string, body kernel.BrowserProcessExecParams, opts ...option.RequestOption) (res *kernel.BrowserProcessExecResponse, err error)
 	Kill(ctx context.Context, processID string, params kernel.BrowserProcessKillParams, opts ...option.RequestOption) (res *kernel.BrowserProcessKillResponse, err error)
 	Resize(ctx context.Context, processID string, params kernel.BrowserProcessResizeParams, opts ...option.RequestOption) (res *kernel.BrowserProcessResizeResponse, err error)
-	Spawn(ctx context.Context, id string, body kernel.BrowserProcessSpawnParams, opts ...option.RequestOption) (res *kernel.BrowserProcessSpawnResponse, err error)
+	Spawn(ctx context.Context, idOrName string, body kernel.BrowserProcessSpawnParams, opts ...option.RequestOption) (res *kernel.BrowserProcessSpawnResponse, err error)
 	Status(ctx context.Context, processID string, query kernel.BrowserProcessStatusParams, opts ...option.RequestOption) (res *kernel.BrowserProcessStatusResponse, err error)
 	Stdin(ctx context.Context, processID string, params kernel.BrowserProcessStdinParams, opts ...option.RequestOption) (res *kernel.BrowserProcessStdinResponse, err error)
 	StdoutStreamStreaming(ctx context.Context, processID string, query kernel.BrowserProcessStdoutStreamParams, opts ...option.RequestOption) (stream *ssestream.Stream[kernel.BrowserProcessStdoutStreamResponse])
@@ -80,34 +80,40 @@ type BrowserProcessService interface {
 // BrowserFWatchService defines the subset we use for browser filesystem watch APIs.
 type BrowserFWatchService interface {
 	EventsStreaming(ctx context.Context, watchID string, query kernel.BrowserFWatchEventsParams, opts ...option.RequestOption) (stream *ssestream.Stream[kernel.BrowserFWatchEventsResponse])
-	Start(ctx context.Context, id string, body kernel.BrowserFWatchStartParams, opts ...option.RequestOption) (res *kernel.BrowserFWatchStartResponse, err error)
+	Start(ctx context.Context, idOrName string, body kernel.BrowserFWatchStartParams, opts ...option.RequestOption) (res *kernel.BrowserFWatchStartResponse, err error)
 	Stop(ctx context.Context, watchID string, body kernel.BrowserFWatchStopParams, opts ...option.RequestOption) (err error)
 }
 
 // BrowserLogService defines the subset we use for browser log APIs.
 type BrowserLogService interface {
-	StreamStreaming(ctx context.Context, id string, query kernel.BrowserLogStreamParams, opts ...option.RequestOption) (stream *ssestream.Stream[shared.LogEvent])
+	StreamStreaming(ctx context.Context, idOrName string, query kernel.BrowserLogStreamParams, opts ...option.RequestOption) (stream *ssestream.Stream[shared.LogEvent])
 }
 
 // BrowserPlaywrightService defines the subset we use for Playwright execution.
 type BrowserPlaywrightService interface {
-	Execute(ctx context.Context, id string, body kernel.BrowserPlaywrightExecuteParams, opts ...option.RequestOption) (res *kernel.BrowserPlaywrightExecuteResponse, err error)
+	Execute(ctx context.Context, idOrName string, body kernel.BrowserPlaywrightExecuteParams, opts ...option.RequestOption) (res *kernel.BrowserPlaywrightExecuteResponse, err error)
+}
+
+// BrowserWebmcpService defines the subset we use for WebMCP tool discovery and invocation.
+type BrowserWebmcpService interface {
+	InvokeTool(ctx context.Context, idOrName string, body kernel.BrowserWebmcpInvokeToolParams, opts ...option.RequestOption) (res *kernel.InvocationResult, err error)
+	ListTools(ctx context.Context, idOrName string, opts ...option.RequestOption) (res *kernel.ToolsResponse, err error)
 }
 
 // BrowserComputerService defines the subset we use for OS-level mouse & screen.
 type BrowserComputerService interface {
-	Batch(ctx context.Context, id string, body kernel.BrowserComputerBatchParams, opts ...option.RequestOption) (err error)
-	CaptureScreenshot(ctx context.Context, id string, body kernel.BrowserComputerCaptureScreenshotParams, opts ...option.RequestOption) (res *http.Response, err error)
-	ClickMouse(ctx context.Context, id string, body kernel.BrowserComputerClickMouseParams, opts ...option.RequestOption) (err error)
-	DragMouse(ctx context.Context, id string, body kernel.BrowserComputerDragMouseParams, opts ...option.RequestOption) (err error)
-	GetMousePosition(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.BrowserComputerGetMousePositionResponse, err error)
-	MoveMouse(ctx context.Context, id string, body kernel.BrowserComputerMoveMouseParams, opts ...option.RequestOption) (err error)
-	PressKey(ctx context.Context, id string, body kernel.BrowserComputerPressKeyParams, opts ...option.RequestOption) (err error)
-	ReadClipboard(ctx context.Context, id string, opts ...option.RequestOption) (res *kernel.BrowserComputerReadClipboardResponse, err error)
-	Scroll(ctx context.Context, id string, body kernel.BrowserComputerScrollParams, opts ...option.RequestOption) (err error)
-	SetCursorVisibility(ctx context.Context, id string, body kernel.BrowserComputerSetCursorVisibilityParams, opts ...option.RequestOption) (res *kernel.BrowserComputerSetCursorVisibilityResponse, err error)
-	TypeText(ctx context.Context, id string, body kernel.BrowserComputerTypeTextParams, opts ...option.RequestOption) (err error)
-	WriteClipboard(ctx context.Context, id string, body kernel.BrowserComputerWriteClipboardParams, opts ...option.RequestOption) (err error)
+	Batch(ctx context.Context, idOrName string, body kernel.BrowserComputerBatchParams, opts ...option.RequestOption) (err error)
+	CaptureScreenshot(ctx context.Context, idOrName string, body kernel.BrowserComputerCaptureScreenshotParams, opts ...option.RequestOption) (res *http.Response, err error)
+	ClickMouse(ctx context.Context, idOrName string, body kernel.BrowserComputerClickMouseParams, opts ...option.RequestOption) (err error)
+	DragMouse(ctx context.Context, idOrName string, body kernel.BrowserComputerDragMouseParams, opts ...option.RequestOption) (err error)
+	GetMousePosition(ctx context.Context, idOrName string, opts ...option.RequestOption) (res *kernel.BrowserComputerGetMousePositionResponse, err error)
+	MoveMouse(ctx context.Context, idOrName string, body kernel.BrowserComputerMoveMouseParams, opts ...option.RequestOption) (err error)
+	PressKey(ctx context.Context, idOrName string, body kernel.BrowserComputerPressKeyParams, opts ...option.RequestOption) (err error)
+	ReadClipboard(ctx context.Context, idOrName string, opts ...option.RequestOption) (res *kernel.BrowserComputerReadClipboardResponse, err error)
+	Scroll(ctx context.Context, idOrName string, body kernel.BrowserComputerScrollParams, opts ...option.RequestOption) (err error)
+	SetCursorVisibility(ctx context.Context, idOrName string, body kernel.BrowserComputerSetCursorVisibilityParams, opts ...option.RequestOption) (res *kernel.BrowserComputerSetCursorVisibilityResponse, err error)
+	TypeText(ctx context.Context, idOrName string, body kernel.BrowserComputerTypeTextParams, opts ...option.RequestOption) (err error)
+	WriteClipboard(ctx context.Context, idOrName string, body kernel.BrowserComputerWriteClipboardParams, opts ...option.RequestOption) (err error)
 }
 
 // Regular expression to validate CUID2 identifiers (starts with a letter, 24 lowercase alphanumeric characters).
@@ -246,6 +252,24 @@ func formatPrivateHosts(network kernel.BrowserNetworkConfig) string {
 	return strings.Join(network.PrivateHosts, ", ")
 }
 
+// formatVaultReferences renders the vaults linked to a session for table output,
+// preferring each vault's name and falling back to its ID. It returns an empty
+// string when no vaults are linked, so the row can be omitted entirely.
+func formatVaultReferences(vaults []kernel.VaultReference) string {
+	if len(vaults) == 0 {
+		return ""
+	}
+	labels := make([]string, 0, len(vaults))
+	for _, vault := range vaults {
+		if vault.Name != "" {
+			labels = append(labels, vault.Name)
+			continue
+		}
+		labels = append(labels, vault.ID)
+	}
+	return strings.Join(labels, ", ")
+}
+
 // parseStringMapFlag parses repeated KEY=value flag values into a map. It returns a nil
 // map when no values were given, so callers can distinguish "flag absent" from "flag set
 // to an empty map".
@@ -360,31 +384,33 @@ func formatTags(tags kernel.Tags) string {
 
 // Inputs for each command
 type BrowsersCreateInput struct {
-	TimeoutSeconds     int
-	Stealth            BoolFlag
-	Headless           BoolFlag
-	GPU                BoolFlag
-	Memory             string
-	InvocationID       string
-	Kiosk              BoolFlag
-	ProfileID          string
-	ProfileName        string
-	ProfileSaveChanges BoolFlag
-	ProxyID            string
-	ProxyName          string
-	ProxyMode          string
-	Region             string
-	PrivateHosts       []string
-	StartURL           string
-	Extensions         []string
-	Viewport           string
-	Telemetry          string
-	TelemetryExport    string
-	ChromePolicy       string
-	ChromePolicyFile   string
-	Name               string
-	Tags               map[string]string
-	Output             string
+	TimeoutSeconds      int
+	Stealth             BoolFlag
+	Headless            BoolFlag
+	GPU                 BoolFlag
+	Memory              string
+	InvocationID        string
+	Kiosk               BoolFlag
+	ProfileID           string
+	ProfileName         string
+	ProfileSaveChanges  BoolFlag
+	ProxyID             string
+	ProxyName           string
+	ProxyMode           string
+	Region              string
+	PrivateHosts        []string
+	StartURL            string
+	Extensions          []string
+	Vaults              []string
+	Viewport            string
+	Telemetry           string
+	TelemetryCdpExclude string
+	TelemetryExport     string
+	ChromePolicy        string
+	ChromePolicyFile    string
+	Name                string
+	Tags                map[string]string
+	Output              string
 }
 
 type BrowsersDeleteInput struct {
@@ -415,6 +441,7 @@ type BrowsersUpdateInput struct {
 	Viewport            string
 	Force               bool
 	Telemetry           string
+	TelemetryCdpExclude string
 	Name                string
 	SetName             bool
 	ClearName           bool
@@ -434,6 +461,7 @@ type BrowsersCmd struct {
 	logs       BrowserLogService
 	computer   BrowserComputerService
 	playwright BrowserPlaywrightService
+	webmcp     BrowserWebmcpService
 	telemetry  BrowserTelemetryService
 }
 
@@ -653,6 +681,24 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		}
 	}
 
+	// Map vaults (IDs or names) into params.Vaults. Links are immutable once the
+	// session is created.
+	if len(in.Vaults) > 0 {
+		for _, vault := range in.Vaults {
+			val := strings.TrimSpace(vault)
+			if val == "" {
+				continue
+			}
+			item := kernel.VaultReferenceParam{}
+			if cuidRegex.MatchString(val) {
+				item.ID = kernel.Opt(val)
+			} else {
+				item.Name = kernel.Opt(val)
+			}
+			params.Vaults = append(params.Vaults, item)
+		}
+	}
+
 	// Add viewport if specified
 	if in.Viewport != "" {
 		width, height, refreshRate, err := parseViewport(in.Viewport)
@@ -669,8 +715,8 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		}
 	}
 
-	if in.Telemetry != "" || in.TelemetryExport != "" {
-		t, err := buildNewTelemetryParam(in.Telemetry, in.TelemetryExport)
+	if in.Telemetry != "" || in.TelemetryCdpExclude != "" || in.TelemetryExport != "" {
+		t, err := buildNewTelemetryParam(in.Telemetry, in.TelemetryCdpExclude, in.TelemetryExport)
 		if err != nil {
 			return err
 		}
@@ -705,7 +751,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 
 	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.ProfileSaveChanges, browser.StartURL, browser.Name, browser.Tags)
-	if in.Telemetry != "" || in.TelemetryExport != "" {
+	if in.Telemetry != "" || in.TelemetryCdpExclude != "" || in.TelemetryExport != "" {
 		printTelemetrySummary(browser.Telemetry)
 	}
 	return nil
@@ -839,8 +885,16 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		tableData = append(tableData, []string{"Proxy", proxy})
 	}
 	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)})
+	if vaults := formatVaultReferences(browser.Vaults); vaults != "" {
+		tableData = append(tableData, []string{"Vaults", vaults})
+	}
 	if !browser.DeletedAt.IsZero() {
 		tableData = append(tableData, []string{"Deleted At", util.FormatLocal(browser.DeletedAt)})
+	}
+	// Only populated for deleted sessions, where "pending" means the usage figures
+	// above are not yet the final billed ones.
+	if browser.UsageStatus != "" {
+		tableData = append(tableData, []string{"Usage Status", string(browser.UsageStatus)})
 	}
 
 	PrintTableNoPad(tableData, true)
@@ -941,8 +995,8 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	// Validate that at least one update option is provided
-	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && !hasNameChange && !hasTagsChange {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --name, --clear-name, --tag, or --clear-tags")
+	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && in.TelemetryCdpExclude == "" && !hasNameChange && !hasTagsChange {
+		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --telemetry-cdp-exclude, --name, --clear-name, --tag, or --clear-tags")
 	}
 
 	params := kernel.BrowserUpdateParams{}
@@ -985,8 +1039,8 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	// Handle telemetry changes
-	if in.Telemetry != "" {
-		t, err := buildUpdateTelemetryParam(in.Telemetry)
+	if in.Telemetry != "" || in.TelemetryCdpExclude != "" {
+		t, err := buildUpdateTelemetryParam(in.Telemetry, in.TelemetryCdpExclude)
 		if err != nil {
 			return err
 		}
@@ -1036,7 +1090,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	if hasProfileChange {
 		pterm.Info.Printf("Profile save changes: %t\n", browser.ProfileSaveChanges)
 	}
-	if in.Telemetry != "" {
+	if in.Telemetry != "" || in.TelemetryCdpExclude != "" {
 		printTelemetrySummary(browser.Telemetry)
 	}
 	return nil
@@ -1590,7 +1644,7 @@ func (b BrowsersCmd) ReplaysStop(ctx context.Context, in BrowsersReplaysStopInpu
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	err = b.replays.Stop(ctx, in.ReplayID, kernel.BrowserReplayStopParams{ID: br.SessionID})
+	err = b.replays.Stop(ctx, in.ReplayID, kernel.BrowserReplayStopParams{IDOrName: br.SessionID})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -1599,7 +1653,7 @@ func (b BrowsersCmd) ReplaysStop(ctx context.Context, in BrowsersReplaysStopInpu
 }
 
 func (b BrowsersCmd) ReplaysDownload(ctx context.Context, in BrowsersReplaysDownloadInput) error {
-	res, err := b.replays.Download(ctx, in.ReplayID, kernel.BrowserReplayDownloadParams{ID: in.Identifier})
+	res, err := b.replays.Download(ctx, in.ReplayID, kernel.BrowserReplayDownloadParams{IDOrName: in.Identifier})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -1756,6 +1810,113 @@ func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrigh
 	return nil
 }
 
+// WebMCP
+type BrowsersWebmcpListToolsInput struct {
+	Identifier string
+	Output     string
+}
+
+func (b BrowsersCmd) WebmcpListTools(ctx context.Context, in BrowsersWebmcpListToolsInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+
+	if b.webmcp == nil {
+		pterm.Error.Println("webmcp service not available")
+		return nil
+	}
+	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	res, err := b.webmcp.ListTools(ctx, br.SessionID)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(res)
+	}
+
+	if res == nil || len(res.Tools) == 0 {
+		pterm.Info.Println("No WebMCP tools found")
+		return nil
+	}
+	rows := pterm.TableData{{"Name", "Tool Ref", "Page", "Frame", "Description"}}
+	for _, t := range res.Tools {
+		frame := "-"
+		if t.Source.Frame.URL != "" {
+			frame = truncateURL(t.Source.Frame.URL, 40)
+		}
+		rows = append(rows, []string{
+			t.Name,
+			t.ToolRef,
+			truncateURL(t.Source.PageURL, 40),
+			frame,
+			truncateURL(t.Description, 60),
+		})
+	}
+	PrintTableNoPad(rows, true)
+	return nil
+}
+
+type BrowsersWebmcpInvokeToolInput struct {
+	Identifier string
+	ToolRef    string
+	InputJSON  string
+	TimeoutSec int64
+	Output     string
+}
+
+func (b BrowsersCmd) WebmcpInvokeTool(ctx context.Context, in BrowsersWebmcpInvokeToolInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+
+	if b.webmcp == nil {
+		pterm.Error.Println("webmcp service not available")
+		return nil
+	}
+	toolInput := map[string]any{}
+	if strings.TrimSpace(in.InputJSON) != "" {
+		if err := json.Unmarshal([]byte(in.InputJSON), &toolInput); err != nil {
+			pterm.Error.Printf("Invalid --input JSON: %v\n", err)
+			return nil
+		}
+	}
+	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	req := kernel.InvokeRequestParam{ToolRef: in.ToolRef, Input: toolInput}
+	if in.TimeoutSec > 0 {
+		req.TimeoutSec = kernel.Opt(in.TimeoutSec)
+	}
+	res, err := b.webmcp.InvokeTool(ctx, br.SessionID, kernel.BrowserWebmcpInvokeToolParams{InvokeRequest: req})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(res)
+	}
+
+	rows := pterm.TableData{{"Property", "Value"}, {"Invocation ID", res.InvocationID}, {"Status", string(res.Status)}}
+	PrintTableNoPad(rows, true)
+
+	if res.Output != nil {
+		bs, err := json.MarshalIndent(res.Output, "", "  ")
+		if err == nil {
+			pterm.Info.Println("output:")
+			fmt.Println(string(bs))
+		}
+	}
+	if res.ErrorText != "" {
+		pterm.Error.Printf("error: %s\n", res.ErrorText)
+	}
+	return nil
+}
+
 func (b BrowsersCmd) ProcessExec(ctx context.Context, in BrowsersProcessExecInput) error {
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
@@ -1905,7 +2066,7 @@ func (b BrowsersCmd) ProcessKill(ctx context.Context, in BrowsersProcessKillInpu
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	params := kernel.BrowserProcessKillParams{ID: br.SessionID, Signal: kernel.BrowserProcessKillParamsSignal(in.Signal)}
+	params := kernel.BrowserProcessKillParams{IDOrName: br.SessionID, Signal: kernel.BrowserProcessKillParamsSignal(in.Signal)}
 	_, err = b.process.Kill(ctx, in.ProcessID, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -1923,7 +2084,7 @@ func (b BrowsersCmd) ProcessStatus(ctx context.Context, in BrowsersProcessStatus
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	res, err := b.process.Status(ctx, in.ProcessID, kernel.BrowserProcessStatusParams{ID: br.SessionID})
+	res, err := b.process.Status(ctx, in.ProcessID, kernel.BrowserProcessStatusParams{IDOrName: br.SessionID})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -1941,7 +2102,7 @@ func (b BrowsersCmd) ProcessStdin(ctx context.Context, in BrowsersProcessStdinIn
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	_, err = b.process.Stdin(ctx, in.ProcessID, kernel.BrowserProcessStdinParams{ID: br.SessionID, DataB64: in.DataB64})
+	_, err = b.process.Stdin(ctx, in.ProcessID, kernel.BrowserProcessStdinParams{IDOrName: br.SessionID, DataB64: in.DataB64})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -1958,7 +2119,7 @@ func (b BrowsersCmd) ProcessStdoutStream(ctx context.Context, in BrowsersProcess
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	stream := b.process.StdoutStreamStreaming(ctx, in.ProcessID, kernel.BrowserProcessStdoutStreamParams{ID: br.SessionID})
+	stream := b.process.StdoutStreamStreaming(ctx, in.ProcessID, kernel.BrowserProcessStdoutStreamParams{IDOrName: br.SessionID})
 	if stream == nil {
 		pterm.Error.Println("failed to open stdout stream")
 		return nil
@@ -1992,7 +2153,7 @@ func (b BrowsersCmd) ProcessResize(ctx context.Context, in BrowsersProcessResize
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	params := kernel.BrowserProcessResizeParams{ID: br.SessionID, Cols: in.Cols, Rows: in.Rows}
+	params := kernel.BrowserProcessResizeParams{IDOrName: br.SessionID, Cols: in.Cols, Rows: in.Rows}
 	_, err = b.process.Resize(ctx, in.ProcessID, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -2041,7 +2202,7 @@ func (b BrowsersCmd) FSWatchStop(ctx context.Context, in BrowsersFSWatchStopInpu
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	err = b.fsWatch.Stop(ctx, in.WatchID, kernel.BrowserFWatchStopParams{ID: br.SessionID})
+	err = b.fsWatch.Stop(ctx, in.WatchID, kernel.BrowserFWatchStopParams{IDOrName: br.SessionID})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -2058,7 +2219,7 @@ func (b BrowsersCmd) FSWatchEvents(ctx context.Context, in BrowsersFSWatchEvents
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	stream := b.fsWatch.EventsStreaming(ctx, in.WatchID, kernel.BrowserFWatchEventsParams{ID: br.SessionID})
+	stream := b.fsWatch.EventsStreaming(ctx, in.WatchID, kernel.BrowserFWatchEventsParams{IDOrName: br.SessionID})
 	if stream == nil {
 		pterm.Error.Println("failed to open watch events stream")
 		return nil
@@ -2682,6 +2843,7 @@ func init() {
 	browsersUpdateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersUpdateCmd.Flags().Bool("force", false, "Force viewport resize even when a live view or recording/replay is active")
 	browsersUpdateCmd.Flags().String("telemetry", "", "Update telemetry: --telemetry=all (reset to default set), --telemetry=off (disable), or --telemetry=console,network (merge those categories into the current selection)")
+	browsersUpdateCmd.Flags().String("telemetry-cdp-exclude", "", "Leave the named CDP methods out of control telemetry's cdp_command events, comma-separated (e.g. Input.dispatchMouseEvent,Page.captureScreenshot); --telemetry-cdp-exclude=none clears the list. Excluded commands are still relayed to the browser, they just produce no event")
 	browsersUpdateCmd.Flags().String("name", "", "Set a new unique name for the browser session (mutually exclusive with --clear-name)")
 	browsersUpdateCmd.Flags().Bool("clear-name", false, "Clear the browser session name")
 	browsersUpdateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE (repeatable; up to 50 pairs). Replaces the entire tag set; mutually exclusive with --clear-tags")
@@ -2939,6 +3101,19 @@ func init() {
 	playwrightRoot.AddCommand(playwrightExecute)
 	browsersCmd.AddCommand(playwrightRoot)
 
+	// webmcp
+	webmcpRoot := &cobra.Command{Use: "webmcp", Short: "Discover and invoke native page (WebMCP) tools"}
+	webmcpListTools := &cobra.Command{Use: "list-tools <id_or_name>", Short: "List WebMCP tools across every open tab and embedded frame", Args: cobra.ExactArgs(1), RunE: runBrowsersWebmcpListTools}
+	addJSONOutputFlag(webmcpListTools)
+	webmcpInvoke := &cobra.Command{Use: "invoke-tool <id_or_name>", Short: "Invoke a discovered WebMCP tool and wait for its result", Args: cobra.ExactArgs(1), RunE: runBrowsersWebmcpInvokeTool}
+	webmcpInvoke.Flags().String("tool-ref", "", "Opaque tool reference from 'browsers webmcp list-tools'")
+	webmcpInvoke.Flags().String("input", "", "Tool input as a JSON object (defaults to {}); use '-' to read from stdin")
+	webmcpInvoke.Flags().Int64("timeout-sec", 0, "Maximum time to wait for the tool result in seconds (1-120, default 60)")
+	_ = webmcpInvoke.MarkFlagRequired("tool-ref")
+	addJSONOutputFlag(webmcpInvoke)
+	webmcpRoot.AddCommand(webmcpListTools, webmcpInvoke)
+	browsersCmd.AddCommand(webmcpRoot)
+
 	// Add flags for create command
 	addJSONOutputFlag(browsersCreateCmd)
 	browsersCreateCmd.Flags().BoolP("stealth", "s", false, "Launch browser in stealth mode to avoid detection")
@@ -2958,11 +3133,13 @@ func init() {
 	browsersCreateCmd.Flags().StringSlice("private-host", nil, "Destinations the browser reaches directly through its own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel the session joins (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Replaces the default private ranges (RFC1918, 100.64.0.0/10, fc00::/7); omit to keep them. Fixed once the session is created")
 	browsersCreateCmd.Flags().String("start-url", "", "Initial page to open on launch")
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
+	browsersCreateCmd.Flags().StringSlice("vault", []string{}, "Vault IDs or names to link to the session (repeatable; may be passed multiple times or comma-separated). Fixed once the session is created")
 	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersCreateCmd.Flags().Bool("viewport-interactive", false, "Interactively select viewport size from list")
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
 	browsersCreateCmd.Flags().String("telemetry", "", "Configure telemetry (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
+	browsersCreateCmd.Flags().String("telemetry-cdp-exclude", "", "Leave the named CDP methods out of control telemetry's cdp_command events, comma-separated (e.g. Input.dispatchMouseEvent,Page.captureScreenshot); --telemetry-cdp-exclude=none clears the list. Excluded commands are still relayed to the browser, they just produce no event")
 	browsersCreateCmd.Flags().String("telemetry-export-otlp", "", "Export captured telemetry over OTLP to one of the org's configured destinations, by ID or name; --telemetry-export-otlp=off disables export. Implies --telemetry=all when --telemetry is not set, since export requires capture")
 	browsersCreateCmd.Flags().String("name", "", "Optional unique name for the browser session (used to find it later; can be changed with 'browsers update --name')")
 	browsersCreateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the session (repeatable; up to 50 pairs)")
@@ -3089,11 +3266,13 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
+	vaults, _ := cmd.Flags().GetStringSlice("vault")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	viewportInteractive, _ := cmd.Flags().GetBool("viewport-interactive")
 	poolID, _ := cmd.Flags().GetString("pool-id")
 	poolName, _ := cmd.Flags().GetString("pool-name")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
+	telemetryCdpExclude, _ := cmd.Flags().GetString("telemetry-cdp-exclude")
 	telemetryExport, _ := cmd.Flags().GetString("telemetry-export-otlp")
 	name, _ := cmd.Flags().GetString("name")
 	tags, _ := tagsFromFlag(cmd, "tag")
@@ -3160,7 +3339,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("timeout") && timeout > 0 {
 			acquireTimeout = int64(timeout)
 		}
-		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry, startURL)
+		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry, telemetryCdpExclude, startURL)
 		if err != nil {
 			return err
 		}
@@ -3202,31 +3381,33 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	in := BrowsersCreateInput{
-		TimeoutSeconds:     timeout,
-		Stealth:            BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealthVal},
-		Headless:           BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headlessVal},
-		GPU:                BoolFlag{Set: cmd.Flags().Changed("gpu"), Value: gpuVal},
-		Memory:             memory,
-		InvocationID:       invocationID,
-		Kiosk:              BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kioskVal},
-		ProfileID:          profileID,
-		ProfileName:        profileName,
-		ProfileSaveChanges: BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
-		ProxyID:            proxyID,
-		ProxyName:          proxyName,
-		ProxyMode:          proxyMode,
-		Region:             region,
-		PrivateHosts:       privateHosts,
-		StartURL:           startURL,
-		Extensions:         extensions,
-		Viewport:           viewport,
-		Telemetry:          telemetry,
-		TelemetryExport:    telemetryExport,
-		ChromePolicy:       chromePolicy,
-		ChromePolicyFile:   chromePolicyFile,
-		Name:               name,
-		Tags:               tags,
-		Output:             output,
+		TimeoutSeconds:      timeout,
+		Stealth:             BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealthVal},
+		Headless:            BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headlessVal},
+		GPU:                 BoolFlag{Set: cmd.Flags().Changed("gpu"), Value: gpuVal},
+		Memory:              memory,
+		InvocationID:        invocationID,
+		Kiosk:               BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kioskVal},
+		ProfileID:           profileID,
+		ProfileName:         profileName,
+		ProfileSaveChanges:  BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
+		ProxyID:             proxyID,
+		ProxyName:           proxyName,
+		ProxyMode:           proxyMode,
+		Region:              region,
+		PrivateHosts:        privateHosts,
+		StartURL:            startURL,
+		Extensions:          extensions,
+		Vaults:              vaults,
+		Viewport:            viewport,
+		Telemetry:           telemetry,
+		TelemetryCdpExclude: telemetryCdpExclude,
+		TelemetryExport:     telemetryExport,
+		ChromePolicy:        chromePolicy,
+		ChromePolicyFile:    chromePolicyFile,
+		Name:                name,
+		Tags:                tags,
+		Output:              output,
 	}
 
 	svc := client.Browsers
@@ -3288,6 +3469,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	viewport, _ := cmd.Flags().GetString("viewport")
 	force, _ := cmd.Flags().GetBool("force")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
+	telemetryCdpExclude, _ := cmd.Flags().GetString("telemetry-cdp-exclude")
 	name, _ := cmd.Flags().GetString("name")
 	clearName, _ := cmd.Flags().GetBool("clear-name")
 	tags, tagsProvided := tagsFromFlag(cmd, "tag")
@@ -3308,6 +3490,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 		Viewport:            viewport,
 		Force:               force,
 		Telemetry:           telemetry,
+		TelemetryCdpExclude: telemetryCdpExclude,
 		Name:                name,
 		SetName:             cmd.Flags().Changed("name"),
 		ClearName:           clearName,
@@ -3519,6 +3702,41 @@ func runBrowsersPlaywrightExecute(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 	b := BrowsersCmd{browsers: &svc, playwright: &svc.Playwright}
 	return b.PlaywrightExecute(cmd.Context(), BrowsersPlaywrightExecuteInput{Identifier: args[0], Code: strings.TrimSpace(code), Timeout: timeout, Output: output})
+}
+
+func runBrowsersWebmcpListTools(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	output, _ := cmd.Flags().GetString("output")
+	b := BrowsersCmd{browsers: &svc, webmcp: &svc.Webmcp}
+	return b.WebmcpListTools(cmd.Context(), BrowsersWebmcpListToolsInput{Identifier: args[0], Output: output})
+}
+
+func runBrowsersWebmcpInvokeTool(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+	toolRef, _ := cmd.Flags().GetString("tool-ref")
+	inputJSON, _ := cmd.Flags().GetString("input")
+	timeoutSec, _ := cmd.Flags().GetInt64("timeout-sec")
+	output, _ := cmd.Flags().GetString("output")
+
+	if inputJSON == "-" {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			pterm.Error.Printf("failed to read stdin: %v\n", err)
+			return nil
+		}
+		inputJSON = string(data)
+	}
+
+	b := BrowsersCmd{browsers: &svc, webmcp: &svc.Webmcp}
+	return b.WebmcpInvokeTool(cmd.Context(), BrowsersWebmcpInvokeToolInput{
+		Identifier: args[0],
+		ToolRef:    toolRef,
+		InputJSON:  inputJSON,
+		TimeoutSec: timeoutSec,
+		Output:     output,
+	})
 }
 
 func runBrowsersFSNewDirectory(cmd *cobra.Command, args []string) error {

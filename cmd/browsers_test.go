@@ -518,6 +518,48 @@ func TestBrowsersCreate_WithNameAndTags(t *testing.T) {
 	assert.Contains(t, out, "env=staging, team=backend")
 }
 
+func TestBrowsersCreate_WithVaults(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-vaults"}, nil
+		},
+	}
+
+	b := BrowsersCmd{browsers: fake}
+	err := b.Create(context.Background(), BrowsersCreateInput{
+		// A Kernel-shaped identifier is sent as an ID, anything else as a name,
+		// and blank entries are dropped.
+		Vaults: []string{"gtw36zdwv9as2etqetxpnspl", " payments ", ""},
+	})
+	assert.NoError(t, err)
+
+	require.Len(t, captured.Vaults, 2)
+	assert.Equal(t, "gtw36zdwv9as2etqetxpnspl", captured.Vaults[0].ID.Value)
+	assert.False(t, captured.Vaults[0].Name.Valid())
+	assert.Equal(t, "payments", captured.Vaults[1].Name.Value)
+	assert.False(t, captured.Vaults[1].ID.Valid())
+}
+
+func TestBrowsersCreate_WithoutVaults(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-no-vaults"}, nil
+		},
+	}
+
+	b := BrowsersCmd{browsers: fake}
+	assert.NoError(t, b.Create(context.Background(), BrowsersCreateInput{}))
+	assert.Empty(t, captured.Vaults)
+}
+
 func TestBrowsersCreate_WithPrivateHosts(t *testing.T) {
 	setupStdoutCapture(t)
 
