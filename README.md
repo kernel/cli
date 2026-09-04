@@ -128,6 +128,7 @@ Commands with JSON output support:
 - **Proxies**: `create`, `list`, `get`, `update`, `check`
 - **API Keys**: `create`, `list`, `get`, `update`, `rotate`
 - **Auth Connections**: `timeline`
+- **Vaults**: `create`, `list`, `get`, `items list/get/events/invoke`, `wallets create/payment-methods`, `cards create/update` (display-safe public fields only)
 - **Projects**: `update`
 - **Org**: `limits get/set`
 - **Apps**: `list`, `history`
@@ -223,6 +224,7 @@ Commands with JSON output support:
   - `--proxy-mode direct|default` - Egress mode instead of a selected proxy: `direct` for no proxy regardless of stealth, `default` for the stealth-derived default (Kernel's stealth proxy with `--stealth`, direct egress otherwise). Omit all proxy flags to get the default.
   - `--name <name>` - Optional unique name for the session (used to find it later by name; can be changed with `browsers update --name`)
   - `--tag <KEY=VALUE>` - Set a tag on the session, repeatable; up to 50 pairs
+  - `--vault <id-or-name>` - Attach a project-owned vault at creation (repeatable, max 20). Uses the API's effective project unless `--project` or `KERNEL_PROJECT` selects one. Cannot be combined with pool flags, even with `--yes`; vault bindings cannot be added to existing sessions.
   - `--pool-id <id>` - Acquire a browser from the specified pool (mutually exclusive with --pool-name; ignores other session flags). `--name`/`--tag` still apply to the acquired session.
   - `--pool-name <name>` - Acquire a browser from the pool name (mutually exclusive with --pool-id; ignores other session flags)
   - `--telemetry=all` - Enable telemetry for all categories
@@ -265,6 +267,174 @@ Commands with JSON output support:
   - `-f, --fail` - Fail with no body output on HTTP errors
   - `-s, --silent` - Suppress progress output
   - _Note: redirects are followed automatically by Chromium._
+
+### Vaults
+
+Vault commands **prepare and observe payment credentials; they do not submit merchant payments**.
+Vault names, item keys, and project ownership are immutable. Optionally select a project with
+`--project <id-or-name>` or `KERNEL_PROJECT`; otherwise, the API resolves the project from your
+credentials and its defaults (the default project for org-wide credentials, not all projects).
+Ownership is assigned from that scope, not a `project_id` body field. Project-scoped credentials
+cannot switch projects.
+
+#### Command reference
+
+| Command | Purpose / flags |
+| --- | --- |
+| `kernel vaults create --name <name>` | Create or retrieve the vault with that immutable name |
+| `kernel vaults list` | `--limit 1..100` (default 20), `--offset`; JSON includes `vaults` and optional `next_offset` |
+| `kernel vaults get <vault>` | Get by ID or name |
+| `kernel vaults delete <vault>` | Invalidate the vault and all its items; `--yes` skips confirmation |
+| `kernel vaults wallets create <vault> <key> --provider link\|agentcard --spec '<json>'` | Connect/enroll a wallet using its provider's spec; `--open` opens a returned HTTPS action URL |
+| `kernel vaults wallets payment-methods <vault> <key>` | Fetch advertised live payment methods; JSON is the item with `expanded.payment_methods` |
+| `kernel vaults cards create <vault> <key> --provider link\|agentcard --spec '<json>'` | Create a card request; never implicitly authorize Link |
+| `kernel vaults cards update <vault> <key> --provider link\|agentcard --spec '<json>'` | Replace the full card spec; the API enforces state/provider constraints |
+| `kernel vaults items list <vault>` | List item keys, types, providers, status, and required actions |
+| `kernel vaults items get <vault> <key>` | Inspect state/actions/returned aliases and copyable operation commands; `--wait 0..60`, `--expand payment_methods`, `--open` |
+| `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; optional `--open` opens a returned HTTPS action |
+| `kernel vaults items events <vault> <key>` | Read ordered audit events; `--after <event-id>`, `--wait 0..60` |
+| `kernel vaults items delete <vault> <key>` | Invalidate an item; `--yes` skips confirmation |
+
+`<vault>` accepts an ID or name. `<key>` is the immutable item key within that vault, not
+its generated item ID. Names and keys use letters, digits, dots, underscores, and hyphens
+(1–255 characters; not `.` or `..`). All commands except delete support `-o json`.
+JSON preserves field presence and API-returned aliases, while omitting unknown fields,
+opaque metadata, and unrecognized event data. Human output labels aliases as non-secret
+checkout values and distinguishes card readiness from checkout authorization/payment outcomes.
+Action and approval URLs print in full on separate lines, without table truncation.
+API failures use the CLI's standard error formatter, preserving the API's code and message.
+`vaults delete` and `vaults items delete` treat HTTP 404 as success and print
+`Deleted or not found`, whether the missing object is the project, vault, or item.
+Other API errors still return a nonzero exit status.
+
+**Provider specifications:** wallet creation and card creation/update require `--provider`
+and `--spec '<json>'`. Supply only the spec object, not a `{type, spec}` envelope. The command
+sets the item type and injects `provider`; if JSON also contains `provider`, it must match.
+Other values are forwarded unchanged, including optional fields, without defaults or normalization.
+The API validates the provider-specific schema. Each command's `--help` includes its raw
+TypeScript-style types, which must stay in sync with the [API spec](https://api.onkernel.com/spec.yaml).
+
+- **Link wallet:** supply `authorization: {method: "oauth", client: {type: "kernel_managed"}}`.
+- **AgentCard wallet:** use `{}` to enroll, or supply `user_id` for an already enrolled user.
+- **Link card:** include the required fields shown in help. Optional `line_items`, `totals`,
+  `metadata`, and `expires_at` are supported through JSON.
+- **AgentCard card:** uses `merchant`, not Link's `merchant_name`. Its optional `card_id` selects
+  a vaulted card; otherwise the cardholder selects one at approval.
+
+`cards update` replaces the entire spec, so omitted optional details are removed. Permitted
+checkout domains remain provider-assigned. Neither command submits a merchant payment.
+
+#### Link checkout preparation
+
+1. Create/select a vault in the effective project. Connect the wallet in the provider's UI:
+
+   ```bash
+   kernel vaults create --name checkout
+   kernel vaults wallets create checkout wallet-1 --provider link \
+     --spec '{"authorization":{"method":"oauth","client":{"type":"kernel_managed"}}}' --open
+   kernel vaults items get checkout wallet-1 --wait 60
+   ```
+
+2. Once connected, list methods and explicitly choose a returned ID:
+
+   ```bash
+   kernel vaults wallets payment-methods checkout wallet-1
+   # Equivalent: kernel vaults items get checkout wallet-1 --expand payment_methods
+   kernel vaults cards create checkout order-1 --provider link --spec '{
+     "wallet": "wallet-1",
+     "payment_method_id": "<returned-id>",
+     "amount": 1234,
+     "currency": "usd",
+     "merchant_name": "Example Shop",
+     "merchant_url": "https://shop.example",
+     "context": "Purchase the selected office supplies from Example Shop for the approved order, with a total spending limit of 1234 minor currency units."
+   }'
+   ```
+
+3. After explicit user approval, authorize **only if the item advertises it**. Follow the
+   returned approval action, then observe:
+
+   ```bash
+   kernel vaults items get checkout order-1
+   kernel vaults items invoke checkout order-1 authorize --open
+   kernel vaults items get checkout order-1 --wait 60
+   ```
+
+4. When ready, attach the same vault to a new browser. Use only the returned
+   `state.aliases` values in that browser's checkout and respect returned permitted domains:
+
+   ```bash
+   kernel browsers create --vault checkout
+   ```
+
+5. Observe outcomes independently of merchant checkout submission:
+
+   ```bash
+   kernel vaults items get checkout order-1
+   kernel vaults items events checkout order-1
+   kernel vaults items events checkout order-1 --after <last-event-id> --wait 60
+   ```
+
+#### AgentCard checkout preparation
+
+For a separate AgentCard flow, create a vault and complete the wallet enrollment action:
+
+```bash
+kernel vaults create --name agentcard-checkout
+kernel vaults wallets create agentcard-checkout wallet-1 --provider agentcard --spec '{}' --open
+kernel vaults items get agentcard-checkout wallet-1 --wait 60
+```
+
+Once the wallet is connected, create the card request:
+
+```bash
+kernel vaults cards create agentcard-checkout order-1 --provider agentcard --spec '{
+  "wallet": "wallet-1",
+  "merchant": "Example Shop",
+  "amount": 1234,
+  "currency": "usd"
+}'
+kernel browsers create --vault agentcard-checkout
+```
+
+AgentCard authorizes at checkout and does not currently advertise `authorize`. To select a
+vaulted card in advance, inspect `wallets payment-methods` and include its ID as `card_id` in the
+card spec. Otherwise, the cardholder selects a card at approval. A reusable card being
+`ready` does not mean the last payment succeeded.
+
+#### Invoking item operations
+
+`items get` displays every `available_operations` entry's type and description, plus a
+copyable `items invoke` command retaining the selected project. Read the description and
+follow its approval requirements before invoking. Required user actions (OAuth, enrollment,
+MFA, spend approval) appear separately; they are not operations to invoke through this endpoint.
+
+`items invoke` fetches the item again and calls
+`POST /vaults/{id_or_name}/items/{key}/operations` only if the requested operation is still
+advertised. The API controls availability; the CLI has no provider/type/state-specific
+operation checks. The response is the updated item, possibly with a required user action.
+
+The current [API spec](https://api.onkernel.com/spec.yaml) accepts only
+`{"type":"authorize"}` and forbids extra fields. There is no operation `--spec` flag;
+wallet/card `--spec` flags remain unchanged. New parameterless operations can be invoked by
+name when the API advertises them, without adding CLI subcommands.
+
+#### Expansions, updates, and lifecycle
+
+`--expand` takes a value, such as `--expand payment_methods`; it is not a boolean switch.
+Request only expansions advertised in `available_expansions`. Add `-o json` to read the
+returned `expanded.payment_methods` directly. Unavailable expansions return an API error.
+
+Use `cards update <vault> <key> --provider <provider> --spec '<json>'` to replace the entire
+card spec when the API permits it. Include optional fields you want to retain; the CLI
+does not merge the new JSON with the existing spec.
+
+Waits are single bounded observations, not readiness guarantees or payment retries. Pending
+state is returned as-is. Requests are not automatically retried by the vault commands.
+**Never retry failed, timed-out, rejected, or indeterminate payments.** Inspect state/events
+and reconcile the outcome instead. Do not pass card data, OAuth codes/tokens, ciphertext,
+provider secrets, or sensitive provider responses to the CLI. Complete collection, OAuth,
+and approval actions through the provider's returned URL/UI; no callback-code command exists.
 
 ### Browser Pools
 
