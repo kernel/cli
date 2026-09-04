@@ -260,7 +260,9 @@ func TestAPIKeysDeleteReturnsNotFoundError(t *testing.T) {
 
 	err := c.Delete(context.Background(), APIKeysDeleteInput{ID: "missing_key", SkipConfirm: true})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), `API key "missing_key" not found`)
+	var apiErr *kernel.Error
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, http.StatusNotFound, apiErr.StatusCode)
 }
 
 func TestAPIKeysDeleteReturnsAPIError(t *testing.T) {

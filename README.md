@@ -105,6 +105,13 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
 - `--log-level <level>` - Set log level (trace, debug, info, warn, error, fatal, print)
 - `--project <id-or-name>` - Scope requests to a project by ID or exact name (or set `KERNEL_PROJECT`). Project-scoped OAuth tokens cannot switch projects.
 
+### Delete errors
+
+Resource delete commands return a nonzero exit status and show the API error when a request
+fails, including HTTP 404 for an invalid project or a missing resource. A 404 is not treated
+as successful deletion. This also applies to resource lookups performed before confirmation.
+Successful API responses and user-cancelled confirmations still exit successfully.
+
 ## JSON Output
 
 Many commands support JSON output for scripting and automation. Use `--output json` or `-o json` to get machine-readable output:

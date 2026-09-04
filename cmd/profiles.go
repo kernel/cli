@@ -229,13 +229,8 @@ func (p ProfilesCmd) Create(ctx context.Context, in ProfilesCreateInput) error {
 }
 
 func (p ProfilesCmd) Delete(ctx context.Context, in ProfilesDeleteInput) error {
-	// Resolve using Get first; treat not found as success with a message
 	item, err := p.profiles.Get(ctx, in.Identifier)
 	if err != nil {
-		if util.IsNotFound(err) {
-			pterm.Info.Printf("Profile '%s' not found\n", in.Identifier)
-			return nil
-		}
 		return util.CleanedUpSdkError{Err: err}
 	}
 	if item == nil || item.ID == "" {
@@ -258,10 +253,6 @@ func (p ProfilesCmd) Delete(ctx context.Context, in ProfilesDeleteInput) error {
 	}
 
 	if err := p.profiles.Delete(ctx, in.Identifier); err != nil {
-		if util.IsNotFound(err) {
-			pterm.Info.Printf("Profile '%s' not found\n", in.Identifier)
-			return nil
-		}
 		return util.CleanedUpSdkError{Err: err}
 	}
 	pterm.Success.Printf("Deleted profile: %s\n", in.Identifier)

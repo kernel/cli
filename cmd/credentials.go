@@ -305,10 +305,6 @@ func (c CredentialsCmd) Delete(ctx context.Context, in CredentialsDeleteInput) e
 	}
 
 	if err := c.credentials.Delete(ctx, in.Identifier); err != nil {
-		if util.IsNotFound(err) {
-			pterm.Info.Printf("Credential '%s' not found\n", in.Identifier)
-			return nil
-		}
 		return util.CleanedUpSdkError{Err: err}
 	}
 	pterm.Success.Printf("Deleted credential: %s\n", in.Identifier)

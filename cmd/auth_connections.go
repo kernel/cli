@@ -739,10 +739,6 @@ func (c AuthConnectionCmd) Delete(ctx context.Context, in AuthConnectionDeleteIn
 	}
 
 	if err := c.svc.Delete(ctx, in.ID); err != nil {
-		if util.IsNotFound(err) {
-			pterm.Info.Printf("Managed auth '%s' not found\n", in.ID)
-			return nil
-		}
 		return util.CleanedUpSdkError{Err: err}
 	}
 	pterm.Success.Printf("Deleted managed auth: %s\n", in.ID)

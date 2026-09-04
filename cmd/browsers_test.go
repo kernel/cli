@@ -1009,7 +1009,7 @@ func TestBrowsersDelete_Success(t *testing.T) {
 	_ = b.Delete(context.Background(), BrowsersDeleteInput{Identifier: "any"})
 
 	out := outBuf.String()
-	assert.Contains(t, out, "Successfully deleted (or already absent) browser: any")
+	assert.Contains(t, out, "Successfully deleted browser: any")
 }
 
 func TestBrowsersDelete_Failure(t *testing.T) {

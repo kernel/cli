@@ -305,10 +305,6 @@ func (c TelemetryDestinationsCmd) Delete(ctx context.Context, in TelemetryDestin
 	}
 
 	if err := c.destinations.Delete(ctx, in.Identifier); err != nil {
-		if util.IsNotFound(err) {
-			pterm.Info.Printf("OTLP destination '%s' not found\n", in.Identifier)
-			return nil
-		}
 		// A 409 here means the destination is still referenced; the API's own
 		// message names what still holds it, so it is surfaced as-is.
 		return util.CleanedUpSdkError{Err: err}

@@ -202,10 +202,6 @@ func (e ExtensionsCmd) Delete(ctx context.Context, in ExtensionsDeleteInput) err
 	}
 
 	if err := e.extensions.Delete(ctx, in.Identifier); err != nil {
-		if util.IsNotFound(err) {
-			pterm.Info.Printf("Extension '%s' not found\n", in.Identifier)
-			return nil
-		}
 		return util.CleanedUpSdkError{Err: err}
 	}
 	pterm.Success.Printf("Deleted extension: %s\n", in.Identifier)

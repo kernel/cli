@@ -20,11 +20,7 @@ func (p ProxyCmd) Delete(ctx context.Context, in ProxyDeleteInput) error {
 		// Try to get the proxy details for better confirmation message
 		proxy, err := p.proxies.Get(ctx, in.ID)
 		if err != nil {
-			// If we can't get the proxy, just use the ID
-			if !util.IsNotFound(err) {
-				return util.CleanedUpSdkError{Err: err}
-			}
-			proxy = nil
+			return util.CleanedUpSdkError{Err: err}
 		}
 
 		var confirmMsg string
@@ -48,10 +44,6 @@ func (p ProxyCmd) Delete(ctx context.Context, in ProxyDeleteInput) error {
 
 	err := p.proxies.Delete(ctx, in.ID)
 	if err != nil {
-		if util.IsNotFound(err) {
-			pterm.Warning.Printf("Proxy '%s' not found\n", in.ID)
-			return nil
-		}
 		return util.CleanedUpSdkError{Err: err}
 	}
 

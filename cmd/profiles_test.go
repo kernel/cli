@@ -198,8 +198,9 @@ func TestProfilesDelete_ConfirmNotFound(t *testing.T) {
 		return nil, &kernel.Error{StatusCode: http.StatusNotFound}
 	}}
 	p := ProfilesCmd{profiles: fake}
-	_ = p.Delete(context.Background(), ProfilesDeleteInput{Identifier: "missing"})
-	assert.Contains(t, buf.String(), "not found")
+	err := p.Delete(context.Background(), ProfilesDeleteInput{Identifier: "missing"})
+	assert.Error(t, err)
+	assert.Empty(t, buf.String())
 }
 
 func TestProfilesDelete_SkipConfirm(t *testing.T) {

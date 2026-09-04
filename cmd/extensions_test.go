@@ -160,8 +160,9 @@ func TestExtensionsDelete_NotFound(t *testing.T) {
 		return &kernel.Error{StatusCode: http.StatusNotFound}
 	}}
 	e := ExtensionsCmd{extensions: fake}
-	_ = e.Delete(context.Background(), ExtensionsDeleteInput{Identifier: "missing", SkipConfirm: true})
-	assert.Contains(t, buf.String(), "not found")
+	err := e.Delete(context.Background(), ExtensionsDeleteInput{Identifier: "missing", SkipConfirm: true})
+	assert.Error(t, err)
+	assert.Empty(t, buf.String())
 }
 
 func TestExtensionsDownload_MissingOutput(t *testing.T) {

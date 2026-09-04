@@ -284,10 +284,6 @@ func (c CredentialProvidersCmd) Delete(ctx context.Context, in CredentialProvide
 	}
 
 	if err := c.providers.Delete(ctx, in.ID); err != nil {
-		if util.IsNotFound(err) {
-			pterm.Info.Printf("Credential provider '%s' not found\n", in.ID)
-			return nil
-		}
 		return util.CleanedUpSdkError{Err: err}
 	}
 	pterm.Success.Printf("Deleted credential provider: %s\n", in.ID)

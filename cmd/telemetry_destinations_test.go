@@ -260,8 +260,8 @@ func TestTelemetryDestinationsDelete_NotFound(t *testing.T) {
 		return &kernel.Error{StatusCode: http.StatusNotFound}
 	}}
 	c := TelemetryDestinationsCmd{destinations: fake}
-	require.NoError(t, c.Delete(context.Background(), TelemetryDestinationsDeleteInput{Identifier: "nope", SkipConfirm: true}))
-	assert.Contains(t, buf.String(), "not found")
+	require.Error(t, c.Delete(context.Background(), TelemetryDestinationsDeleteInput{Identifier: "nope", SkipConfirm: true}))
+	assert.Empty(t, buf.String())
 }
 
 func TestTelemetryDestinationsDelete_NonInteractiveWithoutYes(t *testing.T) {

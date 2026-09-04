@@ -747,11 +747,10 @@ func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, profile kernel
 }
 
 func (b BrowsersCmd) Delete(ctx context.Context, in BrowsersDeleteInput) error {
-	// Treat not found as a success (idempotent delete)
-	if err := b.browsers.DeleteByID(ctx, in.Identifier); err != nil && !util.IsNotFound(err) {
+	if err := b.browsers.DeleteByID(ctx, in.Identifier); err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	pterm.Success.Printf("Successfully deleted (or already absent) browser: %s\n", in.Identifier)
+	pterm.Success.Printf("Successfully deleted browser: %s\n", in.Identifier)
 	return nil
 }
 
