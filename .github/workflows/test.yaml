@@ -21,21 +21,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: "go.mod"
-          cache: false
-
-      - name: Create read-only token for the preview SDK
-        id: sdk-token
-        uses: actions/create-github-app-token@v3
-        with:
-          app-id: ${{ secrets.ADMIN_APP_ID }}
-          private-key: ${{ secrets.ADMIN_APP_PRIVATE_KEY }}
-          repositories: kernel-go-sdk-staging
-          permission-contents: read
+          cache: true
 
       - name: Run tests
-        env:
-          GOPRIVATE: github.com/kernel/kernel-go-sdk-staging
-          GH_TOKEN: ${{ steps.sdk-token.outputs.token }}
-        run: |
-          gh auth setup-git
-          make test
+        run: make test

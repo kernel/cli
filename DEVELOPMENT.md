@@ -77,24 +77,11 @@ selected project in copyable invocation hints and shell-quote arguments safely.
 - Action and approval URLs must remain outside the terminal-width-limited tables. Check
   complete URLs at narrow terminal widths as well as in piped and JSON output.
 
-#### Preview SDK dependency
+#### SDK dependency
 
-The vault implementation currently uses the `go.mod` replacement for
-`github.com/kernel/kernel-go-sdk-staging` at
-`v0.86.1-0.20260904020633-50f33b1b5cf6`. Fetching it requires GitHub access to that repository
-and `GOPRIVATE=github.com/kernel/kernel-go-sdk-staging`. The test workflow temporarily
-obtains a repository-scoped read token and disables Go caching; fork CI cannot access it.
-
-A cached local build does not prove the preview is fetchable. If a fresh build reports
-`unknown revision`, resolve the dependency before merging or releasing.
-
-Before releasing the vault commands:
-
-1. Upgrade to the canonical released SDK containing the required vault APIs and remove the
-   replacement with `go mod edit -dropreplace=github.com/kernel/kernel-go-sdk`.
-2. Run `go mod tidy` and address any generated SDK interface changes.
-3. Remove the preview-token/GOPRIVATE setup from `.github/workflows/test.yaml` and restore caching.
-4. Verify a fresh dependency fetch, tests, build, and lint against the released SDK.
+Vault commands use the published `github.com/kernel/kernel-go-sdk` v0.100.0 dependency.
+No preview replacement, private SDK access, or special CI authentication is required.
+When upgrading the SDK, run `go mod tidy`, tests, build, and lint against the released module.
 
 ### Releasing a new version
 
