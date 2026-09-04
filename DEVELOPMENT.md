@@ -12,7 +12,7 @@ brew install onkernel/tap/kernel
 
 Install the following tools:
 
-- Go 1.22+ ( https://go.dev/doc/install )
+- Go 1.25+ ( https://go.dev/doc/install ); the required version is recorded in `go.mod`
 - [Goreleaser Pro](https://goreleaser.com/install/#pro) - **IMPORTANT: You must install goreleaser-pro, not the standard version, as this is required for our release process**
 - [chglog](https://github.com/goreleaser/chglog)
 
@@ -55,6 +55,40 @@ A typical workflow we encounter is updating the API and integrating those change
 ```
 ./scripts/go-mod-replace-kernel.sh <commit | branch name>
 ```
+
+### Maintaining the vault commands
+
+Wallet creation and card creation/update accept `--provider` and raw `--spec` JSON.
+Provider-specific fields are validated by the API, not duplicated as CLI flags or local
+schema validators. Preserve JSON values, including large integers, explicit `false`, nulls,
+and omitted fields; do not introduce defaults while converting requests for the SDK.
+
+- Keep the types in `cmd/vaults_help.go` aligned with the
+  [published API spec](https://api.onkernel.com/spec.yaml), including nested optional types.
+- Update the README examples and payment-method selection hints when changing this interface.
+- Run `make test`, `make build`, and `go test -race ./cmd -run TestVault -count=1`.
+  Use local HTTP fixtures for request/output tests; do not create live payment credentials.
+- Action and approval URLs must remain outside the terminal-width-limited tables. Check
+  complete URLs at narrow terminal widths as well as in piped and JSON output.
+
+#### Preview SDK dependency
+
+The vault implementation currently uses the `go.mod` replacement for
+`github.com/kernel/kernel-go-sdk-staging` at
+`v0.86.1-0.20260904020633-50f33b1b5cf6`. Fetching it requires GitHub access to that repository
+and `GOPRIVATE=github.com/kernel/kernel-go-sdk-staging`. The test workflow temporarily
+obtains a repository-scoped read token and disables Go caching; fork CI cannot access it.
+
+A cached local build does not prove the preview is fetchable. If a fresh build reports
+`unknown revision`, resolve the dependency before merging or releasing.
+
+Before releasing the vault commands:
+
+1. Upgrade to the canonical released SDK containing the required vault APIs and remove the
+   replacement with `go mod edit -dropreplace=github.com/kernel/kernel-go-sdk`.
+2. Run `go mod tidy` and address any generated SDK interface changes.
+3. Remove the preview-token/GOPRIVATE setup from `.github/workflows/test.yaml` and restore caching.
+4. Verify a fresh dependency fetch, tests, build, and lint against the released SDK.
 
 ### Releasing a new version
 

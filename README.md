@@ -295,8 +295,9 @@ cannot switch projects.
 | `kernel vaults items events <vault> <key>` | Read ordered audit events; `--after <event-id>`, `--wait 0..60` |
 | `kernel vaults items delete <vault> <key>` | Invalidate an item; `--yes` skips confirmation |
 
-`<vault>` accepts an ID or name. Names and keys use letters, digits, dots, underscores, and
-hyphens (1–255 characters; not `.` or `..`). All commands except delete support `-o json`.
+`<vault>` accepts an ID or name. `<key>` is the immutable item key within that vault, not
+its generated item ID. Names and keys use letters, digits, dots, underscores, and hyphens
+(1–255 characters; not `.` or `..`). All commands except delete support `-o json`.
 JSON preserves field presence and API-returned aliases, while omitting unknown fields,
 opaque metadata, and unrecognized event data. Human output labels aliases as non-secret
 checkout values and distinguishes card readiness from checkout authorization/payment outcomes.
@@ -338,6 +339,7 @@ checkout domains remain provider-assigned. Neither command submits a merchant pa
 
    ```bash
    kernel vaults wallets payment-methods checkout wallet-1
+   # Equivalent: kernel vaults items get checkout wallet-1 --expand payment_methods
    kernel vaults cards create checkout order-1 --provider link --spec '{
      "wallet": "wallet-1",
      "payment_method_id": "<returned-id>",
@@ -372,6 +374,43 @@ checkout domains remain provider-assigned. Neither command submits a merchant pa
    kernel vaults items events checkout order-1
    kernel vaults items events checkout order-1 --after <last-event-id> --wait 60
    ```
+
+#### AgentCard checkout preparation
+
+For a separate AgentCard flow, create a vault and complete the wallet enrollment action:
+
+```bash
+kernel vaults create --name agentcard-checkout
+kernel vaults wallets create agentcard-checkout wallet-1 --provider agentcard --spec '{}' --open
+kernel vaults items get agentcard-checkout wallet-1 --wait 60
+```
+
+Once the wallet is connected, create the card request:
+
+```bash
+kernel vaults cards create agentcard-checkout order-1 --provider agentcard --spec '{
+  "wallet": "wallet-1",
+  "merchant": "Example Shop",
+  "amount": 1234,
+  "currency": "usd"
+}'
+kernel browsers create --vault agentcard-checkout
+```
+
+AgentCard authorizes at checkout; do not run `cards authorize` for it. To select a vaulted
+card in advance, inspect `wallets payment-methods` and include its ID as `card_id` in the
+card spec. Otherwise, the cardholder selects a card at approval. A reusable card being
+`ready` does not mean the last payment succeeded.
+
+#### Expansions, updates, and lifecycle
+
+`--expand` takes a value, such as `--expand payment_methods`; it is not a boolean switch.
+Request only expansions advertised in `available_expansions`. Add `-o json` to read the
+returned `expanded.payment_methods` directly. Unavailable expansions return an API error.
+
+Use `cards update <vault> <key> --provider <provider> --spec '<json>'` to replace the entire
+card spec when the API permits it. Include optional fields you want to retain; the CLI
+does not merge the new JSON with the existing spec.
 
 Waits are single bounded observations, not readiness guarantees or payment retries. Pending
 state is returned as-is. Requests are not automatically retried by the vault commands.
