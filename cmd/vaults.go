@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/kernel/cli/pkg/interactive"
@@ -99,7 +98,11 @@ func (c VaultsCmd) List(ctx context.Context, limit, offset int64, project, outpu
 		PrintTableNoPad(rows, true)
 	}
 	if pagination.HasMore {
-		pterm.Printf("Next: kernel --project %q vaults list --limit %d --offset %d\n", project, limit, pagination.NextOffset)
+		projectFlag := ""
+		if project != "" {
+			projectFlag = fmt.Sprintf(" --project %q", project)
+		}
+		pterm.Printf("Next: kernel%s vaults list --limit %d --offset %d\n", projectFlag, limit, pagination.NextOffset)
 	}
 	return nil
 }
@@ -300,13 +303,6 @@ func (c VaultsCmd) showItem(item *kernel.VaultItemUnion, output string, open boo
 	}
 	if err := c.openURL(actionURL); err != nil {
 		return fmt.Errorf("could not open the browser; open the returned action URL manually")
-	}
-	return nil
-}
-
-func requireVaultProject(project string) error {
-	if strings.TrimSpace(project) == "" {
-		return fmt.Errorf("select the vault's project with --project <id-or-name> or KERNEL_PROJECT; vault project ownership is immutable")
 	}
 	return nil
 }

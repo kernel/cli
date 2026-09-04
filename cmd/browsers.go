@@ -2972,7 +2972,7 @@ func init() {
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
 	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersCreateCmd.Flags().Bool("viewport-interactive", false, "Interactively select viewport size from list")
-	browsersCreateCmd.Flags().StringArray("vault", nil, "Project-owned vault ID or name to attach at creation (repeatable, max 20; requires --project or KERNEL_PROJECT; incompatible with pools)")
+	browsersCreateCmd.Flags().StringArray("vault", nil, "Project-owned vault ID or name to attach at creation (repeatable, max 20; incompatible with pools)")
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
 	browsersCreateCmd.Flags().String("telemetry", "", "Configure telemetry (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
@@ -3122,10 +3122,6 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		}
 		if poolID != "" || poolName != "" {
 			return fmt.Errorf("--vault cannot be used with --pool-id or --pool-name; create a new browser to attach vaults")
-		}
-		project, _ := cmd.Flags().GetString("project")
-		if err := requireVaultProject(resolveProjectSelection(project)); err != nil {
-			return err
 		}
 	}
 

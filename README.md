@@ -224,7 +224,7 @@ Commands with JSON output support:
   - `--proxy-mode direct|default` - Egress mode instead of a selected proxy: `direct` for no proxy regardless of stealth, `default` for the stealth-derived default (Kernel's stealth proxy with `--stealth`, direct egress otherwise). Omit all proxy flags to get the default.
   - `--name <name>` - Optional unique name for the session (used to find it later by name; can be changed with `browsers update --name`)
   - `--tag <KEY=VALUE>` - Set a tag on the session, repeatable; up to 50 pairs
-  - `--vault <id-or-name>` - Attach a project-owned vault at creation (repeatable, max 20). Requires `--project` or `KERNEL_PROJECT`. Cannot be combined with pool flags, even with `--yes`; vault bindings cannot be added to existing sessions.
+  - `--vault <id-or-name>` - Attach a project-owned vault at creation (repeatable, max 20). Uses the API's effective project unless `--project` or `KERNEL_PROJECT` selects one. Cannot be combined with pool flags, even with `--yes`; vault bindings cannot be added to existing sessions.
   - `--pool-id <id>` - Acquire a browser from the specified pool (mutually exclusive with --pool-name; ignores other session flags). `--name`/`--tag` still apply to the acquired session.
   - `--pool-name <name>` - Acquire a browser from the pool name (mutually exclusive with --pool-id; ignores other session flags)
   - `--telemetry=all` - Enable telemetry for all categories
@@ -271,9 +271,11 @@ Commands with JSON output support:
 ### Vaults
 
 Vault commands **prepare and observe payment credentials; they do not submit merchant payments**.
-Vault names, item keys, and project ownership are immutable. Select the project explicitly with
-`--project <id-or-name>` or `KERNEL_PROJECT`; the API assigns ownership from that scope, not a
-`project_id` body field. Project-scoped credentials cannot switch projects.
+Vault names, item keys, and project ownership are immutable. Optionally select a project with
+`--project <id-or-name>` or `KERNEL_PROJECT`; otherwise, the API resolves the project from your
+credentials and its defaults (the default project for org-wide credentials, not all projects).
+Ownership is assigned from that scope, not a `project_id` body field. Project-scoped credentials
+cannot switch projects.
 
 #### Command reference
 
@@ -318,10 +320,9 @@ and `--merchant <name>` are required. Currency is normalized to lowercase.
 
 #### Link checkout preparation
 
-1. Select a project and create/select a vault. Connect the wallet in the provider's UI:
+1. Create/select a vault in the effective project. Connect the wallet in the provider's UI:
 
    ```bash
-   export KERNEL_PROJECT=my-project
    kernel vaults create --name checkout
    kernel vaults wallets create checkout wallet-1 --provider link --open
    kernel vaults items get checkout wallet-1 --wait 60

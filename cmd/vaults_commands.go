@@ -33,10 +33,6 @@ func vaultOutput(cmd *cobra.Command) string {
 }
 
 func vaultPreRun(cmd *cobra.Command, args []string) error {
-	project, _ := cmd.Flags().GetString("project")
-	if err := requireVaultProject(resolveProjectSelection(project)); err != nil {
-		return err
-	}
 	if err := validateJSONOutput(vaultOutput(cmd)); err != nil {
 		return err
 	}
@@ -57,8 +53,9 @@ func newVaultsCommand() *cobra.Command {
 		Use: "vaults", Aliases: []string{"vault"}, Short: "Prepare and observe project-owned payment credentials",
 		Long: `Prepare and observe payment credentials; vault commands do not submit merchant payments.
 
-Select the project with --project <id-or-name> or KERNEL_PROJECT. The API assigns
-immutable project ownership from that scope. Vault names and item keys are immutable.
+Optionally select a project with --project <id-or-name> or KERNEL_PROJECT.
+Otherwise, the API resolves the project from your credentials and its defaults.
+Vault names, item keys, and project ownership are immutable.
 
 1. Create/select a vault, then create a provider wallet and follow its returned action.
 2. For Link, list wallet payment methods and select an ID explicitly.
@@ -85,7 +82,7 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 	_ = create.MarkFlagRequired("name")
 	addVaultJSONOutputFlag(create)
 
-	list := &cobra.Command{Use: "list", Short: "List vaults in the selected project", Args: cobra.NoArgs, PreRunE: vaultPreRun,
+	list := &cobra.Command{Use: "list", Short: "List vaults in the effective project", Args: cobra.NoArgs, PreRunE: vaultPreRun,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			limit, _ := cmd.Flags().GetInt64("limit")
 			offset, _ := cmd.Flags().GetInt64("offset")

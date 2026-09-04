@@ -114,9 +114,49 @@ func TestVaultRequiredAndInvalidFlags(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.want)
 		})
 	}
+}
+
+func TestVaultCommandsWithoutProject(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
-	_, _, err := executeVaultCommand(t, client, "vaults", "list")
-	require.ErrorContains(t, err, "--project")
+	tests := []struct {
+		args     []string
+		response string
+		calls    int
+	}{
+		{[]string{"create", "--name", "checkout"}, vaultFixture, 1},
+		{[]string{"list"}, "[" + vaultFixture + "]", 1},
+		{[]string{"get", "checkout"}, vaultFixture, 1},
+		{[]string{"delete", "checkout", "--yes"}, "", 1},
+		{[]string{"items", "list", "checkout"}, "[" + requestedCardFixture + "]", 1},
+		{[]string{"items", "get", "checkout", "order-1"}, requestedCardFixture, 1},
+		{[]string{"items", "delete", "checkout", "order-1", "--yes"}, "", 1},
+		{[]string{"items", "events", "checkout", "order-1"}, "[]", 1},
+		{[]string{"wallets", "create", "checkout", "wallet-1", "--provider", "link"}, connectedWalletFixture, 1},
+		{[]string{"wallets", "payment-methods", "checkout", "wallet-1"}, connectedWalletFixture, 1},
+		{append([]string{"cards", "create", "checkout", "order-1"}, linkCardArgs()...), requestedCardFixture, 1},
+		{append([]string{"cards", "update", "checkout", "order-1"}, linkCardArgs()...), requestedCardFixture, 1},
+		{[]string{"cards", "authorize", "checkout", "order-1"}, requestedCardFixture, 2},
+	}
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.args[:min(2, len(tt.args))], " "), func(t *testing.T) {
+			calls := 0
+			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				assert.Empty(t, r.Header.Get("X-Kernel-Project"))
+				if r.Method == http.MethodDelete {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Has-More", "false")
+				w.Header().Set("X-Next-Offset", "0")
+				_, _ = io.WriteString(w, tt.response)
+			})
+			_, _, err := executeVaultCommand(t, client, append([]string{"vaults"}, tt.args...)...)
+			require.NoError(t, err)
+			assert.Equal(t, tt.calls, calls)
+		})
+	}
 }
 
 func linkCardArgs() []string {
@@ -218,6 +258,11 @@ func TestVaultListPaginationAndEmptyJSON(t *testing.T) {
 	_, human, err := executeVaultCommand(t, client, "vaults", "list", "--limit", "1", "--offset", "20")
 	require.NoError(t, err)
 	assert.Contains(t, human, `kernel --project "project-test" vaults list --limit 1 --offset 21`)
+	t.Setenv("KERNEL_PROJECT", "")
+	_, human, err = executeVaultCommand(t, client, "vaults", "list", "--limit", "1", "--offset", "20")
+	require.NoError(t, err)
+	assert.Contains(t, human, "kernel vaults list --limit 1 --offset 21")
+	assert.NotContains(t, human, "--project")
 	body, hasMore, next = "[]", "false", "0"
 	out, _, err = executeVaultCommand(t, client, "vaults", "list", "--limit", "1", "--offset", "20", "-o", "json")
 	require.NoError(t, err)

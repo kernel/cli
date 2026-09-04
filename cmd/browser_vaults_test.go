@@ -51,14 +51,13 @@ func browserVaultTestCommand(client kernel.Client) *cobra.Command {
 	return cmd
 }
 
-func TestBrowserVaultPoolAndProjectValidation(t *testing.T) {
+func TestBrowserVaultPoolAndReferenceValidation(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
 	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Error("invalid attachment reached API") })
 	for _, flags := range [][]string{
 		{"--vault", "checkout", "--pool-id", "pool-1", "--yes"},
 		{"--vault", "checkout", "--pool-name", "pool", "--yes"},
-		{"--vault", "checkout"},
-		{"--vault=", "--project", "project-test"},
+		{"--vault="},
 	} {
 		cmd := browserVaultTestCommand(client)
 		require.NoError(t, cmd.ParseFlags(flags))
@@ -68,11 +67,12 @@ func TestBrowserVaultPoolAndProjectValidation(t *testing.T) {
 }
 
 func TestBrowserCreateVaultRequestAndReturnedAttachments(t *testing.T) {
-	t.Setenv("KERNEL_PROJECT", "project-test")
+	t.Setenv("KERNEL_PROJECT", "")
 	const body = `{"session_id":"browser-1","cdp_ws_url":"ws://example.test/cdp","vaults":[{"id":"vault-1","name":"checkout"}]}`
 	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/browsers", r.URL.Path)
+		assert.Empty(t, r.Header.Get("X-Kernel-Project"))
 		payload, _ := io.ReadAll(r.Body)
 		assert.JSONEq(t, `{"vaults":[{"name":"checkout"}]}`, string(payload))
 		w.Header().Set("Content-Type", "application/json")
