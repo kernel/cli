@@ -5,9 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"mime/multipart"
-	"net/http"
 	"net/textproto"
 	"os"
 	"path/filepath"
@@ -179,11 +177,6 @@ func runDeployGithub(cmd *cobra.Command, args []string) error {
 	startTime := time.Now()
 
 	// Manually POST multipart with a JSON 'source' field to match backend expectations
-	apiKey := os.Getenv("KERNEL_API_KEY")
-	if strings.TrimSpace(apiKey) == "" {
-		return fmt.Errorf("KERNEL_API_KEY is required for github deploy")
-	}
-	baseURL := util.GetBaseURL()
 	if region == "" {
 		region = string(kernel.DeploymentNewParamsRegionAwsUsEast1a)
 	}
@@ -230,30 +223,17 @@ func runDeployGithub(cmd *cobra.Command, args []string) error {
 	_, _ = part.Write(srcJSON)
 	_ = mw.Close()
 
-	reqHTTP, _ := http.NewRequestWithContext(cmd.Context(), http.MethodPost, strings.TrimRight(baseURL, "/")+"/deployments", &body)
-	reqHTTP.Header.Set("Authorization", "Bearer "+apiKey)
-	reqHTTP.Header.Set("Content-Type", mw.FormDataContentType())
-	httpResp, err := http.DefaultClient.Do(reqHTTP)
-	if err != nil {
-		return fmt.Errorf("post deployments: %w", err)
-	}
-	defer httpResp.Body.Close()
-	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
-		b, _ := io.ReadAll(httpResp.Body)
-		return fmt.Errorf("deployments POST failed: %s: %s", httpResp.Status, strings.TrimSpace(string(b)))
-	}
 	var depCreated struct {
 		ID string `json:"id"`
 	}
-	if err := json.NewDecoder(httpResp.Body).Decode(&depCreated); err != nil {
-		return fmt.Errorf("decode deployment response: %w", err)
+	if err := client.Post(cmd.Context(), "deployments", nil, &depCreated,
+		option.WithRequestBody(mw.FormDataContentType(), &body),
+		option.WithMaxRetries(0),
+	); err != nil {
+		return fmt.Errorf("post deployments: %w", err)
 	}
 
-	return followDeployment(cmd.Context(), client, depCreated.ID, startTime, output,
-		option.WithBaseURL(baseURL),
-		option.WithHeader("Authorization", "Bearer "+apiKey),
-		option.WithMaxRetries(0),
-	)
+	return followDeployment(cmd.Context(), client, depCreated.ID, startTime, output, option.WithMaxRetries(0))
 }
 
 func runDeploy(cmd *cobra.Command, args []string) (err error) {
