@@ -1,6 +1,4 @@
-"""Base tool types for Yutori n1."""
-
-from typing import TypedDict
+"""Base tool types for Yutori n2."""
 
 
 class ToolError(Exception):
@@ -9,9 +7,3 @@ class ToolError(Exception):
     def __init__(self, message: str):
         self.message = message
         super().__init__(message)
-
-
-class ToolResult(TypedDict, total=False):
-    base64_image: str
-    output: str
-    error: str
