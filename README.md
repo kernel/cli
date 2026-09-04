@@ -300,6 +300,7 @@ hyphens (1–255 characters; not `.` or `..`). All commands except delete suppor
 JSON preserves field presence and API-returned aliases, while omitting unknown fields,
 opaque metadata, and unrecognized event data. Human output labels aliases as non-secret
 checkout values and distinguishes card readiness from checkout authorization/payment outcomes.
+Action and approval URLs print in full on separate lines, without table truncation.
 API failures use the CLI's standard error formatter, preserving the API's code and message.
 `vaults delete` and `vaults items delete` treat HTTP 404 as success and print
 `Deleted or not found`, whether the missing object is the project, vault, or item.

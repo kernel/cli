@@ -214,9 +214,6 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	}
 	if item.Action.Name != "" {
 		rows = append(rows, []string{"Required action", item.Action.Name})
-		if item.Action.URL != "" {
-			rows = append(rows, []string{"Action URL", item.Action.URL})
-		}
 	}
 	if !item.ExpiresAt.IsZero() {
 		rows = append(rows, []string{"Expires At", util.FormatLocal(item.ExpiresAt)})
@@ -231,9 +228,6 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		if a.Reason != "" {
 			rows = append(rows, []string{"Authorization reason", a.Reason})
 		}
-		if a.ApprovalURL != "" {
-			rows = append(rows, []string{"Approval URL", a.ApprovalURL})
-		}
 		if a.JSON.ChargedKind.Valid() {
 			rows = append(rows, []string{"Charged kind", string(a.ChargedKind)}, []string{"Charged (minor units)", fmt.Sprintf("%d %s", a.ChargedAmountCents, a.ChargedCurrency)})
 		}
@@ -242,6 +236,12 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		}
 	}
 	PrintTableNoPad(rows, true)
+	if item.Action.Name != "" && item.Action.URL != "" {
+		pterm.Printf("Action URL:\n%s\n", item.Action.URL)
+	}
+	if item.State.JSON.Authorization.Valid() && item.State.Authorization.ApprovalURL != "" {
+		pterm.Printf("Approval URL:\n%s\n", item.State.Authorization.ApprovalURL)
+	}
 	if item.Type == "card" {
 		card := item.AsCard()
 		for _, op := range card.AvailableOperations {

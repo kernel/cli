@@ -121,6 +121,34 @@ func TestVaultActionOutputNoInventedURLs(t *testing.T) {
 	}
 }
 
+func TestVaultLongURLsPrintedOutsideTable(t *testing.T) {
+	actionURL := "https://provider.example/auth?state=" + strings.Repeat("a", 512) + "&code_challenge=complete-challenge"
+	approvalURL := "https://provider.example/approve?request=" + strings.Repeat("b", 512)
+	for _, tt := range []struct {
+		name, body, label, url string
+	}{
+		{"action", strings.TrimSuffix(connectedWalletFixture, "}") + fmt.Sprintf(`,"action":{"name":"link_oauth","url":%q}}`, actionURL), "Action URL", actionURL},
+		{"approval", fmt.Sprintf(`{"key":"order-1","type":"card","spec":{"provider":"agentcard"},"state":{"provider":"agentcard","status":"ready","authorization":{"status":"pending","approval_url":%q}}}`, approvalURL), "Approval URL", approvalURL},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var item kernel.VaultItemUnion
+			require.NoError(t, json.Unmarshal([]byte(tt.body), &item))
+			buf := capturePtermOutput(t)
+			require.NoError(t, printVaultItem(&item, ""))
+			assert.Contains(t, buf.String(), tt.label+":\n"+tt.url+"\n")
+			assert.Equal(t, 1, strings.Count(buf.String(), tt.url))
+			out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
+			var decoded kernel.VaultItemUnion
+			require.NoError(t, json.Unmarshal([]byte(out), &decoded))
+			if tt.name == "action" {
+				assert.Equal(t, tt.url, decoded.Action.URL)
+			} else {
+				assert.Equal(t, tt.url, decoded.State.Authorization.ApprovalURL)
+			}
+		})
+	}
+}
+
 func TestVaultURLsWithSecretsAreWithheld(t *testing.T) {
 	for _, address := range []string{
 		"https://user:SECRET@provider.example/", "https://provider.example/?code=SECRET",
