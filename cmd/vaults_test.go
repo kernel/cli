@@ -52,7 +52,7 @@ func executeVaultCommand(t *testing.T, client kernel.Client, args ...string) (st
 }
 
 func TestVaultCommandConstruction(t *testing.T) {
-	for _, path := range []string{"create", "list", "get", "delete", "items list", "items get", "items delete", "items events", "wallets create", "wallets payment-methods", "cards create", "cards update", "cards authorize"} {
+	for _, path := range []string{"create", "list", "get", "delete", "items list", "items get", "items delete", "items events", "wallets create", "wallets payment-methods", "cards create", "cards update", "items invoke"} {
 		t.Run(path, func(t *testing.T) {
 			cmd, remaining, err := newVaultsCommand().Find(strings.Fields(path))
 			require.NoError(t, err)
@@ -68,10 +68,10 @@ func TestVaultCommandConstruction(t *testing.T) {
 			}
 		})
 	}
-	cmd, _, err := rootCmd.Find([]string{"vaults", "cards", "authorize"})
+	cmd, _, err := rootCmd.Find([]string{"vaults", "items", "invoke"})
 	require.NoError(t, err)
 	assert.False(t, isAuthExempt(cmd))
-	for _, unsupported := range []string{"rename", "update", "items put", "items action", "wallets callback", "cards pay"} {
+	for _, unsupported := range []string{"rename", "update", "items put", "items action", "wallets callback", "cards pay", "cards authorize"} {
 		cmd, remaining, _ := newVaultsCommand().Find(strings.Fields(unsupported))
 		assert.True(t, len(remaining) > 0 || cmd.RunE == nil, unsupported)
 	}
@@ -140,7 +140,7 @@ func TestVaultCommandsWithoutProject(t *testing.T) {
 		{[]string{"wallets", "payment-methods", "checkout", "wallet-1"}, connectedWalletFixture, 1},
 		{append([]string{"cards", "create", "checkout", "order-1"}, linkCardArgs()...), requestedCardFixture, 1},
 		{append([]string{"cards", "update", "checkout", "order-1"}, linkCardArgs()...), requestedCardFixture, 1},
-		{[]string{"cards", "authorize", "checkout", "order-1"}, requestedCardFixture, 2},
+		{[]string{"items", "invoke", "checkout", "order-1", "authorize"}, requestedCardFixture, 2},
 	}
 	for _, tt := range tests {
 		t.Run(strings.Join(tt.args[:min(2, len(tt.args))], " "), func(t *testing.T) {
@@ -307,7 +307,7 @@ func TestVaultCardRequestMapping(t *testing.T) {
 	}
 }
 
-func TestVaultAuthorizeRequiresAdvertisedRequestedLinkCard(t *testing.T) {
+func TestVaultInvokeRequiresAdvertisedOperation(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "project-test")
 	for _, state := range []string{"requested", "pending_authorization", "ready", "consumed", "expired", "declined"} {
 		for _, advertised := range []bool{false, true} {
@@ -331,13 +331,13 @@ func TestVaultAuthorizeRequiresAdvertisedRequestedLinkCard(t *testing.T) {
 					assert.JSONEq(t, `{"type":"authorize"}`, string(payload))
 					_, _ = io.WriteString(w, body)
 				})
-				_, _, err := executeVaultCommand(t, client, "vaults", "cards", "authorize", "checkout", "order-1", "-o", "json")
+				_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "authorize", "-o", "json")
 				assert.Equal(t, 1, getCalls)
-				if state == "requested" && advertised {
+				if advertised {
 					require.NoError(t, err)
 					assert.Equal(t, 1, postCalls)
 				} else {
-					require.Error(t, err)
+					require.ErrorContains(t, err, "not advertised in available_operations")
 					assert.Zero(t, postCalls)
 				}
 			})
@@ -360,7 +360,7 @@ func TestVaultNoSDKRetriesAndAPIErrorMessages(t *testing.T) {
 				w.WriteHeader(status)
 				_, _ = io.WriteString(w, `{"message":"Authorization service unavailable","code":"authorization_failed"}`)
 			})
-			out, _, err := executeVaultCommand(t, client, "vaults", "cards", "authorize", "checkout", "order-1", "-o", "json")
+			out, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "authorize", "-o", "json")
 			require.Error(t, err)
 			assert.Equal(t, 2, calls)
 			assert.Empty(t, out)
@@ -382,7 +382,7 @@ func TestVaultInvalidProjectErrors(t *testing.T) {
 		{"wallets", "payment-methods", "checkout", "wallet-1"},
 		append([]string{"cards", "create", "checkout", "order-1"}, linkCardArgs()...),
 		append([]string{"cards", "update", "checkout", "order-1"}, linkCardArgs()...),
-		{"cards", "authorize", "checkout", "order-1"},
+		{"items", "invoke", "checkout", "order-1", "authorize"},
 	}
 	for _, project := range []string{"doesntexist", "abcdefghijklmnopqrstuvwx"} {
 		for _, args := range commands {

@@ -35,6 +35,9 @@ func vaultPreRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	for i, arg := range args {
+		if i > 1 {
+			break
+		}
 		label := "vault ID or name"
 		if i == 1 {
 			label = "item key"
@@ -58,8 +61,8 @@ Vault names, item keys, and project ownership are immutable.
 1. Create/select a vault, then create a provider wallet and follow its returned action.
 2. For Link, list wallet payment methods and select an ID explicitly.
 3. Create a card request with --provider and --spec JSON. Link requires an explicit test boolean.
-4. For a requested Link card, use cards authorize only when advertised. Follow the
-   returned approval action. AgentCard authorizes at checkout, not through this command.
+4. Inspect items get, then use items invoke <vault> <key> <operation> only when advertised.
+   Follow the operation description and any returned provider action.
 5. Attach the vault with browsers create --vault <id-or-name>. Use only returned
    non-secret aliases in that browser. Inspect items get/events for the outcome.
 
@@ -110,7 +113,8 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 			wait, _ := cmd.Flags().GetInt64("wait")
 			expand, _ := cmd.Flags().GetStringSlice("expand")
 			open, _ := cmd.Flags().GetBool("open")
-			return getVaultsHandler(cmd).GetItem(cmd.Context(), args[0], args[1], wait, expand, vaultOutput(cmd), open)
+			project, _ := cmd.Flags().GetString("project")
+			return getVaultsHandler(cmd).GetItem(cmd.Context(), args[0], args[1], wait, expand, resolveProjectSelection(project), vaultOutput(cmd), open)
 		}}
 	itemGet.Flags().Int64("wait", 0, "Hold while pending for up to this many seconds (0-60); observe only")
 	itemGet.Flags().StringSlice("expand", nil, "Advertised live data to fetch: payment_methods")
@@ -125,7 +129,16 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 	itemEvents.Flags().String("after", "", "Return events after this event ID (use the last ID from the previous response)")
 	itemEvents.Flags().Int64("wait", 0, "Long-poll once for new events (0-60 seconds)")
 	addVaultJSONOutputFlag(itemEvents)
-	items.AddCommand(itemList, itemGet, itemEvents, newVaultDeleteCommand(true))
+	invoke := &cobra.Command{Use: "invoke <vault> <key> <operation>", Short: "Invoke an operation advertised by an item", Args: cobra.ExactArgs(3), PreRunE: vaultPreRun,
+		Long:    "Retrieve the item and invoke only an operation listed in available_operations.\nRead its description with items get before invoking; follow any approval requirements.\nThe API determines availability regardless of item type, provider, or state.\nRequests are not automatically retried. The updated item may contain a required user action.\nThe current API accepts only {\"type\":\"authorize\"}; there are no operation parameters or --spec flag.",
+		Example: "  kernel vaults items get checkout order-1\n  kernel vaults items invoke checkout order-1 authorize",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			open, _ := cmd.Flags().GetBool("open")
+			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], vaultOutput(cmd), open)
+		}}
+	invoke.Flags().Bool("open", false, "Open a returned HTTPS action URL in your browser")
+	addVaultJSONOutputFlag(invoke)
+	items.AddCommand(itemList, itemGet, itemEvents, invoke, newVaultDeleteCommand(true))
 
 	wallets := &cobra.Command{Use: "wallets", Short: "Connect provider wallets and inspect funding methods"}
 	walletCreate := &cobra.Command{Use: "create <vault> <key> --provider <link|agentcard> --spec '<json>'", Short: "Create a wallet and display its connection or enrollment action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
@@ -154,21 +167,14 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 	methods := &cobra.Command{Use: "payment-methods <vault> <key>", Short: "Fetch advertised live wallet payment methods", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
 		Long: "Fetch payment_methods through the item's GET expansion. The wallet must advertise this expansion.\nDisplays selectable IDs and advisory capabilities; never automatically chooses a funding method.\nJSON returns the item with expanded.payment_methods, like items get --expand payment_methods.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return getVaultsHandler(cmd).GetItem(cmd.Context(), args[0], args[1], 0, []string{"payment_methods"}, vaultOutput(cmd), false)
+			project, _ := cmd.Flags().GetString("project")
+			return getVaultsHandler(cmd).GetItem(cmd.Context(), args[0], args[1], 0, []string{"payment_methods"}, resolveProjectSelection(project), vaultOutput(cmd), false)
 		}}
 	addVaultJSONOutputFlag(methods)
 	wallets.AddCommand(walletCreate, methods)
 
-	cards := &cobra.Command{Use: "cards", Short: "Configure card requests and explicitly authorize requested Link cards"}
-	authorize := &cobra.Command{Use: "authorize <vault> <key>", Short: "Invoke advertised authorization for a requested Link card", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: "Use only after explicit user approval. Retrieve the item and invoke authorize only if advertised and still requested.\nThis can obtain a payment credential but does not submit a merchant payment.\nPending/terminal authorizations are never resumed or retried by this command.\nFollow any returned approval URL, then observe with items get --wait 60.",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			open, _ := cmd.Flags().GetBool("open")
-			return getVaultsHandler(cmd).Authorize(cmd.Context(), args[0], args[1], vaultOutput(cmd), open)
-		}}
-	authorize.Flags().Bool("open", false, "Open the returned HTTPS approval URL")
-	addVaultJSONOutputFlag(authorize)
-	cards.AddCommand(newVaultCardCommand(false), newVaultCardCommand(true), authorize)
+	cards := &cobra.Command{Use: "cards", Short: "Configure card requests"}
+	cards.AddCommand(newVaultCardCommand(false), newVaultCardCommand(true))
 	cmd.AddCommand(items, wallets, cards)
 	return cmd
 }

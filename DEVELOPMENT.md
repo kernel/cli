@@ -63,6 +63,12 @@ Provider-specific fields are validated by the API, not duplicated as CLI flags o
 schema validators. Preserve JSON values, including large integers, explicit `false`, nulls,
 and omitted fields; do not introduce defaults while converting requests for the SDK.
 
+Item operations use `items invoke <vault> <key> <operation>`. Gate invocations on the
+server's `available_operations`, not local provider/type/state rules or an operation registry.
+The current operation schema only accepts `{"type":"authorize"}` with no extra fields;
+add operation parameters only when the API supports them. GET output should retain the
+selected project in copyable invocation hints and shell-quote arguments safely.
+
 - Keep the types in `cmd/vaults_help.go` aligned with the
   [published API spec](https://api.onkernel.com/spec.yaml), including nested optional types.
 - Update the README examples and payment-method selection hints when changing this interface.

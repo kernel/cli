@@ -177,6 +177,43 @@ func vaultDisplayURL(address string) bool {
 	return true
 }
 
+type vaultItemOperation struct {
+	Type        string `json:"type"`
+	Description string `json:"description"`
+}
+
+func vaultItemOperations(item *kernel.VaultItemUnion) ([]vaultItemOperation, error) {
+	var fields struct {
+		Operations []vaultItemOperation `json:"available_operations"`
+	}
+	if err := json.Unmarshal([]byte(item.RawJSON()), &fields); err != nil {
+		return nil, fmt.Errorf("invalid vault item operations: %w", err)
+	}
+	return fields.Operations, nil
+}
+
+func vaultShellArgument(value string) string {
+	if vaultNamePattern.MatchString(value) {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project string) error {
+	operations, err := vaultItemOperations(item)
+	if err != nil {
+		return err
+	}
+	prefix := "kernel vaults items invoke"
+	if project != "" {
+		prefix += " --project=" + vaultShellArgument(project)
+	}
+	for _, op := range operations {
+		pterm.Printf("Invoke: %s -- %s %s %s\n", prefix, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
+	}
+	return nil
+}
+
 func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	raw, err := filterVaultJSON(json.RawMessage(item.RawJSON()), vaultItemFields)
 	if err != nil {
@@ -242,11 +279,15 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	if item.State.JSON.Authorization.Valid() && item.State.Authorization.ApprovalURL != "" {
 		pterm.Printf("Approval URL:\n%s\n", item.State.Authorization.ApprovalURL)
 	}
+	operations, err := vaultItemOperations(item)
+	if err != nil {
+		return err
+	}
+	for _, op := range operations {
+		pterm.Printf("Available operation: %s — %s\n", op.Type, op.Description)
+	}
 	if item.Type == "card" {
 		card := item.AsCard()
-		for _, op := range card.AvailableOperations {
-			pterm.Printf("Available operation: %s — %s\n", op.Type, op.Description)
-		}
 		for _, expansion := range card.AvailableExpansions {
 			pterm.Printf("Available expansion: %s — %s\n", expansion.Type, expansion.Description)
 		}

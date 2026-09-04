@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/kernel/cli/pkg/interactive"
@@ -150,7 +151,7 @@ func validateVaultWait(wait int64) error {
 	return nil
 }
 
-func (c VaultsCmd) GetItem(ctx context.Context, vault, key string, wait int64, expand []string, output string, open bool) error {
+func (c VaultsCmd) GetItem(ctx context.Context, vault, key string, wait int64, expand []string, project, output string, open bool) error {
 	if err := validateVaultWait(wait); err != nil {
 		return err
 	}
@@ -165,7 +166,13 @@ func (c VaultsCmd) GetItem(ctx context.Context, vault, key string, wait int64, e
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	return c.showItem(item, output, open)
+	if err := c.showItem(item, output, open); err != nil {
+		return err
+	}
+	if output != "json" {
+		return printVaultOperationHints(item, vault, key, project)
+	}
+	return nil
 }
 
 func (c VaultsCmd) CreateWallet(ctx context.Context, vault, key string, spec kernel.WalletVaultItemSpecUnionParam, output string, open bool) error {
@@ -190,27 +197,32 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 	return c.showItem(item, output, false)
 }
 
-func (c VaultsCmd) Authorize(ctx context.Context, vault, key, output string, open bool) error {
+func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation, output string, open bool) error {
+	if strings.TrimSpace(operation) == "" {
+		return fmt.Errorf("operation must not be empty")
+	}
 	item, err := c.vaults.Items.Get(ctx, key, kernel.VaultItemGetParams{IDOrName: vault}, option.WithMaxRetries(0))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	if item.Type != "card" || item.Spec.Provider != "link" || item.State.Status != "requested" {
-		return fmt.Errorf("authorization requires a requested Link card; inspect item state and events; do not retry payments or resume indeterminate authorizations")
+	operations, err := vaultItemOperations(item)
+	if err != nil {
+		return err
 	}
 	available := false
-	for _, operation := range item.AsCard().AvailableOperations {
-		if operation.Type == "authorize" {
+	for _, op := range operations {
+		if op.Type == operation {
 			available = true
 			if output != "json" {
-				pterm.Info.Println(operation.Description)
+				pterm.Info.Println(op.Description)
 			}
+			break
 		}
 	}
 	if !available {
-		return fmt.Errorf("authorize is not advertised in available_operations; inspect the item and its wallet")
+		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
-	item, err = c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, Type: kernel.VaultItemPerformOperationParamsTypeAuthorize}, option.WithMaxRetries(0))
+	item, err = c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, Type: kernel.VaultItemPerformOperationParamsType(operation)}, option.WithMaxRetries(0))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}

@@ -174,7 +174,7 @@ func TestVaultGetCancellation(t *testing.T) {
 		<-r.Context().Done()
 	})
 	c := VaultsCmd{vaults: &client.Vaults}
-	err := c.GetItem(ctx, "checkout", "order-1", 60, nil, "json", false)
+	err := c.GetItem(ctx, "checkout", "order-1", 60, nil, "", "json", false)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, int32(1), calls.Load())

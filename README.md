@@ -128,7 +128,7 @@ Commands with JSON output support:
 - **Proxies**: `create`, `list`, `get`, `update`, `check`
 - **API Keys**: `create`, `list`, `get`, `update`, `rotate`
 - **Auth Connections**: `timeline`
-- **Vaults**: `create`, `list`, `get`, `items list/get/events`, `wallets create/payment-methods`, `cards create/update/authorize` (display-safe public fields only)
+- **Vaults**: `create`, `list`, `get`, `items list/get/events/invoke`, `wallets create/payment-methods`, `cards create/update` (display-safe public fields only)
 - **Projects**: `update`
 - **Org**: `limits get/set`
 - **Apps**: `list`, `history`
@@ -289,9 +289,9 @@ cannot switch projects.
 | `kernel vaults wallets payment-methods <vault> <key>` | Fetch advertised live payment methods; JSON is the item with `expanded.payment_methods` |
 | `kernel vaults cards create <vault> <key> --provider link\|agentcard --spec '<json>'` | Create a card request; never implicitly authorize Link |
 | `kernel vaults cards update <vault> <key> --provider link\|agentcard --spec '<json>'` | Replace the full card spec; the API enforces state/provider constraints |
-| `kernel vaults cards authorize <vault> <key>` | After explicit user approval, GET the requested Link card and POST `authorize` only if advertised; optional `--open` |
 | `kernel vaults items list <vault>` | List item keys, types, providers, status, and required actions |
-| `kernel vaults items get <vault> <key>` | Inspect state/actions/returned aliases; `--wait 0..60`, `--expand payment_methods`, `--open` |
+| `kernel vaults items get <vault> <key>` | Inspect state/actions/returned aliases and copyable operation commands; `--wait 0..60`, `--expand payment_methods`, `--open` |
+| `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; optional `--open` opens a returned HTTPS action |
 | `kernel vaults items events <vault> <key>` | Read ordered audit events; `--after <event-id>`, `--wait 0..60` |
 | `kernel vaults items delete <vault> <key>` | Invalidate an item; `--yes` skips confirmation |
 
@@ -356,7 +356,8 @@ checkout domains remain provider-assigned. Neither command submits a merchant pa
    returned approval action, then observe:
 
    ```bash
-   kernel vaults cards authorize checkout order-1 --open
+   kernel vaults items get checkout order-1
+   kernel vaults items invoke checkout order-1 authorize --open
    kernel vaults items get checkout order-1 --wait 60
    ```
 
@@ -397,10 +398,27 @@ kernel vaults cards create agentcard-checkout order-1 --provider agentcard --spe
 kernel browsers create --vault agentcard-checkout
 ```
 
-AgentCard authorizes at checkout; do not run `cards authorize` for it. To select a vaulted
-card in advance, inspect `wallets payment-methods` and include its ID as `card_id` in the
+AgentCard authorizes at checkout and does not currently advertise `authorize`. To select a
+vaulted card in advance, inspect `wallets payment-methods` and include its ID as `card_id` in the
 card spec. Otherwise, the cardholder selects a card at approval. A reusable card being
 `ready` does not mean the last payment succeeded.
+
+#### Invoking item operations
+
+`items get` displays every `available_operations` entry's type and description, plus a
+copyable `items invoke` command retaining the selected project. Read the description and
+follow its approval requirements before invoking. Required user actions (OAuth, enrollment,
+MFA, spend approval) appear separately; they are not operations to invoke through this endpoint.
+
+`items invoke` fetches the item again and calls
+`POST /vaults/{id_or_name}/items/{key}/operations` only if the requested operation is still
+advertised. The API controls availability; the CLI has no provider/type/state-specific
+operation checks. The response is the updated item, possibly with a required user action.
+
+The current [API spec](https://api.onkernel.com/spec.yaml) accepts only
+`{"type":"authorize"}` and forbids extra fields. There is no operation `--spec` flag;
+wallet/card `--spec` flags remain unchanged. New parameterless operations can be invoked by
+name when the API advertises them, without adding CLI subcommands.
 
 #### Expansions, updates, and lifecycle
 
@@ -414,7 +432,6 @@ does not merge the new JSON with the existing spec.
 
 Waits are single bounded observations, not readiness guarantees or payment retries. Pending
 state is returned as-is. Requests are not automatically retried by the vault commands.
-Pending/terminal Link authorizations cannot be resumed by `cards authorize`.
 **Never retry failed, timed-out, rejected, or indeterminate payments.** Inspect state/events
 and reconcile the outcome instead. Do not pass card data, OAuth codes/tokens, ciphertext,
 provider secrets, or sensitive provider responses to the CLI. Complete collection, OAuth,
