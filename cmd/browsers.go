@@ -377,6 +377,7 @@ type BrowsersCreateInput struct {
 	PrivateHosts       []string
 	StartURL           string
 	Extensions         []string
+	Vaults             []string
 	Viewport           string
 	Telemetry          string
 	TelemetryExport    string
@@ -564,7 +565,11 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	if err := validateStartURLFlag(in.StartURL); err != nil {
 		return err
 	}
-	params := kernel.BrowserNewParams{}
+	vaults, err := buildBrowserVaults(in.Vaults)
+	if err != nil {
+		return err
+	}
+	params := kernel.BrowserNewParams{Vaults: vaults}
 	if in.TimeoutSeconds > 0 {
 		params.TimeoutSeconds = kernel.Opt(int64(in.TimeoutSeconds))
 	}
@@ -705,6 +710,13 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 
 	printBrowserSessionResult(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.ProfileSaveChanges, browser.StartURL, browser.Name, browser.Tags)
+	if len(browser.Vaults) > 0 {
+		rows := pterm.TableData{{"Attached vault ID", "Name"}}
+		for _, vault := range browser.Vaults {
+			rows = append(rows, []string{vault.ID, vault.Name})
+		}
+		PrintTableNoPad(rows, true)
+	}
 	if in.Telemetry != "" || in.TelemetryExport != "" {
 		printTelemetrySummary(browser.Telemetry)
 	}
@@ -1590,7 +1602,7 @@ func (b BrowsersCmd) ReplaysStop(ctx context.Context, in BrowsersReplaysStopInpu
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	err = b.replays.Stop(ctx, in.ReplayID, kernel.BrowserReplayStopParams{ID: br.SessionID})
+	err = b.replays.Stop(ctx, in.ReplayID, kernel.BrowserReplayStopParams{IDOrName: br.SessionID})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -1599,7 +1611,7 @@ func (b BrowsersCmd) ReplaysStop(ctx context.Context, in BrowsersReplaysStopInpu
 }
 
 func (b BrowsersCmd) ReplaysDownload(ctx context.Context, in BrowsersReplaysDownloadInput) error {
-	res, err := b.replays.Download(ctx, in.ReplayID, kernel.BrowserReplayDownloadParams{ID: in.Identifier})
+	res, err := b.replays.Download(ctx, in.ReplayID, kernel.BrowserReplayDownloadParams{IDOrName: in.Identifier})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -1905,7 +1917,7 @@ func (b BrowsersCmd) ProcessKill(ctx context.Context, in BrowsersProcessKillInpu
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	params := kernel.BrowserProcessKillParams{ID: br.SessionID, Signal: kernel.BrowserProcessKillParamsSignal(in.Signal)}
+	params := kernel.BrowserProcessKillParams{IDOrName: br.SessionID, Signal: kernel.BrowserProcessKillParamsSignal(in.Signal)}
 	_, err = b.process.Kill(ctx, in.ProcessID, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -1923,7 +1935,7 @@ func (b BrowsersCmd) ProcessStatus(ctx context.Context, in BrowsersProcessStatus
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	res, err := b.process.Status(ctx, in.ProcessID, kernel.BrowserProcessStatusParams{ID: br.SessionID})
+	res, err := b.process.Status(ctx, in.ProcessID, kernel.BrowserProcessStatusParams{IDOrName: br.SessionID})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -1941,7 +1953,7 @@ func (b BrowsersCmd) ProcessStdin(ctx context.Context, in BrowsersProcessStdinIn
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	_, err = b.process.Stdin(ctx, in.ProcessID, kernel.BrowserProcessStdinParams{ID: br.SessionID, DataB64: in.DataB64})
+	_, err = b.process.Stdin(ctx, in.ProcessID, kernel.BrowserProcessStdinParams{IDOrName: br.SessionID, DataB64: in.DataB64})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -1958,7 +1970,7 @@ func (b BrowsersCmd) ProcessStdoutStream(ctx context.Context, in BrowsersProcess
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	stream := b.process.StdoutStreamStreaming(ctx, in.ProcessID, kernel.BrowserProcessStdoutStreamParams{ID: br.SessionID})
+	stream := b.process.StdoutStreamStreaming(ctx, in.ProcessID, kernel.BrowserProcessStdoutStreamParams{IDOrName: br.SessionID})
 	if stream == nil {
 		pterm.Error.Println("failed to open stdout stream")
 		return nil
@@ -1992,7 +2004,7 @@ func (b BrowsersCmd) ProcessResize(ctx context.Context, in BrowsersProcessResize
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	params := kernel.BrowserProcessResizeParams{ID: br.SessionID, Cols: in.Cols, Rows: in.Rows}
+	params := kernel.BrowserProcessResizeParams{IDOrName: br.SessionID, Cols: in.Cols, Rows: in.Rows}
 	_, err = b.process.Resize(ctx, in.ProcessID, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
@@ -2041,7 +2053,7 @@ func (b BrowsersCmd) FSWatchStop(ctx context.Context, in BrowsersFSWatchStopInpu
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	err = b.fsWatch.Stop(ctx, in.WatchID, kernel.BrowserFWatchStopParams{ID: br.SessionID})
+	err = b.fsWatch.Stop(ctx, in.WatchID, kernel.BrowserFWatchStopParams{IDOrName: br.SessionID})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -2058,7 +2070,7 @@ func (b BrowsersCmd) FSWatchEvents(ctx context.Context, in BrowsersFSWatchEvents
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	stream := b.fsWatch.EventsStreaming(ctx, in.WatchID, kernel.BrowserFWatchEventsParams{ID: br.SessionID})
+	stream := b.fsWatch.EventsStreaming(ctx, in.WatchID, kernel.BrowserFWatchEventsParams{IDOrName: br.SessionID})
 	if stream == nil {
 		pterm.Error.Println("failed to open watch events stream")
 		return nil
@@ -2960,6 +2972,7 @@ func init() {
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
 	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersCreateCmd.Flags().Bool("viewport-interactive", false, "Interactively select viewport size from list")
+	browsersCreateCmd.Flags().StringArray("vault", nil, "Project-owned vault ID or name to attach at creation (repeatable, max 20; requires --project or KERNEL_PROJECT; incompatible with pools)")
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
 	browsersCreateCmd.Flags().String("telemetry", "", "Configure telemetry (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
@@ -3089,6 +3102,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
+	vaults, _ := cmd.Flags().GetStringArray("vault")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	viewportInteractive, _ := cmd.Flags().GetBool("viewport-interactive")
 	poolID, _ := cmd.Flags().GetString("pool-id")
@@ -3101,6 +3115,19 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
 	output, _ := cmd.Flags().GetString("output")
 	skipConfirm, _ := cmd.Flags().GetBool("yes")
+
+	if cmd.Flags().Changed("vault") {
+		if len(vaults) == 0 {
+			return fmt.Errorf("--vault requires a vault ID or name")
+		}
+		if poolID != "" || poolName != "" {
+			return fmt.Errorf("--vault cannot be used with --pool-id or --pool-name; create a new browser to attach vaults")
+		}
+		project, _ := cmd.Flags().GetString("project")
+		if err := requireVaultProject(resolveProjectSelection(project)); err != nil {
+			return err
+		}
+	}
 
 	if poolID != "" && poolName != "" {
 		pterm.Error.Println("must specify at most one of --pool-id or --pool-name")
@@ -3219,6 +3246,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		PrivateHosts:       privateHosts,
 		StartURL:           startURL,
 		Extensions:         extensions,
+		Vaults:             vaults,
 		Viewport:           viewport,
 		Telemetry:          telemetry,
 		TelemetryExport:    telemetryExport,
