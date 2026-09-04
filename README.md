@@ -103,7 +103,7 @@ Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
 - `--version`, `-v` - Print the CLI version
 - `--no-color` - Disable color output
 - `--log-level <level>` - Set log level (trace, debug, info, warn, error, fatal, print)
-- `--project <id-or-name>` - Scope requests to a project by ID or exact name (or set `KERNEL_PROJECT`). Project-scoped OAuth tokens cannot switch projects.
+- `--project <id-or-name>` - Scope requests to a project by ID or exact name (or set `KERNEL_PROJECT`). A non-empty flag overrides the environment variable. The selector is sent to the API as `X-Kernel-Project`, without a client-side project lookup. Project-scoped API keys and OAuth tokens cannot switch projects.
 
 ## JSON Output
 
