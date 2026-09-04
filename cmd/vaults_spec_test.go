@@ -17,7 +17,7 @@ func TestVaultRawSpecForwarding(t *testing.T) {
 		for _, provider := range []string{"link", "agentcard"} {
 			for _, raw := range []string{
 				`{}`,
-				`{"test":false,"amount":0,"currency":"USD","metadata":null}`,
+				`{"custom_option":false,"amount":0,"currency":"USD","metadata":null}`,
 				`{"expires_at":9223372036854775807,"line_items":[{"name":"Item","quantity":2,"unit_amount":100,"totals":[{"type":"tax","display_text":"Tax","amount":10}]}],"totals":[],"metadata":{"reference":"order-1"}}`,
 			} {
 				t.Run(path+"/"+provider+"/"+raw, func(t *testing.T) {
@@ -62,13 +62,13 @@ func TestVaultRawSpecValidationIsLeftToAPI(t *testing.T) {
 			Spec map[string]json.RawMessage `json:"spec"`
 		}
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-		assert.NotContains(t, body.Spec, "test", "an omitted test field must not become a live request")
+		assert.NotContains(t, body.Spec, "wallet")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = io.WriteString(w, `{"code":"invalid_request","message":"test is required"}`)
+		_, _ = io.WriteString(w, `{"code":"invalid_request","message":"wallet is required"}`)
 	})
 	_, _, err := executeVaultCommand(t, client, "vaults", "cards", "create", "checkout", "order-1", "--provider", "link", "--spec", "{}")
-	require.ErrorContains(t, err, "invalid_request: test is required")
+	require.ErrorContains(t, err, "invalid_request: wallet is required")
 }
 
 func TestVaultSpecHelpAndFlags(t *testing.T) {
@@ -86,8 +86,10 @@ func TestVaultSpecHelpAndFlags(t *testing.T) {
 			assert.Contains(t, cmd.Long, "provider: \"link\"")
 			assert.Contains(t, cmd.Long, "provider: \"agentcard\"")
 			assert.Contains(t, cmd.Example, "--spec '")
+			assert.NotContains(t, cmd.Long, "test: boolean")
+			assert.NotContains(t, cmd.Long, "sandbox/live")
 			if strings.HasPrefix(path, "cards") {
-				for _, field := range []string{"test: boolean", "merchant_name:", "merchant:", "line_items?:", "metadata?:", "expires_at?:", "type LinkLineItem", "type LinkTotal"} {
+				for _, field := range []string{"merchant_name:", "merchant:", "line_items?:", "metadata?:", "expires_at?:", "type LinkLineItem", "type LinkTotal"} {
 					assert.Contains(t, cmd.Long, field)
 				}
 			} else {

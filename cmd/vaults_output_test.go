@@ -17,7 +17,7 @@ import (
 
 const readyCardFixture = `{
   "id":"card-id","key":"order-1","type":"card",
-  "spec":{"provider":"link","wallet":"wallet-1","payment_method_id":"pm-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://shop.example","test":true,"provider_secret":"SECRET_SPEC"},
+  "spec":{"provider":"link","wallet":"wallet-1","payment_method_id":"pm-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://shop.example","provider_secret":"SECRET_SPEC"},
   "state":{"provider":"link","status":"ready","domains":["shop.example"],"aliases":{"number":"9999999999999999","cvc":"999","exp_month":"01","exp_year":"2099","secret":"SECRET_ALIAS"},"card_number":"SECRET_CARD","secret_enc":"SECRET_CIPHERTEXT"},
   "available_operations":[],"available_expansions":[],"oauth_tokens":"SECRET_OAUTH"
 }`
@@ -68,13 +68,30 @@ func TestVaultOutputAgentCardAuthorizationIsNotPaymentSuccess(t *testing.T) {
 	}`), &item))
 	buf := capturePtermOutput(t)
 	require.NoError(t, printVaultItem(&item, ""))
-	for _, text := range []string{"Deployment-controlled", "Authorization status", "declined", "expired", "Charged kind", "none", "Processor response delivered", "false"} {
+	for _, text := range []string{"Authorization status", "declined", "expired", "Charged kind", "none", "Processor response delivered", "false"} {
 		assert.Contains(t, buf.String(), text)
 	}
 	assert.NotContains(t, buf.String(), "SECRET_RESPONSE")
 	out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
 	assert.NotContains(t, out, `"test"`)
 	assert.NotContains(t, out, "SECRET_RESPONSE")
+}
+
+func TestVaultOutputOmitsCardTestMode(t *testing.T) {
+	for _, provider := range []string{"link", "agentcard"} {
+		t.Run(provider, func(t *testing.T) {
+			body := strings.ReplaceAll(requestedCardFixture, `"provider":"link"`, `"provider":"`+provider+`"`)
+			body = strings.ReplaceAll(body, `"amount":1234`, `"amount":1234,"test":true`)
+			var item kernel.VaultItemUnion
+			require.NoError(t, json.Unmarshal([]byte(body), &item))
+			buf := capturePtermOutput(t)
+			require.NoError(t, printVaultItem(&item, ""))
+			assert.NotContains(t, buf.String(), "Test")
+			assert.NotContains(t, buf.String(), "Mode")
+			out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
+			assert.NotContains(t, out, `"test"`)
+		})
+	}
 }
 
 func TestVaultOutputPaymentMethodsAdvisoryUnknownVsFalse(t *testing.T) {

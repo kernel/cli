@@ -25,8 +25,6 @@ type AgentCardWalletSpec = {
   provider: "agentcard";
   user_id?: string; // usr_...; already enrolled in this organization
 };
-
-AgentCard sandbox/live mode is deployment-controlled, not a per-item flag.
 `
 
 const vaultCardSpecHelp = `
@@ -39,7 +37,6 @@ type LinkCardSpec = {
   merchant_name: string;      // 1..255 characters
   merchant_url: string;       // URI
   context: string;            // at least 100 characters
-  test: boolean;             // true = test; false = live; required
   line_items?: LinkLineItem[];
   totals?: LinkTotal[];
   metadata?: Record<string, string>;
@@ -73,6 +70,5 @@ type LinkTotal = {
   amount: number;             // integer minor units
 };
 
-AgentCard sandbox/live mode is deployment-controlled; its spec has no test field.
 Permitted domains are provider-assigned, not configurable in the spec.
 `

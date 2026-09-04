@@ -40,7 +40,7 @@ var vaultItemFields = vaultOutputFields{
 	"spec": {
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil,
 		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
-		"context": nil, "test": nil, "expires_at": nil,
+		"context": nil, "expires_at": nil,
 		"authorization": {"method": nil, "client": vaultFieldsOf("type")},
 		"totals":        vaultTotalFields,
 		"line_items": {
@@ -241,9 +241,7 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		}
 		rows = append(rows, []string{"Wallet key", item.Spec.Wallet}, []string{"Merchant", merchant}, []string{"Amount (minor units)", fmt.Sprintf("%d %s", item.Spec.Amount, item.Spec.Currency)})
 		if item.Spec.Provider == "link" {
-			rows = append(rows, []string{"Test", fmt.Sprint(item.Spec.Test)}, []string{"Payment method ID", item.Spec.PaymentMethodID})
-		} else {
-			rows = append(rows, []string{"Mode", "Deployment-controlled (no per-item test mode)"})
+			rows = append(rows, []string{"Payment method ID", item.Spec.PaymentMethodID})
 		}
 	}
 	if item.State.JSON.Domains.Valid() {

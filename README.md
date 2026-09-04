@@ -316,10 +316,10 @@ TypeScript-style types, which must stay in sync with the [API spec](https://api.
 
 - **Link wallet:** supply `authorization: {method: "oauth", client: {type: "kernel_managed"}}`.
 - **AgentCard wallet:** use `{}` to enroll, or supply `user_id` for an already enrolled user.
-- **Link card:** include an explicit `test: true` or `test: false` and the required fields shown
-  in help. Optional `line_items`, `totals`, `metadata`, and `expires_at` are supported through JSON.
+- **Link card:** include the required fields shown in help. Optional `line_items`, `totals`,
+  `metadata`, and `expires_at` are supported through JSON.
 - **AgentCard card:** uses `merchant`, not Link's `merchant_name`. Its optional `card_id` selects
-  a vaulted card; otherwise the cardholder selects one at approval. Mode is deployment-controlled.
+  a vaulted card; otherwise the cardholder selects one at approval.
 
 `cards update` replaces the entire spec, so omitted optional details are removed. Permitted
 checkout domains remain provider-assigned. Neither command submits a merchant payment.
@@ -347,8 +347,7 @@ checkout domains remain provider-assigned. Neither command submits a merchant pa
      "currency": "usd",
      "merchant_name": "Example Shop",
      "merchant_url": "https://shop.example",
-     "context": "Purchase the selected office supplies from Example Shop for the approved order, with a total spending limit of 1234 minor currency units.",
-     "test": true
+     "context": "Purchase the selected office supplies from Example Shop for the approved order, with a total spending limit of 1234 minor currency units."
    }'
    ```
 

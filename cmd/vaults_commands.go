@@ -60,14 +60,14 @@ Vault names, item keys, and project ownership are immutable.
 
 1. Create/select a vault, then create a provider wallet and follow its returned action.
 2. For Link, list wallet payment methods and select an ID explicitly.
-3. Create a card request with --provider and --spec JSON. Link requires an explicit test boolean.
+3. Create a card request with --provider and --spec JSON.
 4. Inspect items get, then use items invoke <vault> <key> <operation> only when advertised.
    Follow the operation description and any returned provider action.
 5. Attach the vault with browsers create --vault <id-or-name>. Use only returned
    non-secret aliases in that browser. Inspect items get/events for the outcome.
 
 Permitted checkout domains are provider-assigned and displayed when returned;
-there is no domain-setting API. AgentCard mode is deployment-controlled, not per item.
+there is no domain-setting API.
 Never supply card data, OAuth codes/tokens, ciphertext, or provider secrets to the CLI.
 Never retry failed, timed-out, rejected, or indeterminate payments.
 JSON output preserves returned public fields but omits unknown/opaque provider data.`,

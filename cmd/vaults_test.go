@@ -22,7 +22,7 @@ import (
 const linkWalletSpecFixture = `{"authorization":{"method":"oauth","client":{"type":"kernel_managed"}}}`
 
 const vaultFixture = `{"id":"vault-1","name":"checkout","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}`
-const requestedCardFixture = `{"id":"item-1","key":"order-1","type":"card","spec":{"provider":"link","wallet":"wallet-1","payment_method_id":"pm-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://shop.example","context":"Purchase description","test":true},"state":{"provider":"link","status":"requested"},"available_operations":[{"type":"authorize","description":"Use only after explicit user approval."}],"available_expansions":[]}`
+const requestedCardFixture = `{"id":"item-1","key":"order-1","type":"card","spec":{"provider":"link","wallet":"wallet-1","payment_method_id":"pm-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://shop.example","context":"Purchase description"},"state":{"provider":"link","status":"requested"},"available_operations":[{"type":"authorize","description":"Use only after explicit user approval."}],"available_expansions":[]}`
 const connectedWalletFixture = `{"id":"wallet-id","key":"wallet-1","type":"wallet","spec":{"provider":"link","authorization":{"method":"oauth","client":{"type":"kernel_managed"}}},"state":{"provider":"link","status":"connected"},"available_operations":[],"available_expansions":[{"type":"payment_methods","description":"Select a payment method explicitly."}]}`
 
 func vaultTestClient(t *testing.T, handler http.HandlerFunc) kernel.Client {
@@ -165,7 +165,7 @@ func TestVaultCommandsWithoutProject(t *testing.T) {
 }
 
 func linkCardArgs() []string {
-	return []string{"--provider", "link", "--spec", fmt.Sprintf(`{"wallet":"wallet-1","amount":1234,"currency":"USD","merchant_name":"Example Shop","payment_method_id":"pm-1","merchant_url":"https://shop.example","context":%q,"test":true}`, strings.Repeat("Purchase purpose. ", 7))}
+	return []string{"--provider", "link", "--spec", fmt.Sprintf(`{"wallet":"wallet-1","amount":1234,"currency":"USD","merchant_name":"Example Shop","payment_method_id":"pm-1","merchant_url":"https://shop.example","context":%q}`, strings.Repeat("Purchase purpose. ", 7))}
 }
 
 func TestVaultSpecValidation(t *testing.T) {
@@ -285,7 +285,7 @@ func TestVaultCardRequestMapping(t *testing.T) {
 						assert.Len(t, body, 1)
 					}
 					if provider == "link" {
-						assert.JSONEq(t, fmt.Sprintf(`{"provider":"link","wallet":"wallet-1","amount":1234,"currency":"USD","merchant_name":"Example Shop","merchant_url":"https://shop.example","payment_method_id":"pm-1","context":%q,"test":true}`, strings.Repeat("Purchase purpose. ", 7)), string(body["spec"]))
+						assert.JSONEq(t, fmt.Sprintf(`{"provider":"link","wallet":"wallet-1","amount":1234,"currency":"USD","merchant_name":"Example Shop","merchant_url":"https://shop.example","payment_method_id":"pm-1","context":%q}`, strings.Repeat("Purchase purpose. ", 7)), string(body["spec"]))
 					} else {
 						assert.JSONEq(t, `{"provider":"agentcard","wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop","card_id":"vc_chosen"}`, string(body["spec"]))
 					}
