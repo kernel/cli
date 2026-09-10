@@ -41,6 +41,10 @@ Proxy types (from best to worst for bot detection):
 - datacenter: Datacenter proxies
 - custom: Your own proxy server
 
+Country targeting:
+- datacenter and isp default to US when --country is omitted
+- residential and mobile use the global pool without country targeting when --country is omitted
+
 Examples:
   # Create a datacenter proxy
   kernel proxies create --type datacenter --country US --name "US Datacenter"
@@ -111,7 +115,7 @@ func init() {
 	proxiesCreateCmd.Flags().String("protocol", "https", "Protocol to use for the proxy connection (http|https)")
 
 	// Location flags (datacenter, isp, residential, mobile)
-	proxiesCreateCmd.Flags().String("country", "", "ISO 3166 country code or EU (isp proxies support US, GB, FR, DE, SG; defaults to US)")
+	proxiesCreateCmd.Flags().String("country", "", "ISO 3166 country code or EU (isp proxies support US, GB, FR, DE, SG; datacenter and isp default to US, residential and mobile use the global pool without country targeting)")
 	proxiesCreateCmd.Flags().String("city", "", "City name (no spaces, e.g. sanfrancisco)")
 	proxiesCreateCmd.Flags().String("state", "", "Two-letter state code")
 	proxiesCreateCmd.Flags().String("zip", "", "US ZIP code")
