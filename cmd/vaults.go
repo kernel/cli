@@ -175,10 +175,10 @@ func (c VaultsCmd) GetItem(ctx context.Context, vault, key string, wait int64, e
 	return nil
 }
 
-func (c VaultsCmd) CreateWallet(ctx context.Context, vault, key string, spec kernel.WalletVaultItemSpecUnionParam, output string, open bool) error {
+func (c VaultsCmd) CreateWallet(ctx context.Context, vault, key string, spec kernel.VaultItemUpsertParamsBodyWalletSpecUnion, output string, open bool) error {
 	item, err := c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfWallet: &kernel.VaultItemUpsertParamsBodyWallet{Spec: spec}}, option.WithMaxRetries(0))
 	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
+		return vaultCredentialError(err)
 	}
 	return c.showItem(item, output, open)
 }
@@ -204,6 +204,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation, output str
 	item, err := c.vaults.Items.Get(ctx, key, kernel.VaultItemGetParams{IDOrName: vault}, option.WithMaxRetries(0))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
+	}
+	if item.State.Status == "recovery_required" {
+		return fmt.Errorf("recovery_required: reconcile the original operation with the provider or support; do not retry, delete, or replace it")
 	}
 	operations, err := vaultItemOperations(item)
 	if err != nil {
@@ -263,7 +266,7 @@ func (c VaultsCmd) showItem(item *kernel.VaultItemUnion, output string, open boo
 	if err := printVaultItem(item, output); err != nil {
 		return err
 	}
-	if !open {
+	if !open || item.State.Status == "recovery_required" {
 		return nil
 	}
 	actionURL := item.Action.URL
