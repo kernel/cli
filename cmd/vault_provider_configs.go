@@ -155,10 +155,10 @@ Secrets are accepted only from a file or stdin and are never displayed. Protect 
 				}
 			}
 			err := c.configs.Delete(cmd.Context(), args[0], option.WithMaxRetries(0))
-			if err != nil && !util.IsNotFound(err) {
+			if err != nil {
 				return vaultCredentialError(err)
 			}
-			pterm.Success.Println("Deleted or not found: vault provider configuration " + args[0])
+			pterm.Success.Println("Deleted vault provider configuration " + args[0])
 			return nil
 		}}
 	delete.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")

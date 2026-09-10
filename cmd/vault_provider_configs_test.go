@@ -74,7 +74,12 @@ func TestVaultProviderConfigCreate(t *testing.T) {
 					assert.Equal(t, "client-1", body.Credentials["client_id"])
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusCreated)
-					_, _ = io.WriteString(w, strings.ReplaceAll(providerConfigFixture, "agentcard", provider))
+					response := providerConfigFixture
+					if provider == "link" {
+						response = strings.ReplaceAll(response, "agentcard", "link")
+						response = strings.ReplaceAll(response, `,"test_mode":false`, "")
+					}
+					_, _ = io.WriteString(w, response)
 				})
 				out, human, err := executeVaultInputCommand(t, client, stdin, "vault-provider-configs", "create", "--name", "checkout-client", "--provider", provider, "--credentials-file", path, "-o", "json")
 				require.NoError(t, err)
@@ -82,6 +87,9 @@ func TestVaultProviderConfigCreate(t *testing.T) {
 				assert.Empty(t, human)
 				assert.False(t, strings.Contains(out, secret), "output must not contain credentials")
 				assert.Contains(t, out, `"id": "config-1"`)
+				if provider == "link" {
+					assert.NotContains(t, out, "test_mode")
+				}
 			})
 		}
 	}
@@ -243,9 +251,9 @@ func TestVaultProviderConfigErrorsAndDelete(t *testing.T) {
 					}
 					out, human, err := executeVaultInputCommand(t, client, fmt.Sprintf(`{"client_id":"client-1","client_secret":%q}`, secret), args...)
 					assert.Equal(t, 1, calls, "SDK retries must be disabled")
-					if operation == "delete" && (status == 204 || status == 404) {
+					if operation == "delete" && status == 204 {
 						require.NoError(t, err)
-						assert.Contains(t, human, "Deleted or not found")
+						assert.Contains(t, human, "Deleted vault provider configuration")
 					} else {
 						require.Error(t, err)
 						assert.Contains(t, err.Error(), fmt.Sprint(status))
