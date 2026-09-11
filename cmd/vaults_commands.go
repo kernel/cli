@@ -111,7 +111,7 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 		}}
 	addVaultJSONOutputFlag(itemList)
 	itemGet := &cobra.Command{Use: "get <vault> <key>", Short: "Get item state and any required action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: "Get item state, available operations, provider actions, and returned checkout aliases.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nAn item still pending after the wait is returned as-is; ready does not mean paid.\nrecovery_required stops waiting and means unresolved, not declined or expired.\nReconcile with the provider or support; do not retry, delete, or replace the payment.",
+		Long: "Get item state, available operations, provider actions, and returned checkout aliases.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nAn item still pending after the wait is returned as-is; ready does not mean paid.\nrecovery_required stops waiting and means unresolved, not declined or expired.\nA known authorization ID must be reconciled with the provider or support; do not retry, delete, or replace the payment.\nAn AgentCard checkout that returned no authorization ID may be abandoned by deleting that card explicitly, which is not proof that the payment did not occur.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			wait, _ := cmd.Flags().GetInt64("wait")
 			expand, _ := cmd.Flags().GetStringSlice("expand")
@@ -188,10 +188,16 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 
 func newVaultDeleteCommand(item bool) *cobra.Command {
 	use, short, nargs := "delete <vault>", "Delete a vault and invalidate all its items", 1
+	long := short + ".\nUnresolved payment operations block deletion, including operations on child cards of a wallet."
 	if item {
 		use, short, nargs = "delete <vault> <key>", "Delete an item and invalidate its credential", 2
+		long = short + `.
+Unresolved payment operations normally block deletion. An AgentCard checkout whose
+create response returned no authorization ID may be abandoned by deleting that card
+directly, so a replacement can be created; deleting its wallet or vault stays blocked.
+Deleting or recreating an item is not proof that a payment did not occur.`
 	}
-	cmd := &cobra.Command{Use: use, Short: short, Args: cobra.ExactArgs(nargs), PreRunE: vaultPreRun,
+	cmd := &cobra.Command{Use: use, Short: short, Long: long, Args: cobra.ExactArgs(nargs), PreRunE: vaultPreRun,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key := ""
 			if item {

@@ -58,3 +58,30 @@ func TestVaultRecoveryActionDisplayPolicy(t *testing.T) {
 		}
 	}
 }
+
+// An unresolved AgentCard checkout that returned no authorization ID may be
+// abandoned by deleting that card; one with a known authorization ID may not.
+func TestVaultRecoveryAbandonmentGuidance(t *testing.T) {
+	const abandonGuidance = "deleting this card explicitly abandons the attempt"
+	const reconcileGuidance = "Do not retry, delete, or replace it"
+	for _, tc := range []struct {
+		name          string
+		authorization string
+		wants, avoids string
+	}{
+		{"no-authorization-id", "", abandonGuidance, reconcileGuidance},
+		{"known-authorization-id", `,"authorization":{"id":"cauth_test","status":"awaiting_approval","psp":"stripe","merchant":"Example Shop","amount_cents":1234,"currency":"usd"}`, reconcileGuidance, abandonGuidance},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"id":"item-1","key":"order-1","type":"card","spec":{"provider":"agentcard","wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop"},"state":{"provider":"agentcard","status":"recovery_required"` + tc.authorization + `},"available_operations":[],"available_expansions":[]}`
+			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, body)
+			})
+			_, human, err := executeVaultInputCommand(t, client, "", "vaults", "items", "get", "checkout", "order-1")
+			require.NoError(t, err)
+			assert.Contains(t, human, tc.wants)
+			assert.NotContains(t, human, tc.avoids)
+		})
+	}
+}

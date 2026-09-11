@@ -280,7 +280,11 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 
 func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemActions) {
 	if actions.RecoveryRequired {
-		pterm.Warning.Println("recovery_required: the original operation is unresolved, not declined or expired. Do not retry, delete, or replace it. Reconcile with the provider or support; no reset operation exists.")
+		if actions.Abandonable {
+			pterm.Warning.Println("recovery_required: the original operation is unresolved, not declined or expired. Automatic reuse is blocked and no reset operation exists. No authorization ID was returned, so deleting this card explicitly abandons the attempt and lets you create a replacement; deletion is not proof that the payment did not occur. Deleting its wallet or vault stays blocked.")
+			return
+		}
+		pterm.Warning.Println("recovery_required: the original operation is unresolved, not declined or expired. Do not retry, delete, or replace it. Reconcile the known authorization ID with the provider or support; no reset operation exists.")
 		return
 	}
 	if item.Type == "wallet" && item.Spec.Provider == "link" && item.Spec.Authorization.Client.Type == "customer_managed" && item.State.Status == "degraded" {

@@ -214,7 +214,10 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation, output str
 		return err
 	}
 	if actions.RecoveryRequired {
-		return fmt.Errorf("recovery_required: reconcile the original operation with the provider or support; do not retry, delete, or replace it")
+		if actions.Abandonable {
+			return fmt.Errorf("recovery_required: automatic reuse is blocked; no authorization ID was returned, so delete this card explicitly to abandon the attempt and create a replacement")
+		}
+		return fmt.Errorf("recovery_required: reconcile the known authorization ID with the provider or support; do not retry, delete, or replace it")
 	}
 	available := false
 	for _, op := range actions.Operations {

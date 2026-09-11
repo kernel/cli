@@ -14,17 +14,25 @@ type vaultItemOperation struct {
 
 type vaultItemActions struct {
 	RecoveryRequired bool
-	RequiredAction   string
-	ActionURL        string
-	ApprovalURL      string
-	Operations       []vaultItemOperation
+	// Abandonable is true when an unresolved AgentCard checkout returned no
+	// authorization ID. The API lets that card be deleted explicitly to abandon
+	// the attempt so a replacement can be created; its wallet and vault stay
+	// blocked, and deletion is not proof that the payment did not occur.
+	Abandonable    bool
+	RequiredAction string
+	ActionURL      string
+	ApprovalURL    string
+	Operations     []vaultItemOperation
 }
 
 // Execution and human output use this policy; JSON preserves the API-advertised
 // fields through the separate display-safe projection.
 func effectiveVaultItemActions(item *kernel.VaultItemUnion) (vaultItemActions, error) {
 	if item.State.Status == "recovery_required" {
-		return vaultItemActions{RecoveryRequired: true}, nil
+		return vaultItemActions{
+			RecoveryRequired: true,
+			Abandonable:      item.Type == "card" && item.State.Provider == "agentcard" && item.State.Authorization.ID == "",
+		}, nil
 	}
 	var fields struct {
 		Operations []vaultItemOperation `json:"available_operations"`
