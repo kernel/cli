@@ -137,7 +137,9 @@ func TestVaultWalletConfigInvalidInput(t *testing.T) {
 	for _, path := range []string{"wallets create", "cards create", "cards update"} {
 		for _, raw := range []string{
 			fmt.Sprintf(`{"authorization":{"tokens":{"access_token":%q}}}`, secret),
-			fmt.Sprintf(`{"nested":[{"client_secret":%q}]}`, secret),
+			fmt.Sprintf(`{"credentials":{"client_secret":%q}}`, secret),
+			fmt.Sprintf(`{"authorization":{"client":{"client_secret":%q}}}`, secret),
+			fmt.Sprintf(`{"provider_config":{"client_secret":%q}}`, secret),
 		} {
 			args := append([]string{"vaults"}, strings.Fields(path)...)
 			args = append(args, "checkout", "item-1", "--provider", "link", "--spec", raw)
@@ -210,6 +212,8 @@ func TestVaultRecoveryDoesNotOpenStaleAction(t *testing.T) {
 	buf := capturePtermOutput(t)
 	require.NoError(t, c.showItem(&item, "", true))
 	assert.NotContains(t, buf.String(), "https://example.test/approve")
+	assert.NotContains(t, buf.String(), "Required action")
+	assert.NotContains(t, buf.String(), "spend_approval")
 }
 
 func TestVaultImportedWalletDegradedOutput(t *testing.T) {

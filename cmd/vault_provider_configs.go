@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
 
 	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
@@ -175,15 +174,8 @@ func (c VaultProviderConfigsCmd) List(ctx context.Context, limit, offset int64, 
 	if err != nil {
 		return vaultCredentialError(err)
 	}
-	hasMore, err := strconv.ParseBool(response.Header.Get("X-Has-More"))
+	pagination, err := parseOffsetPagination(response, offset)
 	if err != nil {
-		return fmt.Errorf("invalid vault provider configuration pagination metadata")
-	}
-	nextOffset := 0
-	if value := response.Header.Get("X-Next-Offset"); value != "" {
-		nextOffset, err = strconv.Atoi(value)
-	}
-	if err != nil || nextOffset < 0 || (hasMore && int64(nextOffset) <= offset) || (!hasMore && nextOffset != 0) {
 		return fmt.Errorf("invalid vault provider configuration pagination metadata")
 	}
 	if output == "json" {
@@ -194,7 +186,7 @@ func (c VaultProviderConfigsCmd) List(ctx context.Context, limit, offset int64, 
 		return printVaultJSON(struct {
 			Configs    []vaultJSON `json:"vault_provider_configs"`
 			NextOffset int         `json:"next_offset,omitempty"`
-		}{items, nextOffset})
+		}{items, pagination.NextOffset})
 	}
 	if len(page.Items) == 0 {
 		pterm.Info.Println("No vault provider configurations found")
@@ -209,8 +201,8 @@ func (c VaultProviderConfigsCmd) List(ctx context.Context, limit, offset int64, 
 		}
 		PrintTableNoPad(rows, true)
 	}
-	if hasMore {
-		pterm.Printf("Next: kernel vault-provider-configs list --limit %d --offset %d\n", limit, nextOffset)
+	if pagination.HasMore {
+		pterm.Printf("Next: kernel vault-provider-configs list --limit %d --offset %d\n", limit, pagination.NextOffset)
 	}
 	return nil
 }

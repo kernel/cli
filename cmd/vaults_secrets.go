@@ -66,20 +66,14 @@ func readVaultSecrets(cmd *cobra.Command, flag string, fields ...string) (map[st
 
 func vaultSpecHasSecrets(value json.RawMessage) bool {
 	var object map[string]json.RawMessage
-	if json.Unmarshal(value, &object) == nil {
-		for key, child := range object {
-			switch strings.ToLower(key) {
-			case "tokens", "access_token", "refresh_token", "client_secret", "credentials":
-				return true
-			}
-			if vaultSpecHasSecrets(child) {
-				return true
-			}
-		}
+	if json.Unmarshal(value, &object) != nil {
+		return false
 	}
-	var array []json.RawMessage
-	if json.Unmarshal(value, &array) == nil {
-		for _, child := range array {
+	for key, child := range object {
+		switch strings.ToLower(key) {
+		case "tokens", "access_token", "refresh_token", "client_secret", "credentials":
+			return true
+		case "authorization", "client", "provider_config":
 			if vaultSpecHasSecrets(child) {
 				return true
 			}
