@@ -69,7 +69,8 @@ Vault names, item keys, and project ownership are immutable.
 Permitted checkout domains are provider-assigned and displayed when returned;
 there is no domain-setting API.
 Never supply card data, OAuth codes/tokens, ciphertext, or provider secrets to the CLI.
-Never retry failed, timed-out, rejected, or indeterminate payments.
+Never automatically retry failed, timed-out, rejected, or indeterminate payments.
+When an item explicitly permits user-confirmed abandonment, delete that card before creating a replacement.
 JSON output preserves returned public fields but omits unknown/opaque provider data.`,
 		Run: func(cmd *cobra.Command, args []string) { _ = cmd.Help() },
 	}
@@ -193,7 +194,7 @@ func newVaultDeleteCommand(item bool) *cobra.Command {
 			yes, _ := cmd.Flags().GetBool("yes")
 			return getVaultsHandler(cmd).Delete(cmd.Context(), args[0], key, yes)
 		}}
-	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt; abandon recovery only after explicit user confirmation")
 	return cmd
 }
 
@@ -205,7 +206,8 @@ func newVaultCardCommand(update bool) *cobra.Command {
 	cmd := &cobra.Command{Use: use + " <vault> <key> --provider <link|agentcard> --spec '<json>'", Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
 		Long: short + `. Neither create nor update authorizes a Link card.
 Update replaces the entire spec; omitted optional details are removed.
-Never reconfigure to retry a failed, timed-out, rejected, or indeterminate payment.
+Never reconfigure the same item to retry a failed, timed-out, rejected, or indeterminate payment.
+A recovery item that permits abandonment must be deleted after explicit user confirmation before creating a replacement.
 ` + vaultSpecHelp + vaultCardSpecHelp,
 		Example: "  kernel vaults cards " + use + ` checkout order-1 \
     --provider agentcard --spec '{
