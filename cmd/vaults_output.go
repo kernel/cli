@@ -24,14 +24,6 @@ func vaultFieldsOf(names string) vaultOutputFields {
 }
 
 var vaultFields = vaultFieldsOf("id name created_at updated_at")
-
-// Provider configurations never return their secret credentials, so every
-// documented field is display-safe.
-var vaultProviderConfigFields = vaultFieldsOf("id name provider client_id test_mode created_at updated_at")
-
-// A wallet spec names its provider configuration by ID and name only; secrets
-// stay on the configuration.
-var vaultProviderConfigRefFields = vaultFieldsOf("id name")
 var vaultOperationFields = vaultFieldsOf("type description")
 var vaultTotalFields = vaultFieldsOf("type display_text amount")
 var vaultMethodFields = vaultOutputFields{

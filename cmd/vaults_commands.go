@@ -182,7 +182,7 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 
 	cards := &cobra.Command{Use: "cards", Short: "Configure card requests"}
 	cards.AddCommand(newVaultCardCommand(false), newVaultCardCommand(true))
-	cmd.AddCommand(items, wallets, cards, newVaultProviderConfigsCommand())
+	cmd.AddCommand(items, wallets, cards)
 	return cmd
 }
 
