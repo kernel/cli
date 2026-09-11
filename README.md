@@ -288,7 +288,7 @@ cannot switch projects.
 | `kernel vaults wallets create <vault> <key> --provider link\|agentcard --spec '<json>'` | Connect/enroll a wallet using its provider's spec; `--open` opens a returned HTTPS action URL |
 | `kernel vaults wallets payment-methods <vault> <key>` | Fetch advertised live payment methods; JSON is the item with `expanded.payment_methods` |
 | `kernel vaults cards create <vault> <key> --provider link\|agentcard --spec '<json>'` | Create a card request; never implicitly authorize Link |
-| `kernel vaults cards update <vault> <key> --provider link\|agentcard --spec '<json>'` | Replace the full card spec; the API enforces state/provider constraints |
+| `kernel vaults cards update <vault> <key> --provider link\|agentcard --spec '<json>'` | Update a card spec; pending issuance preserves omitted optional fields, and the API enforces state/provider constraints |
 | `kernel vaults items list <vault>` | List item keys, types, providers, status, and required actions |
 | `kernel vaults items get <vault> <key>` | Inspect state/actions/returned aliases and copyable operation commands; `--wait 0..60`, `--expand payment_methods`, `--open` |
 | `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; optional `--open` opens a returned HTTPS action |
@@ -302,7 +302,8 @@ JSON preserves field presence and API-returned aliases, while omitting unknown f
 opaque metadata, and unrecognized event data. Human output labels aliases as non-secret
 checkout values and distinguishes card readiness from checkout authorization/payment outcomes.
 Action and approval URLs print in full on separate lines, without table truncation.
-API failures use the CLI's standard error formatter, preserving the API's code and message.
+Most API failures use the CLI's standard error formatter. Wallet creation and provider config
+commands withhold response/transport details to prevent credential echoes; HTTP status remains visible.
 `vaults delete` and `vaults items delete` treat HTTP 404 as success and print
 `Deleted or not found`, whether the missing object is the project, vault, or item.
 Other API errors still return a nonzero exit status.
@@ -315,14 +316,82 @@ The API validates the provider-specific schema. Each command's `--help` includes
 TypeScript-style types, which must stay in sync with the [API spec](https://api.onkernel.com/spec.yaml).
 
 - **Link wallet:** supply `authorization: {method: "oauth", client: {type: "kernel_managed"}}`.
-- **AgentCard wallet:** use `{}` to enroll, or supply `user_id` for an already enrolled user.
+- **AgentCard wallet:** use `{}` to enroll, or supply `user_id` for a user enrolled in the same organization and provider configuration.
 - **Link card:** include the required fields shown in help. Optional `line_items`, `totals`,
   `metadata`, and `expires_at` are supported through JSON.
 - **AgentCard card:** uses `merchant`, not Link's `merchant_name`. Its optional `card_id` selects
   a vaulted card; otherwise the cardholder selects one at approval.
 
-`cards update` replaces the entire spec, so omitted optional details are removed. Permitted
+`cards update` replaces the spec for requested cards. Pending issuance updates preserve omitted
+optional fields; explicit empty lists clear them. Wallet/provider bindings and unsupported fields
+cannot change after authorization starts. Checkout cards can be edited between authorizations.
+An uncertain update enters `recovery_required` and must not be retried. Identical card creation
+returns its existing state without polling, reauthorizing, or resetting recovery. Permitted
 checkout domains remain provider-assigned. Neither command submits a merchant payment.
+
+#### Provider configurations and imported grants
+
+Provider configurations are organization-owned and shared across projects. Creating, updating,
+or deleting one requires organization-scoped authentication; selecting `--project` does not
+elevate a project-scoped API key. Existing Kernel-managed wallet commands remain unchanged.
+
+| Command | Purpose |
+| --- | --- |
+| `kernel vault-provider-configs create --name <name> --provider link\|agentcard --credentials-file <path\|->` | Register client credentials; file JSON contains `client_id` and `client_secret` strings |
+| `kernel vault-provider-configs list` | `--limit 1..100`, `--offset`; JSON includes `vault_provider_configs` and optional `next_offset` |
+| `kernel vault-provider-configs get <id-or-name>` | Show public metadata (`show` is an alias); AgentCard `test_mode` is introspected, not selectable |
+| `kernel vault-provider-configs update <id-or-name>` | `--name` renames; `--credentials-file` rotates using a JSON object containing only `client_secret` |
+| `kernel vault-provider-configs delete <id-or-name>` | Delete only when no non-deleted items reference it; `--yes` skips confirmation |
+
+Config commands support `-o json` except delete. Secrets never appear in list/get/write output.
+Omitted update fields stay unchanged. Provider and client ID are immutable; rotation must preserve
+identity and mode and affects every bound wallet. Renaming preserves the config ID and wallet
+bindings. Duplicate config creation returns a conflict, not credential replacement. Deletion does
+not delete the external client or revoke unrelated grants.
+
+Use protected credential files or pipe directly from your secret manager with `--credentials-file -`.
+Never put secrets in shell arguments, `--spec`, or command examples. For an existing protected file:
+
+```bash
+kernel vault-provider-configs create --name checkout-client --provider agentcard \
+  --credentials-file /secure/provider-client.json
+kernel vaults wallets create checkout wallet-1 --provider agentcard --spec '{}' \
+  --provider-config-name checkout-client --open
+```
+
+Wallet creation accepts either `--provider-config-id` or `--provider-config-name`, not both.
+Alternatively, AgentCard accepts `provider_config: {id: ...}` or `{name: ...}` in its spec.
+Do not combine a spec reference with selection flags. Bindings are immutable and responses return
+the resolved ID. Omitting selection preserves Kernel-managed credentials.
+
+**Link config credentials and wallet grants are different inputs.** The config stores the OAuth
+client credentials. Your backend must complete Link OAuth and obtain a currently valid access
+and refresh token pair from the same grant before importing a wallet. After successful import,
+stop refreshing that grant in your backend: Kernel owns subsequent refresh-token rotation.
+
+```bash
+kernel vault-provider-configs create --name link-client --provider link \
+  --credentials-file /secure/link-client.json
+kernel vaults wallets create checkout imported-wallet --provider link --spec '{}' \
+  --provider-config-name link-client --tokens-file /secure/link-grant.json
+```
+
+The protected grant file must contain only `access_token` and `refresh_token` JSON string fields;
+`--tokens-file -` reads the same object from stdin. With Link selection flags, omit
+`spec.authorization`. Alternatively, set `authorization.method` to `oauth` and its `client` to
+`{type: "customer_managed", provider_config: {id: ...}}` in `--spec`, still using `--tokens-file`.
+Tokens are never accepted in `--spec` or returned in display output.
+
+Repeating wallet creation never replaces an imported grant. If it becomes degraded, complete
+fresh OAuth in your backend and import a **new wallet key for new work only**. This does not
+rebind existing cards or resolve old payments. Retain old items while reconciling uncertain
+payments; do not repeat an uncertain payment through the new wallet. There is no in-place
+imported-wallet reauthorization.
+
+**`recovery_required` means unresolved, not declined or expired.** It stops server-side waiting.
+Do not retry, delete, or replace the original operation. Reconcile with the provider or support;
+there is no reset or caller-asserted reconciliation endpoint. Unresolved child cards can block
+wallet and vault deletion. Time passing or deletion is not evidence of non-execution.
 
 #### Link checkout preparation
 
@@ -411,8 +480,9 @@ MFA, spend approval) appear separately; they are not operations to invoke throug
 
 `items invoke` fetches the item again and calls
 `POST /vaults/{id_or_name}/items/{key}/operations` only if the requested operation is still
-advertised. The API controls availability; the CLI has no provider/type/state-specific
-operation checks. The response is the updated item, possibly with a required user action.
+advertised. The API controls availability. The CLI additionally refuses invocation and opening
+actions in `recovery_required`, even if a stale action or operation was returned. The response
+is the updated item, possibly with a required user action.
 
 The current [API spec](https://api.onkernel.com/spec.yaml) accepts only
 `{"type":"authorize"}` and forbids extra fields. There is no operation `--spec` flag;
