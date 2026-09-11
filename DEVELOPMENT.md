@@ -56,42 +56,6 @@ A typical workflow we encounter is updating the API and integrating those change
 ./scripts/go-mod-replace-kernel.sh <commit | branch name>
 ```
 
-### Vault provider SDK release prerequisite
-
-The vault provider configuration commands require generated SDK methods and the separate wallet
-request union that are not in the currently pinned `github.com/kernel/kernel-go-sdk v0.100.0`.
-**Do not merge or release this change until a production SDK containing these APIs is published,
-`go.mod`/`go.sum` are updated to that real release, and the normal tests/build/vet pass.**
-The production dependency is deliberately unchanged; this branch currently builds only with
-the preview replacement below. No staging dependency or guessed future release is shipped.
-
-Validated preview: `kernel-go-sdk-staging` commit
-`87471646cd377f2e3503cd98f69f233fe93f479c`. Its config CRUD, wallet request/response fields,
-and recovery statuses match API head `0b96b27cfe03b4c26e8a6c92b8ae7baeca54e77d`.
-The latest main merge changed unrelated config-registry/proxy schemas, not the vault contract.
-The generated config methods are named `New`, `Get`, `List`, `Update`, and `Delete`.
-
-Use the same SDK replacement mechanism as the development script, but isolate it in a temporary
-modfile so the published dependency files cannot accidentally retain the preview:
-
-```bash
-preview_dir=$(mktemp -d)
-cp go.mod "$preview_dir/preview.mod"
-cp go.sum "$preview_dir/preview.sum"
-export GOPRIVATE="${GOPRIVATE:+$GOPRIVATE,}github.com/kernel/kernel-go-sdk-staging"
-go mod edit -modfile="$preview_dir/preview.mod" \
-  -replace=github.com/kernel/kernel-go-sdk=github.com/kernel/kernel-go-sdk-staging@87471646cd377f2e3503cd98f69f233fe93f479c
-go mod tidy -modfile="$preview_dir/preview.mod"
-GOFLAGS="-modfile=$preview_dir/preview.mod" go test ./...
-GOFLAGS="-modfile=$preview_dir/preview.mod" go test -race ./cmd -run 'Vault|BrowserVault'
-GOFLAGS="-modfile=$preview_dir/preview.mod" go build ./...
-GOFLAGS="-modfile=$preview_dir/preview.mod" go vet ./...
-```
-
-These tests use local HTTP fixtures, not live provider credentials or calls. Keep the temporary
-modfile out of commits. After the production SDK release, remove this prerequisite section and
-repeat validation without a replacement.
-
 ### Releasing a new version
 
 Releases are automated via GitHub Actions. Simply push a version tag and the release workflow will handle the rest.
