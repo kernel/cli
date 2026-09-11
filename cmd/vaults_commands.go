@@ -68,7 +68,9 @@ Vault names, item keys, and project ownership are immutable.
 
 Permitted checkout domains are provider-assigned and displayed when returned;
 there is no domain-setting API.
-Never supply card data, OAuth codes/tokens, ciphertext, or provider secrets to the CLI.
+Never supply card data, OAuth codes, ciphertext, or secrets in shell arguments.
+Use vault-provider-configs for client credentials and wallets create --tokens-file
+for imported Link grants; both accept protected files or stdin.
 Never automatically retry failed, timed-out, rejected, or indeterminate payments.
 When an item explicitly permits user-confirmed abandonment, delete that card before creating a replacement.
 JSON output preserves returned public fields but omits unknown/opaque provider data.`,
@@ -109,7 +111,7 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 		}}
 	addVaultJSONOutputFlag(itemList)
 	itemGet := &cobra.Command{Use: "get <vault> <key>", Short: "Get item state and any required action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: "Get item state, available operations, provider actions, and returned checkout aliases.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nAn item still pending after the wait is returned as-is; ready does not mean paid.",
+		Long: "Get item state, available operations, provider actions, and returned checkout aliases.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nAn item still pending after the wait is returned as-is; ready does not mean paid.\nrecovery_required stops waiting and means unresolved, not declined or expired.\nReconcile with the provider or support; do not retry, delete, or replace the payment.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			wait, _ := cmd.Flags().GetInt64("wait")
 			expand, _ := cmd.Flags().GetStringSlice("expand")
@@ -155,14 +157,18 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
   kernel vaults wallets create checkout wallet-1 \
     --provider agentcard --spec '{}'`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			spec, err := vaultSpecFromFlags(cmd)
+			spec, err := vaultWalletSpecFromFlags(cmd)
 			if err != nil {
 				return err
 			}
 			open, _ := cmd.Flags().GetBool("open")
-			return getVaultsHandler(cmd).CreateWallet(cmd.Context(), args[0], args[1], param.Override[kernel.WalletVaultItemSpecUnionParam](spec), vaultOutput(cmd), open)
+			return getVaultsHandler(cmd).CreateWallet(cmd.Context(), args[0], args[1], spec, vaultOutput(cmd), open)
 		}}
 	addVaultSpecFlags(walletCreate)
+	walletCreate.Flags().String("provider-config-id", "", "Bind the new wallet to this provider configuration ID (immutable)")
+	walletCreate.Flags().String("provider-config-name", "", "Bind the new wallet to this provider configuration name (immutable)")
+	walletCreate.MarkFlagsMutuallyExclusive("provider-config-id", "provider-config-name")
+	walletCreate.Flags().String("tokens-file", "", "Import Link access_token and refresh_token JSON from a file (use '-' for stdin)")
 	walletCreate.Flags().Bool("open", false, "Open the returned HTTPS connection/enrollment URL")
 	addVaultJSONOutputFlag(walletCreate)
 	methods := &cobra.Command{Use: "payment-methods <vault> <key>", Short: "Fetch advertised live wallet payment methods", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
@@ -201,11 +207,15 @@ func newVaultDeleteCommand(item bool) *cobra.Command {
 func newVaultCardCommand(update bool) *cobra.Command {
 	use, short := "create", "Create a card request without authorizing it"
 	if update {
-		use, short = "update", "Replace a card spec when the API permits configuration"
+		use, short = "update", "Update a card spec when the API permits configuration"
 	}
 	cmd := &cobra.Command{Use: use + " <vault> <key> --provider <link|agentcard> --spec '<json>'", Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
 		Long: short + `. Neither create nor update authorizes a Link card.
-Update replaces the entire spec; omitted optional details are removed.
+Requested cards accept a replacement spec. Pending issuance updates preserve omitted
+optional fields; explicit empty lists clear them. The API restricts fields after
+authorization starts; wallet/provider bindings cannot change. An uncertain update
+enters recovery_required and must not be retried. Checkout cards can be edited
+between authorizations. Identical creates return existing state without resetting it.
 Never reconfigure the same item to retry a failed, timed-out, rejected, or indeterminate payment.
 A recovery item that permits abandonment must be deleted after explicit user confirmation before creating a replacement.
 ` + vaultSpecHelp + vaultCardSpecHelp,
@@ -250,6 +260,9 @@ func vaultSpecFromFlags(cmd *cobra.Command) (map[string]json.RawMessage, error) 
 		if err := json.Unmarshal(value, &embedded); err != nil || embedded != provider {
 			return nil, fmt.Errorf("spec.provider must match --provider")
 		}
+	}
+	if vaultSpecHasSecrets(json.RawMessage(raw)) {
+		return nil, fmt.Errorf("--spec must not contain credentials or tokens; use the dedicated file/stdin inputs")
 	}
 	spec["provider"], _ = json.Marshal(provider)
 	return spec, nil

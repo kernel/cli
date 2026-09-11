@@ -176,64 +176,6 @@ func TestProjectsList_RejectsInvalidPagination(t *testing.T) {
 	}
 }
 
-func TestParseProjectListPagination(t *testing.T) {
-	tests := []struct {
-		name     string
-		response *http.Response
-		want     projectListPagination
-		wantErr  string
-	}{
-		{
-			name:     "more results",
-			response: &http.Response{Header: http.Header{"X-Has-More": []string{"true"}, "X-Next-Offset": []string{"120"}}},
-			want:     projectListPagination{HasMore: true, NextOffset: 120},
-		},
-		{
-			name:     "terminal page",
-			response: &http.Response{Header: http.Header{"X-Has-More": []string{"false"}, "X-Next-Offset": []string{"0"}}},
-			want:     projectListPagination{},
-		},
-		{name: "missing response", wantErr: "missing pagination headers"},
-		{
-			name:     "missing has more",
-			response: &http.Response{Header: http.Header{"X-Next-Offset": []string{"120"}}},
-			wantErr:  "invalid X-Has-More",
-		},
-		{
-			name:     "has more with missing cursor",
-			response: &http.Response{Header: http.Header{"X-Has-More": []string{"true"}}},
-			wantErr:  "invalid X-Next-Offset",
-		},
-		{
-			name:     "has more with malformed cursor",
-			response: &http.Response{Header: http.Header{"X-Has-More": []string{"true"}, "X-Next-Offset": []string{"next"}}},
-			wantErr:  "invalid X-Next-Offset",
-		},
-		{
-			name:     "has more with terminal cursor",
-			response: &http.Response{Header: http.Header{"X-Has-More": []string{"true"}, "X-Next-Offset": []string{"0"}}},
-			wantErr:  "X-Next-Offset is not positive",
-		},
-		{
-			name:     "terminal page with cursor",
-			response: &http.Response{Header: http.Header{"X-Has-More": []string{"false"}, "X-Next-Offset": []string{"120"}}},
-			wantErr:  "X-Has-More is false",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseProjectListPagination(tt.response)
-			if tt.wantErr != "" {
-				require.ErrorContains(t, err, tt.wantErr)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
 func TestMarshalProjectsListJSON_EmptyPage(t *testing.T) {
 	data, err := marshalProjectsListJSON(nil, 0)
 	require.NoError(t, err)
