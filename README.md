@@ -294,6 +294,19 @@ cannot switch projects.
 | `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; optional `--open` opens a returned HTTPS action |
 | `kernel vaults items events <vault> <key>` | Read ordered audit events; `--after <event-id>`, `--wait 0..60` |
 | `kernel vaults items delete <vault> <key>` | Invalidate an item; `--yes` skips confirmation |
+| `kernel vaults provider-configs create --name <name> --provider link\|agentcard --client-id <id>` | Register customer-owned provider credentials; `--client-secret` or `--client-secret-file` (`-` reads stdin) |
+| `kernel vaults provider-configs list` | `--page` (default 1), `--per-page 1..100` (default 20) |
+| `kernel vaults provider-configs get <id-or-name>` | Get by ID or name; secrets are never returned |
+| `kernel vaults provider-configs update <id-or-name>` | `--name` renames, `--client-secret`/`--client-secret-file` rotates; the client ID is immutable |
+| `kernel vaults provider-configs delete <id-or-name>` | Refused with 409 while a vault item still references it; `--yes` skips confirmation |
+
+`provider-configs` commands are organization-scoped: they need an organization-scoped API key
+or dashboard login, a project-scoped key receives 403, and `--project` does not apply.
+A configuration is shared across the organization's projects and serves many wallets.
+Select one for an AgentCard wallet with `provider_config` in `--spec`, or omit it to use
+Kernel-managed credentials; the binding is fixed at wallet creation and renaming a
+configuration does not rebind existing wallets. Customer-managed Link wallets are created by
+importing a grant's OAuth tokens, which this CLI never accepts — create them from your backend.
 
 `<vault>` accepts an ID or name. `<key>` is the immutable item key within that vault, not
 its generated item ID. Names and keys use letters, digits, dots, underscores, and hyphens

@@ -175,7 +175,7 @@ func (c VaultsCmd) GetItem(ctx context.Context, vault, key string, wait int64, e
 	return nil
 }
 
-func (c VaultsCmd) CreateWallet(ctx context.Context, vault, key string, spec kernel.WalletVaultItemSpecUnionParam, output string, open bool) error {
+func (c VaultsCmd) CreateWallet(ctx context.Context, vault, key string, spec kernel.VaultItemUpsertParamsBodyWalletSpecUnion, output string, open bool) error {
 	item, err := c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfWallet: &kernel.VaultItemUpsertParamsBodyWallet{Spec: spec}}, option.WithMaxRetries(0))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}

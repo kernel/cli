@@ -24,6 +24,14 @@ func vaultFieldsOf(names string) vaultOutputFields {
 }
 
 var vaultFields = vaultFieldsOf("id name created_at updated_at")
+
+// Provider configurations never return their secret credentials, so every
+// documented field is display-safe.
+var vaultProviderConfigFields = vaultFieldsOf("id name provider client_id test_mode created_at updated_at")
+
+// A wallet spec names its provider configuration by ID and name only; secrets
+// stay on the configuration.
+var vaultProviderConfigRefFields = vaultFieldsOf("id name")
 var vaultOperationFields = vaultFieldsOf("type description")
 var vaultTotalFields = vaultFieldsOf("type display_text amount")
 var vaultMethodFields = vaultOutputFields{
@@ -41,8 +49,9 @@ var vaultItemFields = vaultOutputFields{
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil,
 		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
 		"context": nil, "expires_at": nil,
-		"authorization": {"method": nil, "client": vaultFieldsOf("type")},
-		"totals":        vaultTotalFields,
+		"provider_config": vaultProviderConfigRefFields,
+		"authorization":   {"method": nil, "client": {"type": nil, "provider_config": vaultProviderConfigRefFields}},
+		"totals":          vaultTotalFields,
 		"line_items": {
 			"name": nil, "quantity": nil, "unit_amount": nil, "description": nil,
 			"sku": nil, "url": nil, "image_url": nil, "product_url": nil, "totals": vaultTotalFields,

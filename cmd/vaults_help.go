@@ -23,8 +23,21 @@ type LinkWalletSpec = {
 
 type AgentCardWalletSpec = {
   provider: "agentcard";
-  user_id?: string; // usr_...; already enrolled in this organization
+  user_id?: string;           // usr_...; already enrolled under the same configuration
+  provider_config?: {         // register with vaults provider-configs; select by
+    id?: string;              // either id or name. Omit provider_config to use
+    name?: string;            // Kernel-managed credentials
+  };
 };
+
+A wallet's configuration and provider binding are fixed at creation: it cannot be
+moved to a different configuration later, and renaming one does not rebind it.
+Omitting user_id returns a hosted enrollment action for the user to complete.
+
+Link wallets on your own OAuth client are created by importing an existing grant's
+access and refresh tokens. Those tokens must never be passed to the CLI; create
+such wallets from your backend instead. Only the kernel_managed client shown above
+is supported here.
 `
 
 const vaultCardSpecHelp = `

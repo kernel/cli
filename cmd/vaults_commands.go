@@ -160,7 +160,7 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 				return err
 			}
 			open, _ := cmd.Flags().GetBool("open")
-			return getVaultsHandler(cmd).CreateWallet(cmd.Context(), args[0], args[1], param.Override[kernel.WalletVaultItemSpecUnionParam](spec), vaultOutput(cmd), open)
+			return getVaultsHandler(cmd).CreateWallet(cmd.Context(), args[0], args[1], param.Override[kernel.VaultItemUpsertParamsBodyWalletSpecUnion](spec), vaultOutput(cmd), open)
 		}}
 	addVaultSpecFlags(walletCreate)
 	walletCreate.Flags().Bool("open", false, "Open the returned HTTPS connection/enrollment URL")
@@ -176,7 +176,7 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 
 	cards := &cobra.Command{Use: "cards", Short: "Configure card requests"}
 	cards.AddCommand(newVaultCardCommand(false), newVaultCardCommand(true))
-	cmd.AddCommand(items, wallets, cards)
+	cmd.AddCommand(items, wallets, cards, newVaultProviderConfigsCommand())
 	return cmd
 }
 
