@@ -1,7 +1,12 @@
 package cmd
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -9,271 +14,288 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kernel/cli/pkg/util"
+	kernel "github.com/kernel/kernel-go-sdk"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-const linkProviderConfigFixture = `{"id":"vpc-link-1","name":"my-link-client","provider":"link","client_id":"example-client-id","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}`
-const agentcardProviderConfigFixture = `{"id":"vpc-ac-1","name":"my-agentcard","provider":"agentcard","client_id":"example-client-id","test_mode":true,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}`
+const providerConfigFixture = `{"id":"config-1","name":"checkout-client","provider":"agentcard","client_id":"client-1","test_mode":false,"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}`
 
-func TestVaultProviderConfigCommandConstruction(t *testing.T) {
-	for _, path := range []string{"provider-configs create", "provider-configs list", "provider-configs get", "provider-configs update", "provider-configs delete"} {
-		t.Run(path, func(t *testing.T) {
-			cmd, remaining, err := newVaultsCommand().Find(strings.Fields(path))
-			require.NoError(t, err)
-			require.Empty(t, remaining)
-			assert.NotNil(t, cmd.RunE)
-			assert.NotNil(t, cmd.PreRunE)
-			assert.NotNil(t, cmd.Args)
-			if cmd.Name() == "delete" {
-				assert.NotNil(t, cmd.Flags().Lookup("yes"))
-				return
-			}
-			require.NotNil(t, cmd.Flags().Lookup("output"))
-			assert.Contains(t, cmd.Flags().Lookup("output").Usage, "display-safe")
-		})
-	}
+func vaultTestSecret(t *testing.T) string {
+	t.Helper()
+	var data [32]byte
+	_, err := rand.Read(data[:])
+	require.NoError(t, err)
+	return hex.EncodeToString(data[:])
+}
 
-	create, _, err := newVaultsCommand().Find([]string{"provider-configs", "create"})
-	require.NoError(t, err)
-	for _, flag := range []string{"name", "provider", "client-id", "client-secret", "client-secret-file"} {
-		assert.NotNil(t, create.Flags().Lookup(flag), flag)
-	}
-	list, _, err := newVaultsCommand().Find([]string{"provider-configs", "list"})
-	require.NoError(t, err)
-	assert.NotNil(t, list.Flags().Lookup("page"))
-	assert.NotNil(t, list.Flags().Lookup("per-page"))
-	// The endpoint pages with limit/offset, but those stay an implementation detail.
-	assert.Nil(t, list.Flags().Lookup("limit"))
-	assert.Nil(t, list.Flags().Lookup("offset"))
-	// The client ID is immutable, so update must not offer to change it.
-	update, _, err := newVaultsCommand().Find([]string{"provider-configs", "update"})
-	require.NoError(t, err)
-	assert.Nil(t, update.Flags().Lookup("client-id"))
-	assert.Nil(t, update.Flags().Lookup("provider"))
+func executeVaultInputCommand(t *testing.T, client kernel.Client, stdin string, args ...string) (string, string, error) {
+	t.Helper()
+	root := &cobra.Command{Use: "kernel", SilenceErrors: true, SilenceUsage: true}
+	root.PersistentFlags().String("project", "", "Project")
+	root.SetContext(context.WithValue(context.Background(), util.KernelClientKey, client))
+	root.SetIn(strings.NewReader(stdin))
+	root.AddCommand(newVaultProviderConfigsCommand(), newVaultsCommand())
+	root.SetArgs(args)
+	buf := capturePtermOutput(t)
+	var err error
+	stdout := captureStdout(t, func() { err = root.Execute() })
+	return stdout, buf.String(), err
 }
 
 func TestVaultProviderConfigCreate(t *testing.T) {
-	t.Setenv("KERNEL_PROJECT", "")
-	for _, tc := range []struct {
-		provider string
-		fixture  string
-		usage    string
-	}{
-		{"link", linkProviderConfigFixture, "not through the CLI"},
-		{"agentcard", agentcardProviderConfigFixture, `--provider agentcard --spec '{"provider_config": {"name": "my-agentcard"}}'`},
-	} {
-		t.Run(tc.provider, func(t *testing.T) {
-			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, http.MethodPost, r.Method)
-				assert.Equal(t, "/vault-provider-configs", r.URL.Path)
-				body, _ := io.ReadAll(r.Body)
-				assert.JSONEq(t, `{"name":"cfg-1","provider":"`+tc.provider+`","credentials":{"client_id":"example-client-id","client_secret":"s3cret"}}`, string(body))
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusCreated)
-				_, _ = io.WriteString(w, tc.fixture)
+	for _, provider := range []string{"link", "agentcard"} {
+		for _, source := range []string{"file", "stdin"} {
+			t.Run(provider+"/"+source, func(t *testing.T) {
+				secret := vaultTestSecret(t)
+				input := fmt.Sprintf(`{"client_id":"client-1","client_secret":%q}`, secret)
+				path, stdin := "-", input
+				if source == "file" {
+					path, stdin = filepath.Join(t.TempDir(), "credentials.json"), ""
+					require.NoError(t, os.WriteFile(path, []byte(input), 0600))
+				}
+				calls := 0
+				client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					assert.Equal(t, http.MethodPost, r.Method)
+					assert.Equal(t, "/vault-provider-configs", r.URL.Path)
+					var body struct {
+						Name        string            `json:"name"`
+						Provider    string            `json:"provider"`
+						Credentials map[string]string `json:"credentials"`
+					}
+					require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+					assert.Equal(t, "checkout-client", body.Name)
+					assert.Equal(t, provider, body.Provider)
+					assert.Equal(t, 2, len(body.Credentials))
+					assert.True(t, body.Credentials["client_secret"] == secret, "secret must be sent unchanged")
+					assert.Equal(t, "client-1", body.Credentials["client_id"])
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusCreated)
+					response := providerConfigFixture
+					if provider == "link" {
+						response = strings.ReplaceAll(response, "agentcard", "link")
+						response = strings.ReplaceAll(response, `,"test_mode":false`, "")
+					}
+					_, _ = io.WriteString(w, response)
+				})
+				out, human, err := executeVaultInputCommand(t, client, stdin, "vault-provider-configs", "create", "--name", "checkout-client", "--provider", provider, "--credentials-file", path, "-o", "json")
+				require.NoError(t, err)
+				assert.Equal(t, 1, calls)
+				assert.Empty(t, human)
+				assert.False(t, strings.Contains(out, secret), "output must not contain credentials")
+				assert.Contains(t, out, `"id": "config-1"`)
+				if provider == "link" {
+					assert.NotContains(t, out, "test_mode")
+				}
 			})
-			out, human, err := executeVaultCommand(t, client,
-				"vaults", "provider-configs", "create", "--name", "cfg-1", "--provider", tc.provider,
-				"--client-id", "example-client-id", "--client-secret", "s3cret", "-o", "json")
-			require.NoError(t, err)
-			assert.JSONEq(t, tc.fixture, out)
-			assert.Empty(t, human)
+		}
+	}
+}
 
-			_, human, err = executeVaultCommand(t, client,
-				"vaults", "provider-configs", "create", "--name", "cfg-1", "--provider", tc.provider,
-				"--client-id", "example-client-id", "--client-secret", "s3cret")
-			require.NoError(t, err)
-			assert.Contains(t, human, "example-client-id")
-			assert.NotContains(t, human, "s3cret")
-			assert.Contains(t, human, tc.usage)
+func TestVaultProviderConfigUpdates(t *testing.T) {
+	for _, rotate := range []bool{false, true} {
+		for _, rename := range []bool{false, true} {
+			if !rotate && !rename {
+				continue
+			}
+			t.Run(fmt.Sprint(rotate, rename), func(t *testing.T) {
+				secret := vaultTestSecret(t)
+				args := []string{"vault-provider-configs", "update", "config-1", "-o", "json"}
+				if rename {
+					args = append(args, "--name", "renamed")
+				}
+				if rotate {
+					args = append(args, "--credentials-file", "-")
+				}
+				client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+					assert.Equal(t, http.MethodPatch, r.Method)
+					assert.Equal(t, "/vault-provider-configs/config-1", r.URL.Path)
+					var body map[string]json.RawMessage
+					require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+					_, hasName := body["name"]
+					_, hasCredentials := body["credentials"]
+					assert.Equal(t, rename, hasName)
+					assert.Equal(t, rotate, hasCredentials)
+					_, hasProvider := body["provider"]
+					_, hasClientID := body["client_id"]
+					assert.False(t, hasProvider)
+					assert.False(t, hasClientID)
+					if rotate {
+						var credentials map[string]string
+						require.NoError(t, json.Unmarshal(body["credentials"], &credentials))
+						assert.Equal(t, 1, len(credentials))
+						assert.True(t, credentials["client_secret"] == secret)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, providerConfigFixture)
+				})
+				out, _, err := executeVaultInputCommand(t, client, fmt.Sprintf(`{"client_secret":%q}`, secret), args...)
+				require.NoError(t, err)
+				assert.False(t, strings.Contains(out, secret))
+			})
+		}
+	}
+}
+
+func TestVaultProviderConfigSafeOutput(t *testing.T) {
+	secret := vaultTestSecret(t)
+	body := strings.TrimSuffix(providerConfigFixture, "}") + fmt.Sprintf(`,"credentials":{"client_secret":%q},"access_token":%q}`, secret, secret)
+	for _, operation := range []string{"get", "show", "list"} {
+		for _, output := range []string{"", "json"} {
+			t.Run(operation+"/"+output, func(t *testing.T) {
+				args := []string{"vault-provider-configs", operation}
+				if operation != "list" {
+					args = append(args, "checkout-client")
+				} else {
+					args = append(args, "--limit", "1", "--offset", "20")
+				}
+				if output != "" {
+					args = append(args, "-o", output)
+				}
+				client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+					assert.Equal(t, http.MethodGet, r.Method)
+					w.Header().Set("Content-Type", "application/json")
+					if operation == "list" {
+						assert.Equal(t, "/vault-provider-configs", r.URL.Path)
+						assert.Equal(t, "1", r.URL.Query().Get("limit"))
+						assert.Equal(t, "20", r.URL.Query().Get("offset"))
+						w.Header().Set("X-Has-More", "true")
+						w.Header().Set("X-Next-Offset", "21")
+						_, _ = io.WriteString(w, "["+body+"]")
+					} else {
+						assert.Equal(t, "/vault-provider-configs/checkout-client", r.URL.Path)
+						_, _ = io.WriteString(w, body)
+					}
+				})
+				out, human, err := executeVaultInputCommand(t, client, "", args...)
+				require.NoError(t, err)
+				assert.False(t, strings.Contains(out+human, secret), "secret echoed by API must not be displayed")
+				assert.NotContains(t, out+human, "client_secret")
+				assert.Contains(t, out+human, "false", "false test mode must not be lost")
+				if operation == "list" {
+					if output == "json" {
+						assert.Contains(t, out, `"next_offset": 21`)
+					} else {
+						assert.Contains(t, human, "--limit 1 --offset 21")
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestVaultProviderConfigInvalidInput(t *testing.T) {
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Error("invalid input reached API") })
+	for _, args := range []string{
+		"create", "create --name .. --provider link --credentials-file -", "create --name good --provider other --credentials-file -",
+		"get ../bad", "get config -o yaml", "list --limit 0", "list --limit 101", "list --offset -1",
+		"update config", "update config --name=", "update config --client-id other", "update config --provider link",
+		"delete config", "create --name good --provider link --credentials-file=", "update config --credentials-file=",
+	} {
+		t.Run(args, func(t *testing.T) {
+			_, _, err := executeVaultInputCommand(t, client, "{}", append([]string{"vault-provider-configs"}, strings.Fields(args)...)...)
+			require.Error(t, err)
 		})
 	}
+	for _, raw := range []string{"", "null", "[]", "{}", "{} {}", `{"client_id":"client-1"}`, `{"client_id":false,"client_secret":null}`} {
+		_, _, err := executeVaultInputCommand(t, client, raw, "vault-provider-configs", "create", "--name", "good", "--provider", "link", "--credentials-file", "-")
+		require.Error(t, err)
+	}
+	secret := vaultTestSecret(t)
+	for _, raw := range []string{secret, fmt.Sprintf(`{"client_id":"client-1","client_secret":%q,"unexpected":true}`, secret), strings.Repeat(secret, (1<<20)/len(secret)+1)} {
+		out, human, err := executeVaultInputCommand(t, client, raw, "vault-provider-configs", "create", "--name", "good", "--provider", "link", "--credentials-file", "-")
+		require.Error(t, err)
+		assert.False(t, strings.Contains(out+human+err.Error(), secret))
+	}
+	_, _, err := executeVaultInputCommand(t, client, fmt.Sprintf(`{"client_id":"other","client_secret":%q}`, secret), "vault-provider-configs", "update", "config-1", "--credentials-file", "-")
+	require.Error(t, err, "rotation cannot change identity")
 }
 
-func TestVaultProviderConfigCreateSecretSources(t *testing.T) {
-	t.Setenv("KERNEL_PROJECT", "")
-	var sent string
-	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Credentials struct {
-				ClientSecret string `json:"client_secret"`
-			} `json:"credentials"`
+func TestVaultProviderConfigErrorsAndDelete(t *testing.T) {
+	for _, operation := range []string{"create", "get", "list", "update", "delete"} {
+		for _, status := range []int{204, 400, 403, 404, 409, 429, 500} {
+			if status == 204 && operation != "delete" {
+				continue
+			}
+			for _, plain := range []bool{false, true} {
+				t.Run(fmt.Sprint(operation, status, plain), func(t *testing.T) {
+					secret := vaultTestSecret(t)
+					calls := 0
+					client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+						calls++
+						if !plain {
+							w.Header().Set("Content-Type", "application/json")
+						}
+						w.WriteHeader(status)
+						if status != 204 {
+							if plain {
+								_, _ = io.WriteString(w, secret)
+							} else {
+								_, _ = fmt.Fprintf(w, `{"code":%q,"message":%q}`, secret, secret)
+							}
+						}
+					})
+					args := []string{"vault-provider-configs", operation}
+					switch operation {
+					case "create":
+						args = append(args, "--name", "good", "--provider", "link", "--credentials-file", "-")
+					case "get":
+						args = append(args, "config-1")
+					case "update":
+						args = append(args, "config-1", "--name", "renamed")
+					case "delete":
+						args = append(args, "config-1", "--yes")
+					}
+					out, human, err := executeVaultInputCommand(t, client, fmt.Sprintf(`{"client_id":"client-1","client_secret":%q}`, secret), args...)
+					assert.Equal(t, 1, calls, "SDK retries must be disabled")
+					if operation == "delete" && status == 204 {
+						require.NoError(t, err)
+						assert.Contains(t, human, "Deleted vault provider configuration")
+					} else {
+						require.Error(t, err)
+						assert.Contains(t, err.Error(), fmt.Sprint(status))
+						assert.False(t, strings.Contains(util.CleanedUpSdkError{Err: err}.Error(), secret), "root formatting must not expose response")
+						assert.NotContains(t, human, "Deleted")
+					}
+					assert.False(t, strings.Contains(out+human, secret))
+				})
+			}
 		}
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-		sent = body.Credentials.ClientSecret
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, linkProviderConfigFixture)
-	})
-
-	// A file keeps the secret out of shell history, and its trailing newline is
-	// an artifact of how the file was written rather than part of the secret.
-	path := filepath.Join(t.TempDir(), "secret.txt")
-	require.NoError(t, os.WriteFile(path, []byte("file-secret\n"), 0o600))
-	_, _, err := executeVaultCommand(t, client,
-		"vaults", "provider-configs", "create", "--name", "cfg-1", "--provider", "link",
-		"--client-id", "example-client-id", "--client-secret-file", path, "-o", "json")
-	require.NoError(t, err)
-	assert.Equal(t, "file-secret", sent)
-
-	_, _, err = executeVaultCommand(t, client,
-		"vaults", "provider-configs", "create", "--name", "cfg-1", "--provider", "link",
-		"--client-id", "example-client-id", "--client-secret", "inline-secret", "--client-secret-file", path)
-	require.ErrorContains(t, err, "not both")
-}
-
-func TestVaultProviderConfigCreateValidation(t *testing.T) {
-	t.Setenv("KERNEL_PROJECT", "")
-	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("unexpected request to %s", r.URL.Path)
-	})
-	for _, tc := range []struct {
-		args    []string
-		message string
-	}{
-		{[]string{"--name", "cfg-1", "--provider", "stripe", "--client-id", "id", "--client-secret", "s"}, "--provider must be link or agentcard"},
-		{[]string{"--name", "bad name", "--provider", "link", "--client-id", "id", "--client-secret", "s"}, "--name must contain"},
-		{[]string{"--name", "cfg-1", "--provider", "link", "--client-id", "id"}, "--client-secret"},
-	} {
-		_, _, err := executeVaultCommand(t, client, append([]string{"vaults", "provider-configs", "create"}, tc.args...)...)
-		require.ErrorContains(t, err, tc.message)
 	}
 }
 
-func TestVaultProviderConfigListPagination(t *testing.T) {
-	t.Setenv("KERNEL_PROJECT", "")
-	body := "[" + linkProviderConfigFixture + "," + agentcardProviderConfigFixture + "]"
-	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/vault-provider-configs", r.URL.Path)
-		// One extra item over --per-page is requested so the response itself
-		// reveals whether another page exists.
-		assert.Equal(t, "2", r.URL.Query().Get("limit"))
-		assert.Equal(t, "1", r.URL.Query().Get("offset"))
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, body)
-	})
+func TestVaultCredentialTransportAndFileErrorsAreSafe(t *testing.T) {
+	secret := vaultTestSecret(t)
+	err := vaultCredentialError(fmt.Errorf("transport: %w", errors.New(secret)))
+	assert.False(t, strings.Contains(util.CleanedUpSdkError{Err: err}.Error(), secret))
 
-	out, _, err := executeVaultCommand(t, client, "vaults", "provider-configs", "list", "--page", "2", "--per-page", "1", "-o", "json")
-	require.NoError(t, err)
-	assert.JSONEq(t, `{"provider_configs":[`+linkProviderConfigFixture+`],"page":2,"per_page":1,"has_more":true}`, out)
-
-	_, human, err := executeVaultCommand(t, client, "vaults", "provider-configs", "list", "--page", "2", "--per-page", "1")
-	require.NoError(t, err)
-	assert.Contains(t, human, "Page: 2  Per-page: 1  Items this page: 1  Has more: yes")
-	assert.Contains(t, human, "Next: kernel vaults provider-configs list --page 3 --per-page 1")
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unreadable input reached API") })
+	out, human, err := executeVaultInputCommand(t, client, "", "vault-provider-configs", "update", "config-1", "--credentials-file", filepath.Join(t.TempDir(), secret))
+	require.Error(t, err)
+	assert.False(t, strings.Contains(out+human+err.Error(), secret), "do not echo paths supplied to secret input flags")
 }
 
-func TestVaultProviderConfigListFooterWithoutMorePages(t *testing.T) {
-	t.Setenv("KERNEL_PROJECT", "")
-	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, "["+agentcardProviderConfigFixture+"]")
-	})
-	_, human, err := executeVaultCommand(t, client, "vaults", "provider-configs", "list")
-	require.NoError(t, err)
-	assert.Contains(t, human, "Page: 1  Per-page: 20  Items this page: 1  Has more: no")
-	assert.NotContains(t, human, "Next:")
-	// Only AgentCard configurations report a provider-introspected mode.
-	assert.Contains(t, human, "sandbox")
-}
-
-func TestVaultProviderConfigGetAndUpdate(t *testing.T) {
-	t.Setenv("KERNEL_PROJECT", "")
-	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/vault-provider-configs/my-link-client", r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodPatch {
-			body, _ := io.ReadAll(r.Body)
-			assert.JSONEq(t, `{"name":"renamed","credentials":{"client_secret":"rotated"}}`, string(body))
+func TestVaultProviderConfigEmptyAndInvalidPagination(t *testing.T) {
+	for _, invalid := range []bool{false, true} {
+		client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Has-More", "false")
+			if invalid {
+				w.Header().Set("X-Has-More", "true")
+				w.Header().Set("X-Next-Offset", "bad")
+			}
+			_, _ = io.WriteString(w, "[]")
+		})
+		out, _, err := executeVaultInputCommand(t, client, "", "vault-provider-configs", "list", "-o", "json")
+		if invalid {
+			require.ErrorContains(t, err, "pagination")
+			assert.Empty(t, out)
 		} else {
-			assert.Equal(t, http.MethodGet, r.Method)
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"vault_provider_configs":[]}`, out)
 		}
-		_, _ = io.WriteString(w, linkProviderConfigFixture)
-	})
-
-	out, _, err := executeVaultCommand(t, client, "vaults", "provider-configs", "get", "my-link-client", "-o", "json")
-	require.NoError(t, err)
-	assert.JSONEq(t, linkProviderConfigFixture, out)
-
-	_, human, err := executeVaultCommand(t, client, "vaults", "provider-configs", "update", "my-link-client",
-		"--name", "renamed", "--client-secret", "rotated")
-	require.NoError(t, err)
-	assert.Contains(t, human, "Updated provider configuration")
-	assert.NotContains(t, human, "rotated")
-	assert.Contains(t, human, "does not rebind existing wallets")
-}
-
-func TestVaultProviderConfigUpdateRequiresAField(t *testing.T) {
-	t.Setenv("KERNEL_PROJECT", "")
-	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("unexpected request to %s", r.URL.Path)
-	})
-	_, _, err := executeVaultCommand(t, client, "vaults", "provider-configs", "update", "my-link-client")
-	require.ErrorContains(t, err, "nothing to update")
-	// An empty secret would otherwise read as "clear it", which the API cannot do.
-	_, _, err = executeVaultCommand(t, client, "vaults", "provider-configs", "update", "my-link-client", "--client-secret", "")
-	require.ErrorContains(t, err, "must not be empty")
-}
-
-func TestVaultProviderConfigDelete(t *testing.T) {
-	t.Setenv("KERNEL_PROJECT", "")
-	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodDelete, r.Method)
-		assert.Equal(t, "/vault-provider-configs/my-link-client", r.URL.Path)
-		w.WriteHeader(http.StatusNoContent)
-	})
-	_, human, err := executeVaultCommand(t, client, "vaults", "provider-configs", "delete", "my-link-client", "-y")
-	require.NoError(t, err)
-	assert.Contains(t, human, "Deleted provider configuration: my-link-client")
-	assert.Contains(t, human, "still exists")
-}
-
-func TestVaultProviderConfigDeleteConflictIsSurfaced(t *testing.T) {
-	t.Setenv("KERNEL_PROJECT", "")
-	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		_, _ = io.WriteString(w, `{"code":"conflict","message":"vault items still reference this configuration"}`)
-	})
-	_, _, err := executeVaultCommand(t, client, "vaults", "provider-configs", "delete", "my-link-client", "-y")
-	require.ErrorContains(t, err, "vault items still reference this configuration")
-}
-
-func TestVaultProviderConfigNotFoundDeleteIsQuiet(t *testing.T) {
-	t.Setenv("KERNEL_PROJECT", "")
-	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = io.WriteString(w, `{"code":"not_found","message":"no such configuration"}`)
-	})
-	_, human, err := executeVaultCommand(t, client, "vaults", "provider-configs", "delete", "gone", "-y")
-	require.NoError(t, err)
-	assert.Contains(t, human, "not found")
-}
-
-// Wallet specs select a configuration by id or name only; the JSON projection
-// must keep that reference and still drop unknown provider data around it.
-func TestVaultWalletProviderConfigIsDisplayed(t *testing.T) {
-	t.Setenv("KERNEL_PROJECT", "")
-	const fixture = `{"id":"wallet-id","key":"wallet-1","type":"wallet","spec":{"provider":"agentcard","user_id":"usr_1","provider_config":{"id":"vpc-ac-1","name":"my-agentcard","opaque":"drop-me"}},"state":{"provider":"agentcard","status":"connected"},"available_operations":[],"available_expansions":[]}`
-	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, fixture)
-	})
-	out, _, err := executeVaultCommand(t, client, "vaults", "items", "get", "checkout", "wallet-1", "-o", "json")
-	require.NoError(t, err)
-	assert.Contains(t, out, `"vpc-ac-1"`)
-	assert.Contains(t, out, `"my-agentcard"`)
-	assert.NotContains(t, out, "drop-me")
-}
-
-func TestVaultWalletSpecHelpDocumentsProviderConfig(t *testing.T) {
-	cmd, _, err := newVaultsCommand().Find([]string{"wallets", "create"})
-	require.NoError(t, err)
-	assert.Contains(t, cmd.Long, "provider_config?:")
-	assert.Contains(t, cmd.Long, "vaults provider-configs")
-	// Importing a Link grant means handling OAuth tokens, which this surface
-	// never accepts.
-	assert.Contains(t, cmd.Long, "must never be passed to the CLI")
-	assert.NotContains(t, cmd.Long, "access_token")
+	}
 }

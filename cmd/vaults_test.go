@@ -397,7 +397,11 @@ func TestVaultInvalidProjectErrors(t *testing.T) {
 				})
 				out, human, err := executeVaultCommand(t, client, append([]string{"--project", project, "vaults"}, args...)...)
 				require.Error(t, err)
-				assert.Equal(t, "project_not_found: Project not found or inactive", util.CleanedUpSdkError{Err: err}.Error())
+				if args[0] == "wallets" && args[1] == "create" {
+					assert.Equal(t, "vault resource not found (HTTP 404)", err.Error())
+				} else {
+					assert.Equal(t, "project_not_found: Project not found or inactive", util.CleanedUpSdkError{Err: err}.Error())
+				}
 				assert.Equal(t, 1, calls)
 				assert.Empty(t, out)
 				assert.NotContains(t, human, "Deleted")

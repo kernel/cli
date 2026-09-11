@@ -49,8 +49,8 @@ var vaultItemFields = vaultOutputFields{
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil,
 		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
 		"context": nil, "expires_at": nil,
-		"provider_config": vaultProviderConfigRefFields,
-		"authorization":   {"method": nil, "client": {"type": nil, "provider_config": vaultProviderConfigRefFields}},
+		"provider_config": vaultFieldsOf("id name"),
+		"authorization":   {"method": nil, "client": {"type": nil, "provider_config": vaultFieldsOf("id name")}},
 		"totals":          vaultTotalFields,
 		"line_items": {
 			"name": nil, "quantity": nil, "unit_amount": nil, "description": nil,
@@ -66,7 +66,7 @@ var vaultItemFields = vaultOutputFields{
 }
 var vaultEventFields = vaultOutputFields{
 	"id": nil, "name": nil, "created_at": nil, "browser_id": nil,
-	"data": vaultFieldsOf("reason status authorization_id vault_session_id request_kind outcome_reason provider_status provider_code provider_request_id provider_payment_status provider_error_type provider_error_code provider_decline_code provider_error_param provider_http_status provider_response_bytes provider_latency_ms payment_intent_id payment_method_id checkout_session_id replay_attempted replay_delivered charged_amount_cents charged_currency charged_kind expected_cents actual_cents currency actual_currency intent_status amount_verified psp_error_code"),
+	"data": vaultFieldsOf("reason operation status authorization_id vault_session_id request_kind outcome_reason provider_status provider_code provider_request_id provider_payment_status provider_error_type provider_error_code provider_decline_code provider_error_param provider_http_status provider_response_bytes provider_latency_ms payment_intent_id payment_method_id checkout_session_id replay_attempted replay_delivered charged_amount_cents charged_currency charged_kind expected_cents actual_cents currency actual_currency intent_status amount_verified psp_error_code"),
 }
 
 // Vault output is a display-safe projection, not raw provider JSON. Keep presence
@@ -186,21 +186,6 @@ func vaultDisplayURL(address string) bool {
 	return true
 }
 
-type vaultItemOperation struct {
-	Type        string `json:"type"`
-	Description string `json:"description"`
-}
-
-func vaultItemOperations(item *kernel.VaultItemUnion) ([]vaultItemOperation, error) {
-	var fields struct {
-		Operations []vaultItemOperation `json:"available_operations"`
-	}
-	if err := json.Unmarshal([]byte(item.RawJSON()), &fields); err != nil {
-		return nil, fmt.Errorf("invalid vault item operations: %w", err)
-	}
-	return fields.Operations, nil
-}
-
 func vaultShellArgument(value string) string {
 	if vaultNamePattern.MatchString(value) {
 		return value
@@ -209,7 +194,7 @@ func vaultShellArgument(value string) string {
 }
 
 func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project string) error {
-	operations, err := vaultItemOperations(item)
+	actions, err := effectiveVaultItemActions(item)
 	if err != nil {
 		return err
 	}
@@ -217,7 +202,7 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 	if project != "" {
 		prefix += " --project=" + vaultShellArgument(project)
 	}
-	for _, op := range operations {
+	for _, op := range actions.Operations {
 		pterm.Printf("Invoke: %s -- %s %s %s\n", prefix, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
 	}
 	return nil
@@ -236,9 +221,26 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		return fmt.Errorf("invalid vault item response")
 	}
 	item = &safe
+	actions, err := effectiveVaultItemActions(item)
+	if err != nil {
+		return err
+	}
 	rows := pterm.TableData{
 		{"Property", "Value"}, {"Key (immutable)", item.Key}, {"ID", item.ID},
 		{"Type", item.Type}, {"Provider", item.Spec.Provider}, {"Status", item.State.Status},
+	}
+	if item.Type == "wallet" {
+		configID, configName := item.Spec.ProviderConfig.ID, item.Spec.ProviderConfig.Name
+		if item.Spec.Provider == "link" {
+			client := item.Spec.Authorization.Client
+			rows = append(rows, []string{"OAuth client type", client.Type})
+			configID, configName = client.ProviderConfig.ID, client.ProviderConfig.Name
+		}
+		if configID != "" {
+			rows = append(rows, []string{"Provider config ID (immutable)", configID})
+		} else if configName != "" {
+			rows = append(rows, []string{"Provider config name", configName})
+		}
 	}
 	if item.State.StatusReason != "" {
 		rows = append(rows, []string{"Status reason", item.State.StatusReason})
@@ -256,8 +258,8 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	if item.State.JSON.Domains.Valid() {
 		rows = append(rows, []string{"Permitted domains (provider-assigned)", strings.Join(item.State.Domains, ", ")})
 	}
-	if item.Action.Name != "" {
-		rows = append(rows, []string{"Required action", item.Action.Name})
+	if actions.RequiredAction != "" {
+		rows = append(rows, []string{"Required action", actions.RequiredAction})
 	}
 	if !item.ExpiresAt.IsZero() {
 		rows = append(rows, []string{"Expires At", util.FormatLocal(item.ExpiresAt)})
@@ -280,17 +282,25 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		}
 	}
 	PrintTableNoPad(rows, true)
-	if item.Action.Name != "" && item.Action.URL != "" {
-		pterm.Printf("Action URL:\n%s\n", item.Action.URL)
+	printVaultItemGuidance(item, actions)
+	return nil
+}
+
+func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemActions) {
+	if actions.RecoveryRequired {
+		pterm.Warning.Println("recovery_required: the original operation is unresolved, not declined or expired. Do not retry, delete, or replace it. Reconcile with the provider or support; no reset operation exists.")
+		return
 	}
-	if item.State.JSON.Authorization.Valid() && item.State.Authorization.ApprovalURL != "" {
-		pterm.Printf("Approval URL:\n%s\n", item.State.Authorization.ApprovalURL)
+	if item.Type == "wallet" && item.Spec.Provider == "link" && item.Spec.Authorization.Client.Type == "customer_managed" && item.State.Status == "degraded" {
+		pterm.Warning.Println("Imported grant is degraded; there is no in-place reauthorization. Import a fresh backend OAuth grant under a new wallet key for new work only. Existing cards stay bound to the old wallet; retain them and reconcile uncertain payments before further action.")
 	}
-	operations, err := vaultItemOperations(item)
-	if err != nil {
-		return err
+	if actions.RequiredAction != "" && actions.ActionURL != "" {
+		pterm.Printf("Action URL:\n%s\n", actions.ActionURL)
 	}
-	for _, op := range operations {
+	if actions.ApprovalURL != "" {
+		pterm.Printf("Approval URL:\n%s\n", actions.ApprovalURL)
+	}
+	for _, op := range actions.Operations {
 		pterm.Printf("Available operation: %s — %s\n", op.Type, op.Description)
 	}
 	if item.Type == "card" {
@@ -311,10 +321,9 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	if item.Expanded.JSON.PaymentMethods.Valid() {
 		printVaultPaymentMethods(item.Expanded.PaymentMethods)
 	}
-	if item.Action.Name != "" {
+	if actions.RequiredAction != "" {
 		pterm.Info.Println("Complete the returned action with the provider; never pass card data or OAuth codes to the CLI. Observe with items get --wait 60.")
 	}
-	return nil
 }
 
 func printVaultPaymentMethods(methods []kernel.VaultPaymentMethod) {

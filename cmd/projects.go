@@ -113,7 +113,7 @@ func (c ProjectsCmd) List(ctx context.Context, in ProjectsListInput) error {
 	if projects != nil {
 		items = projects.Items
 	}
-	pagination, err := parseProjectListPagination(response)
+	pagination, err := parseOffsetPagination(response, int64(in.Offset))
 	if err != nil {
 		return err
 	}
@@ -158,37 +158,6 @@ func (c ProjectsCmd) List(ctx context.Context, in ProjectsListInput) error {
 		)
 	}
 	return nil
-}
-
-type projectListPagination struct {
-	HasMore    bool
-	NextOffset int
-}
-
-func parseProjectListPagination(response *http.Response) (projectListPagination, error) {
-	if response == nil {
-		return projectListPagination{}, fmt.Errorf("project list response is missing pagination headers")
-	}
-
-	hasMoreValue := response.Header.Get("X-Has-More")
-	hasMore, err := strconv.ParseBool(hasMoreValue)
-	if err != nil {
-		return projectListPagination{}, fmt.Errorf("invalid X-Has-More header %q", hasMoreValue)
-	}
-
-	nextOffsetValue := response.Header.Get("X-Next-Offset")
-	nextOffset, err := strconv.Atoi(nextOffsetValue)
-	if err != nil || nextOffset < 0 {
-		return projectListPagination{}, fmt.Errorf("invalid X-Next-Offset header %q", nextOffsetValue)
-	}
-	if hasMore && nextOffset == 0 {
-		return projectListPagination{}, fmt.Errorf("X-Has-More is true but X-Next-Offset is not positive")
-	}
-	if !hasMore && nextOffset != 0 {
-		return projectListPagination{}, fmt.Errorf("X-Has-More is false but X-Next-Offset is %d", nextOffset)
-	}
-
-	return projectListPagination{HasMore: hasMore, NextOffset: nextOffset}, nil
 }
 
 func marshalProjectsListJSON(projects *pagination.OffsetPagination[kernel.Project], nextOffset int) ([]byte, error) {

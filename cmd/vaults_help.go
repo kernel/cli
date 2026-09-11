@@ -5,7 +5,7 @@ const vaultSpecHelp = `
 --spec takes the specification object, not the {type, spec} request envelope.
 --provider supplies spec.provider; omit it from JSON or supply the same value.
 The API validates provider-specific fields. Values are forwarded without defaults
-or normalization. Never include card data, OAuth tokens, or provider secrets.
+or normalization. Never include card data, OAuth tokens, or provider secrets in --spec.
 
 // Keep these types in sync with https://api.onkernel.com/spec.yaml.
 // TypeScript notation: ? means optional. Other fields are required.
@@ -13,21 +13,37 @@ or normalization. Never include card data, OAuth tokens, or provider secrets.
 `
 
 const vaultWalletSpecHelp = `
+Omit config selection to preserve Kernel-managed defaults.
+--provider-config-id and --provider-config-name are mutually exclusive.
+For Link with selection flags, use --spec '{}' and --tokens-file <path|->.
+Alternatively, set the customer_managed client and provider_config in --spec,
+with tokens still supplied ONLY through --tokens-file. Its JSON object must have
+access_token and refresh_token strings from the same currently valid grant.
+Config client credentials belong in vault-provider-configs, not in a wallet.
+
+Your backend completes OAuth before import and must stop refreshing the grant
+after import: Kernel owns subsequent rotation. Duplicate creation never replaces
+tokens. Bindings are immutable; renaming a config preserves the resolved ID.
+If an imported wallet becomes degraded, obtain a fresh grant in your backend and
+import it under a NEW wallet key for NEW work. This does not rebind existing cards
+or resolve uncertain payments. Retain old items for reconciliation; do not repeat
+an uncertain payment through the new wallet. There is no in-place reauthorization.
+
+type ProviderConfigReference = { id: string } | { name: string };
+
 type LinkWalletSpec = {
   provider: "link";
   authorization: {
     method: "oauth";
-    client: { type: "kernel_managed" };
+    client: { type: "kernel_managed" } |
+      { type: "customer_managed"; provider_config: ProviderConfigReference }; // requires --tokens-file
   };
 };
 
 type AgentCardWalletSpec = {
   provider: "agentcard";
-  user_id?: string;           // usr_...; already enrolled under the same configuration
-  provider_config?: {         // register with vaults provider-configs; select by
-    id?: string;              // either id or name. Omit provider_config to use
-    name?: string;            // Kernel-managed credentials
-  };
+  provider_config?: ProviderConfigReference; // omit for Kernel-managed credentials
+  user_id?: string; // usr_...; enrolled in this organization under the SAME config
 };
 
 A wallet's configuration and provider binding are fixed at creation: it cannot be

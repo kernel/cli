@@ -59,7 +59,7 @@ func (c VaultsCmd) List(ctx context.Context, limit, offset int64, project, outpu
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	pagination, err := parseProjectListPagination(response)
+	pagination, err := parseOffsetPagination(response, offset)
 	if err != nil {
 		return fmt.Errorf("invalid vault pagination metadata")
 	}
@@ -138,7 +138,11 @@ func (c VaultsCmd) ListItems(ctx context.Context, vault, output string) error {
 	}
 	rows := pterm.TableData{{"Key", "Type", "Provider", "Status", "Action"}}
 	for _, item := range *items {
-		rows = append(rows, []string{item.Key, item.Type, item.Spec.Provider, item.State.Status, util.OrDash(item.Action.Name)})
+		actions, err := effectiveVaultItemActions(&item)
+		if err != nil {
+			return err
+		}
+		rows = append(rows, []string{item.Key, item.Type, item.Spec.Provider, item.State.Status, util.OrDash(actions.RequiredAction)})
 	}
 	PrintTableNoPad(rows, true)
 	return nil
@@ -178,7 +182,7 @@ func (c VaultsCmd) GetItem(ctx context.Context, vault, key string, wait int64, e
 func (c VaultsCmd) CreateWallet(ctx context.Context, vault, key string, spec kernel.VaultItemUpsertParamsBodyWalletSpecUnion, output string, open bool) error {
 	item, err := c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfWallet: &kernel.VaultItemUpsertParamsBodyWallet{Spec: spec}}, option.WithMaxRetries(0))
 	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
+		return vaultCredentialError(err)
 	}
 	return c.showItem(item, output, open)
 }
@@ -205,12 +209,15 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation, output str
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	operations, err := vaultItemOperations(item)
+	actions, err := effectiveVaultItemActions(item)
 	if err != nil {
 		return err
 	}
+	if actions.RecoveryRequired {
+		return fmt.Errorf("recovery_required: reconcile the original operation with the provider or support; do not retry, delete, or replace it")
+	}
 	available := false
-	for _, op := range operations {
+	for _, op := range actions.Operations {
 		if op.Type == operation {
 			available = true
 			if output != "json" {
@@ -266,7 +273,14 @@ func (c VaultsCmd) showItem(item *kernel.VaultItemUnion, output string, open boo
 	if !open {
 		return nil
 	}
-	actionURL := item.Action.URL
+	actions, err := effectiveVaultItemActions(item)
+	if err != nil {
+		return err
+	}
+	if actions.RecoveryRequired {
+		return nil
+	}
+	actionURL := actions.ActionURL
 	if actionURL == "" {
 		if output != "json" {
 			pterm.Info.Println("No action URL returned; no browser opened")
