@@ -16,12 +16,18 @@ import (
 // write-only credentials, and the root command unwraps SDK errors for display.
 func vaultPaymentTokenError(err error) error {
 	var apiErr *kernel.Error
-	if errors.As(err, &apiErr) && apiErr.StatusCode == 400 {
+	if errors.As(err, &apiErr) {
 		var body struct {
 			Code string `json:"code"`
 		}
-		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil && body.Code == "lpt_not_supported" {
-			return fmt.Errorf("lpt_not_supported: this checkout does not support a Link payment token; create a card instead")
+		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
+			if body.Code == "lpt_not_supported" {
+				return fmt.Errorf("lpt_not_supported: this checkout does not support a Link payment token; create a card instead")
+			}
+			switch body.Code {
+			case "page_not_found", "ambiguous_page", "timeout", "destination_denied", "not_found", "conflict", "browser_error":
+				return fmt.Errorf("%s: payment-token checkout discovery failed before a spend was created; correct the browser or page and retry", body.Code)
+			}
 		}
 	}
 	return vaultCredentialError(err)

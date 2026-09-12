@@ -59,6 +59,16 @@ func TestVaultOutputAliasesPresenceAndRedaction(t *testing.T) {
 	assert.Contains(t, out, `"aliases": null`)
 }
 
+func TestVaultPaymentTokenHumanOutput(t *testing.T) {
+	var item kernel.VaultItemUnion
+	require.NoError(t, json.Unmarshal([]byte(paymentTokenFixture), &item))
+	buf := capturePtermOutput(t)
+	require.NoError(t, printVaultItem(&item, ""))
+	for _, text := range []string{"Wallet key", "wallet-1", "Amount (minor units)", "1234 usd", "Payment method ID", "pm-1", "Browser session ID", "browser-1", "Checkout page", "https://shop.example/checkout", "does not submit payment"} {
+		assert.Contains(t, buf.String(), text)
+	}
+}
+
 func TestVaultOutputAgentCardAuthorizationIsNotPaymentSuccess(t *testing.T) {
 	var item kernel.VaultItemUnion
 	require.NoError(t, json.Unmarshal([]byte(`{

@@ -59,12 +59,13 @@ Otherwise, the API resolves the project from your credentials and its defaults.
 Vault names, item keys, and project ownership are immutable.
 
 1. Create/select a vault, then create a provider wallet and follow its returned action.
-2. For Link, list wallet payment methods and select an ID explicitly.
-3. Create a card request with --provider and --spec JSON.
-4. Inspect items get, then use items invoke <vault> <key> <operation> only when advertised.
-   Follow the operation description and any returned provider action.
-5. Attach the vault with browsers create --vault <id-or-name>. Use only returned
-   non-secret aliases in that browser. Inspect items get/events for the outcome.
+2. For Link, list wallet payment methods and select an ID explicitly. Create a browser
+   with --vault <id-or-name>, navigate to final checkout, and gather final spend details.
+3. Try payment-tokens create with that browser ID and exact page URL. Only
+   lpt_not_supported means create a card instead. Credential PUT starts human approval.
+4. Share the returned approval URL and retrieve the item until fill is advertised.
+5. Invoke fill with its browser/page parameters. Fill never submits payment; inspect the
+   checkout and submit separately when ready. Inspect items get/events for the outcome.
 
 Permitted checkout domains are provider-assigned and displayed when returned;
 there is no domain-setting API.

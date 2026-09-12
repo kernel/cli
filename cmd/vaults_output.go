@@ -242,9 +242,20 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 		prefix += " --project=" + vaultShellArgument(project)
 	}
 	for _, op := range actions.Operations {
-		pterm.Printf("Invoke: %s -- %s %s %s\n", prefix, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
+		pterm.Printf("Invoke: %s -- %s %s %s --spec '<fill parameters JSON>'\n", prefix, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
 	}
 	return nil
+}
+
+type vaultPaymentTokenDisplay struct {
+	Spec struct {
+		BrowserID       string `json:"browser_id"`
+		PageURL         string `json:"page_url"`
+		Wallet          string `json:"wallet"`
+		PaymentMethodID string `json:"payment_method_id"`
+		Amount          int64  `json:"amount"`
+		Currency        string `json:"currency"`
+	} `json:"spec"`
 }
 
 func vaultItemDescription(item *kernel.VaultItemUnion) string {
@@ -304,6 +315,18 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		if item.Spec.Provider == "link" {
 			rows = append(rows, []string{"Payment method ID", item.Spec.PaymentMethodID})
 		}
+	} else if item.Type == "payment_token" {
+		var token vaultPaymentTokenDisplay
+		if json.Unmarshal([]byte(item.RawJSON()), &token) != nil {
+			return fmt.Errorf("invalid payment token response")
+		}
+		rows = append(rows,
+			[]string{"Wallet key", token.Spec.Wallet},
+			[]string{"Amount (minor units)", fmt.Sprintf("%d %s", token.Spec.Amount, token.Spec.Currency)},
+			[]string{"Payment method ID", token.Spec.PaymentMethodID},
+			[]string{"Browser session ID", token.Spec.BrowserID},
+			[]string{"Checkout page", token.Spec.PageURL},
+		)
 	}
 	if item.State.JSON.Domains.Valid() {
 		rows = append(rows, []string{"Permitted domains (provider-assigned)", strings.Join(item.State.Domains, ", ")})
@@ -362,6 +385,8 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 			pterm.Info.Println("Aliases are non-secret checkout values. Use only in a browser created with this vault attached; ready does not mean paid.")
 		}
 		pterm.Info.Println("Inspect items events for payment outcomes. Do not retry failed, timed-out, rejected, or indeterminate payments.")
+	} else if item.Type == "payment_token" {
+		pterm.Info.Println("Inspect items events for payment outcomes. Fill authenticates checkout but does not submit payment. Do not retry failed or indeterminate payments.")
 	} else {
 		wallet := item.AsWallet()
 		for _, expansion := range wallet.AvailableExpansions {
