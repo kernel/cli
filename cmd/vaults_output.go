@@ -56,6 +56,18 @@ var vaultItemFields = vaultOutputFields{
 		"authorization": vaultFieldsOf("id status psp merchant amount amount_cents currency created_at expires_at approval_url browser_id reason psp_error_code expected_cents actual_cents amount_authority amount_verified charged_amount_cents charged_currency charged_kind replay_attempted replay_status replay_delivered"),
 	},
 }
+
+type vaultFillOperationResult struct {
+	Type        string `json:"type"`
+	Status      string `json:"status"`
+	Instruction string `json:"instruction,omitempty"`
+	Fields      []struct {
+		Index     int    `json:"index"`
+		Status    string `json:"status"`
+		ErrorCode string `json:"error_code,omitempty"`
+	} `json:"fields"`
+}
+
 var vaultFillResultFields = vaultOutputFields{
 	"type": nil, "status": nil, "instruction": nil,
 	"fields": vaultFieldsOf("index status error_code"),
@@ -155,15 +167,7 @@ func printVaultOperationResult(value any, output string) error {
 	if output == "json" {
 		return printVaultJSON(filtered)
 	}
-	var result struct {
-		Status      string `json:"status"`
-		Instruction string `json:"instruction"`
-		Fields      []struct {
-			Index     int    `json:"index"`
-			Status    string `json:"status"`
-			ErrorCode string `json:"error_code"`
-		} `json:"fields"`
-	}
+	var result vaultFillOperationResult
 	if json.Unmarshal(filtered, &result) != nil || result.Status == "" {
 		return fmt.Errorf("invalid vault operation response")
 	}
@@ -243,6 +247,14 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 	return nil
 }
 
+func vaultItemDescription(item *kernel.VaultItemUnion) string {
+	var value struct {
+		Description string `json:"description"`
+	}
+	_ = json.Unmarshal([]byte(item.RawJSON()), &value)
+	return value.Description
+}
+
 func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	raw, err := filterVaultJSON(json.RawMessage(item.RawJSON()), vaultItemFields)
 	if err != nil {
@@ -264,8 +276,8 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		{"Property", "Value"}, {"Key (immutable)", item.Key}, {"ID", item.ID},
 		{"Type", item.Type}, {"Provider", item.Spec.Provider}, {"Status", item.State.Status},
 	}
-	if item.Description != "" {
-		rows = append(rows, []string{"Description", item.Description})
+	if description := vaultItemDescription(item); description != "" {
+		rows = append(rows, []string{"Description", description})
 	}
 	if item.Type == "wallet" {
 		configID, configName := item.Spec.ProviderConfig.ID, item.Spec.ProviderConfig.Name

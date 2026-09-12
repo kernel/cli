@@ -13,7 +13,6 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	kernel "github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
-	"github.com/kernel/kernel-go-sdk/packages/param"
 	"github.com/pterm/pterm"
 )
 
@@ -143,7 +142,7 @@ func (c VaultsCmd) ListItems(ctx context.Context, vault, output string) error {
 		if err != nil {
 			return err
 		}
-		rows = append(rows, []string{item.Key, item.Type, item.Spec.Provider, item.State.Status, util.OrDash(actions.RequiredAction), item.Description})
+		rows = append(rows, []string{item.Key, item.Type, item.Spec.Provider, item.State.Status, util.OrDash(actions.RequiredAction), vaultItemDescription(&item)})
 	}
 	PrintTableNoPad(rows, true)
 	return nil
@@ -197,14 +196,16 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 }
 
 func (c VaultsCmd) CreatePaymentToken(ctx context.Context, vault, key string, spec map[string]json.RawMessage, output string) error {
-	body := map[string]any{"type": "payment_token", "spec": spec}
-	params := param.Override[kernel.VaultItemUpsertParams](body)
-	params.IDOrName = vault
-	item, err := c.vaults.Items.Upsert(ctx, key, params, option.WithMaxRetries(0))
+	body, err := json.Marshal(map[string]any{"type": "payment_token", "spec": spec})
+	if err != nil {
+		return err
+	}
+	var item kernel.VaultItemUnion
+	_, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault}, option.WithRequestBody("application/json", body), option.WithResponseBodyInto(&item), option.WithMaxRetries(0))
 	if err != nil {
 		return vaultPaymentTokenError(err)
 	}
-	return c.showItem(item, output, false)
+	return c.showItem(&item, output, false)
 }
 
 func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, spec map[string]json.RawMessage, output string) error {
@@ -240,8 +241,12 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, spe
 	for name, value := range spec {
 		body[name] = value
 	}
-	params := kernel.VaultItemPerformOperationParams{IDOrName: vault, FillVaultItemOperationRequest: param.Override[kernel.FillVaultItemOperationRequestParam](body)}
-	result, err := c.vaults.Items.PerformOperation(ctx, key, params, option.WithMaxRetries(0))
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	var result vaultFillOperationResult
+	_, err = c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, Type: kernel.VaultItemPerformOperationParamsType("fill")}, option.WithRequestBody("application/json", encoded), option.WithResponseBodyInto(&result), option.WithMaxRetries(0))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
