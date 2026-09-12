@@ -32,13 +32,13 @@ var vaultMethodFields = vaultOutputFields{
 	"capabilities": {"single_use_card": vaultFieldsOf("eligible reasons")},
 }
 var vaultItemFields = vaultOutputFields{
-	"id": nil, "key": nil, "type": nil, "created_at": nil, "updated_at": nil, "expires_at": nil,
+	"id": nil, "key": nil, "type": nil, "description": nil, "created_at": nil, "updated_at": nil, "expires_at": nil,
 	"available_operations": vaultOperationFields,
 	"available_expansions": vaultOperationFields,
 	"action":               vaultFieldsOf("name url"),
 	"expanded":             {"payment_methods": vaultMethodFields},
 	"spec": {
-		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil,
+		"provider": nil, "wallet": nil, "user_id": nil, "browser_id": nil, "page_url": nil, "payment_method_id": nil, "card_id": nil,
 		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
 		"context": nil, "expires_at": nil,
 		"provider_config": vaultFieldsOf("id name"),
@@ -55,6 +55,10 @@ var vaultItemFields = vaultOutputFields{
 		"aliases":       vaultFieldsOf("number cvc exp_month exp_year"),
 		"authorization": vaultFieldsOf("id status psp merchant amount amount_cents currency created_at expires_at approval_url browser_id reason psp_error_code expected_cents actual_cents amount_authority amount_verified charged_amount_cents charged_currency charged_kind replay_attempted replay_status replay_delivered"),
 	},
+}
+var vaultFillResultFields = vaultOutputFields{
+	"type": nil, "status": nil, "instruction": nil,
+	"fields": vaultFieldsOf("index status error_code"),
 }
 var vaultEventFields = vaultOutputFields{
 	"id": nil, "name": nil, "created_at": nil, "browser_id": nil,
@@ -98,7 +102,7 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 	result := make(vaultJSON)
 	for key, children := range fields {
 		if value, ok := object[key]; ok {
-			if key == "url" || key == "approval_url" || key == "merchant_url" || key == "image_url" || key == "product_url" {
+			if key == "url" || key == "approval_url" || key == "merchant_url" || key == "page_url" || key == "image_url" || key == "product_url" {
 				var address string
 				if json.Unmarshal(value, &address) != nil || !vaultDisplayURL(address) {
 					continue
@@ -136,6 +140,45 @@ func printVaultJSON(value any) error {
 		return err
 	}
 	fmt.Println(string(data))
+	return nil
+}
+
+func printVaultOperationResult(value any, output string) error {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	filtered, err := filterVaultJSON(raw, vaultFillResultFields)
+	if err != nil {
+		return err
+	}
+	if output == "json" {
+		return printVaultJSON(filtered)
+	}
+	var result struct {
+		Status      string `json:"status"`
+		Instruction string `json:"instruction"`
+		Fields      []struct {
+			Index     int    `json:"index"`
+			Status    string `json:"status"`
+			ErrorCode string `json:"error_code"`
+		} `json:"fields"`
+	}
+	if json.Unmarshal(filtered, &result) != nil || result.Status == "" {
+		return fmt.Errorf("invalid vault operation response")
+	}
+	rows := pterm.TableData{{"Property", "Value"}, {"Status", result.Status}}
+	if result.Instruction != "" {
+		rows = append(rows, []string{"Next", result.Instruction})
+	}
+	PrintTableNoPad(rows, true)
+	for _, field := range result.Fields {
+		if field.ErrorCode == "" {
+			pterm.Printf("Field %d: %s\n", field.Index, field.Status)
+		} else {
+			pterm.Printf("Field %d: %s (%s)\n", field.Index, field.Status, field.ErrorCode)
+		}
+	}
 	return nil
 }
 
@@ -220,6 +263,9 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	rows := pterm.TableData{
 		{"Property", "Value"}, {"Key (immutable)", item.Key}, {"ID", item.ID},
 		{"Type", item.Type}, {"Provider", item.Spec.Provider}, {"Status", item.State.Status},
+	}
+	if item.Description != "" {
+		rows = append(rows, []string{"Description", item.Description})
 	}
 	if item.Type == "wallet" {
 		configID, configName := item.Spec.ProviderConfig.ID, item.Spec.ProviderConfig.Name

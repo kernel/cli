@@ -14,6 +14,19 @@ import (
 
 // Do not wrap SDK errors here: response bodies and transport errors can echo
 // write-only credentials, and the root command unwraps SDK errors for display.
+func vaultPaymentTokenError(err error) error {
+	var apiErr *kernel.Error
+	if errors.As(err, &apiErr) && apiErr.StatusCode == 400 {
+		var body struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil && body.Code == "lpt_not_supported" {
+			return fmt.Errorf("lpt_not_supported: this checkout does not support a Link payment token; create a card instead")
+		}
+	}
+	return vaultCredentialError(err)
+}
+
 func vaultCredentialError(err error) error {
 	var apiErr *kernel.Error
 	if errors.As(err, &apiErr) {
@@ -71,7 +84,7 @@ func vaultSpecHasSecrets(value json.RawMessage) bool {
 	}
 	for key, child := range object {
 		switch strings.ToLower(key) {
-		case "tokens", "access_token", "refresh_token", "client_secret", "credentials":
+		case "tokens", "access_token", "refresh_token", "link_pay_token", "client_secret", "credentials":
 			return true
 		case "authorization", "client", "provider_config":
 			if vaultSpecHasSecrets(child) {
