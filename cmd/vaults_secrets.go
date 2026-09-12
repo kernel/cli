@@ -21,11 +21,23 @@ func vaultPaymentTokenError(err error) error {
 			Code string `json:"code"`
 		}
 		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
-			if body.Code == "lpt_not_supported" {
+			if apiErr.StatusCode == 400 && body.Code == "lpt_not_supported" {
 				return fmt.Errorf("lpt_not_supported: this checkout does not support a Link payment token; create a card instead")
 			}
+			discoveryFailure := false
 			switch body.Code {
-			case "page_not_found", "ambiguous_page", "timeout", "destination_denied", "browser_not_found", "conflict", "browser_error":
+			case "page_not_found", "ambiguous_page", "timeout":
+				discoveryFailure = apiErr.StatusCode == 400
+			case "destination_denied":
+				discoveryFailure = apiErr.StatusCode == 403
+			case "browser_not_found":
+				discoveryFailure = apiErr.StatusCode == 404
+			case "browser_unavailable":
+				discoveryFailure = apiErr.StatusCode == 409
+			case "browser_error":
+				discoveryFailure = apiErr.StatusCode == 500
+			}
+			if discoveryFailure {
 				return fmt.Errorf("%s: payment-token checkout discovery failed before a spend was created; correct the browser or page and retry", body.Code)
 			}
 		}

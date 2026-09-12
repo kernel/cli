@@ -79,6 +79,8 @@ func TestVaultPaymentTokenFallbackOnlyForUnsupportedCheckout(t *testing.T) {
 		want   string
 	}{
 		{400, "lpt_not_supported", "create a card instead"},
+		{409, "browser_unavailable", "correct the browser or page and retry"},
+		{409, "conflict", "vault conflict"},
 		{500, "provider_error", "outcome may be unresolved"},
 	} {
 		client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -91,6 +93,9 @@ func TestVaultPaymentTokenFallbackOnlyForUnsupportedCheckout(t *testing.T) {
 		require.ErrorContains(t, err, tc.want)
 		if tc.code != "lpt_not_supported" {
 			assert.NotContains(t, err.Error(), "create a card")
+		}
+		if tc.code == "conflict" {
+			assert.NotContains(t, err.Error(), "retry")
 		}
 	}
 }
