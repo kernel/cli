@@ -25,7 +25,7 @@ func vaultPaymentTokenError(err error) error {
 				return fmt.Errorf("lpt_not_supported: this checkout does not support a Link payment token; create a card instead")
 			}
 			switch body.Code {
-			case "page_not_found", "ambiguous_page", "timeout", "destination_denied", "not_found", "conflict", "browser_error":
+			case "page_not_found", "ambiguous_page", "timeout", "destination_denied", "browser_not_found", "conflict", "browser_error":
 				return fmt.Errorf("%s: payment-token checkout discovery failed before a spend was created; correct the browser or page and retry", body.Code)
 			}
 		}
