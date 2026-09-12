@@ -243,6 +243,17 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 	return nil
 }
 
+// The SDK does not model description on vault items, so read it from the raw response.
+func vaultItemDescription(item *kernel.VaultItemUnion) string {
+	var value struct {
+		Description string `json:"description"`
+	}
+	if json.Unmarshal([]byte(item.RawJSON()), &value) != nil {
+		return ""
+	}
+	return value.Description
+}
+
 func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	raw, err := filterVaultJSON(json.RawMessage(item.RawJSON()), vaultItemFields)
 	if err != nil {
@@ -264,8 +275,8 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		{"Property", "Value"}, {"Key (immutable)", item.Key}, {"ID", item.ID},
 		{"Type", item.Type}, {"Provider", item.Spec.Provider}, {"Status", item.State.Status},
 	}
-	if item.Description != "" {
-		rows = append(rows, []string{"Description", item.Description})
+	if description := vaultItemDescription(item); description != "" {
+		rows = append(rows, []string{"Description", description})
 	}
 	if item.Type == "wallet" {
 		configID, configName := item.Spec.ProviderConfig.ID, item.Spec.ProviderConfig.Name

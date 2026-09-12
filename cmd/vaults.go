@@ -143,7 +143,7 @@ func (c VaultsCmd) ListItems(ctx context.Context, vault, output string) error {
 		if err != nil {
 			return err
 		}
-		rows = append(rows, []string{item.Key, item.Type, item.Spec.Provider, item.State.Status, util.OrDash(actions.RequiredAction), item.Description})
+		rows = append(rows, []string{item.Key, item.Type, item.Spec.Provider, item.State.Status, util.OrDash(actions.RequiredAction), vaultItemDescription(&item)})
 	}
 	PrintTableNoPad(rows, true)
 	return nil
@@ -240,12 +240,13 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, spe
 	for name, value := range spec {
 		body[name] = value
 	}
-	params := kernel.VaultItemPerformOperationParams{IDOrName: vault, FillVaultItemOperationRequest: param.Override[kernel.FillVaultItemOperationRequestParam](body)}
+	params := param.Override[kernel.VaultItemPerformOperationParams](body)
+	params.IDOrName = vault
 	result, err := c.vaults.Items.PerformOperation(ctx, key, params, option.WithMaxRetries(0))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	return printVaultOperationResult(result, output)
+	return printVaultOperationResult(json.RawMessage(result.RawJSON()), output)
 }
 
 func (c VaultsCmd) Events(ctx context.Context, vault, key, after string, wait int64, output string) error {
