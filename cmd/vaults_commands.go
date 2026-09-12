@@ -59,12 +59,13 @@ Otherwise, the API resolves the project from your credentials and its defaults.
 Vault names, item keys, and project ownership are immutable.
 
 1. Create/select a vault, then create a provider wallet and follow its returned action.
-2. For Link, list wallet payment methods and select an ID explicitly.
-3. Create a card request with --provider and --spec JSON.
-4. Inspect items get, then use items invoke <vault> <key> <operation> only when advertised.
-   Follow the operation description and any returned provider action.
-5. Attach the vault with browsers create --vault <id-or-name>. Use only returned
-   non-secret aliases in that browser. Inspect items get/events for the outcome.
+2. For Link, list wallet payment methods and select an ID explicitly. Create a browser
+   with --vault <id-or-name>, navigate to final checkout, and gather final spend details.
+3. Try payment-tokens create with that browser ID and exact page URL. Only
+   lpt_not_supported means create a card instead. Credential PUT starts human approval.
+4. Share the returned approval URL and retrieve the item until fill is advertised.
+5. Invoke fill with its browser/page parameters. Fill never submits payment; inspect the
+   checkout and submit separately when ready. Inspect items get/events for the outcome.
 
 Permitted checkout domains are provider-assigned and displayed when returned;
 there is no domain-setting API.
@@ -131,14 +132,19 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 	itemEvents.Flags().String("after", "", "Return events after this event ID (use the last ID from the previous response)")
 	itemEvents.Flags().Int64("wait", 0, "Long-poll once for new events (0-60 seconds)")
 	addVaultJSONOutputFlag(itemEvents)
-	invoke := &cobra.Command{Use: "invoke <vault> <key> <operation>", Short: "Invoke an operation advertised by an item", Args: cobra.ExactArgs(3), PreRunE: vaultPreRun,
-		Long:    "Retrieve the item and invoke only an operation listed in available_operations.\nRead its description with items get before invoking; follow any approval requirements.\nThe API determines availability regardless of item type, provider, or state.\nRequests are not automatically retried. The updated item may contain a required user action.\nThe current API accepts only {\"type\":\"authorize\"}; there are no operation parameters or --spec flag.",
-		Example: "  kernel vaults items get checkout order-1\n  kernel vaults items invoke checkout order-1 authorize",
+	invoke := &cobra.Command{Use: "invoke <vault> <key> fill --spec '<json>'", Short: "Fill an approved credential without submitting payment", Args: cobra.ExactArgs(3), PreRunE: vaultPreRun,
+		Long: "Retrieve the item and invoke fill only when listed in available_operations.\n--spec is the fill parameters object without type: browser_id, page_url, and card fields when required.\nPayment tokens discover their hidden provider field and reject caller-supplied fields.\nA completed fill supplies credentials but never clicks Pay or submits the purchase.\nFailed and unknown outcomes are not automatically retried.",
+		Example: `  kernel vaults items get checkout order-1
+  kernel vaults items invoke checkout order-1 fill --spec '{"browser_id":"browser-session-id","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#card-number"}]}'`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			open, _ := cmd.Flags().GetBool("open")
-			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], vaultOutput(cmd), open)
+			spec, err := vaultOperationSpec(cmd)
+			if err != nil {
+				return err
+			}
+			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], spec, vaultOutput(cmd))
 		}}
-	invoke.Flags().Bool("open", false, "Open a returned HTTPS action URL in your browser")
+	invoke.Flags().String("spec", "", "Raw fill parameters JSON without the type field (required)")
+	_ = invoke.MarkFlagRequired("spec")
 	addVaultJSONOutputFlag(invoke)
 	items.AddCommand(itemList, itemGet, itemEvents, invoke, newVaultDeleteCommand(true))
 
@@ -179,9 +185,11 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 	addVaultJSONOutputFlag(methods)
 	wallets.AddCommand(walletCreate, methods)
 
-	cards := &cobra.Command{Use: "cards", Short: "Configure card requests"}
-	cards.AddCommand(newVaultCardCommand(false), newVaultCardCommand(true))
-	cmd.AddCommand(items, wallets, cards)
+	cards := &cobra.Command{Use: "cards", Short: "Create immutable card requests at final checkout"}
+	cards.AddCommand(newVaultCardCommand())
+	paymentTokens := &cobra.Command{Use: "payment-tokens", Short: "Create merchant-bound Link payment tokens at final checkout"}
+	paymentTokens.AddCommand(newVaultPaymentTokenCommand())
+	cmd.AddCommand(items, wallets, cards, paymentTokens)
 	return cmd
 }
 
@@ -203,21 +211,10 @@ func newVaultDeleteCommand(item bool) *cobra.Command {
 	return cmd
 }
 
-func newVaultCardCommand(update bool) *cobra.Command {
-	use, short := "create", "Create a card request without authorizing it"
-	if update {
-		use, short = "update", "Update a card spec when the API permits configuration"
-	}
-	cmd := &cobra.Command{Use: use + " <vault> <key> --provider <link|agentcard> --spec '<json>'", Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: short + `. Neither create nor update authorizes a Link card.
-Requested cards accept a replacement spec. Pending issuance updates preserve omitted
-optional fields; explicit empty lists clear them. The API restricts fields after
-authorization starts; wallet/provider bindings cannot change. An uncertain update
-enters recovery_required and must not be retried. Checkout cards can be edited
-between authorizations. Identical creates return existing state without resetting it.
-Never reconfigure to retry a failed, timed-out, rejected, or indeterminate payment.
-` + vaultSpecHelp + vaultCardSpecHelp,
-		Example: "  kernel vaults cards " + use + ` checkout order-1 \
+func newVaultCardCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "create <vault> <key> --provider <link|agentcard> --spec '<json>'", Short: "Create an immutable card request and start approval", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+		Long: "Create a card after reaching final checkout. Link creation starts human approval; share the returned URL and retrieve the item until fill appears.\n" + vaultSpecHelp + vaultCardSpecHelp + vaultLinkPurchaseTypesHelp,
+		Example: "  kernel vaults cards create" + ` checkout order-1 \
     --provider agentcard --spec '{
       "wallet": "wallet-1",
       "merchant": "Example Shop",
@@ -229,11 +226,70 @@ Never reconfigure to retry a failed, timed-out, rejected, or indeterminate payme
 			if err != nil {
 				return err
 			}
-			return getVaultsHandler(cmd).SaveCard(cmd.Context(), args[0], args[1], param.Override[kernel.CardVaultItemSpecUnionParam](spec), update, vaultOutput(cmd))
+			return getVaultsHandler(cmd).SaveCard(cmd.Context(), args[0], args[1], param.Override[kernel.CardVaultItemSpecUnionParam](spec), vaultOutput(cmd))
 		}}
 	addVaultSpecFlags(cmd)
 	addVaultJSONOutputFlag(cmd)
 	return cmd
+}
+
+func newVaultPaymentTokenCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "create <vault> <key> --spec '<json>'", Short: "Create an immutable Link payment token and start approval", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+		Long: "Create a payment token from the active final checkout. Kernel discovers Link support and the Stripe merchant binding from the browser.\n" + vaultSpecHelp + vaultPaymentTokenSpecHelp + vaultLinkPurchaseTypesHelp,
+		Example: `  kernel vaults payment-tokens create checkout order-1 --spec '{
+    "wallet":"wallet-1",
+    "browser_id":"browser-session-id",
+    "page_url":"https://shop.example/checkout",
+    "payment_method_id":"pm-1",
+    "amount":1234,
+    "currency":"usd",
+    "context":"Final checkout for one item totaling USD 12.34. This is a new purchase and not a retry of an uncertain payment."
+  }'`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			spec, err := vaultPaymentTokenSpecFromFlags(cmd)
+			if err != nil {
+				return err
+			}
+			return getVaultsHandler(cmd).CreatePaymentToken(cmd.Context(), args[0], args[1], spec, vaultOutput(cmd))
+		}}
+	cmd.Flags().String("spec", "", "Raw Link payment-token specification object (required)")
+	_ = cmd.MarkFlagRequired("spec")
+	addVaultJSONOutputFlag(cmd)
+	return cmd
+}
+
+func vaultPaymentTokenSpecFromFlags(cmd *cobra.Command) (map[string]json.RawMessage, error) {
+	raw, _ := cmd.Flags().GetString("spec")
+	var spec map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &spec); err != nil || spec == nil {
+		return nil, fmt.Errorf("--spec must be a JSON object")
+	}
+	if _, exists := spec["provider"]; exists {
+		return nil, fmt.Errorf("payment-token provider is Link; omit spec.provider")
+	}
+	if _, exists := spec["merchant_account_id"]; exists {
+		return nil, fmt.Errorf("omit merchant_account_id; Kernel discovers it from the checkout")
+	}
+	if vaultSpecHasSecrets(json.RawMessage(raw)) {
+		return nil, fmt.Errorf("--spec must not contain credentials or tokens")
+	}
+	spec["provider"] = json.RawMessage(`"link"`)
+	return spec, nil
+}
+
+func vaultOperationSpec(cmd *cobra.Command) (map[string]json.RawMessage, error) {
+	raw, _ := cmd.Flags().GetString("spec")
+	var spec map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &spec); err != nil || spec == nil {
+		return nil, fmt.Errorf("--spec must be a JSON object")
+	}
+	if _, exists := spec["type"]; exists {
+		return nil, fmt.Errorf("omit type from --spec; it comes from the operation argument")
+	}
+	if vaultSpecHasSecrets(json.RawMessage(raw)) {
+		return nil, fmt.Errorf("--spec must not contain credential values or tokens")
+	}
+	return spec, nil
 }
 
 func addVaultSpecFlags(cmd *cobra.Command) {

@@ -14,6 +14,37 @@ import (
 
 // Do not wrap SDK errors here: response bodies and transport errors can echo
 // write-only credentials, and the root command unwraps SDK errors for display.
+func vaultPaymentTokenError(err error) error {
+	var apiErr *kernel.Error
+	if errors.As(err, &apiErr) {
+		var body struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
+			if apiErr.StatusCode == 400 && body.Code == "lpt_not_supported" {
+				return fmt.Errorf("lpt_not_supported: this checkout does not support a Link payment token; create a card instead")
+			}
+			discoveryFailure := false
+			switch body.Code {
+			case "page_not_found", "ambiguous_page", "timeout":
+				discoveryFailure = apiErr.StatusCode == 400
+			case "destination_denied":
+				discoveryFailure = apiErr.StatusCode == 403
+			case "browser_not_found":
+				discoveryFailure = apiErr.StatusCode == 404
+			case "browser_unavailable":
+				discoveryFailure = apiErr.StatusCode == 409
+			case "browser_error":
+				discoveryFailure = apiErr.StatusCode == 500
+			}
+			if discoveryFailure {
+				return fmt.Errorf("%s: payment-token checkout discovery failed before a spend was created; correct the browser or page and retry", body.Code)
+			}
+		}
+	}
+	return vaultCredentialError(err)
+}
+
 func vaultCredentialError(err error) error {
 	var apiErr *kernel.Error
 	if errors.As(err, &apiErr) {
@@ -71,7 +102,7 @@ func vaultSpecHasSecrets(value json.RawMessage) bool {
 	}
 	for key, child := range object {
 		switch strings.ToLower(key) {
-		case "tokens", "access_token", "refresh_token", "client_secret", "credentials":
+		case "tokens", "access_token", "refresh_token", "link_pay_token", "client_secret", "credentials":
 			return true
 		case "authorization", "client", "provider_config":
 			if vaultSpecHasSecrets(child) {

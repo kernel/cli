@@ -2,11 +2,11 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/kernel/cli/pkg/interactive"
@@ -136,13 +136,13 @@ func (c VaultsCmd) ListItems(ctx context.Context, vault, output string) error {
 		pterm.Info.Println("No vault items found")
 		return nil
 	}
-	rows := pterm.TableData{{"Key", "Type", "Provider", "Status", "Action"}}
+	rows := pterm.TableData{{"Key", "Type", "Provider", "Status", "Action", "Description"}}
 	for _, item := range *items {
 		actions, err := effectiveVaultItemActions(&item)
 		if err != nil {
 			return err
 		}
-		rows = append(rows, []string{item.Key, item.Type, item.Spec.Provider, item.State.Status, util.OrDash(actions.RequiredAction)})
+		rows = append(rows, []string{item.Key, item.Type, item.Spec.Provider, item.State.Status, util.OrDash(actions.RequiredAction), vaultItemDescription(&item)})
 	}
 	PrintTableNoPad(rows, true)
 	return nil
@@ -187,23 +187,30 @@ func (c VaultsCmd) CreateWallet(ctx context.Context, vault, key string, spec ker
 	return c.showItem(item, output, open)
 }
 
-func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.CardVaultItemSpecUnionParam, update bool, output string) error {
-	var item *kernel.VaultItemUnion
-	var err error
-	if update {
-		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, Spec: spec}, option.WithMaxRetries(0))
-	} else {
-		item, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCard: &kernel.VaultItemUpsertParamsBodyCard{Spec: spec}}, option.WithMaxRetries(0))
-	}
+func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.CardVaultItemSpecUnionParam, output string) error {
+	item, err := c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCard: &kernel.VaultItemUpsertParamsBodyCard{Spec: spec}}, option.WithMaxRetries(0))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 	return c.showItem(item, output, false)
 }
 
-func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation, output string, open bool) error {
-	if strings.TrimSpace(operation) == "" {
-		return fmt.Errorf("operation must not be empty")
+func (c VaultsCmd) CreatePaymentToken(ctx context.Context, vault, key string, spec map[string]json.RawMessage, output string) error {
+	body, err := json.Marshal(map[string]any{"type": "payment_token", "spec": spec})
+	if err != nil {
+		return err
+	}
+	var item kernel.VaultItemUnion
+	_, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault}, option.WithRequestBody("application/json", body), option.WithResponseBodyInto(&item), option.WithMaxRetries(0))
+	if err != nil {
+		return vaultPaymentTokenError(err)
+	}
+	return c.showItem(&item, output, false)
+}
+
+func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, spec map[string]json.RawMessage, output string) error {
+	if operation != "fill" {
+		return fmt.Errorf("operation must be fill")
 	}
 	item, err := c.vaults.Items.Get(ctx, key, kernel.VaultItemGetParams{IDOrName: vault}, option.WithMaxRetries(0))
 	if err != nil {
@@ -229,11 +236,21 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation, output str
 	if !available {
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
-	item, err = c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, Type: kernel.VaultItemPerformOperationParamsType(operation)}, option.WithMaxRetries(0))
+	body := make(map[string]any, len(spec)+1)
+	body["type"] = operation
+	for name, value := range spec {
+		body[name] = value
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	var result vaultFillOperationResult
+	_, err = c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, Type: kernel.VaultItemPerformOperationParamsType("fill")}, option.WithRequestBody("application/json", encoded), option.WithResponseBodyInto(&result), option.WithMaxRetries(0))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	return c.showItem(item, output, open)
+	return printVaultOperationResult(result, output)
 }
 
 func (c VaultsCmd) Events(ctx context.Context, vault, key, after string, wait int64, output string) error {
