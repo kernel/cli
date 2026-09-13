@@ -63,8 +63,10 @@ Vault names, item keys, and project ownership are immutable.
 3. Create a card request with --provider and --spec JSON.
 4. Inspect items get, then use items invoke <vault> <key> <operation> only when advertised.
    Follow the operation description and any returned provider action.
-5. Attach the vault with browsers create --vault <id-or-name>. Use only returned
-   non-secret aliases in that browser. Inspect items get/events for the outcome.
+5. Attach the vault with browsers create --vault <id-or-name>. Prefer items invoke
+   <vault> <key> fill to write card fields into a page in that browser; returned
+   non-secret aliases remain an alternative for egress-substitution integrations.
+   Inspect items get/events for the outcome.
 
 Permitted checkout domains are provider-assigned and displayed when returned;
 there is no domain-setting API.
@@ -133,13 +135,49 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 	itemEvents.Flags().Int64("wait", 0, "Long-poll once for new events (0-60 seconds)")
 	addVaultJSONOutputFlag(itemEvents)
 	invoke := &cobra.Command{Use: "invoke <vault> <key> <operation>", Short: "Invoke an operation advertised by an item", Args: cobra.ExactArgs(3), PreRunE: vaultPreRun,
-		Long:    "Retrieve the item and invoke only an operation listed in available_operations.\nRead its description with items get before invoking; follow any approval requirements.\nThe API determines availability regardless of item type, provider, or state.\nRequests are not automatically retried. The updated item may contain a required user action.\nThe current API accepts only {\"type\":\"authorize\"}; there are no operation parameters or --spec flag.",
-		Example: "  kernel vaults items get checkout order-1\n  kernel vaults items invoke checkout order-1 authorize",
+		Long: `Retrieve the item and invoke only an operation listed in available_operations.
+Read its description with items get before invoking; follow any approval requirements.
+The API determines availability regardless of item type, provider, or state.
+Requests are not automatically retried. The updated item may contain a required user action.
+There is no --spec flag. Operations other than fill take no parameters and send only
+{"type":"authorize"}-style bodies; authorize returns the updated item.
+
+fill writes selected fields of one ready Link card into a page open in a browser that
+has this vault attached, and returns a value-free per-field result instead of an item.
+The browser and the vault must belong to the same project, and --page-url must match
+exactly one open page; prefixes and globs never match. Fields are written in the order
+given and execution stops at the first failure without rolling earlier fields back, so
+never automatically retry or fall back to aliases after a failed or unknown outcome.
+Fill never submits the form. Secret values are never returned, but an agent with
+unrestricted browser access can still read the filled values from the page.
+
+--field takes <field>=<css-selector> and repeats, in fill order (at most 32):
+  number, exp_month, exp_year, cvc, billing_name, billing_line1, billing_line2,
+  billing_city, billing_state, billing_postal_code, billing_country
+  expiration:MM/YY or expiration:MM/YYYY for the combined expiration
+Each selector must resolve to one unique editable input or select across all frames.`,
+		Example: `  kernel vaults items get checkout order-1
+  kernel vaults items invoke checkout order-1 authorize
+
+  kernel vaults items invoke checkout order-1 fill \
+    --browser-id <browser-session-id> \
+    --page-url https://shop.example/checkout \
+    --field number='#card-number' \
+    --field 'expiration:MM/YY=#expiry' \
+    --field cvc='#security-code'`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			fill, err := vaultFillFromFlags(cmd, args[2])
+			if err != nil {
+				return err
+			}
 			open, _ := cmd.Flags().GetBool("open")
-			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], vaultOutput(cmd), open)
+			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], vaultOutput(cmd), open, fill)
 		}}
 	invoke.Flags().Bool("open", false, "Open a returned HTTPS action URL in your browser")
+	invoke.Flags().String("browser-id", "", "fill: browser session ID holding the page, not a reusable browser name")
+	invoke.Flags().String("page-url", "", "fill: exact current HTTPS page URL, including path, query, and fragment")
+	invoke.Flags().StringArray("field", nil, "fill: repeatable <field>=<css-selector> binding, applied in the given order")
+	invoke.Flags().Int64("timeout-ms", 0, "fill: total operation deadline in milliseconds (1-30000; API default 10000)")
 	addVaultJSONOutputFlag(invoke)
 	items.AddCommand(itemList, itemGet, itemEvents, invoke, newVaultDeleteCommand(true))
 

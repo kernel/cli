@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	kernel "github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/param"
 	"github.com/pterm/pterm"
 )
 
@@ -201,9 +203,14 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 	return c.showItem(item, output, false)
 }
 
-func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation, output string, open bool) error {
+// fill carries the parameters of the fill operation; every other advertised
+// operation is invoked by type alone.
+func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation, output string, open bool, fill *vaultFillRequest) error {
 	if strings.TrimSpace(operation) == "" {
 		return fmt.Errorf("operation must not be empty")
+	}
+	if operation == vaultFillOperation && fill == nil {
+		return fmt.Errorf("fill requires --browser-id, --page-url, and at least one --field <field>=<css-selector>")
 	}
 	item, err := c.vaults.Items.Get(ctx, key, kernel.VaultItemGetParams{IDOrName: vault}, option.WithMaxRetries(0))
 	if err != nil {
@@ -232,11 +239,29 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation, output str
 	if !available {
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
-	item, err = c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, Type: kernel.VaultItemPerformOperationParamsType(operation)}, option.WithMaxRetries(0))
+	params := kernel.VaultItemPerformOperationParams{IDOrName: vault}
+	if fill != nil {
+		body := fill.params()
+		params.OfFill = &body
+	} else {
+		// Operations other than fill are advertised by type only; forward the
+		// advertised type as-is so newly advertised operations keep working.
+		params = param.Override[kernel.VaultItemPerformOperationParams](map[string]string{"type": operation})
+		params.IDOrName = vault
+	}
+	response, err := c.vaults.Items.PerformOperation(ctx, key, params, option.WithMaxRetries(0))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	return c.showItem(item, output, open)
+	if response.Type == vaultFillOperation {
+		return printVaultFillResult(response.AsFillVaultItemOperationResult(), fill, output)
+	}
+	// Every other operation returns the updated item.
+	var updated kernel.VaultItemUnion
+	if err := json.Unmarshal([]byte(response.RawJSON()), &updated); err != nil {
+		return fmt.Errorf("invalid vault item response")
+	}
+	return c.showItem(&updated, output, open)
 }
 
 func (c VaultsCmd) Events(ctx context.Context, vault, key, after string, wait int64, output string) error {

@@ -116,7 +116,7 @@ func TestVaultInvokeOpensOnlyReturnedActionExplicitly(t *testing.T) {
 			c := VaultsCmd{vaults: &client.Vaults, openURL: func(url string) error { opened = url; return nil }}
 			var err error
 			out := captureStdout(t, func() {
-				err = c.Invoke(context.Background(), "checkout", "order-1", "authorize", "json", open)
+				err = c.Invoke(context.Background(), "checkout", "order-1", "authorize", "json", open, nil)
 			})
 			require.NoError(t, err)
 			assert.Equal(t, 2, calls)
