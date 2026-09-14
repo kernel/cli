@@ -195,7 +195,11 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 		prefix += " --project=" + vaultShellArgument(project)
 	}
 	for _, op := range actions.Operations {
-		pterm.Printf("Invoke: %s -- %s %s %s\n", prefix, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
+		command := prefix
+		if op.Type == "fill" {
+			command += " --params '<json>'"
+		}
+		pterm.Printf("Invoke: %s -- %s %s %s\n", command, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
 	}
 	return nil
 }

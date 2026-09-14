@@ -201,17 +201,26 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 	return c.showItem(item, output, false)
 }
 
-func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation, output string, open bool) error {
+func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, params *vaultFillParams, output string, open bool) error {
 	if strings.TrimSpace(operation) == "" {
 		return fmt.Errorf("operation must not be empty")
 	}
+	if operation == "fill" && (params == nil || open) {
+		return fmt.Errorf("fill requires --params and does not support --open")
+	}
 	item, err := c.vaults.Items.Get(ctx, key, kernel.VaultItemGetParams{IDOrName: vault}, option.WithMaxRetries(0))
 	if err != nil {
+		if operation == "fill" {
+			return fmt.Errorf("could not retrieve vault item; fill was not invoked")
+		}
 		return util.CleanedUpSdkError{Err: err}
+	}
+	if item == nil {
+		return fmt.Errorf("empty vault item response; operation was not invoked")
 	}
 	actions, err := effectiveVaultItemActions(item)
 	if err != nil {
-		return err
+		return fmt.Errorf("invalid vault item operations; operation was not invoked")
 	}
 	if actions.RecoveryRequired {
 		return fmt.Errorf("recovery_required: reconcile the original operation with the provider or support; do not retry, delete, or replace it")
@@ -220,7 +229,7 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation, output str
 	for _, op := range actions.Operations {
 		if op.Type == operation {
 			available = true
-			if output != "json" {
+			if output != "json" && operation != "fill" {
 				pterm.Info.Println(op.Description)
 			}
 			break
@@ -229,9 +238,15 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation, output str
 	if !available {
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
+	if operation == "fill" {
+		return c.fill(ctx, vault, key, params, output)
+	}
 	item, err = c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, Type: kernel.VaultItemPerformOperationParamsType(operation)}, option.WithMaxRetries(0))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
+	}
+	if item == nil || (item.Type != "card" && item.Type != "wallet") {
+		return fmt.Errorf("unexpected vault operation response; inspect the item and do not retry")
 	}
 	return c.showItem(item, output, open)
 }
