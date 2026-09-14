@@ -333,6 +333,57 @@ func TestAuthConnectionsCreate_ProviderWithPath_DoesNotSetAuto(t *testing.T) {
 	assert.False(t, cred.Auto.Valid(), "auto should remain unset when --credential-path is explicit")
 }
 
+func TestAuthConnectionsRegion_CreateUpdateAndLogin(t *testing.T) {
+	var createParams kernel.AuthConnectionNewParams
+	var updateParams kernel.AuthConnectionUpdateParams
+	var loginParams kernel.AuthConnectionLoginParams
+	fake := &FakeAuthConnectionService{
+		NewFunc: func(ctx context.Context, body kernel.AuthConnectionNewParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			createParams = body
+			return &kernel.ManagedAuth{ID: "conn-new"}, nil
+		},
+		UpdateFunc: func(ctx context.Context, id string, body kernel.AuthConnectionUpdateParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			updateParams = body
+			return &kernel.ManagedAuth{ID: id}, nil
+		},
+		LoginFunc: func(ctx context.Context, id string, body kernel.AuthConnectionLoginParams, opts ...option.RequestOption) (*kernel.LoginResponse, error) {
+			loginParams = body
+			return &kernel.LoginResponse{}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+
+	require.NoError(t, c.Create(context.Background(), AuthConnectionCreateInput{
+		Domain: "example.com", ProfileName: "work", Region: "eu-west", Output: "json",
+	}))
+	assert.Equal(t, kernel.ManagedAuthBrowserConfigRegionEuWest, createParams.ManagedAuthCreateRequest.Browser.Region)
+
+	require.NoError(t, c.Update(context.Background(), AuthConnectionUpdateInput{
+		ID: "conn-new", Region: "ap-southeast", Output: "json",
+	}))
+	assert.Equal(t, kernel.ManagedAuthBrowserConfigRegionApSoutheast, updateParams.ManagedAuthUpdateRequest.Browser.Region)
+
+	require.NoError(t, c.Login(context.Background(), AuthConnectionLoginInput{
+		ID: "conn-new", Region: "us-east", Output: "json",
+	}))
+	assert.Equal(t, kernel.ManagedAuthBrowserConfigRegionUsEast, loginParams.Browser.Region)
+}
+
+func TestAuthConnectionsRegion_RejectsUnknownValue(t *testing.T) {
+	c := AuthConnectionCmd{svc: &FakeAuthConnectionService{}}
+	err := c.Create(context.Background(), AuthConnectionCreateInput{
+		Domain: "example.com", ProfileName: "work", Region: "emea", Output: "json",
+	})
+	assert.ErrorContains(t, err, "invalid --region value")
+}
+
+func TestManagedAuthBrowserRows_IncludesRegion(t *testing.T) {
+	rows := managedAuthBrowserRows(kernel.ManagedAuthBrowserConfig{
+		Region: kernel.ManagedAuthBrowserConfigRegionEuWest,
+	})
+	assert.Contains(t, rows, []string{"Browser Region", "eu-west"})
+}
+
 // --credential-auto should still be honored (it was a no-op redundant flag
 // before the default changed, but callers may pass it for clarity).
 func TestAuthConnectionsCreate_ProviderWithExplicitAuto_SetsAuto(t *testing.T) {
