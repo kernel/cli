@@ -291,7 +291,7 @@ cannot switch projects.
 | `kernel vaults cards update <vault> <key> --provider link\|agentcard --spec '<json>'` | Update a card spec; pending issuance preserves omitted optional fields, and the API enforces state/provider constraints |
 | `kernel vaults items list <vault>` | List item keys, types, providers, status, and required actions |
 | `kernel vaults items get <vault> <key>` | Inspect state/actions/returned aliases and copyable operation commands; `--wait 0..60`, `--expand payment_methods`, `--open` |
-| `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; `authorize --open` opens a returned HTTPS action; `fill --params '<json>'` fills checkout fields |
+| `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; `authorize --open` opens a returned HTTPS action; `prepare_checkout --params '<json>'` prepares an unused AgentCard card for Square Pay; `fill --params '<json>'` fills checkout fields |
 | `kernel vaults items events <vault> <key>` | Read ordered audit events; `--after <event-id>`, `--wait 0..60` |
 | `kernel vaults items delete <vault> <key>` | Invalidate an item; `--yes` skips confirmation |
 | `kernel vaults provider-configs create --name <name> --provider link\|agentcard --client-id <id>` | Register customer-owned provider credentials; `--client-secret` or `--client-secret-file` (`-` reads stdin) |
@@ -479,10 +479,11 @@ kernel vaults cards create agentcard-checkout order-1 --provider agentcard --spe
 kernel browsers create --vault agentcard-checkout
 ```
 
-AgentCard authorizes at checkout and does not currently advertise `authorize`. To select a
-vaulted card in advance, inspect `wallets payment-methods` and include its ID as `card_id` in the
-card spec. Otherwise, the cardholder selects a card at approval. A reusable card being
-`ready` does not mean the last payment succeeded.
+AgentCard authorizes at checkout and does not advertise `authorize`. Eligible unused AgentCard
+cards advertise `prepare_checkout` instead; see [Prepare a Square checkout](#prepare-a-square-checkout).
+To select a vaulted card in advance, inspect `wallets payment-methods` and include its ID as
+`card_id` in the card spec. Otherwise, the cardholder selects a card at approval. A reusable card
+being `ready` does not mean the last payment succeeded.
 
 #### Invoking item operations
 
@@ -498,12 +499,48 @@ advertised. The API controls availability. The CLI additionally refuses invocati
 actions in `recovery_required`, even if a stale action or operation was returned.
 
 `authorize` sends `{"type":"authorize"}` without `--params` and returns the updated item,
-possibly with a required user action. `--open` is supported only for authorize.
-The [API spec](https://api.onkernel.com/spec.yaml) also accepts `fill`, with its inputs in
-`--params`. The positional operation supplies `type`; including `type` in params is rejected.
+possibly with a required user action. `--open` is supported for `authorize` and `prepare_checkout`.
+The [API spec](https://api.onkernel.com/spec.yaml) also accepts `prepare_checkout` and `fill`, with
+their inputs in `--params`. The positional operation supplies `type`; including `type` in params is
+rejected.
 Parameters must be a JSON object without unknown or duplicate properties. There is no
 operation `--spec` flag; wallet/card `--spec` flags remain unchanged. New parameterless
 operations can still be invoked by name when advertised.
+
+##### Prepare a Square checkout
+
+Eligible unused AgentCard cards advertise `prepare_checkout` before the first native Square Pay
+action. Preparation obtains cardholder device approval and binds consent to one browser session and
+one declared merchant origin:
+
+```bash
+kernel vaults items get agentcard-checkout order-1
+kernel vaults items invoke agentcard-checkout order-1 prepare_checkout --params '{"browser_id":"browser-session-id","merchant_origin":"https://shop.example.com","environment":"production"}' --open
+```
+
+- `browser_id` is a browser **session ID** of a browser created with this vault attached, not a
+  reusable browser name. It is sent unchanged; the CLI does not resolve names.
+- `merchant_origin` is the canonical origin of the **top-level merchant document**, not the Square
+  iframe. Only a scheme and host (with an optional port) are accepted; `http` only for localhost.
+- `environment` is `production` or `sandbox`. It describes Square, not the AgentCard credential mode.
+
+The response is the updated item carrying `state.preparation` with its status, approval URL, and
+submission deadline. Deliver the approval URL and keep that page open through token handoff;
+`--open` opens it for you. Then poll:
+
+```bash
+kernel vaults items get agentcard-checkout order-1 --wait 60
+```
+
+Submit native Square Pay only once the item reaches `ready_to_submit`, and before the printed
+deadline. Readiness lasts at most 30 seconds, and polling never extends it. The preparation amount
+is display-only and does not constrain the merchant's eventual charge.
+
+Every preparation is single-use, including after failure or expiry. A failed request is not a retry
+signal: one may already have been created. Item `consumed` means the prepared attempt settled, not
+that an order or charge succeeded; `stopped` cannot be reused; `outcome_unknown` blocks new requests
+and requires merchant reconciliation. Inspect `items events` and reconcile uncertain outcomes with
+the merchant rather than preparing again.
 
 ##### Fill checkout fields
 
@@ -887,8 +924,10 @@ before invoking one.
 - `kernel vaults items update <vault-id-or-name> <key> --spec <json>` - Update a card item's spec before or between authorizations
   - `--spec <json>` / `--spec-file <path>` - Full replacement card spec (only card items can be updated)
   - `--output json`, `-o json` - Output raw JSON object
-- `kernel vaults items perform-operation <vault-id-or-name> <key>` - Perform an operation the item advertises
-  - `--type <type>` - Operation to perform (default `authorize`). Operations may call an external provider and return the item's updated state.
+- `kernel vaults items invoke <vault-id-or-name> <key> <operation>` - Perform an operation the item advertises
+  - `<operation>` - Operation to perform, e.g. `authorize`, `prepare_checkout`, or `fill`. Operations may call an external provider and return the item's updated state.
+  - `--params <json>` - Operation inputs for `prepare_checkout` and `fill`; omit `type`
+  - `--open` - Open a returned HTTPS action or approval URL for `authorize` and `prepare_checkout`
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel vaults items events <vault-id-or-name> <key>` - List an item's immutable audit events, oldest first
   - `--after <event-id>` - Return only events after this event ID

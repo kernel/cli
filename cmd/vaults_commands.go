@@ -139,6 +139,17 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 Read its description with items get before invoking; follow any approval requirements.
 Authorize sends {"type":"authorize"} without --params and returns an updated item;
 --open opens its returned HTTPS action URL.
+Prepare_checkout is advertised by eligible unused AgentCard cards before the first
+Square Pay action. It requires --params with browser_id (session ID of a browser
+created with this vault attached), merchant_origin (canonical origin of the
+top-level merchant document, not the Square iframe; http only for localhost), and
+environment (production or sandbox, describing Square and not the AgentCard
+credential mode). Deliver the returned approval URL and keep that page open;
+--open opens it. Then poll with items get --wait 60 until ready_to_submit and
+submit native Pay before the preparation deadline; readiness lasts at most 30
+seconds and polling never extends it. Unused preparations expire automatically.
+Every preparation is single-use, including after failure or expiry: do not
+automatically retry, and reconcile uncertain outcomes with the merchant.
 Fill requires --params JSON with browser_id (session ID, not name), exact HTTPS
 page_url, and 1-32 fields. Each binding has field and selector; expiration also
 requires format MM/YY or MM/YYYY. Stored fields: number, cvc, exp_month (MM),
@@ -154,12 +165,9 @@ prove no writes occurred. No automatic retries, alias fallback, or form submissi
 Inspect the browser before deciding what to do next; completed does not mean paid.`,
 		Example: `  kernel vaults items get checkout order-1
   kernel vaults items invoke checkout order-1 authorize --open
+  kernel vaults items invoke checkout order-1 prepare_checkout --params '{"browser_id":"browser-session-id","merchant_origin":"https://shop.example.com","environment":"production"}' --open
   kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browser-session-id","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#card-number"},{"field":"expiration","format":"MM/YY","selector":"#expiry"},{"field":"cvc","selector":"#security-code"}],"timeout_ms":10000}' -o json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fill, err := vaultFillFromFlags(cmd, args[2])
-			if err != nil {
-				return err
-			}
 			open, _ := cmd.Flags().GetBool("open")
 			raw, _ := cmd.Flags().GetString("params")
 			params, err := parseVaultOperationParams(args[2], raw, cmd.Flags().Changed("params"), cmd.Flags().Changed("open"))
@@ -168,8 +176,8 @@ Inspect the browser before deciding what to do next; completed does not mean pai
 			}
 			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], params, vaultOutput(cmd), open)
 		}}
-	invoke.Flags().String("params", "", "Operation-specific JSON object for fill; omit type (supplied by <operation>)")
-	invoke.Flags().Bool("open", false, "Open a returned HTTPS action URL for authorize")
+	invoke.Flags().String("params", "", "Operation-specific JSON object for fill and prepare_checkout; omit type (supplied by <operation>)")
+	invoke.Flags().Bool("open", false, "Open a returned HTTPS action or approval URL for authorize and prepare_checkout")
 	addVaultJSONOutputFlag(invoke)
 	items.AddCommand(itemList, itemGet, itemEvents, invoke, newVaultDeleteCommand(true))
 

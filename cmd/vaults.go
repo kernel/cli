@@ -14,7 +14,6 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	kernel "github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
-	"github.com/kernel/kernel-go-sdk/shared/constant"
 	"github.com/pterm/pterm"
 )
 
@@ -203,12 +202,15 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 	return c.showItem(item, output, false)
 }
 
-func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, params *vaultFillParams, output string, open bool) error {
+func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, params *vaultOperationParams, output string, open bool) error {
 	if strings.TrimSpace(operation) == "" {
 		return fmt.Errorf("operation must not be empty")
 	}
-	if operation == "fill" && (params == nil || open) {
+	if operation == "fill" && (params == nil || params.Fill == nil || open) {
 		return fmt.Errorf("fill requires --params and does not support --open")
+	}
+	if operation == "prepare_checkout" && (params == nil || params.Checkout == nil) {
+		return fmt.Errorf("prepare_checkout requires --params with browser_id, merchant_origin, and environment")
 	}
 	item, err := c.vaults.Items.Get(ctx, key, kernel.VaultItemGetParams{IDOrName: vault}, option.WithMaxRetries(0))
 	if err != nil {
@@ -244,12 +246,27 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
 	if operation == "fill" {
-		return c.fill(ctx, vault, key, params, output)
+		return c.fill(ctx, vault, key, params.Fill, output)
 	}
-	// Preserve support for other advertised parameterless operations.
-	authorize := kernel.VaultItemPerformOperationParamsBodyAuthorize{Type: constant.Authorize(operation)}
-	response, err := c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, OfAuthorize: &authorize}, option.WithMaxRetries(0))
+	body := kernel.VaultItemPerformOperationParams{IDOrName: vault}
+	if operation == "prepare_checkout" {
+		body.OfPrepareCheckout = &kernel.PrepareCheckoutVaultItemOperationRequestParam{
+			Type: kernel.PrepareCheckoutVaultItemOperationRequestTypePrepareCheckout,
+			Checkout: kernel.VaultCheckoutContextParam{
+				BrowserID:      params.Checkout.BrowserID,
+				MerchantOrigin: params.Checkout.MerchantOrigin,
+				Environment:    kernel.VaultCheckoutContextEnvironment(params.Checkout.Environment),
+			},
+		}
+	} else {
+		// Preserve support for other advertised parameterless operations.
+		body.OfAuthorize = &kernel.AuthorizeVaultItemOperationRequestParam{Type: kernel.AuthorizeVaultItemOperationRequestType(operation)}
+	}
+	response, err := c.vaults.Items.PerformOperation(ctx, key, body, option.WithMaxRetries(0))
 	if err != nil {
+		if operation == "prepare_checkout" {
+			return vaultPrepareCheckoutRequestError(err)
+		}
 		return util.CleanedUpSdkError{Err: err}
 	}
 	if response == nil || (response.Type != "card" && response.Type != "wallet") {
@@ -307,6 +324,10 @@ func (c VaultsCmd) showItem(item *kernel.VaultItemUnion, output string, open boo
 		return nil
 	}
 	actionURL := actions.ActionURL
+	if actionURL == "" {
+		// prepare_checkout returns an approval URL rather than a required action.
+		actionURL = actions.ApprovalURL
+	}
 	if actionURL == "" {
 		if output != "json" {
 			pterm.Info.Println("No action URL returned; no browser opened")

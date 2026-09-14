@@ -54,6 +54,7 @@ var vaultItemFields = vaultOutputFields{
 		"masks":         vaultFieldsOf("brand last4"),
 		"aliases":       vaultFieldsOf("number cvc exp_month exp_year"),
 		"authorization": vaultFieldsOf("id status psp merchant amount amount_cents currency created_at expires_at approval_url browser_id reason psp_error_code expected_cents actual_cents amount_authority amount_verified charged_amount_cents charged_currency charged_kind replay_attempted replay_status replay_delivered"),
+		"preparation":   vaultFieldsOf("id status browser_id merchant_origin environment approval_url created_at expires_at"),
 	},
 }
 var vaultEventFields = vaultOutputFields{
@@ -196,7 +197,7 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 	}
 	for _, op := range actions.Operations {
 		command := prefix
-		if op.Type == "fill" {
+		if op.Type == "fill" || op.Type == "prepare_checkout" {
 			command += " --params '<json>'"
 		}
 		pterm.Printf("Invoke: %s -- %s %s %s\n", command, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
@@ -277,6 +278,19 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 			rows = append(rows, []string{"Processor response delivered", fmt.Sprint(a.ReplayDelivered)})
 		}
 	}
+	if item.State.JSON.Preparation.Valid() {
+		p := item.State.Preparation
+		rows = append(rows,
+			[]string{"Checkout preparation", util.OrDash(p.ID)},
+			[]string{"Preparation status", string(p.Status)},
+			[]string{"Preparation environment (Square)", string(p.Environment)},
+			[]string{"Merchant origin", p.MerchantOrigin},
+			[]string{"Preparation browser", p.BrowserID},
+		)
+		if !p.ExpiresAt.IsZero() {
+			rows = append(rows, []string{"Submit native Pay before", util.FormatLocal(p.ExpiresAt)})
+		}
+	}
 	PrintTableNoPad(rows, true)
 	printVaultItemGuidance(item, actions)
 	return nil
@@ -300,6 +314,7 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	if actions.ApprovalURL != "" {
 		pterm.Printf("Approval URL:\n%s\n", actions.ApprovalURL)
 	}
+	printVaultPreparationGuidance(item)
 	for _, op := range actions.Operations {
 		pterm.Printf("Available operation: %s — %s\n", op.Type, op.Description)
 	}
@@ -324,6 +339,31 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	if actions.RequiredAction != "" {
 		pterm.Info.Println("Complete the returned action with the provider; never pass card data or OAuth codes to the CLI. Observe with items get --wait 60.")
 	}
+}
+
+// Preparation state and item state answer different questions: the preparation
+// says whether egress can still claim it, the item says whether the attempt has
+// settled. Neither means an order or charge succeeded.
+func printVaultPreparationGuidance(item *kernel.VaultItemUnion) {
+	switch item.State.Status {
+	case "preparing":
+		pterm.Info.Println("preparing: the cardholder has not approved this device yet. Keep the approval page open and observe with items get --wait 60; do not prepare again.")
+	case "ready_to_submit":
+		pterm.Warning.Println("ready_to_submit: device readiness lasts at most 30 seconds. Submit native Square Pay before the preparation deadline; polling never extends it. An expired readiness window cannot be reused.")
+	case "consumed":
+		pterm.Warning.Println("consumed: the prepared attempt has settled. This does not mean an order or charge succeeded. Inspect items events and reconcile with the merchant; preparations are single-use and this one cannot be reused.")
+	case "stopped":
+		pterm.Warning.Println("stopped: this preparation cannot be reused. Do not retry it; create a replacement card only after confirming with the merchant that no payment occurred.")
+	case "outcome_unknown":
+		pterm.Warning.Println("outcome_unknown: the checkout outcome is unresolved and new requests are blocked. Reconcile with the merchant; do not retry, delete, or replace the card.")
+	}
+	if !item.State.JSON.Preparation.Valid() {
+		return
+	}
+	if item.State.Preparation.Status == kernel.AgentcardCheckoutPreparationStatusConsumed {
+		pterm.Info.Println("Preparation consumed means egress claimed it and it cannot be reused. Use the item status as the lifecycle indicator.")
+	}
+	pterm.Info.Println("The preparation amount is display-only and does not constrain the merchant's eventual charge.")
 }
 
 func printVaultPaymentMethods(methods []kernel.VaultPaymentMethod) {
