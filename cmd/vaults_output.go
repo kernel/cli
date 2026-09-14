@@ -32,15 +32,16 @@ var vaultMethodFields = vaultOutputFields{
 	"capabilities": {"single_use_card": vaultFieldsOf("eligible reasons")},
 }
 var vaultItemFields = vaultOutputFields{
-	"id": nil, "key": nil, "type": nil, "created_at": nil, "updated_at": nil, "expires_at": nil,
+	"id": nil, "key": nil, "type": nil, "version": nil, "created_at": nil, "updated_at": nil, "expires_at": nil,
 	"available_operations": vaultOperationFields,
 	"available_expansions": vaultOperationFields,
-	"action":               vaultFieldsOf("name url"),
+	"action":               vaultFieldsOf("name url expires_at"),
 	"expanded":             {"payment_methods": vaultMethodFields},
 	"spec": {
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil,
 		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
-		"context": nil, "expires_at": nil,
+		"context": nil, "expires_at": nil, "description": nil,
+		"fields":          {"*": vaultFieldsOf("type required sensitive")},
 		"provider_config": vaultFieldsOf("id name"),
 		"authorization":   {"method": nil, "client": {"type": nil, "provider_config": vaultFieldsOf("id name")}},
 		"totals":          vaultTotalFields,
@@ -51,6 +52,7 @@ var vaultItemFields = vaultOutputFields{
 	},
 	"state": {
 		"provider": nil, "status": nil, "status_reason": nil, "user_id": nil, "domains": nil,
+		"fields":        {"*": vaultFieldsOf("has_value")},
 		"masks":         vaultFieldsOf("brand last4"),
 		"aliases":       vaultFieldsOf("number cvc exp_month exp_year"),
 		"authorization": vaultFieldsOf("id status psp merchant amount amount_cents currency created_at expires_at approval_url browser_id reason psp_error_code expected_cents actual_cents amount_authority amount_verified charged_amount_cents charged_currency charged_kind replay_attempted replay_status replay_delivered"),
@@ -97,6 +99,16 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 	}
 	result := make(vaultJSON)
 	for key, children := range fields {
+		if key == "*" {
+			for name, value := range object {
+				filtered, err := filterVaultJSON(value, children)
+				if err != nil {
+					return nil, err
+				}
+				result[name] = filtered
+			}
+			continue
+		}
 		if value, ok := object[key]; ok {
 			if key == "url" || key == "approval_url" || key == "merchant_url" || key == "image_url" || key == "product_url" {
 				var address string
@@ -195,7 +207,11 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 		prefix += " --project=" + vaultShellArgument(project)
 	}
 	for _, op := range actions.Operations {
-		pterm.Printf("Invoke: %s -- %s %s %s\n", prefix, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
+		command := prefix
+		if op.Type == "fill" {
+			command += " --spec-file fill.json"
+		}
+		pterm.Printf("Invoke: %s -- %s %s %s\n", command, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
 	}
 	return nil
 }
@@ -220,6 +236,10 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	rows := pterm.TableData{
 		{"Property", "Value"}, {"Key (immutable)", item.Key}, {"ID", item.ID},
 		{"Type", item.Type}, {"Provider", item.Spec.Provider}, {"Status", item.State.Status},
+	}
+	if item.Type == "credential" {
+		rows = append(rows, []string{"Version", fmt.Sprint(item.Version)})
+		pterm.Info.Println("Use -o json for field definitions and presence; stored values are omitted")
 	}
 	if item.Type == "wallet" {
 		configID, configName := item.Spec.ProviderConfig.ID, item.Spec.ProviderConfig.Name

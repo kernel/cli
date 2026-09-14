@@ -264,7 +264,7 @@ func TestVaultPendingUpdatePreservesOmissionsAndEmptyLists(t *testing.T) {
 		client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, http.MethodPatch, r.Method)
 			body, _ := io.ReadAll(r.Body)
-			assert.JSONEq(t, `{"spec":{"provider":"link","wallet":"wallet-1","amount":2000`+fields+`}}`, string(body))
+			assert.JSONEq(t, `{"type":"card","spec":{"provider":"link","wallet":"wallet-1","amount":2000`+fields+`}}`, string(body))
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, strings.ReplaceAll(requestedCardFixture, "requested", "recovery_required"))
 		})

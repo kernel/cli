@@ -51,8 +51,19 @@ func vaultPreRun(cmd *cobra.Command, args []string) error {
 
 func newVaultsCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use: "vaults", Aliases: []string{"vault"}, Short: "Prepare and observe project-owned payment credentials",
-		Long: `Prepare and observe payment credentials; vault commands do not submit merchant payments.
+		Use: "vaults", Aliases: []string{"vault"}, Short: "Collect user credentials and manage payment credentials",
+		Long: `Collect user credentials and manage payment credentials; fill never submits website forms.
+
+User credential flow:
+1. Create a vault per end user and create a browser with --vault <id-or-name>.
+2. Navigate to a sensitive form and define its fields with credentials create --spec-file.
+3. Present the returned collection URL to the user. Poll items get --wait 60 for ready.
+4. Use items invoke <vault> <key> fill --spec-file with browser_id and field selectors.
+Use credentials update --version for edits, or items invoke collect to reopen the form.
+Credential values belong in protected files/stdin, never command-line arguments.
+See credentials --help and items invoke --help for examples.
+
+Payment credential flow:
 
 Optionally select a project with --project <id-or-name> or KERNEL_PROJECT.
 Otherwise, the API resolves the project from your credentials and its defaults.
@@ -63,8 +74,9 @@ Vault names, item keys, and project ownership are immutable.
 3. Create a card request with --provider and --spec JSON.
 4. Inspect items get, then use items invoke <vault> <key> <operation> only when advertised.
    Follow the operation description and any returned provider action.
-5. Attach the vault with browsers create --vault <id-or-name>. Use only returned
-   non-secret aliases in that browser. Inspect items get/events for the outcome.
+5. Attach the vault with browsers create --vault <id-or-name>. Prefer advertised fill;
+   non-secret aliases are an alternative for explicit egress-substitution integrations.
+   Inspect items get/events for the outcome.
 
 Permitted checkout domains are provider-assigned and displayed when returned;
 there is no domain-setting API.
@@ -103,14 +115,14 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 	addVaultJSONOutputFlag(get)
 	cmd.AddCommand(create, list, get, newVaultDeleteCommand(false))
 
-	items := &cobra.Command{Use: "items", Short: "Inspect vault item state, actions, aliases, and outcomes"}
+	items := &cobra.Command{Use: "items", Short: "Inspect readiness and collection URLs, or invoke collect/fill", Long: "Use get --wait 60 to observe readiness and get -o json for schema/version/presence.\nUse invoke collect to obtain a collection URL, or invoke fill --spec-file to fill a browser.\nCreate and edit credentials with vaults credentials; payment items use wallets/cards."}
 	itemList := &cobra.Command{Use: "list <vault>", Short: "List items by vault ID or name", Args: cobra.ExactArgs(1), PreRunE: vaultPreRun,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return getVaultsHandler(cmd).ListItems(cmd.Context(), args[0], vaultOutput(cmd))
 		}}
 	addVaultJSONOutputFlag(itemList)
 	itemGet := &cobra.Command{Use: "get <vault> <key>", Short: "Get item state and any required action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: "Get item state, available operations, provider actions, and returned checkout aliases.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nAn item still pending after the wait is returned as-is; ready does not mean paid.\nrecovery_required stops waiting and means unresolved, not declined or expired.\nReconcile with the provider or support; do not retry, delete, or replace the payment.",
+		Long: "Get item state, available operations, provider actions, and returned checkout aliases.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nAn item still pending after the wait is returned as-is; ready means populated for credentials, not logged in or paid.\nFor credential edits on an already-ready item, compare versions without --wait. Stored field values are omitted from CLI output.\nrecovery_required stops waiting and means unresolved, not declined or expired.\nReconcile with the provider or support; do not retry, delete, or replace the payment.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			wait, _ := cmd.Flags().GetInt64("wait")
 			expand, _ := cmd.Flags().GetStringSlice("expand")
@@ -132,12 +144,44 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 	itemEvents.Flags().Int64("wait", 0, "Long-poll once for new events (0-60 seconds)")
 	addVaultJSONOutputFlag(itemEvents)
 	invoke := &cobra.Command{Use: "invoke <vault> <key> <operation>", Short: "Invoke an operation advertised by an item", Args: cobra.ExactArgs(3), PreRunE: vaultPreRun,
-		Long:    "Retrieve the item and invoke only an operation listed in available_operations.\nRead its description with items get before invoking; follow any approval requirements.\nThe API determines availability regardless of item type, provider, or state.\nRequests are not automatically retried. The updated item may contain a required user action.\nThe current API accepts only {\"type\":\"authorize\"}; there are no operation parameters or --spec flag.",
-		Example: "  kernel vaults items get checkout order-1\n  kernel vaults items invoke checkout order-1 authorize",
+		Long: `Retrieve the item and invoke only an operation listed in available_operations.
+collect returns a time-scoped URL for the full credential form without clearing values.
+authorize sends {"type":"authorize"} for payment authorization.
+fill requires --spec-file JSON with browser_id and ordered fields (field, selector),
+plus optional page_url and timeout_ms. The vault must already be attached to the browser.
+Navigate first: page_url selects an existing page, never navigates. Cards require HTTPS
+page_url; credentials may omit it only when exactly one page is open.
+Fill never submits forms. TOTP codes are generated in the control plane.
+completed means fields were filled, not website acceptance. failed may leave partial
+writes; unknown quarantines the browser. Never automatically retry or fall back.
+Requests are not automatically retried. Only collect/authorize may use --open.
+Fill output is outcome-only JSON; non-completed results return a nonzero exit status.`,
+		Example: `  kernel vaults items invoke user-vault login collect
+  kernel vaults items invoke user-vault login fill --spec-file - <<'JSON'
+{"browser_id":"<browser-id>","fields":[{"field":"username","selector":"#username"},{"field":"password","selector":"#password"}]}
+JSON`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			open, _ := cmd.Flags().GetBool("open")
-			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], vaultOutput(cmd), open)
+			var fill *kernel.FillVaultItemOperationRequestParam
+			if args[2] == "fill" {
+				if open {
+					return fmt.Errorf("--open does not apply to fill")
+				}
+				data, err := readVaultSpecFile(cmd)
+				if err != nil {
+					return err
+				}
+				fill = &kernel.FillVaultItemOperationRequestParam{}
+				if json.Unmarshal(data, fill) != nil || fill.BrowserID == "" || len(fill.Fields) == 0 {
+					return fmt.Errorf("fill spec requires browser_id and fields")
+				}
+				fill.Type = "fill"
+			} else if cmd.Flags().Changed("spec-file") {
+				return fmt.Errorf("--spec-file is only supported for fill")
+			}
+			return getVaultsHandler(cmd).invoke(cmd.Context(), args[0], args[1], args[2], vaultOutput(cmd), open, fill)
 		}}
+	invoke.Flags().String("spec-file", "", "Fill request JSON file (use '-' for stdin; no credential values)")
 	invoke.Flags().Bool("open", false, "Open a returned HTTPS action URL in your browser")
 	addVaultJSONOutputFlag(invoke)
 	items.AddCommand(itemList, itemGet, itemEvents, invoke, newVaultDeleteCommand(true))
@@ -181,7 +225,7 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 
 	cards := &cobra.Command{Use: "cards", Short: "Configure card requests"}
 	cards.AddCommand(newVaultCardCommand(false), newVaultCardCommand(true))
-	cmd.AddCommand(items, wallets, cards)
+	cmd.AddCommand(items, wallets, cards, newVaultCredentialsCommand())
 	return cmd
 }
 

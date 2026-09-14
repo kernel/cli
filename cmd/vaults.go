@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -191,7 +192,7 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 	var item *kernel.VaultItemUnion
 	var err error
 	if update {
-		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, Spec: spec}, option.WithMaxRetries(0))
+		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCard: &kernel.VaultItemUpdateParamsBodyCard{Spec: spec}}, option.WithMaxRetries(0))
 	} else {
 		item, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCard: &kernel.VaultItemUpsertParamsBodyCard{Spec: spec}}, option.WithMaxRetries(0))
 	}
@@ -202,6 +203,10 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 }
 
 func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation, output string, open bool) error {
+	return c.invoke(ctx, vault, key, operation, output, open, nil)
+}
+
+func (c VaultsCmd) invoke(ctx context.Context, vault, key, operation, output string, open bool, fill *kernel.FillVaultItemOperationRequestParam) error {
 	if strings.TrimSpace(operation) == "" {
 		return fmt.Errorf("operation must not be empty")
 	}
@@ -229,9 +234,32 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation, output str
 	if !available {
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
-	item, err = c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, Type: kernel.VaultItemPerformOperationParamsType(operation)}, option.WithMaxRetries(0))
+	params := kernel.VaultItemPerformOperationParams{IDOrName: vault}
+	opts := []option.RequestOption{option.WithMaxRetries(0)}
+	switch operation {
+	case "fill":
+		if fill == nil {
+			return fmt.Errorf("fill requires --spec-file with browser_id and ordered fields; see items invoke --help")
+		}
+		params.OfFill = fill
+	case "collect":
+		params.OfCollect = &kernel.CollectVaultItemOperationRequestParam{Type: "collect"}
+	default:
+		params.OfAuthorize = &kernel.VaultItemPerformOperationParamsBodyAuthorize{}
+		opts = append(opts, option.WithJSONSet("type", operation))
+	}
+	result, err := c.vaults.Items.PerformOperation(ctx, key, params, opts...)
 	if err != nil {
+		if item.Type == "credential" || operation == "fill" {
+			return vaultCredentialError(err)
+		}
 		return util.CleanedUpSdkError{Err: err}
+	}
+	if operation == "fill" {
+		return printVaultFill(result, len(fill.Fields))
+	}
+	if err := json.Unmarshal([]byte(result.RawJSON()), &item); err != nil {
+		return fmt.Errorf("invalid vault item response")
 	}
 	return c.showItem(item, output, open)
 }

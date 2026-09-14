@@ -21,11 +21,11 @@ func vaultCredentialError(err error) error {
 		case 400:
 			return fmt.Errorf("vault request rejected (HTTP 400); check the input and credential validity")
 		case 403:
-			return fmt.Errorf("vault request forbidden (HTTP 403); configuration writes require organization-scoped authentication")
+			return fmt.Errorf("vault request forbidden (HTTP 403); check authentication scope and permissions")
 		case 404:
 			return fmt.Errorf("vault resource not found (HTTP 404)")
 		case 409:
-			return fmt.Errorf("vault conflict (HTTP 409); names and bindings must match, grants cannot be replaced, and referenced configurations cannot be deleted")
+			return fmt.Errorf("vault conflict (HTTP 409); inspect current version, state, and immutable bindings before retrying")
 		default:
 			return fmt.Errorf("vault request failed (HTTP %d); outcome may be unresolved, inspect existing state before taking further action", apiErr.StatusCode)
 		}

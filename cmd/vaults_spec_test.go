@@ -36,7 +36,7 @@ func TestVaultRawSpecForwarding(t *testing.T) {
 						assert.Equal(t, "/vaults/checkout/items/item-1", r.URL.Path)
 						if path == "cards update" {
 							assert.Equal(t, http.MethodPatch, r.Method)
-							assert.Empty(t, body.Type)
+							assert.Equal(t, "card", body.Type)
 						} else {
 							assert.Equal(t, http.MethodPut, r.Method)
 							assert.Equal(t, strings.TrimSuffix(strings.Fields(path)[0], "s"), body.Type)

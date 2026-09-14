@@ -128,7 +128,7 @@ Commands with JSON output support:
 - **Proxies**: `create`, `list`, `get`, `update`, `check`
 - **API Keys**: `create`, `list`, `get`, `update`, `rotate`
 - **Auth Connections**: `timeline`
-- **Vaults**: `create`, `list`, `get`, `items list/get/events/invoke`, `wallets create/payment-methods`, `cards create/update` (display-safe public fields only)
+- **Vaults**: `create`, `list`, `get`, `credentials create/update`, `items list/get/events/invoke` (including `collect` and `fill`), `wallets create/payment-methods`, `cards create/update` (display-safe public fields only)
 - **Projects**: `update`
 - **Org**: `limits get/set`
 - **Apps**: `list`, `history`
@@ -270,7 +270,44 @@ Commands with JSON output support:
 
 ### Vaults
 
-Vault commands **prepare and observe payment credentials; they do not submit merchant payments**.
+Vault commands **collect user credentials and manage payment credentials; fill does not submit website forms**.
+
+#### User credentials
+
+Create a vault for the end user, attach it when creating a browser, then navigate to the
+sensitive form. Define the observed fields without supplying values:
+
+```sh
+kernel vaults create --name user-vault
+kernel browsers create --vault user-vault
+kernel vaults credentials create user-vault login --spec-file - <<'JSON'
+{"fields":{"username":{"type":"email","required":true},"password":{"type":"password","required":true}}}
+JSON
+kernel vaults items get user-vault login --wait 60 -o json
+kernel vaults items invoke user-vault login fill --spec-file - <<'JSON'
+{"browser_id":"<browser-id>","fields":[{"field":"username","selector":"#username"},{"field":"password","selector":"#password"}]}
+JSON
+```
+
+Present the returned collection URL to the user before waiting for `ready`. It is a
+bearer credential: share it only with that user. Readiness means required values are
+populated, not that login succeeded. `fill` requires an already-open page and never
+navigates or submits it. Optional `page_url` selects the exact page; cards require it.
+Do not automatically retry failed/unknown fills or fall back to aliases.
+
+Use `credentials update <vault> <key> --version <version> --spec-file changes.json`
+with a spec such as `{"fields":{"password":{"value":"replacement"}}}`. Keep actual
+secrets in protected files or stdin, never shell arguments. Omission preserves values;
+null clears supported fields. Field definitions cannot change. Stale versions fail,
+without retries. `items invoke <vault> <key> collect` reopens the full form without
+clearing values; compare versions to observe edits to already-ready items.
+
+Types are `text`, `email`, `password`, and `totp`. TOTP seeds must be provided through
+create/update, never the form; only generated codes enter the browser. Unrestricted
+browser access can read filled values. CLI output omits all stored credential values,
+including non-sensitive values, and retains definitions, version, and `has_value`.
+Credential spec input is capped at 128 KiB; write errors are redacted.
+
 Vault names, item keys, and project ownership are immutable. Optionally select a project with
 `--project <id-or-name>` or `KERNEL_PROJECT`; otherwise, the API resolves the project from your
 credentials and its defaults (the default project for org-wide credentials, not all projects).
@@ -484,10 +521,11 @@ advertised. The API controls availability. The CLI additionally refuses invocati
 actions in `recovery_required`, even if a stale action or operation was returned. The response
 is the updated item, possibly with a required user action.
 
-The current [API spec](https://api.onkernel.com/spec.yaml) accepts only
-`{"type":"authorize"}` and forbids extra fields. There is no operation `--spec` flag;
-wallet/card `--spec` flags remain unchanged. New parameterless operations can be invoked by
-name when the API advertises them, without adding CLI subcommands.
+`authorize` and `collect` are parameterless. `fill` takes `--spec-file` with `browser_id`,
+ordered `fields` bindings, optional `page_url`, and optional `timeout_ms`. It prints
+outcome-only JSON (`completed`, `failed`, or `unknown` plus field outcomes); a non-completed
+result exits nonzero. Other operations return an item. Wallet/card `--spec` flags remain
+unchanged. New parameterless operations can be invoked when advertised.
 
 #### Expansions, updates, and lifecycle
 
