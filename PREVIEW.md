@@ -10,7 +10,7 @@ Download a run's artifact (GitHub authentication required):
 
 ```sh
 gh run list --repo kernel/cli --workflow preview.yaml --branch <branch>
-gh run download <run-id> --repo kernel/cli --pattern 'kernel-preview-*' --dir preview
+gh run download <run-id> --repo kernel/cli --name kernel-preview-<full-commit> --dir preview
 cd preview
 sha256sum -c SHA256SUMS
 # macOS: shasum -a 256 -c SHA256SUMS
