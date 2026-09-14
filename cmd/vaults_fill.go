@@ -1,230 +1,145 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"net/url"
-	"strings"
+	"strconv"
 
-	"github.com/kernel/cli/pkg/util"
 	kernel "github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/pterm/pterm"
-	"github.com/spf13/cobra"
 )
 
-// Keep these limits in sync with https://api.onkernel.com/spec.yaml.
-const (
-	vaultFillOperation       = "fill"
-	vaultFillExpirationField = "expiration"
-	vaultFillMaxFields       = 32
-	vaultFillMaxTimeoutMs    = 30000
-)
-
-var vaultFillStoredFields = []string{
-	"number", "exp_month", "exp_year", "cvc", "billing_name", "billing_line1",
-	"billing_line2", "billing_city", "billing_state", "billing_postal_code", "billing_country",
+type vaultFillResult struct {
+	Type   string                 `json:"type"`
+	Status string                 `json:"status"`
+	Fields []vaultFillFieldResult `json:"fields"`
 }
 
-var vaultFillExpirationFormats = []string{"MM/YY", "MM/YYYY"}
-
-var vaultFillFlags = []string{"browser-id", "page-url", "field", "timeout-ms"}
-
-// vaultFillField is one parsed --field binding. Bindings keep their command-line
-// order because the API fills in request order and stops at the first failure.
-type vaultFillField struct {
-	Field    string
-	Format   string
-	Selector string
-}
-
-type vaultFillRequest struct {
-	BrowserID string
-	PageURL   string
-	TimeoutMs int64
-	Fields    []vaultFillField
-}
-
-// vaultFillFromFlags returns the fill request for the fill operation and nil for
-// every other advertised operation, which takes no parameters.
-func vaultFillFromFlags(cmd *cobra.Command, operation string) (*vaultFillRequest, error) {
-	if operation != vaultFillOperation {
-		for _, name := range vaultFillFlags {
-			if cmd.Flags().Changed(name) {
-				return nil, fmt.Errorf("--%s applies only to the fill operation", name)
-			}
-		}
-		return nil, nil
-	}
-	browserID, _ := cmd.Flags().GetString("browser-id")
-	pageURL, _ := cmd.Flags().GetString("page-url")
-	raw, _ := cmd.Flags().GetStringArray("field")
-	timeout, _ := cmd.Flags().GetInt64("timeout-ms")
-	request := &vaultFillRequest{BrowserID: strings.TrimSpace(browserID), PageURL: strings.TrimSpace(pageURL)}
-	// A zero value means "unset": the API applies its own default deadline.
-	if cmd.Flags().Changed("timeout-ms") {
-		if timeout < 1 {
-			return nil, vaultFillTimeoutError()
-		}
-		request.TimeoutMs = timeout
-	}
-	if err := request.validate(raw); err != nil {
-		return nil, err
-	}
-	return request, nil
-}
-
-func vaultFillTimeoutError() error {
-	return fmt.Errorf("--timeout-ms must be between 1 and %d milliseconds for the whole operation", vaultFillMaxTimeoutMs)
-}
-
-func (r *vaultFillRequest) validate(raw []string) error {
-	if r.BrowserID == "" {
-		return fmt.Errorf("fill requires --browser-id with a browser session ID, not a reusable browser name")
-	}
-	if err := validateVaultFillPageURL(r.PageURL); err != nil {
-		return err
-	}
-	if len(raw) == 0 {
-		return fmt.Errorf("fill requires at least one --field <field>=<css-selector> binding")
-	}
-	if len(raw) > vaultFillMaxFields {
-		return fmt.Errorf("fill accepts at most %d --field bindings", vaultFillMaxFields)
-	}
-	if r.TimeoutMs < 0 || r.TimeoutMs > vaultFillMaxTimeoutMs {
-		return vaultFillTimeoutError()
-	}
-	seen := make(map[string]bool, len(raw))
-	for _, value := range raw {
-		field, err := parseVaultFillField(value)
-		if err != nil {
-			return err
-		}
-		if seen[field.Selector] {
-			return fmt.Errorf("each --field must use a distinct selector; %q is repeated and no two bindings may resolve to the same element", field.Selector)
-		}
-		seen[field.Selector] = true
-		r.Fields = append(r.Fields, field)
-	}
-	return nil
-}
-
-// The API requires an exact HTTPS page URL without embedded credentials and
-// matches it against exactly one open page; prefixes and globs never match.
-func validateVaultFillPageURL(value string) error {
-	invalid := fmt.Errorf("--page-url must be the exact current HTTPS page URL without embedded credentials")
-	if value == "" {
-		return fmt.Errorf("fill requires --page-url with the exact current top-level page URL")
-	}
-	if strings.ContainsAny(value, " \t\r\n*") {
-		return invalid
-	}
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Host == "" {
-		return invalid
-	}
-	return nil
-}
-
-func parseVaultFillField(value string) (vaultFillField, error) {
-	// Selectors may contain '=' (for example input[name=card]), so only the first
-	// separator delimits the card field from its selector.
-	name, selector, found := strings.Cut(value, "=")
-	selector = strings.TrimSpace(selector)
-	if !found || selector == "" {
-		return vaultFillField{}, fmt.Errorf("--field must be <field>=<css-selector>, for example --field number='#card-number'")
-	}
-	name, format, hasFormat := strings.Cut(strings.TrimSpace(name), ":")
-	field := vaultFillField{Field: name, Format: format, Selector: selector}
-	if name == vaultFillExpirationField {
-		if !hasFormat {
-			return vaultFillField{}, fmt.Errorf("expiration requires a format: use --field expiration:<%s>=<css-selector>", strings.Join(vaultFillExpirationFormats, "|"))
-		}
-		if !containsVaultFillValue(vaultFillExpirationFormats, format) {
-			return vaultFillField{}, fmt.Errorf("expiration format must be one of: %s", strings.Join(vaultFillExpirationFormats, ", "))
-		}
-		return field, nil
-	}
-	if hasFormat {
-		return vaultFillField{}, fmt.Errorf("only expiration takes a format; drop %q from --field %s", format, name)
-	}
-	if !containsVaultFillValue(vaultFillStoredFields, name) {
-		return vaultFillField{}, fmt.Errorf("--field %q is not a card field; use one of: %s, %s:<%s>", name,
-			strings.Join(vaultFillStoredFields, ", "), vaultFillExpirationField, strings.Join(vaultFillExpirationFormats, "|"))
-	}
-	return field, nil
-}
-
-func containsVaultFillValue(values []string, value string) bool {
-	for _, candidate := range values {
-		if candidate == value {
-			return true
-		}
-	}
-	return false
-}
-
-func (r vaultFillRequest) params() kernel.FillVaultItemOperationRequestParam {
-	body := kernel.FillVaultItemOperationRequestParam{
-		BrowserID: r.BrowserID,
-		PageURL:   r.PageURL,
-		Type:      kernel.FillVaultItemOperationRequestTypeFill,
-	}
-	if r.TimeoutMs != 0 {
-		body.TimeoutMs = kernel.Opt(r.TimeoutMs)
-	}
-	for _, field := range r.Fields {
-		if field.Field == vaultFillExpirationField {
-			body.Fields = append(body.Fields, kernel.VaultCardFillFieldParamOfVaultCardFillFieldVaultCardExpirationFillField(field.Field, field.Format, field.Selector))
-			continue
-		}
-		body.Fields = append(body.Fields, kernel.VaultCardFillFieldParamOfVaultCardFillFieldVaultCardStoredFillField(field.Field, field.Selector))
-	}
-	return body
+type vaultFillFieldResult struct {
+	Index     *int   `json:"index"`
+	Status    string `json:"status"`
+	ErrorCode string `json:"error_code,omitempty"`
 }
 
 var vaultFillResultFields = vaultOutputFields{
-	"type": nil, "status": nil, "fields": vaultFieldsOf("index status error_code"),
+	"type": nil, "status": nil,
+	"fields": vaultFieldsOf("index status error_code"),
 }
 
-// Fill returns a value-free execution result instead of the item, so it is
-// printed on its own. Request bindings are local and label each result row.
-func printVaultFillResult(result kernel.FillVaultItemOperationResult, request *vaultFillRequest, output string) error {
-	raw, err := filterVaultJSON(json.RawMessage(result.RawJSON()), vaultFillResultFields)
+const vaultFillUncertain = "browser fields may have been written; inspect the browser and do not retry or fall back to aliases"
+
+func vaultFillRequestError(err error) error {
+	var apiErr *kernel.Error
+	if errors.As(err, &apiErr) {
+		return fmt.Errorf("fill request failed (HTTP %d); %s", apiErr.StatusCode, vaultFillUncertain)
+	}
+	// Do not wrap SDK/transport errors: they can contain request or response data,
+	// and the root error handler extracts raw SDK error messages through Unwrap.
+	return fmt.Errorf("fill result unavailable; %s", vaultFillUncertain)
+}
+
+func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFillParams, output string) error {
+	request := kernel.FillVaultItemOperationRequestParam{
+		BrowserID: params.BrowserID,
+		PageURL:   params.PageURL,
+		Type:      kernel.FillVaultItemOperationRequestTypeFill,
+		Fields:    make([]kernel.VaultCardFillFieldUnionParam, 0, len(params.Fields)),
+	}
+	if params.TimeoutMS != nil {
+		request.TimeoutMs = kernel.Opt(int64(*params.TimeoutMS))
+	}
+	for _, field := range params.Fields {
+		binding := kernel.VaultCardFillFieldParamOfVaultCardFillFieldVaultCardStoredFillField(field.Field, field.Selector)
+		if field.Field == "expiration" {
+			binding = kernel.VaultCardFillFieldParamOfVaultCardFillFieldVaultCardExpirationFillField(field.Field, field.Format, field.Selector)
+		}
+		request.Fields = append(request.Fields, binding)
+	}
+	response, err := c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, OfFill: &request}, option.WithMaxRetries(0))
+	if err != nil {
+		return vaultFillRequestError(err)
+	}
+	if response == nil {
+		return fmt.Errorf("empty fill result; %s", vaultFillUncertain)
+	}
+	result, err := parseVaultFillResult(json.RawMessage(response.RawJSON()), len(params.Fields))
 	if err != nil {
 		return err
 	}
 	if output == "json" {
-		return printVaultJSON(raw)
-	}
-	var safe kernel.FillVaultItemOperationResult
-	if err := json.Unmarshal(raw, &safe); err != nil {
-		return fmt.Errorf("invalid vault fill response")
-	}
-	rows := pterm.TableData{{"#", "Field", "Selector", "Status", "Error"}}
-	for _, field := range safe.Fields {
-		name, selector := "-", "-"
-		if request != nil && field.Index >= 0 && int(field.Index) < len(request.Fields) {
-			binding := request.Fields[int(field.Index)]
-			name, selector = binding.Field, binding.Selector
-			if binding.Format != "" {
-				name += " (" + binding.Format + ")"
-			}
+		if err := printVaultJSON(result); err != nil {
+			return err
 		}
-		rows = append(rows, []string{fmt.Sprint(field.Index), name, selector, string(field.Status), util.OrDash(string(field.ErrorCode))})
+	} else {
+		pterm.Printf("Fill: %s\n", result.Status)
+		rows := pterm.TableData{{"Field index", "Status", "Error code"}}
+		for _, field := range result.Fields {
+			rows = append(rows, []string{strconv.Itoa(*field.Index), field.Status, field.ErrorCode})
+		}
+		PrintTableNoPad(rows, true)
+		if result.Status == "completed" {
+			pterm.Println("Fields filled; this does not confirm payment or merchant acceptance.")
+		} else {
+			pterm.Println(vaultFillUncertain)
+		}
 	}
-	PrintTableNoPad(rows, true)
-	printVaultFillGuidance(safe.Status)
+	if result.Status != "completed" {
+		return vaultFillOutcomeError{status: result.Status}
+	}
 	return nil
 }
 
-func printVaultFillGuidance(status kernel.FillVaultItemOperationResultStatus) {
-	switch status {
-	case kernel.FillVaultItemOperationResultStatusCompleted:
-		pterm.Success.Println("Fill completed: every requested field was written. Filling is not payment and does not confirm merchant acceptance; the form was not submitted.")
-	case kernel.FillVaultItemOperationResultStatusFailed:
-		pterm.Warning.Println("Fill failed: execution stopped at the first failed field and earlier fields were not rolled back. Do not automatically retry or fall back to aliases; inspect the page and items events before any explicit new attempt.")
-	default:
-		pterm.Warning.Println("Fill outcome unknown: at least one field's result could not be determined, which is not a retry signal. Do not automatically retry or fall back to aliases; reconcile with items events before any explicit new attempt.")
+// The result has already been printed; retain a nonzero exit without diagnostics.
+type vaultFillOutcomeError struct{ status string }
+
+func (e vaultFillOutcomeError) Error() string { return "fill " + e.status }
+func (e vaultFillOutcomeError) Silent() bool  { return true }
+
+func parseVaultFillResult(raw json.RawMessage, count int) (*vaultFillResult, error) {
+	invalid := fmt.Errorf("invalid fill result; %s", vaultFillUncertain)
+	safe, err := filterVaultJSON(raw, vaultFillResultFields)
+	if err != nil {
+		return nil, invalid
 	}
-	pterm.Info.Println("Secret values are never returned. An agent with unrestricted browser access can still read filled values from the page.")
+	var result vaultFillResult
+	if json.Unmarshal(safe, &result) != nil || result.Type != "fill" || len(result.Fields) != count {
+		return nil, invalid
+	}
+	status := "completed"
+	stopped := false
+	for i, field := range result.Fields {
+		if field.Index == nil || *field.Index != i {
+			return nil, invalid
+		}
+		if stopped {
+			if field.Status != "not_attempted" {
+				return nil, invalid
+			}
+		} else {
+			switch field.Status {
+			case "filled":
+			case "failed", "unknown":
+				status, stopped = field.Status, true
+			default:
+				return nil, invalid
+			}
+		}
+		if field.ErrorCode != "" {
+			if field.Status != "failed" && field.Status != "unknown" {
+				return nil, invalid
+			}
+			switch field.ErrorCode {
+			case "target_changed", "element_not_found", "ambiguous_selector", "element_not_editable", "option_not_found", "timeout", "execution_failed":
+			default:
+				return nil, invalid
+			}
+		}
+	}
+	if result.Status != status {
+		return nil, invalid
+	}
+	return &result, nil
 }

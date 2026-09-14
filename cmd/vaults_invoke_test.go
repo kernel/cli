@@ -94,6 +94,8 @@ func TestVaultInvokeArgumentsAndHelp(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, cmd.Flags().Lookup("spec"))
 	assert.NotNil(t, cmd.Flags().Lookup("open"))
+	assert.NotNil(t, cmd.Flags().Lookup("params"))
+	assert.Contains(t, cmd.Long, "failed/unknown exit nonzero")
 	assert.Contains(t, cmd.Long, `{"type":"authorize"}`)
 	assert.Contains(t, cmd.Long, "available_operations")
 }
@@ -116,7 +118,7 @@ func TestVaultInvokeOpensOnlyReturnedActionExplicitly(t *testing.T) {
 			c := VaultsCmd{vaults: &client.Vaults, openURL: func(url string) error { opened = url; return nil }}
 			var err error
 			out := captureStdout(t, func() {
-				err = c.Invoke(context.Background(), "checkout", "order-1", "authorize", "json", open, nil)
+				err = c.Invoke(context.Background(), "checkout", "order-1", "authorize", nil, "json", open)
 			})
 			require.NoError(t, err)
 			assert.Equal(t, 2, calls)

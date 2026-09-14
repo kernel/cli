@@ -195,13 +195,11 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 		prefix += " --project=" + vaultShellArgument(project)
 	}
 	for _, op := range actions.Operations {
-		hint := fmt.Sprintf("Invoke: %s -- %s %s %s", prefix, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
-		if op.Type == vaultFillOperation {
-			// fill is the only operation that takes parameters; show them so the
-			// hint is runnable once the browser, page, and selectors are known.
-			hint += " --browser-id <browser-session-id> --page-url <https://exact-page-url> --field number='<css-selector>'"
+		command := prefix
+		if op.Type == "fill" {
+			command += " --params '<json>'"
 		}
-		pterm.Println(hint)
+		pterm.Printf("Invoke: %s -- %s %s %s\n", command, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
 	}
 	return nil
 }

@@ -291,7 +291,7 @@ cannot switch projects.
 | `kernel vaults cards update <vault> <key> --provider link\|agentcard --spec '<json>'` | Update a card spec; pending issuance preserves omitted optional fields, and the API enforces state/provider constraints |
 | `kernel vaults items list <vault>` | List item keys, types, providers, status, and required actions |
 | `kernel vaults items get <vault> <key>` | Inspect state/actions/returned aliases and copyable operation commands; `--wait 0..60`, `--expand payment_methods`, `--open` |
-| `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; optional `--open` opens a returned HTTPS action |
+| `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; `authorize --open` opens a returned HTTPS action; `fill --params '<json>'` fills checkout fields |
 | `kernel vaults items events <vault> <key>` | Read ordered audit events; `--after <event-id>`, `--wait 0..60` |
 | `kernel vaults items delete <vault> <key>` | Invalidate an item; `--yes` skips confirmation |
 | `kernel vaults provider-configs create --name <name> --provider link\|agentcard --client-id <id>` | Register customer-owned provider credentials; `--client-secret` or `--client-secret-file` (`-` reads stdin) |
@@ -442,8 +442,8 @@ wallet and vault deletion. Time passing or deletion is not evidence of non-execu
    kernel vaults items get checkout order-1 --wait 60
    ```
 
-4. When ready, attach the same vault to a new browser. Use only the returned
-   `state.aliases` values in that browser's checkout and respect returned permitted domains:
+4. When ready, attach the same vault to a new browser, navigate to checkout, and use
+   the advertised `fill` operation below. Respect returned permitted domains:
 
    ```bash
    kernel browsers create --vault checkout
@@ -486,21 +486,67 @@ card spec. Otherwise, the cardholder selects a card at approval. A reusable card
 
 #### Invoking item operations
 
-`items get` displays every `available_operations` entry's type and description, plus a
-copyable `items invoke` command retaining the selected project. Read the description and
-follow its approval requirements before invoking. Required user actions (OAuth, enrollment,
-MFA, spend approval) appear separately; they are not operations to invoke through this endpoint.
+`items get` displays every `available_operations` entry's type and description, plus
+an `items invoke` command retaining the selected project (replace `<json>` for fill).
+Read the description and follow its approval requirements before invoking. Required user actions
+(OAuth, enrollment, MFA, spend approval) appear separately; they are not operations to invoke
+through this endpoint.
 
 `items invoke` fetches the item again and calls
 `POST /vaults/{id_or_name}/items/{key}/operations` only if the requested operation is still
 advertised. The API controls availability. The CLI additionally refuses invocation and opening
-actions in `recovery_required`, even if a stale action or operation was returned. The response
-is the updated item, possibly with a required user action.
+actions in `recovery_required`, even if a stale action or operation was returned.
 
-The current [API spec](https://api.onkernel.com/spec.yaml) accepts only
-`{"type":"authorize"}` and forbids extra fields. There is no operation `--spec` flag;
-wallet/card `--spec` flags remain unchanged. New parameterless operations can be invoked by
-name when the API advertises them, without adding CLI subcommands.
+`authorize` sends `{"type":"authorize"}` without `--params` and returns the updated item,
+possibly with a required user action. `--open` is supported only for authorize.
+The [API spec](https://api.onkernel.com/spec.yaml) also accepts `fill`, with its inputs in
+`--params`. The positional operation supplies `type`; including `type` in params is rejected.
+Parameters must be a JSON object without unknown or duplicate properties. There is no
+operation `--spec` flag; wallet/card `--spec` flags remain unchanged. New parameterless
+operations can still be invoked by name when advertised.
+
+##### Fill checkout fields
+
+Fill is supported only when advertised by a ready Link card, not AgentCard. It writes stored
+card data without returning the values or submitting checkout:
+
+```bash
+kernel vaults items get checkout order-1
+kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browser-session-id","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#card-number"},{"field":"expiration","format":"MM/YY","selector":"#expiry"},{"field":"cvc","selector":"#security-code"}],"timeout_ms":10000}' -o json
+```
+
+- `browser_id` is a browser **session ID**, not a reusable browser name. It is sent unchanged;
+  the CLI does not resolve names.
+- `page_url` is the exact current top-level HTTPS URL, including path, query, and fragment,
+  without embedded credentials. It must match exactly one open page; no prefix/glob matching.
+- `fields` contains 1-32 bindings in write order. Each has `field` and a nonempty CSS
+  `selector` targeting an editable input/select or its container. The API searches the selected
+  page and descendants, including payment iframes. Do not supply frame IDs or literal values.
+- Stored fields: `number`, `cvc`, `exp_month` (MM), `exp_year` (YYYY), `billing_name`,
+  `billing_line1`, `billing_line2`, `billing_city`, `billing_state`, `billing_postal_code`,
+  `billing_country`. Billing fields use the stored address without reformatting; request only
+  needed fields. Missing requested billing data fails validation before browser writes.
+- Combined `expiration` requires `format: "MM/YY"` or `"MM/YYYY"`. Other fields reject `format`.
+- Optional `timeout_ms` is an integer from 1 to 30000 (default 10000), for the whole operation.
+
+Fill returns an execution result, **not an updated item**. Normal output shows zero-based
+field indices, statuses, and error codes. `-o json` preserves the display-safe result shape:
+
+```json
+{"type":"fill","status":"unknown","fields":[{"index":0,"status":"filled"},{"index":1,"status":"unknown","error_code":"timeout"},{"index":2,"status":"not_attempted"}]}
+```
+
+`completed` exits 0; `failed` and `unknown` exit nonzero **with the result still on stdout**,
+without appended error text. API/transport errors exit nonzero with a sanitized diagnostic on
+stderr, not a fabricated execution result. No values, selectors, DOM content, or raw browser
+errors are printed in fill results.
+
+Fill is non-atomic: execution stops at the first failed/unknown field and earlier writes are
+not rolled back. `filled` does not mean the site retained or accepted the value; `completed`
+does not mean paid. Transport errors do not prove no writes occurred. Inspect the browser
+before deciding what to do next. The CLI never retries, submits checkout, or falls back to
+aliases. Returned `state.aliases` remain an alternative for explicitly chosen egress-substitution
+integrations, not a recovery path after a failed or indeterminate fill.
 
 #### Expansions, updates, and lifecycle
 

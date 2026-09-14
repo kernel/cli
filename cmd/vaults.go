@@ -14,7 +14,7 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	kernel "github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
-	"github.com/kernel/kernel-go-sdk/packages/param"
+	"github.com/kernel/kernel-go-sdk/shared/constant"
 	"github.com/pterm/pterm"
 )
 
@@ -203,22 +203,26 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 	return c.showItem(item, output, false)
 }
 
-// fill carries the parameters of the fill operation; every other advertised
-// operation is invoked by type alone.
-func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation, output string, open bool, fill *vaultFillRequest) error {
+func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, params *vaultFillParams, output string, open bool) error {
 	if strings.TrimSpace(operation) == "" {
 		return fmt.Errorf("operation must not be empty")
 	}
-	if operation == vaultFillOperation && fill == nil {
-		return fmt.Errorf("fill requires --browser-id, --page-url, and at least one --field <field>=<css-selector>")
+	if operation == "fill" && (params == nil || open) {
+		return fmt.Errorf("fill requires --params and does not support --open")
 	}
 	item, err := c.vaults.Items.Get(ctx, key, kernel.VaultItemGetParams{IDOrName: vault}, option.WithMaxRetries(0))
 	if err != nil {
+		if operation == "fill" {
+			return fmt.Errorf("could not retrieve vault item; fill was not invoked")
+		}
 		return util.CleanedUpSdkError{Err: err}
+	}
+	if item == nil {
+		return fmt.Errorf("empty vault item response; operation was not invoked")
 	}
 	actions, err := effectiveVaultItemActions(item)
 	if err != nil {
-		return err
+		return fmt.Errorf("invalid vault item operations; operation was not invoked")
 	}
 	if actions.RecoveryRequired {
 		if actions.Abandonable {
@@ -230,7 +234,7 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation, output str
 	for _, op := range actions.Operations {
 		if op.Type == operation {
 			available = true
-			if output != "json" {
+			if output != "json" && operation != "fill" {
 				pterm.Info.Println(op.Description)
 			}
 			break
@@ -239,27 +243,21 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation, output str
 	if !available {
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
-	params := kernel.VaultItemPerformOperationParams{IDOrName: vault}
-	if fill != nil {
-		body := fill.params()
-		params.OfFill = &body
-	} else {
-		// Operations other than fill are advertised by type only; forward the
-		// advertised type as-is so newly advertised operations keep working.
-		params = param.Override[kernel.VaultItemPerformOperationParams](map[string]string{"type": operation})
-		params.IDOrName = vault
+	if operation == "fill" {
+		return c.fill(ctx, vault, key, params, output)
 	}
-	response, err := c.vaults.Items.PerformOperation(ctx, key, params, option.WithMaxRetries(0))
+	// Preserve support for other advertised parameterless operations.
+	authorize := kernel.VaultItemPerformOperationParamsBodyAuthorize{Type: constant.Authorize(operation)}
+	response, err := c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, OfAuthorize: &authorize}, option.WithMaxRetries(0))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	if response.Type == vaultFillOperation {
-		return printVaultFillResult(response.AsFillVaultItemOperationResult(), fill, output)
+	if response == nil || (response.Type != "card" && response.Type != "wallet") {
+		return fmt.Errorf("unexpected vault operation response; inspect the item and do not retry")
 	}
-	// Every other operation returns the updated item.
 	var updated kernel.VaultItemUnion
 	if err := json.Unmarshal([]byte(response.RawJSON()), &updated); err != nil {
-		return fmt.Errorf("invalid vault item response")
+		return fmt.Errorf("invalid vault item response; inspect the item and do not retry")
 	}
 	return c.showItem(&updated, output, open)
 }
