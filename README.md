@@ -281,7 +281,7 @@ sensitive form. Define the observed fields without supplying values:
 kernel vaults create --name user-vault
 kernel browsers create --vault user-vault
 kernel vaults credentials create user-vault login --spec-file - <<'JSON'
-{"fields":{"username":{"type":"email","required":true},"password":{"type":"password","required":true}}}
+{"description":"Hacker News","fields":{"username":{"type":"text","required":true,"sensitive":false},"password":{"type":"password","required":true,"sensitive":true}}}
 JSON
 kernel vaults items get user-vault login --wait 60 -o json
 kernel vaults items invoke user-vault login fill --spec-file - <<'JSON'
@@ -298,9 +298,11 @@ Do not automatically retry failed/unknown fills or fall back to aliases.
 Use `credentials update <vault> <key> --version <version> --spec-file changes.json`
 with a spec such as `{"fields":{"password":{"value":"replacement"}}}`. Keep actual
 secrets in protected files or stdin, never shell arguments. Omission preserves values;
-null clears supported fields. Field definitions cannot change. Stale versions fail,
+null or an empty string clears supported fields, including required text/email/password fields (returning them to pending collection). The form still requires nonempty required inputs. Field definitions cannot change. Stale versions fail,
 without retries. `items invoke <vault> <key> collect` reopens the full form without
 clearing values; compare versions to observe edits to already-ready items.
+
+Set `description` to the recognizable site name only, such as `Hacker News`, not `Hacker News sign-in credentials`. Set `sensitive: false` explicitly for ordinary usernames and email addresses. Reserve `sensitive: true` for passwords, API tokens, and TOTP seeds; the omitted default remains true for safety.
 
 Types are `text`, `email`, `password`, and `totp`. TOTP seeds must be provided through
 create/update, never the form; only generated codes enter the browser. Unrestricted

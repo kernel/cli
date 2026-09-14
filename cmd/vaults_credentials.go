@@ -12,11 +12,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const vaultCredentialHelp = `Create credentials from the sensitive fields observed on a website.
+const vaultCredentialHelp = `Create credentials from the fields observed on a website.
 First create a vault for the end user and attach it with browsers create --vault.
 Use a protected JSON file or stdin, never secret values in shell arguments.
 The spec contains description and fields keyed by name. Field types are text,
 email, password, and totp; definitions accept required, sensitive, and value.
+Set description to the recognizable site name only, e.g. "Hacker News", not
+"Hacker News sign-in credentials". This text is the user-facing form title.
+Set sensitive:false explicitly for ordinary usernames and email addresses.
+Reserve sensitive:true for secrets such as passwords, API tokens, and TOTP seeds.
+Password and totp must be sensitive. Omitted sensitive defaults to true for safety.
 Omit required values to receive a collection URL to present to the user.
 Poll items get --wait 60 until state.status is ready, then use items invoke fill.
 Ready means populated, not a successful login. An agent controlling the browser
@@ -43,13 +48,13 @@ func newVaultCredentialsCommand() *cobra.Command {
 			},
 		}
 		if update {
-			cmd.Long += "\nUpdate preserves omitted fields, replaces string values, and clears supported values with null.\nField definitions are immutable. Do not automatically retry version conflicts."
+			cmd.Long += "\nUpdate preserves omitted fields, replaces nonempty string values, and clears supported values with null or an empty string. Clearing a required text/email/password field returns pending_collection; form submissions still require a nonempty value.\nField definitions are immutable. Do not automatically retry version conflicts."
 			cmd.Flags().Int64("version", 0, "Expected version from items get (required; never auto-refreshed)")
 			_ = cmd.MarkFlagRequired("version")
 			cmd.Example = "  kernel vaults credentials update user-vault login --version 2 --spec-file changes.json"
 		} else {
 			cmd.Example = `  kernel vaults credentials create user-vault login --spec-file - <<'JSON'
-{"fields":{"username":{"type":"email","required":true},"password":{"type":"password","required":true}}}
+{"description":"Hacker News","fields":{"username":{"type":"text","required":true,"sensitive":false},"password":{"type":"password","required":true,"sensitive":true}}}
 JSON`
 		}
 		cmd.Flags().String("spec-file", "", "Credential spec JSON file (use '-' for stdin; maximum 128 KiB)")
