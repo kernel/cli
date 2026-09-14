@@ -31,8 +31,8 @@ archives contain `kernel.exe`. Download on trusted machines and verify checksums
 
 ## Temporary SDK pin
 
-`go.mod` replaces the normal Go SDK with the immutable STLC preview revision from
-`kernel/kernel` PR #3898. The staging SDK repository requires GitHub authentication.
+`go.mod` replaces the normal Go SDK with an immutable STLC preview revision.
+The staging SDK repository requires GitHub authentication.
 Tests and preview builds use the existing GitHub App credentials to obtain a
 contents-read token scoped to `kernel-go-sdk-staging`, solely for `go mod download`.
 No token is passed to compilation/tests, no credential config is persisted, and Go
@@ -41,7 +41,7 @@ Fork PR jobs are skipped while this private dependency is required. No
 `pull_request_target` workflow executes untrusted PR code.
 
 Replace the preview pin with the released `github.com/kernel/kernel-go-sdk` version
-before a stable release, then remove the temporary SDK-auth steps and restore fork
+before merging this preview branch, then remove the temporary SDK-auth steps and restore fork
 testing/cache behavior. The stable release workflow rejects the staging SDK pin.
 
 For a local cross-platform build, authenticate Git for the SDK repository, then run:
