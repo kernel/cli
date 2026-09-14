@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"strconv"
 
 	kernel "github.com/kernel/kernel-go-sdk"
@@ -43,19 +42,30 @@ func vaultFillRequestError(err error) error {
 }
 
 func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFillParams, output string) error {
-	request := struct {
-		Type string `json:"type"`
-		*vaultFillParams
-	}{Type: "fill", vaultFillParams: params}
-	var raw json.RawMessage
-	// The released SDK's PerformOperation only decodes item responses. Use its
-	// authenticated request path with the same service options until it supports fill.
-	client := kernel.Client{Options: c.vaults.Items.Options}
-	path := fmt.Sprintf("vaults/%s/items/%s/operations", url.PathEscape(vault), url.PathEscape(key))
-	if err := client.Post(ctx, path, request, &raw, option.WithMaxRetries(0)); err != nil {
+	request := kernel.FillVaultItemOperationRequestParam{
+		BrowserID: params.BrowserID,
+		PageURL:   params.PageURL,
+		Type:      kernel.FillVaultItemOperationRequestTypeFill,
+		Fields:    make([]kernel.VaultCardFillFieldUnionParam, 0, len(params.Fields)),
+	}
+	if params.TimeoutMS != nil {
+		request.TimeoutMs = kernel.Opt(int64(*params.TimeoutMS))
+	}
+	for _, field := range params.Fields {
+		binding := kernel.VaultCardFillFieldParamOfVaultCardFillFieldVaultCardStoredFillField(field.Field, field.Selector)
+		if field.Field == "expiration" {
+			binding = kernel.VaultCardFillFieldParamOfVaultCardFillFieldVaultCardExpirationFillField(field.Field, field.Format, field.Selector)
+		}
+		request.Fields = append(request.Fields, binding)
+	}
+	response, err := c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, OfFill: &request}, option.WithMaxRetries(0))
+	if err != nil {
 		return vaultFillRequestError(err)
 	}
-	result, err := parseVaultFillResult(raw, len(params.Fields))
+	if response == nil {
+		return fmt.Errorf("empty fill result; %s", vaultFillUncertain)
+	}
+	result, err := parseVaultFillResult(json.RawMessage(response.RawJSON()), len(params.Fields))
 	if err != nil {
 		return err
 	}

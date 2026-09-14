@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	kernel "github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/shared/constant"
 	"github.com/pterm/pterm"
 )
 
@@ -241,14 +243,20 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	if operation == "fill" {
 		return c.fill(ctx, vault, key, params, output)
 	}
-	item, err = c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, Type: kernel.VaultItemPerformOperationParamsType(operation)}, option.WithMaxRetries(0))
+	// Preserve support for other advertised parameterless operations.
+	authorize := kernel.VaultItemPerformOperationParamsBodyAuthorize{Type: constant.Authorize(operation)}
+	response, err := c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, OfAuthorize: &authorize}, option.WithMaxRetries(0))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	if item == nil || (item.Type != "card" && item.Type != "wallet") {
+	if response == nil || (response.Type != "card" && response.Type != "wallet") {
 		return fmt.Errorf("unexpected vault operation response; inspect the item and do not retry")
 	}
-	return c.showItem(item, output, open)
+	var updated kernel.VaultItemUnion
+	if err := json.Unmarshal([]byte(response.RawJSON()), &updated); err != nil {
+		return fmt.Errorf("invalid vault item response; inspect the item and do not retry")
+	}
+	return c.showItem(&updated, output, open)
 }
 
 func (c VaultsCmd) Events(ctx context.Context, vault, key, after string, wait int64, output string) error {
