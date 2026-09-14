@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -111,58 +110,4 @@ func (c VaultsCmd) saveCredential(ctx context.Context, vault, key string, data [
 		return vaultCredentialError(err)
 	}
 	return c.showItem(item, output, open)
-}
-
-func vaultFillError(err error) error {
-	var apiErr *kernel.Error
-	if errors.As(err, &apiErr) {
-		var body struct {
-			Code string `json:"code"`
-		}
-		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
-			switch body.Code {
-			case "invalid_request", "invalid_selector", "duplicate_target", "timeout", "target_changed", "page_not_found", "ambiguous_page", "element_not_found", "ambiguous_selector", "element_not_editable", "option_not_found", "field_unavailable", "conflict", "destination_denied", "execution_failed":
-				return fmt.Errorf("fill failed: %s (HTTP %d); inspect the browser and item before further action; do not automatically retry", body.Code, apiErr.StatusCode)
-			}
-		}
-	}
-	return vaultCredentialError(err)
-}
-
-func printVaultFill(result *kernel.VaultItemOperationResponseUnion, expectedFields int) error {
-	raw, err := filterVaultJSON(json.RawMessage(result.RawJSON()), vaultOutputFields{"type": nil, "status": nil, "fields": vaultFieldsOf("index status error_code")})
-	if err != nil {
-		return fmt.Errorf("invalid fill response")
-	}
-	var outcome kernel.FillVaultItemOperationResult
-	if json.Unmarshal(raw, &outcome) != nil || outcome.Type != "fill" || len(outcome.Fields) != expectedFields {
-		return fmt.Errorf("invalid fill response")
-	}
-	switch outcome.Status {
-	case "completed", "failed", "unknown":
-	default:
-		return fmt.Errorf("invalid fill response")
-	}
-	for i, field := range outcome.Fields {
-		if field.Index != int64(i) || (outcome.Status == "completed" && field.Status != "filled") {
-			return fmt.Errorf("invalid fill response")
-		}
-		switch field.Status {
-		case "filled", "failed", "not_attempted", "unknown":
-		default:
-			return fmt.Errorf("invalid fill response")
-		}
-		switch field.ErrorCode {
-		case "", "target_changed", "element_not_found", "ambiguous_selector", "element_not_editable", "option_not_found", "timeout", "execution_failed":
-		default:
-			return fmt.Errorf("invalid fill response")
-		}
-	}
-	if err := printVaultJSON(raw); err != nil {
-		return err
-	}
-	if outcome.Status != "completed" {
-		return fmt.Errorf("fill did not complete; inspect field outcomes and do not automatically retry or fall back")
-	}
-	return nil
 }

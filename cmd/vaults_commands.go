@@ -74,9 +74,10 @@ Vault names, item keys, and project ownership are immutable.
 3. Create a card request with --provider and --spec JSON.
 4. Inspect items get, then use items invoke <vault> <key> <operation> only when advertised.
    Follow the operation description and any returned provider action.
-5. Attach the vault with browsers create --vault <id-or-name>. Prefer advertised fill;
-   non-secret aliases are an alternative for explicit egress-substitution integrations.
-   Inspect items get/events for the outcome.
+5. Attach the vault with browsers create --vault <id-or-name>. For ready Link cards,
+   use advertised fill with --params to bind checkout fields. Returned non-secret
+   aliases are an alternative for explicitly chosen egress-substitution integrations,
+   not a fallback after fill. Inspect items get/events for payment outcomes.
 
 Permitted checkout domains are provider-assigned and displayed when returned;
 there is no domain-setting API.
@@ -147,41 +148,51 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 		Long: `Retrieve the item and invoke only an operation listed in available_operations.
 collect returns a time-scoped URL for the full credential form without clearing values.
 authorize sends {"type":"authorize"} for payment authorization.
-fill requires --spec-file JSON with browser_id and ordered fields (field, selector),
-plus optional page_url and timeout_ms. The vault must already be attached to the browser.
-Navigate first: page_url selects an existing page, never navigates. Cards require HTTPS
-page_url; credentials may omit it only when exactly one page is open.
-Fill never submits forms. TOTP codes are generated in the control plane.
-completed means fields were filled, not website acceptance. failed may leave partial
-writes; unknown quarantines the browser. Never automatically retry or fall back.
-Requests are not automatically retried. Only collect/authorize may use --open.
-Fill output is outcome-only JSON; non-completed results return a nonzero exit status.`,
+Read the operation description and follow any approval requirements before invoking.
+fill requires --params JSON or --spec-file <path|-> with browser_id (session ID, not name)
+and 1-32 ordered fields (field, selector). Do not include type, values, or frame IDs.
+The vault must already be attached to the browser. page_url selects an existing page;
+fill never navigates. Credentials use declared field names, must omit format, and may
+omit page_url only when the API can resolve a unique page. TOTP codes stay server-generated.
+Cards require an exact HTTPS page_url. Stored fields: number, cvc, exp_month (MM),
+exp_year (YYYY), billing_name, billing_line1, billing_line2, billing_city,
+billing_state, billing_postal_code, billing_country. expiration requires format MM/YY
+or MM/YYYY. Optional timeout_ms is 1-30000 (default 10000).
+The API searches the page and descendant frames, including payment iframes.
+Fill is available for credential items and ready Link cards when advertised, not AgentCard.
+Fill never submits forms. completed means fields were filled, not website acceptance.
+failed may leave partial writes; unknown quarantines the browser. Never automatically
+retry or fall back to aliases. Requests are not automatically retried.
+Only collect/authorize may use --open. Fill returns value-free per-field outcomes;
+completed exits 0, failed/unknown exit nonzero with valid JSON retained on stdout in -o json.`,
 		Example: `  kernel vaults items invoke user-vault login collect
   kernel vaults items invoke user-vault login fill --spec-file - <<'JSON'
 {"browser_id":"<browser-id>","fields":[{"field":"username","selector":"#username"},{"field":"password","selector":"#password"}]}
-JSON`,
+JSON
+  kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browser-session-id","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#card-number"}]}' -o json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			open, _ := cmd.Flags().GetBool("open")
-			var fill *kernel.FillVaultItemOperationRequestParam
-			if args[2] == "fill" {
-				if open {
-					return fmt.Errorf("--open does not apply to fill")
+			raw, _ := cmd.Flags().GetString("params")
+			paramsSet := cmd.Flags().Changed("params")
+			if cmd.Flags().Changed("spec-file") {
+				if args[2] != "fill" {
+					return fmt.Errorf("--spec-file is only supported for fill")
 				}
 				data, err := readVaultSpecFile(cmd)
 				if err != nil {
 					return err
 				}
-				fill = &kernel.FillVaultItemOperationRequestParam{}
-				if json.Unmarshal(data, fill) != nil || fill.BrowserID == "" || len(fill.Fields) == 0 {
-					return fmt.Errorf("fill spec requires browser_id and fields")
-				}
-				fill.Type = "fill"
-			} else if cmd.Flags().Changed("spec-file") {
-				return fmt.Errorf("--spec-file is only supported for fill")
+				raw, paramsSet = string(data), true
 			}
-			return getVaultsHandler(cmd).invoke(cmd.Context(), args[0], args[1], args[2], vaultOutput(cmd), open, fill)
+			params, err := parseVaultOperationParams(args[2], raw, paramsSet, cmd.Flags().Changed("open"))
+			if err != nil {
+				return err
+			}
+			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], params, vaultOutput(cmd), open)
 		}}
-	invoke.Flags().String("spec-file", "", "Fill request JSON file (use '-' for stdin; no credential values)")
+	invoke.Flags().String("params", "", "Fill parameters JSON (maximum 128 KiB); omit type and credential values")
+	invoke.Flags().String("spec-file", "", "Fill parameters JSON file (use '-' for stdin; maximum 128 KiB)")
+	invoke.MarkFlagsMutuallyExclusive("params", "spec-file")
 	invoke.Flags().Bool("open", false, "Open a returned HTTPS action URL in your browser")
 	addVaultJSONOutputFlag(invoke)
 	items.AddCommand(itemList, itemGet, itemEvents, invoke, newVaultDeleteCommand(true))

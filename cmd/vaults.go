@@ -14,6 +14,7 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	kernel "github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/shared/constant"
 	"github.com/pterm/pterm"
 )
 
@@ -202,21 +203,26 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 	return c.showItem(item, output, false)
 }
 
-func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation, output string, open bool) error {
-	return c.invoke(ctx, vault, key, operation, output, open, nil)
-}
-
-func (c VaultsCmd) invoke(ctx context.Context, vault, key, operation, output string, open bool, fill *kernel.FillVaultItemOperationRequestParam) error {
+func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, params *vaultFillParams, output string, open bool) error {
 	if strings.TrimSpace(operation) == "" {
 		return fmt.Errorf("operation must not be empty")
 	}
+	if operation == "fill" && (params == nil || open) {
+		return fmt.Errorf("fill requires --params and does not support --open")
+	}
 	item, err := c.vaults.Items.Get(ctx, key, kernel.VaultItemGetParams{IDOrName: vault}, option.WithMaxRetries(0))
 	if err != nil {
+		if operation == "fill" {
+			return fmt.Errorf("could not retrieve vault item; fill was not invoked")
+		}
 		return util.CleanedUpSdkError{Err: err}
+	}
+	if item == nil {
+		return fmt.Errorf("empty vault item response; operation was not invoked")
 	}
 	actions, err := effectiveVaultItemActions(item)
 	if err != nil {
-		return err
+		return fmt.Errorf("invalid vault item operations; operation was not invoked")
 	}
 	if actions.RecoveryRequired {
 		return fmt.Errorf("recovery_required: reconcile the original operation with the provider or support; do not retry, delete, or replace it")
@@ -225,7 +231,7 @@ func (c VaultsCmd) invoke(ctx context.Context, vault, key, operation, output str
 	for _, op := range actions.Operations {
 		if op.Type == operation {
 			available = true
-			if output != "json" {
+			if output != "json" && operation != "fill" {
 				pterm.Info.Println(op.Description)
 			}
 			break
@@ -234,36 +240,32 @@ func (c VaultsCmd) invoke(ctx context.Context, vault, key, operation, output str
 	if !available {
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
-	params := kernel.VaultItemPerformOperationParams{IDOrName: vault}
-	opts := []option.RequestOption{option.WithMaxRetries(0)}
-	switch operation {
-	case "fill":
-		if fill == nil {
-			return fmt.Errorf("fill requires --spec-file with browser_id and ordered fields; see items invoke --help")
+	if operation == "fill" {
+		if err := validateVaultFillItem(params, item); err != nil {
+			return err
 		}
-		params.OfFill = fill
-	case "collect":
-		params.OfCollect = &kernel.CollectVaultItemOperationRequestParam{Type: "collect"}
-	default:
-		params.OfAuthorize = &kernel.VaultItemPerformOperationParamsBodyAuthorize{}
-		opts = append(opts, option.WithJSONSet("type", operation))
+		return c.fill(ctx, vault, key, params, output)
 	}
-	result, err := c.vaults.Items.PerformOperation(ctx, key, params, opts...)
+	request := kernel.VaultItemPerformOperationParams{IDOrName: vault}
+	if operation == "collect" {
+		request.OfCollect = &kernel.CollectVaultItemOperationRequestParam{Type: "collect"}
+	} else {
+		// Preserve support for other advertised parameterless operations.
+		request.OfAuthorize = &kernel.VaultItemPerformOperationParamsBodyAuthorize{Type: constant.Authorize(operation)}
+	}
+	response, err := c.vaults.Items.PerformOperation(ctx, key, request, option.WithMaxRetries(0))
 	if err != nil {
-		if operation == "fill" {
-			return vaultFillError(err)
-		}
 		if item.Type == "credential" {
 			return vaultCredentialError(err)
 		}
 		return util.CleanedUpSdkError{Err: err}
 	}
-	if operation == "fill" {
-		return printVaultFill(result, len(fill.Fields))
+	if response == nil || (response.Type != "card" && response.Type != "wallet" && response.Type != "credential") {
+		return fmt.Errorf("unexpected vault operation response; inspect the item and do not retry")
 	}
 	var updated kernel.VaultItemUnion
-	if err := json.Unmarshal([]byte(result.RawJSON()), &updated); err != nil {
-		return fmt.Errorf("invalid vault item response")
+	if err := json.Unmarshal([]byte(response.RawJSON()), &updated); err != nil {
+		return fmt.Errorf("invalid vault item response; inspect the item and do not retry")
 	}
 	return c.showItem(&updated, output, open)
 }

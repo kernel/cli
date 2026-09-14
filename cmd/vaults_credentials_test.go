@@ -11,8 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	kernel "github.com/kernel/kernel-go-sdk"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -105,7 +103,11 @@ func TestCredentialCollectAndFill(t *testing.T) {
 					return
 				}
 				assert.JSONEq(t, `{"type":"fill","browser_id":"browser-1","fields":[{"field":"password","selector":"#password"}]}`, string(data))
-				io.WriteString(w, fmt.Sprintf(`{"type":"fill","status":%q,"fields":[{"index":0,"status":"filled"}],"secret":"never-print"}`, status))
+				fieldStatus := status
+				if status == "completed" {
+					fieldStatus = "filled"
+				}
+				io.WriteString(w, fmt.Sprintf(`{"type":"fill","status":%q,"fields":[{"index":0,"status":%q}],"secret":"never-print"}`, status, fieldStatus))
 			})
 			op := "fill"
 			if status == "collect" {
@@ -117,7 +119,8 @@ func TestCredentialCollectAndFill(t *testing.T) {
 			}
 			out, _, err := executeVaultCommand(t, client, args...)
 			if status == "failed" || status == "unknown" {
-				require.ErrorContains(t, err, "do not automatically retry")
+				require.ErrorContains(t, err, "fill "+status)
+				assert.True(t, json.Valid([]byte(out)))
 			} else {
 				require.NoError(t, err)
 			}
@@ -179,12 +182,9 @@ func TestCredentialFillRejectsUnsafeOutcomes(t *testing.T) {
 		`{"type":"fill","status":"completed","fields":[{"index":0,"status":"filled","error_code":"secret-echo"}]}`,
 		`{"type":"fill","status":"completed","fields":[]}`,
 	} {
-		var result kernel.VaultItemOperationResponseUnion
-		require.NoError(t, json.Unmarshal([]byte(raw), &result))
-		var err error
-		out := captureStdout(t, func() { err = printVaultFill(&result, 1) })
+		result, err := parseVaultFillResult(json.RawMessage(raw), 1)
 		require.Error(t, err)
-		assert.Empty(t, out)
+		assert.Nil(t, result)
 		assert.NotContains(t, err.Error(), "secret-echo")
 	}
 }
