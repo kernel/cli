@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -110,6 +111,22 @@ func (c VaultsCmd) saveCredential(ctx context.Context, vault, key string, data [
 		return vaultCredentialError(err)
 	}
 	return c.showItem(item, output, open)
+}
+
+func vaultFillError(err error) error {
+	var apiErr *kernel.Error
+	if errors.As(err, &apiErr) {
+		var body struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
+			switch body.Code {
+			case "invalid_request", "invalid_selector", "duplicate_target", "timeout", "target_changed", "page_not_found", "ambiguous_page", "element_not_found", "ambiguous_selector", "element_not_editable", "option_not_found", "field_unavailable", "conflict", "destination_denied", "execution_failed":
+				return fmt.Errorf("fill failed: %s (HTTP %d); inspect the browser and item before further action; do not automatically retry", body.Code, apiErr.StatusCode)
+			}
+		}
+	}
+	return vaultCredentialError(err)
 }
 
 func printVaultFill(result *kernel.VaultItemOperationResponseUnion, expectedFields int) error {

@@ -250,7 +250,10 @@ func (c VaultsCmd) invoke(ctx context.Context, vault, key, operation, output str
 	}
 	result, err := c.vaults.Items.PerformOperation(ctx, key, params, opts...)
 	if err != nil {
-		if item.Type == "credential" || operation == "fill" {
+		if operation == "fill" {
+			return vaultFillError(err)
+		}
+		if item.Type == "credential" {
 			return vaultCredentialError(err)
 		}
 		return util.CleanedUpSdkError{Err: err}

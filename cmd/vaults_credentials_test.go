@@ -127,6 +127,30 @@ func TestCredentialCollectAndFill(t *testing.T) {
 	}
 }
 
+func TestCredentialFillErrorCodes(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	for _, code := range []string{"ambiguous_selector", "secret-echo"} {
+		calls := 0
+		client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			w.Header().Set("Content-Type", "application/json")
+			if calls == 1 {
+				io.WriteString(w, credentialFixture)
+				return
+			}
+			w.WriteHeader(400)
+			fmt.Fprintf(w, `{"code":%q,"message":"secret-echo"}`, code)
+		})
+		_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "user", "login", "fill", "--spec-file", credentialSpecFile(t, `{"browser_id":"browser-1","fields":[{"field":"password","selector":"#password"}]}`))
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "secret-echo")
+		assert.Equal(t, 2, calls)
+		if code == "ambiguous_selector" {
+			assert.Contains(t, err.Error(), code)
+		}
+	}
+}
+
 func TestCredentialFillRejectsUnsafeOutcomes(t *testing.T) {
 	for _, raw := range []string{
 		`{"type":"fill","status":"secret-echo","fields":[]}`,
