@@ -315,6 +315,13 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	for _, op := range actions.Operations {
 		pterm.Printf("Available operation: %s — %s\n", op.Type, op.Description)
 	}
+	if item.Type == "credential" {
+		if actions.RequiredAction != "" {
+			pterm.Info.Println("Share the collection URL with the user to complete the credential form. Observe readiness with items get --wait 60; for edits to an already-ready item, compare versions without --wait.")
+		}
+		pterm.Info.Println("Ready means required fields are populated, not that login succeeded. Fill only when advertised; fill does not submit the form.")
+		return
+	}
 	if item.Type == "card" {
 		card := item.AsCard()
 		for _, expansion := range card.AvailableExpansions {
