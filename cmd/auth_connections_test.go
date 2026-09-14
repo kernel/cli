@@ -759,6 +759,71 @@ func TestCreate_BrowserConfig(t *testing.T) {
 	assert.False(t, browser.Stealth.Value)
 }
 
+// Region is part of the connection's browser config: create sets it, update
+// moves future sessions, and login overrides it for that login only.
+func TestCreate_BrowserRegion(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.AuthConnectionNewParams
+	fake := &FakeAuthConnectionService{
+		NewFunc: func(ctx context.Context, body kernel.AuthConnectionNewParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			captured = body
+			return &kernel.ManagedAuth{ID: "auth_1"}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+	require.NoError(t, c.Create(context.Background(), AuthConnectionCreateInput{
+		Domain:      "example.com",
+		ProfileName: "prof",
+		Region:      "eu-west",
+	}))
+
+	assert.Equal(t, kernel.ManagedAuthBrowserConfigRegionEuWest, captured.ManagedAuthCreateRequest.Browser.Region)
+}
+
+// Region alone is a real change, so it must satisfy update's "at least one
+// field" check rather than being dropped.
+func TestUpdate_BrowserRegion(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.AuthConnectionUpdateParams
+	fake := &FakeAuthConnectionService{
+		UpdateFunc: func(ctx context.Context, id string, body kernel.AuthConnectionUpdateParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			captured = body
+			return &kernel.ManagedAuth{ID: id}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+	require.NoError(t, c.Update(context.Background(), AuthConnectionUpdateInput{ID: "auth_1", Region: "ap-southeast"}))
+
+	assert.Equal(t, kernel.ManagedAuthBrowserConfigRegionApSoutheast, captured.ManagedAuthUpdateRequest.Browser.Region)
+}
+
+func TestLogin_BrowserRegion(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.AuthConnectionLoginParams
+	fake := &FakeAuthConnectionService{
+		LoginFunc: func(ctx context.Context, id string, body kernel.AuthConnectionLoginParams, opts ...option.RequestOption) (*kernel.LoginResponse, error) {
+			captured = body
+			return &kernel.LoginResponse{ID: id}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+	require.NoError(t, c.Login(context.Background(), AuthConnectionLoginInput{ID: "auth_1", Region: "us-east"}))
+
+	assert.Equal(t, kernel.ManagedAuthBrowserConfigRegionUsEast, captured.Browser.Region)
+}
+
+func TestCreate_InvalidRegionErrors(t *testing.T) {
+	capturePtermOutput(t)
+	c := AuthConnectionCmd{svc: &FakeAuthConnectionService{}}
+
+	err := c.Create(context.Background(), AuthConnectionCreateInput{
+		Domain: "example.com", ProfileName: "prof", Region: "mars",
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid --region value")
+}
+
 func TestLogin_BrowserProxyMode(t *testing.T) {
 	capturePtermOutput(t)
 	var captured kernel.AuthConnectionLoginParams

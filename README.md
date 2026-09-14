@@ -1027,16 +1027,19 @@ Managed auth connections (`kernel auth connections`). The commands below are new
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel auth connections create` - New flags:
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy configuration for this connection's login, reauth, and health-check browser sessions (mutually exclusive). Omit to derive the default from stealth.
+  - `--region us-east|eu-west|ap-southeast` - Region for this connection's browser sessions (default: `us-east`). Non-default regions require an eligible plan and organization access.
   - `--stealth` - Whether those browser sessions run in stealth mode (default: true); use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Default telemetry for this connection's browser sessions. Same semantics as `kernel browsers create`
   - `--telemetry-export-otlp <id-or-name>` - Export this connection's captured telemetry over OTLP to one of the org's configured destinations. Implies `--telemetry=all` when `--telemetry` is not set. Use `=off` to disable export.
 - `kernel auth connections update <id>` - New flags:
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy configuration for future browser sessions (mutually exclusive). Use `--proxy-mode=default` to drop a selected proxy rather than passing an empty value.
+  - `--region us-east|eu-west|ap-southeast` - Region for future browser sessions; omit to keep the current region
   - `--stealth` - Set whether future browser sessions run in stealth mode; use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Update telemetry for future browser sessions
   - `--telemetry-export-otlp <id-or-name>` - Update where future sessions export captured telemetry. Naming a destination requires passing `--telemetry` in the same command, since the API validates capture and export together and enabling capture here would replace the connection's current category selection. Use `=off` to disable export.
 - `kernel auth connections login <id>` - New flags:
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy override for this login's browser session (mutually exclusive); omitted properties inherit the connection defaults
+  - `--region us-east|eu-west|ap-southeast` - Region override for this login's browser session; omit to inherit the connection's region. Applies only to this login.
   - `--stealth` - Stealth override for this login's browser session; use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Telemetry override for this login only, merged onto the connection's config
   - `--telemetry-export-otlp <id-or-name>` - Export override for this login only. Naming a destination requires passing `--telemetry` in the same command. Use `=off` to disable export.
