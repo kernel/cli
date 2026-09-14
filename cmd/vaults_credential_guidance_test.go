@@ -33,6 +33,8 @@ func TestCredentialHumanGuidance(t *testing.T) {
 				assert.Contains(t, output, "items get --wait 60")
 				assert.Contains(t, output, "compare versions without --wait")
 				assert.Contains(t, output, "not that login succeeded")
+				assert.Contains(t, output, "Do not use credential items for credit card data")
+				assert.Contains(t, output, "Use wallet and card item types")
 				assert.Contains(t, output, "Available operation: fill")
 				assert.NotContains(t, output, "with the provider")
 				assert.NotContains(t, output, "OAuth codes")

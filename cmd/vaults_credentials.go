@@ -13,6 +13,11 @@ import (
 )
 
 const vaultCredentialHelp = `Create credentials from the fields observed on a website.
+
+Do not use credential items to store, collect, or fill credit card data, including
+card numbers (PANs), security codes (CVV/CVC), or expiration dates. Use wallet and
+card item types for credit cards and payment checkout instead.
+
 First create a vault for the end user and attach it with browsers create --vault.
 Use a protected JSON file or stdin, never secret values in shell arguments.
 The spec contains description and fields keyed by name. Field types are text,

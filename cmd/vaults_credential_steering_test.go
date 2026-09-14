@@ -3,6 +3,7 @@ package cmd
 import (
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,9 +23,12 @@ func TestCredentialEmptyStringUpdate(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestCredentialHelpSteersDisplayNameAndSensitivity(t *testing.T) {
+func TestCredentialHelpSteering(t *testing.T) {
 	cmd, _, err := newVaultsCommand().Find([]string{"credentials", "create"})
 	require.NoError(t, err)
+	assert.Contains(t, cmd.Long, "Do not use credential items to store, collect, or fill credit card data")
+	assert.Contains(t, strings.Join(strings.Fields(cmd.Long), " "), "Use wallet and card item types for credit cards and payment checkout instead")
+	assert.Contains(t, newVaultsCommand().Long, "Use wallet and card item types")
 	assert.Contains(t, cmd.Long, "recognizable site name only")
 	assert.Contains(t, cmd.Long, "sensitive:false explicitly for ordinary usernames and email addresses")
 	assert.Contains(t, cmd.Example, `"description":"Hacker News"`)

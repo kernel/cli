@@ -319,6 +319,7 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		if actions.RequiredAction != "" {
 			pterm.Info.Println("Share the collection URL with the user to complete the credential form. Observe readiness with items get --wait 60; for edits to an already-ready item, compare versions without --wait.")
 		}
+		pterm.Info.Println("Do not use credential items for credit card data. Use wallet and card item types for credit cards and payment checkout instead.")
 		pterm.Info.Println("Ready means required fields are populated, not that login succeeded. Fill only when advertised; fill does not submit the form.")
 		return
 	}

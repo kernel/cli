@@ -302,6 +302,8 @@ null or an empty string clears supported fields, including required text/email/p
 without retries. `items invoke <vault> <key> collect` reopens the full form without
 clearing values; compare versions to observe edits to already-ready items.
 
+Do not use credential items to store, collect, or fill credit card data, including card numbers (PANs), security codes (CVV/CVC), or expiration dates. Use wallet and card item types for credit cards and payment checkout instead.
+
 Set `description` to the recognizable site name only, such as `Hacker News`, not `Hacker News sign-in credentials`. Set `sensitive: false` explicitly for ordinary usernames and email addresses. Reserve `sensitive: true` for passwords, API tokens, and TOTP seeds; the omitted default remains true for safety.
 
 Types are `text`, `email`, `password`, and `totp`. TOTP seeds must be provided through

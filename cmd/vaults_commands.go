@@ -54,6 +54,9 @@ func newVaultsCommand() *cobra.Command {
 		Use: "vaults", Aliases: []string{"vault"}, Short: "Collect user credentials and manage payment credentials",
 		Long: `Collect user credentials and manage payment credentials; fill never submits website forms.
 
+Do not use credential items to store, collect, or fill credit card data.
+Use wallet and card item types for credit cards and payment checkout instead.
+
 User credential flow:
 1. Create a vault per end user and create a browser with --vault <id-or-name>.
 2. Navigate to a sensitive form and define its fields with credentials create --spec-file.
