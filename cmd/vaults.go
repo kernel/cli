@@ -261,10 +261,11 @@ func (c VaultsCmd) invoke(ctx context.Context, vault, key, operation, output str
 	if operation == "fill" {
 		return printVaultFill(result, len(fill.Fields))
 	}
-	if err := json.Unmarshal([]byte(result.RawJSON()), &item); err != nil {
+	var updated kernel.VaultItemUnion
+	if err := json.Unmarshal([]byte(result.RawJSON()), &updated); err != nil {
 		return fmt.Errorf("invalid vault item response")
 	}
-	return c.showItem(item, output, open)
+	return c.showItem(&updated, output, open)
 }
 
 func (c VaultsCmd) Events(ctx context.Context, vault, key, after string, wait int64, output string) error {

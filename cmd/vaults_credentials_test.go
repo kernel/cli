@@ -127,6 +127,28 @@ func TestCredentialCollectAndFill(t *testing.T) {
 	}
 }
 
+func TestCredentialOperationDoesNotRetainOldAction(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	var response map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal([]byte(credentialFixture), &response))
+	delete(response, "action")
+	fresh, err := json.Marshal(response)
+	require.NoError(t, err)
+	calls := 0
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if calls == 1 {
+			io.WriteString(w, credentialFixture)
+		} else {
+			w.Write(fresh)
+		}
+	})
+	out, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "user", "login", "collect", "-o", "json")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "#token=")
+}
+
 func TestCredentialFillErrorCodes(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
 	for _, code := range []string{"ambiguous_selector", "secret-echo"} {
