@@ -32,10 +32,14 @@ func effectiveVaultItemActions(item *kernel.VaultItemUnion) (vaultItemActions, e
 	if err := json.Unmarshal([]byte(item.RawJSON()), &fields); err != nil {
 		return vaultItemActions{}, fmt.Errorf("invalid vault item operations: %w", err)
 	}
+	approvalURL := item.State.Authorization.ApprovalURL
+	if item.State.Status == "preparing" && item.State.Preparation.ApprovalURL != "" {
+		approvalURL = item.State.Preparation.ApprovalURL
+	}
 	return vaultItemActions{
 		RequiredAction: item.Action.Name,
 		ActionURL:      item.Action.URL,
-		ApprovalURL:    item.State.Authorization.ApprovalURL,
+		ApprovalURL:    approvalURL,
 		Operations:     fields.Operations,
 	}, nil
 }

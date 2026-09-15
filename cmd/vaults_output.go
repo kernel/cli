@@ -289,9 +289,6 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		if !p.ExpiresAt.IsZero() {
 			rows = append(rows, []string{"Submit before", util.FormatLocal(p.ExpiresAt)})
 		}
-		if p.ApprovalURL != "" {
-			rows = append(rows, []string{"Preparation approval URL", p.ApprovalURL})
-		}
 	}
 	if item.State.JSON.Authorization.Valid() {
 		a := item.State.Authorization

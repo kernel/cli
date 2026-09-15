@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -83,6 +84,32 @@ func TestCredentialInitialValuesWithReleasedSDK(t *testing.T) {
 		assert.NotContains(t, out, value)
 	}
 	assert.Contains(t, out, `"has_value": true`)
+}
+
+func TestVaultPreparationApprovalURLIsPrintedInFull(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	approvalURL := "https://approve.example/" + strings.Repeat("long-token", 40)
+	fixture := strings.Replace(preparationCardFixture, `"action":{"name":"spend_approval","url":"https://approve.example/prepare"},`, "", 1)
+	fixture = strings.Replace(fixture, "https://approve.example/prepare", approvalURL, 1)
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, fixture)
+	})
+	_, text, err := executeVaultCommand(t, client, "vaults", "items", "get", "user-123", "order-1")
+	require.NoError(t, err)
+	assert.Contains(t, text, "Approval URL:\n"+approvalURL+"\n")
+	assert.NotContains(t, text, "Preparation approval URL")
+}
+
+func TestVaultFileValidationUsesFieldNames(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("invalid input must not reach the API")
+	})
+	_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "user-123", "login", "fill", "--spec-file", credentialSpecFile(t, `{"browser_id":"","fields":[]}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "browser_id")
+	assert.NotContains(t, err.Error(), "--params")
 }
 
 func TestVaultPreparationEventsAreProjected(t *testing.T) {

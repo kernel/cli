@@ -34,7 +34,7 @@ var vaultFillPageURLPattern = regexp.MustCompile(`^https?://[^/?#@*\s]+(?:[/?#][
 
 // Reject duplicate and unknown keys without including payloads in diagnostics.
 func vaultParamsObject(raw, allowed string) (map[string]json.RawMessage, error) {
-	invalid := fmt.Errorf("--params must contain JSON objects with only supported, non-duplicate properties")
+	invalid := fmt.Errorf("operation parameters must contain JSON objects with only supported, non-duplicate properties")
 	dec := json.NewDecoder(strings.NewReader(raw))
 	token, err := dec.Token()
 	if err != nil || token != json.Delim('{') {
@@ -52,7 +52,7 @@ func vaultParamsObject(raw, allowed string) (map[string]json.RawMessage, error) 
 			return nil, invalid
 		}
 		if key == "type" {
-			return nil, fmt.Errorf("--params must not contain type; the positional operation supplies it")
+			return nil, fmt.Errorf("operation parameters must not contain type; the positional operation supplies it")
 		}
 		if _, duplicate := object[key]; duplicate || !slices.Contains(keys, key) {
 			return nil, invalid
@@ -115,42 +115,42 @@ func parseVaultFillParams(raw string) (*vaultFillParams, error) {
 	}
 	var params vaultFillParams
 	if json.Unmarshal(object["browser_id"], &params.BrowserID) != nil || strings.TrimSpace(params.BrowserID) == "" {
-		return nil, fmt.Errorf("--params.browser_id must be a non-empty browser session ID, not a name")
+		return nil, fmt.Errorf("browser_id must be a non-empty browser session ID, not a name")
 	}
 	if rawURL, present := object["page_url"]; present {
 		if json.Unmarshal(rawURL, &params.PageURL) != nil || !vaultFillPageURLPattern.MatchString(params.PageURL) {
-			return nil, fmt.Errorf("--params.page_url must be an exact HTTP or HTTPS URL without credentials or a wildcard host")
+			return nil, fmt.Errorf("page_url must be an exact HTTP or HTTPS URL without credentials or a wildcard host")
 		}
 		u, err := url.Parse(params.PageURL)
 		if err != nil || u.Hostname() == "" || u.User != nil || u.Opaque != "" {
-			return nil, fmt.Errorf("--params.page_url must be an exact HTTP or HTTPS URL without credentials")
+			return nil, fmt.Errorf("page_url must be an exact HTTP or HTTPS URL without credentials")
 		}
 	}
 	if timeout, ok := object["timeout_ms"]; ok {
 		if json.Unmarshal(timeout, &params.TimeoutMS) != nil || params.TimeoutMS == nil || *params.TimeoutMS < 1 || *params.TimeoutMS > 30000 {
-			return nil, fmt.Errorf("--params.timeout_ms must be an integer between 1 and 30000")
+			return nil, fmt.Errorf("timeout_ms must be an integer between 1 and 30000")
 		}
 	}
 	var fields []json.RawMessage
 	if json.Unmarshal(object["fields"], &fields) != nil || len(fields) < 1 || len(fields) > 32 {
-		return nil, fmt.Errorf("--params.fields must be an array of 1-32 field bindings")
+		return nil, fmt.Errorf("fields must be an array of 1-32 field bindings")
 	}
 	params.Fields = make([]vaultFillField, 0, len(fields))
 	for i, rawField := range fields {
 		field, err := vaultParamsObject(string(rawField), "field selector format")
 		if err != nil {
-			return nil, fmt.Errorf("--params.fields[%d]: %w", i, err)
+			return nil, fmt.Errorf("fields[%d]: %w", i, err)
 		}
 		var binding vaultFillField
 		if json.Unmarshal(field["selector"], &binding.Selector) != nil || strings.TrimSpace(binding.Selector) == "" {
-			return nil, fmt.Errorf("--params.fields[%d].selector must be a non-empty CSS selector", i)
+			return nil, fmt.Errorf("fields[%d].selector must be a non-empty CSS selector", i)
 		}
 		if json.Unmarshal(field["field"], &binding.Field) != nil || strings.TrimSpace(binding.Field) == "" || len(binding.Field) > 64 {
-			return nil, fmt.Errorf("--params.fields[%d].field must be a non-empty field name of at most 64 bytes", i)
+			return nil, fmt.Errorf("fields[%d].field must be a non-empty field name of at most 64 bytes", i)
 		}
 		if format, present := field["format"]; present {
 			if json.Unmarshal(format, &binding.Format) != nil || (binding.Format != "MM/YY" && binding.Format != "MM/YYYY") {
-				return nil, fmt.Errorf("--params.fields[%d].format must be MM/YY or MM/YYYY", i)
+				return nil, fmt.Errorf("fields[%d].format must be MM/YY or MM/YYYY", i)
 			}
 		}
 		params.Fields = append(params.Fields, binding)
