@@ -332,26 +332,11 @@ cannot switch projects.
 | `kernel vaults wallets payment-methods <vault> <key>` | Fetch advertised live payment methods; JSON is the item with `expanded.payment_methods` |
 | `kernel vaults cards create <vault> <key> --provider link\|agentcard --spec '<json>'` | Create a card request; never implicitly authorize Link |
 | `kernel vaults cards update <vault> <key> --provider link\|agentcard --spec '<json>'` | Update a card spec; pending issuance preserves omitted optional fields, and the API enforces state/provider constraints |
-| `kernel vaults credentials create <vault> <key> --spec '<json>'` | Declare a credential item's fields; `--values-file <path\|->` seeds values, `--open` opens a returned collection URL |
-| `kernel vaults credentials update <vault> <key> --version <n>` | Set or clear values and the description; `--values-file <path\|->`, `--description`, `--expected-item-id` |
 | `kernel vaults items list <vault>` | List item keys, types, providers, status, and required actions |
 | `kernel vaults items get <vault> <key>` | Inspect state/actions/returned aliases and copyable operation commands; `--wait 0..60`, `--expand payment_methods`, `--open` |
 | `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; `authorize --open` opens a returned HTTPS action; `prepare_checkout --params '<json>'` prepares an unused AgentCard card for Square Pay; `fill --params '<json>'` fills checkout or login fields; `collect --open` opens a credential item's hosted form |
 | `kernel vaults items events <vault> <key>` | Read ordered audit events; `--after <event-id>`, `--wait 0..60` |
 | `kernel vaults items delete <vault> <key>` | Invalidate an item; `--yes` skips confirmation |
-| `kernel vaults provider-configs create --name <name> --provider link\|agentcard --client-id <id>` | Register customer-owned provider credentials; `--client-secret` or `--client-secret-file` (`-` reads stdin) |
-| `kernel vaults provider-configs list` | `--page` (default 1), `--per-page 1..100` (default 20) |
-| `kernel vaults provider-configs get <id-or-name>` | Get by ID or name; secrets are never returned |
-| `kernel vaults provider-configs update <id-or-name>` | `--name` renames, `--client-secret`/`--client-secret-file` rotates; the client ID is immutable |
-| `kernel vaults provider-configs delete <id-or-name>` | Refused with 409 while a vault item still references it; `--yes` skips confirmation |
-
-`provider-configs` commands are organization-scoped: they need an organization-scoped API key
-or dashboard login, a project-scoped key receives 403, and `--project` does not apply.
-A configuration is shared across the organization's projects and serves many wallets.
-Select one for an AgentCard wallet with `provider_config` in `--spec`, or omit it to use
-Kernel-managed credentials; the binding is fixed at wallet creation and renaming a
-configuration does not rebind existing wallets. Customer-managed Link wallets are created by
-importing a grant's OAuth tokens, which this CLI never accepts — create them from your backend.
 
 `<vault>` accepts an ID or name. `<key>` is the immutable item key within that vault, not
 its generated item ID. Names and keys use letters, digits, dots, underscores, and hyphens
@@ -524,11 +509,10 @@ kernel vaults cards create agentcard-checkout order-1 --provider agentcard --spe
 kernel browsers create --vault agentcard-checkout
 ```
 
-AgentCard authorizes at checkout and does not advertise `authorize`. Eligible unused AgentCard
-cards advertise `prepare_checkout` instead; see [Prepare a Square checkout](#prepare-a-square-checkout).
-To select a vaulted card in advance, inspect `wallets payment-methods` and include its ID as
-`card_id` in the card spec. Otherwise, the cardholder selects a card at approval. A reusable card
-being `ready` does not mean the last payment succeeded.
+AgentCard authorizes at checkout and does not currently advertise `authorize`. To select a
+vaulted card in advance, inspect `wallets payment-methods` and include its ID as `card_id` in the
+card spec. Otherwise, the cardholder selects a card at approval. A reusable card being
+`ready` does not mean the last payment succeeded.
 
 #### Invoking item operations
 
@@ -593,7 +577,6 @@ kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browse
   the CLI does not resolve names.
 - For cards, `page_url` is the exact current top-level HTTPS URL, including path, query, and fragment,
   without embedded credentials. It must match exactly one open page; no prefix/glob matching.
-  Cards require it. Credential items may omit it, which then requires exactly one open page.
 - `fields` contains 1-32 bindings in write order. Each has `field` and a nonempty CSS
   `selector` targeting an editable input/select or its container. The API searches the selected
   page and descendants, including payment iframes. Do not supply frame IDs or literal values.
@@ -910,113 +893,6 @@ kernel browsers webmcp invoke my-browser --tool-ref '<tool_ref>' --input-file in
   - `--to <dir>` - Directory to extract the profile into (required)
   - `--format <format>` - Archive format to request: `tar.zst` (compressed, default) or `tar` (decompressed server-side)
 
-### Vaults
-
-A vault is a named, project-scoped container for payment items. Vault names and
-item keys are immutable, so `create` behaves as an upsert: creating with a name
-or key that already exists returns what is there rather than failing. Link
-vaults to a session with `kernel browsers create --vault <id-or-name>`.
-
-- `kernel vaults list` - List vaults in the current project
-  - `--page <n>` - Page number, 1-based (default 1)
-  - `--per-page <n>` - Items per page (default 20)
-  - `--output json`, `-o json` - Output raw JSON array
-  - When more vaults are available, the CLI prints the exact command to fetch the next page
-- `kernel vaults get <id-or-name>` - Get a vault by ID or name
-  - `--output json`, `-o json` - Output raw JSON object
-- `kernel vaults create --name <name>` - Create or retrieve a vault by name
-  - `--name <name>` - Immutable vault name (required)
-  - `--output json`, `-o json` - Output raw JSON object
-- `kernel vaults delete <id-or-name>` - Delete a vault; every item it holds is invalidated
-  - `-y, --yes` - Skip confirmation prompt
-
-#### Vault Items
-
-An item is a wallet (an authorized funding source), a card (a payment credential
-minted from a wallet), or a credential (a login or other non-payment secret with
-no wallet or provider). Items advertise the operations valid in their current
-state, so run `kernel vaults items get` and read `Available Operations` before
-invoking one.
-
-- `kernel vaults items list <vault-id-or-name>` - List a vault's items; secret values are never returned
-  - `--output json`, `-o json` - Output raw JSON array
-- `kernel vaults items get <vault-id-or-name> <key>` - Get an item and the operations currently valid for it
-  - `--wait <seconds>` - Hold for up to this many seconds while the item is pending authorization or approval (max 60)
-  - `--expand <type>` - Request live provider data listed under `Available Expansions`, e.g. `payment_methods` (repeatable or comma-separated). Expanded data is fetched from the provider and is not persisted in the item.
-  - `--output json`, `-o json` - Output raw JSON object
-- `kernel vaults items create <vault-id-or-name> <key> --type <wallet|card> --spec <json>` - Create or retrieve an item by key
-  - `--type wallet|card` - Item type (required)
-  - `--spec <json>` - Provider-specific spec as a JSON object, discriminated by its `provider` field. Amounts are integers in minor currency units (`1250` = $12.50).
-  - `--spec-file <path>` - Read the spec from a file (use `-` for stdin). Mutually exclusive with `--spec`.
-  - `--output json`, `-o json` - Output raw JSON object
-
-  Examples:
-
-  ```bash
-  kernel vaults items create my-vault my-wallet --type wallet \
-    --spec '{"provider":"agentcard","user_id":"usr_123"}'
-
-  kernel vaults items create my-vault my-wallet --type wallet \
-    --spec '{"provider":"link","authorization":{"method":"oauth","client":{"type":"kernel_managed"}}}'
-
-  kernel vaults items create my-vault my-card --type card \
-    --spec '{"provider":"agentcard","wallet":"my-wallet","merchant":"Acme","amount":1250,"currency":"USD"}'
-  ```
-
-- `kernel vaults items update <vault-id-or-name> <key> --spec <json>` - Update a card item's spec before or between authorizations
-  - `--spec <json>` / `--spec-file <path>` - Full replacement card spec (only card items can be updated)
-  - `--output json`, `-o json` - Output raw JSON object
-- `kernel vaults items invoke <vault-id-or-name> <key> <operation>` - Perform an operation the item advertises
-  - `<operation>` - Operation to perform, e.g. `authorize`, `collect`, `prepare_checkout`, or `fill`. Operations may call an external provider and return the item's updated state.
-  - `--params <json>` - Operation inputs for `prepare_checkout` and `fill`; omit `type`. `authorize` and `collect` take none.
-  - `--open` - Open a returned HTTPS action or approval URL for `authorize`, `collect`, and `prepare_checkout`
-  - `--output json`, `-o json` - Output raw JSON object
-- `kernel vaults items events <vault-id-or-name> <key>` - List an item's immutable audit events, oldest first
-  - `--after <event-id>` - Return only events after this event ID
-  - `--wait <seconds>` - Long-poll for new events for up to this many seconds (max 60). Together with `--after`, this follows an item's progress.
-  - `--output json`, `-o json` - Output raw JSON array
-- `kernel vaults items delete <vault-id-or-name> <key>` - Delete an item; its secret value is invalidated
-  - `-y, --yes` - Skip confirmation prompt
-
-#### Credential Items
-
-A credential item stores a login or other non-payment secret with no wallet and no
-external provider. Declare its fields once; field names, types, required flags, and
-sensitivity are fixed at creation. Never store card numbers, security codes, or
-expiration dates in a credential item - use wallet and card items for payments.
-
-Values are write-only and never appear in shell arguments: pass them through
-`--values-file <path>` (or `-` for stdin) as a JSON object of field names to values.
-
-- `kernel vaults credentials create <vault-id-or-name> <key> --spec <json>` - Declare a credential item
-  - `--spec <json>` - `{"description"?: string, "fields": {"<name>": {"type": "text"|"email"|"password"|"totp", "required"?: bool, "sensitive"?: bool}}}` (required). Field names match `[a-zA-Z][a-zA-Z0-9_]{0,63}`; 1-32 fields. Values are rejected here.
-  - `--values-file <path>` - JSON object of declared field names to non-empty string values (`-` reads stdin)
-  - `--open` - Open a returned HTTPS collection URL
-  - `--output json`, `-o json` - Output raw JSON object
-- `kernel vaults credentials update <vault-id-or-name> <key> --version <n>` - Set or clear values and the description
-  - `--version <n>` - Expected current item version from the latest read (required). A concurrent edit returns 409 instead of being overwritten.
-  - `--values-file <path>` - JSON object of field names to values; `null` or `""` clears one immediately (`-` reads stdin)
-  - `--description <text>` - Replacement form title; `""` clears it
-  - `--expected-item-id <id>` - Immutable item ID precondition; returns 409 if the key now identifies a different item
-  - `--output json`, `-o json` - Output raw JSON object
-
-  Example:
-
-  ```bash
-  kernel vaults credentials create logins hacker-news     --spec '{"description":"Hacker News","fields":{"username":{"type":"text","sensitive":false},"password":{"type":"password"}}}'     --values-file ./values.json --open
-
-  # Open the hosted form again for the person who holds the credential
-  kernel vaults items invoke logins hacker-news collect --open
-
-  # Fill the login into a browser created with --vault logins
-  kernel vaults items invoke logins hacker-news fill -o json     --params '{"browser_id":"browser-session-id","fields":[{"field":"username","selector":"#login"},{"field":"password","selector":"#password"}]}'
-  ```
-
-If every required field has a value, the item is `ready` and no collection action is
-returned; `collect` still opens its form. Otherwise the item is `pending_collection`
-with a time-scoped hosted form URL - treat that URL as a secret. `ready` means the
-required values are present, not that a login succeeded.
-
 ### Projects
 
 - `kernel projects list` - List projects (up to 100 by default)
@@ -1109,21 +985,18 @@ Managed auth connections (`kernel auth connections`). The commands below are new
 - `kernel auth connections create` - New flags:
   - `--region us-east|eu-west|ap-southeast` - Region for this connection's login, reauth, and health-check browser sessions. Defaults to `us-east`.
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy configuration for this connection's login, reauth, and health-check browser sessions (mutually exclusive). Omit to derive the default from stealth.
-  - `--region us-east|eu-west|ap-southeast` - Region for this connection's browser sessions (default: `us-east`). Non-default regions require an eligible plan and organization access.
   - `--stealth` - Whether those browser sessions run in stealth mode (default: true); use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Default telemetry for this connection's browser sessions. Same semantics as `kernel browsers create`
   - `--telemetry-export-otlp <id-or-name>` - Export this connection's captured telemetry over OTLP to one of the org's configured destinations. Implies `--telemetry=all` when `--telemetry` is not set. Use `=off` to disable export.
 - `kernel auth connections update <id>` - New flags:
   - `--region us-east|eu-west|ap-southeast` - Update the region for browser sessions created after this command. Active sessions don't move.
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy configuration for future browser sessions (mutually exclusive). Use `--proxy-mode=default` to drop a selected proxy rather than passing an empty value.
-  - `--region us-east|eu-west|ap-southeast` - Region for future browser sessions; omit to keep the current region
   - `--stealth` - Set whether future browser sessions run in stealth mode; use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Update telemetry for future browser sessions
   - `--telemetry-export-otlp <id-or-name>` - Update where future sessions export captured telemetry. Naming a destination requires passing `--telemetry` in the same command, since the API validates capture and export together and enabling capture here would replace the connection's current category selection. Use `=off` to disable export.
 - `kernel auth connections login <id>` - New flags:
   - `--region us-east|eu-west|ap-southeast` - Region override for this login only. Omit it to inherit the connection region.
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy override for this login's browser session (mutually exclusive); omitted properties inherit the connection defaults
-  - `--region us-east|eu-west|ap-southeast` - Region override for this login's browser session; omit to inherit the connection's region. Applies only to this login.
   - `--stealth` - Stealth override for this login's browser session; use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Telemetry override for this login only, merged onto the connection's config
   - `--telemetry-export-otlp <id-or-name>` - Export override for this login only. Naming a destination requires passing `--telemetry` in the same command. Use `=off` to disable export.

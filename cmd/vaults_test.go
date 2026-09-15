@@ -34,15 +34,7 @@ func vaultTestClient(t *testing.T, handler http.HandlerFunc) kernel.Client {
 
 func executeVaultCommand(t *testing.T, client kernel.Client, args ...string) (string, string, error) {
 	t.Helper()
-	return executeVaultCommandWithStdin(t, client, nil, args...)
-}
-
-func executeVaultCommandWithStdin(t *testing.T, client kernel.Client, stdin io.Reader, args ...string) (string, string, error) {
-	t.Helper()
 	root := &cobra.Command{Use: "kernel", SilenceErrors: true, SilenceUsage: true}
-	if stdin != nil {
-		root.SetIn(stdin)
-	}
 	root.PersistentFlags().String("project", "", "Project")
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		project, _ := cmd.Flags().GetString("project")
@@ -60,7 +52,7 @@ func executeVaultCommandWithStdin(t *testing.T, client kernel.Client, stdin io.R
 }
 
 func TestVaultCommandConstruction(t *testing.T) {
-	for _, path := range []string{"create", "list", "get", "delete", "items list", "items get", "items delete", "items events", "wallets create", "wallets payment-methods", "cards create", "cards update", "items invoke", "credentials create", "credentials update"} {
+	for _, path := range []string{"create", "list", "get", "delete", "items list", "items get", "items delete", "items events", "wallets create", "wallets payment-methods", "cards create", "cards update", "items invoke"} {
 		t.Run(path, func(t *testing.T) {
 			cmd, remaining, err := newVaultsCommand().Find(strings.Fields(path))
 			require.NoError(t, err)

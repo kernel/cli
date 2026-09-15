@@ -82,12 +82,6 @@ Vault names, item keys, and project ownership are immutable.
    aliases are an alternative for explicitly chosen egress-substitution integrations,
    not a fallback after fill. Inspect items get/events for payment outcomes.
 
-For logins and other non-payment credentials, use credentials create instead of a
-wallet and card: declare the fields, supply any known values with --values-file,
-and hand the returned collection URL to whoever holds the credential. Attach the
-vault with browsers create --vault, then use advertised fill to bind its fields.
-Credential items must never hold card numbers, security codes, or expiration dates.
-
 Permitted checkout domains are provider-assigned and displayed when returned;
 there is no domain-setting API.
 Never supply card data, OAuth codes, ciphertext, or secrets in shell arguments.
@@ -100,7 +94,6 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 	}
 
 	create := &cobra.Command{Use: "create --name <name>", Short: "Create or retrieve a vault by immutable name", Args: cobra.NoArgs, PreRunE: vaultPreRun,
-		Long: "Create or retrieve a vault by immutable name.\nFree organizations can store up to 3 non-deleted vaults across all projects; paid plans and active trials have no vault cap.\nRetrieving an existing vault by name succeeds even at the limit.\nSee kernel org limits get for the current cap and usage.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, _ := cmd.Flags().GetString("name")
 			return getVaultsHandler(cmd).Create(cmd.Context(), name, vaultOutput(cmd))
@@ -256,90 +249,12 @@ JSON
 	return cmd
 }
 
-func newVaultCredentialCreateCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "create <vault> <key> --spec '<json>'", Short: "Declare a credential item and optionally seed its values", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: `Create a credential item at an immutable key, without a wallet or provider.
-Repeating the original creation request returns the current item without
-overwriting later edits; a different request at the same key returns 409.
-Use vaults credentials update for changes.
-` + vaultCredentialSpecHelp,
-		Example: `  kernel vaults credentials create logins hacker-news     --spec '{
-      "description": "Hacker News",
-      "fields": {
-        "username": {"type": "text", "sensitive": false},
-        "password": {"type": "password"}
-      }
-    }' --values-file ./values.json --open`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			spec, err := vaultCredentialSpecFromFlags(cmd)
-			if err != nil {
-				return err
-			}
-			open, _ := cmd.Flags().GetBool("open")
-			return getVaultsHandler(cmd).CreateCredential(cmd.Context(), args[0], args[1], spec, vaultOutput(cmd), open)
-		}}
-	cmd.Flags().String("spec", "", "Credential specification JSON with fields and an optional description (required)")
-	_ = cmd.MarkFlagRequired("spec")
-	addVaultCredentialValuesFlag(cmd)
-	cmd.Flags().Bool("open", false, "Open a returned HTTPS collection URL in your browser")
-	addVaultJSONOutputFlag(cmd)
-	return cmd
-}
-
-func newVaultCredentialUpdateCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "update <vault> <key> --version <n>", Short: "Set or clear credential values and the description", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: `Atomically update the description and selected values; omitted properties are preserved.
---version is the expected current item version from the latest read, so a
-concurrent edit returns 409 instead of being overwritten. Read it with items get.
-Field names, types, required flags, and sensitivity cannot change, and unknown
-field names return 400. A successful update increments the version and invalidates
-outstanding hosted collection sessions.
-
---values-file sets values; a JSON null or empty string clears one immediately.
-Clearing a required field reopens collection and returns a fresh collection action;
-clearing a required totp field returns 400 because no form can collect it.
---description "" clears the description.`,
-		Example: `  kernel vaults credentials update logins hacker-news --version 3 --values-file ./values.json
-  kernel vaults credentials update logins hacker-news --version 3 --description "Hacker News"`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			version, _ := cmd.Flags().GetInt64("version")
-			if version < 1 {
-				return fmt.Errorf("--version must be the expected current item version (1 or greater)")
-			}
-			expectedItemID, _ := cmd.Flags().GetString("expected-item-id")
-			spec, err := vaultCredentialUpdateSpecFromFlags(cmd)
-			if err != nil {
-				return err
-			}
-			open, _ := cmd.Flags().GetBool("open")
-			return getVaultsHandler(cmd).UpdateCredential(cmd.Context(), args[0], args[1], version, expectedItemID, spec, vaultOutput(cmd), open)
-		}}
-	cmd.Flags().Int64("version", 0, "Expected current item version from the latest read (required)")
-	_ = cmd.MarkFlagRequired("version")
-	cmd.Flags().String("description", "", "Replacement form title; an empty string clears it")
-	cmd.Flags().String("expected-item-id", "", "Immutable item ID precondition; returns 409 if the key now identifies a different item")
-	addVaultCredentialValuesFlag(cmd)
-	cmd.Flags().Bool("open", false, "Open a returned HTTPS collection URL in your browser")
-	addVaultJSONOutputFlag(cmd)
-	return cmd
-}
-
-func addVaultCredentialValuesFlag(cmd *cobra.Command) {
-	cmd.Flags().String("values-file", "", "JSON object of field names to values, read from a file (use '-' for stdin); never pass values as shell arguments")
-}
-
 func newVaultDeleteCommand(item bool) *cobra.Command {
 	use, short, nargs := "delete <vault>", "Delete a vault and invalidate all its items", 1
-	long := short + ".\nUnresolved payment operations block deletion, including operations on child cards of a wallet."
 	if item {
 		use, short, nargs = "delete <vault> <key>", "Delete an item and invalidate its credential", 2
-		long = short + `.
-Unresolved payment operations normally block deletion. An AgentCard checkout whose
-create response returned no authorization ID may be abandoned by deleting that card
-directly, so a replacement can be created; deleting its wallet or vault stays blocked.
-Deleting or recreating an item is not proof that a payment did not occur.`
 	}
-	cmd := &cobra.Command{Use: use, Short: short, Long: long, Args: cobra.ExactArgs(nargs), PreRunE: vaultPreRun,
+	cmd := &cobra.Command{Use: use, Short: short, Args: cobra.ExactArgs(nargs), PreRunE: vaultPreRun,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key := ""
 			if item {

@@ -32,13 +32,6 @@ type vaultFillField struct {
 
 var vaultFillPageURLPattern = regexp.MustCompile(`^https?://[^/?#@*\s]+(?:[/?#][^\s]*)?$`)
 
-// Declared credential field names; card field names also satisfy this pattern.
-var vaultFieldNamePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`)
-
-// Card fields the API fills from the decrypted card, excluding the combined
-// expiration field, which additionally requires a format.
-var vaultCardFillFields = []string{"number", "cvc", "exp_month", "exp_year", "billing_name", "billing_line1", "billing_line2", "billing_city", "billing_state", "billing_postal_code", "billing_country"}
-
 // Reject duplicate and unknown keys without including payloads in diagnostics.
 func vaultParamsObject(raw, allowed string) (map[string]json.RawMessage, error) {
 	invalid := fmt.Errorf("operation parameters must contain JSON objects with only supported, non-duplicate properties")
@@ -162,83 +155,7 @@ func parseVaultFillParams(raw string) (*vaultFillParams, error) {
 		}
 		params.Fields = append(params.Fields, binding)
 	}
-	return &vaultOperationParams{Fill: &params}, nil
-}
-
-// Preparations are single-use even after failure or expiry, so reject a
-// malformed checkout context before spending one.
-func parseVaultCheckoutContext(raw string, paramsSet bool) (*vaultCheckoutContext, error) {
-	if !paramsSet {
-		return nil, fmt.Errorf("prepare_checkout requires --params with browser_id, merchant_origin, and environment")
-	}
-	object, err := vaultParamsObject(raw, "browser_id merchant_origin environment")
-	if err != nil {
-		return nil, err
-	}
-	var checkout vaultCheckoutContext
-	if json.Unmarshal(object["browser_id"], &checkout.BrowserID) != nil || strings.TrimSpace(checkout.BrowserID) == "" {
-		return nil, fmt.Errorf("--params.browser_id must be a non-empty browser session ID, not a name")
-	}
-	if json.Unmarshal(object["environment"], &checkout.Environment) != nil || (checkout.Environment != "production" && checkout.Environment != "sandbox") {
-		return nil, fmt.Errorf("--params.environment must be production or sandbox; it describes Square, not the AgentCard credential mode")
-	}
-	if json.Unmarshal(object["merchant_origin"], &checkout.MerchantOrigin) != nil {
-		return nil, fmt.Errorf("--params.merchant_origin must be the top-level merchant document's origin, not the Square iframe")
-	}
-	origin, err := vaultMerchantOrigin(checkout.MerchantOrigin)
-	if err != nil {
-		return nil, err
-	}
-	checkout.MerchantOrigin = origin
-	return &checkout, nil
-}
-
-// A canonical origin carries no path, query, fragment, or credentials. HTTP is
-// accepted only for loopback test merchants.
-func vaultMerchantOrigin(value string) (string, error) {
-	invalid := fmt.Errorf("--params.merchant_origin must be a canonical HTTPS origin such as https://shop.example.com (http accepted only for localhost), without a path, query, or fragment")
-	u, err := url.Parse(strings.TrimSpace(value))
-	if err != nil || u.Host == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.Fragment != "" {
-		return "", invalid
-	}
-	if u.Path != "" && u.Path != "/" {
-		return "", invalid
-	}
-	switch u.Scheme {
-	case "https":
-	case "http":
-		if host := u.Hostname(); host != "localhost" && host != "127.0.0.1" && host != "::1" {
-			return "", invalid
-		}
-	default:
-		return "", invalid
-	}
-	return u.Scheme + "://" + u.Host, nil
-}
-
-// Card and credential items accept different bindings, and the item type is only
-// known after the item is read. Reject mismatches before any browser writes.
-func validateVaultFillForItem(item *kernel.VaultItemUnion, params *vaultFillParams) error {
-	if item.Type == "credential" {
-		for i, field := range params.Fields {
-			if field.Format != "" {
-				return fmt.Errorf("--params.fields[%d].format is only supported for a card's combined expiration field", i)
-			}
-			if _, declared := item.Spec.Fields[field.Field]; !declared {
-				return fmt.Errorf("--params.fields[%d].field %q is not declared on this credential item", i, field.Field)
-			}
-		}
-		return nil
-	}
-	if params.PageURL == "" {
-		return fmt.Errorf("--params.page_url is required for card items; only credential items may omit it")
-	}
-	for i, field := range params.Fields {
-		if field.Field != "expiration" && !slices.Contains(vaultCardFillFields, field.Field) {
-			return fmt.Errorf("--params.fields[%d].field must be a supported card field", i)
-		}
-	}
-	return nil
+	return &params, nil
 }
 
 func validateVaultFillItem(params *vaultFillParams, item *kernel.VaultItemUnion) error {

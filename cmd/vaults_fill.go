@@ -50,7 +50,7 @@ func vaultFillRequestError(err error) error {
 	return fmt.Errorf("fill result unavailable; %s", vaultFillUncertain)
 }
 
-func (c VaultsCmd) fill(ctx context.Context, vault, key, itemType string, params *vaultFillParams, output string) error {
+func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFillParams, output string) error {
 	request := kernel.FillVaultItemOperationRequestParam{
 		BrowserID: params.BrowserID,
 		Type:      kernel.FillVaultItemOperationRequestTypeFill,

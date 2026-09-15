@@ -143,7 +143,7 @@ func (c VaultsCmd) ListItems(ctx context.Context, vault, output string) error {
 		if err != nil {
 			return err
 		}
-		rows = append(rows, []string{item.Key, item.Type, util.OrDash(item.Spec.Provider), item.State.Status, util.OrDash(actions.RequiredAction)})
+		rows = append(rows, []string{item.Key, item.Type, item.Spec.Provider, item.State.Status, util.OrDash(actions.RequiredAction)})
 	}
 	PrintTableNoPad(rows, true)
 	return nil
@@ -227,10 +227,7 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		return fmt.Errorf("invalid vault item operations; operation was not invoked")
 	}
 	if actions.RecoveryRequired {
-		if actions.Abandonable {
-			return fmt.Errorf("recovery_required: automatic reuse is blocked; no authorization ID was returned, so delete this card explicitly to abandon the attempt and create a replacement")
-		}
-		return fmt.Errorf("recovery_required: reconcile the known authorization ID with the provider or support; do not retry, delete, or replace it")
+		return fmt.Errorf("recovery_required: reconcile the original operation with the provider or support; do not retry, delete, or replace it")
 	}
 	available := false
 	for _, op := range actions.Operations {
@@ -325,10 +322,6 @@ func (c VaultsCmd) showItem(item *kernel.VaultItemUnion, output string, open boo
 		return nil
 	}
 	actionURL := actions.ActionURL
-	if actionURL == "" {
-		// prepare_checkout returns an approval URL rather than a required action.
-		actionURL = actions.ApprovalURL
-	}
 	if actionURL == "" {
 		if output != "json" {
 			pterm.Info.Println("No action URL returned; no browser opened")

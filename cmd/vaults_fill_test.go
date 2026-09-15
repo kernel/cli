@@ -52,6 +52,7 @@ func TestVaultFillParamsValidation(t *testing.T) {
 		"bad port":                  replace(`shop.example`, `shop.example:secret`),
 		"URL whitespace":            replace(`checkout?`, `checkout ?`),
 		"URL type":                  replace(`"https://shop.example/checkout?step=2#payment"`, `123`),
+		"missing URL":               replace(`"page_url":"https://shop.example/checkout?step=2#payment",`, ``),
 		"empty fields":              replace(`[{"field":"number","selector":"#card-number"},{"field":"expiration","format":"MM/YY","selector":"#expiry"},{"field":"cvc","selector":"#security-code"}]`, `[]`),
 		"fields object":             `{"browser_id":"id","page_url":"https://shop.example/","fields":{}}`,
 		"missing fields":            `{"browser_id":"id","page_url":"https://shop.example/"}`,

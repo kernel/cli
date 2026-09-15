@@ -115,16 +115,17 @@ type AuthConnectionDeleteInput struct {
 }
 
 type AuthConnectionLoginInput struct {
-	ID              string
-	ProxyID         string
-	ProxyName       string
-	ProxyMode       string
-	Region          string
-	Stealth         BoolFlag
-	RecordSession   BoolFlag
-	Telemetry       string
-	TelemetryExport string
-	Output          string
+	ID                  string
+	ProxyID             string
+	ProxyName           string
+	ProxyMode           string
+	Region              string
+	Stealth             BoolFlag
+	RecordSession       BoolFlag
+	Telemetry           string
+	TelemetryCdpExclude string
+	TelemetryExport     string
+	Output              string
 }
 
 type AuthConnectionSubmitInput struct {
@@ -1606,16 +1607,17 @@ func runAuthConnectionsLogin(cmd *cobra.Command, args []string) error {
 	svc := client.Auth.Connections
 	c := AuthConnectionCmd{svc: &svc}
 	return c.Login(cmd.Context(), AuthConnectionLoginInput{
-		ID:              args[0],
-		ProxyID:         proxyID,
-		ProxyName:       proxyName,
-		ProxyMode:       proxyMode,
-		Region:          region,
-		Stealth:         readBoolFlag(cmd.Flags(), "stealth"),
-		RecordSession:   readBoolFlag(cmd.Flags(), "record-session"),
-		Telemetry:       telemetry,
-		TelemetryExport: telemetryExport,
-		Output:          output,
+		ID:                  args[0],
+		ProxyID:             proxyID,
+		ProxyName:           proxyName,
+		ProxyMode:           proxyMode,
+		Region:              region,
+		Stealth:             readBoolFlag(cmd.Flags(), "stealth"),
+		RecordSession:       readBoolFlag(cmd.Flags(), "record-session"),
+		Telemetry:           telemetry,
+		TelemetryCdpExclude: telemetryCdpExclude,
+		TelemetryExport:     telemetryExport,
+		Output:              output,
 	})
 }
 

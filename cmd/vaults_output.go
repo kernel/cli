@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"sort"
 	"strings"
 
 	"github.com/kernel/cli/pkg/util"
@@ -15,10 +14,6 @@ import (
 
 type vaultJSON map[string]json.RawMessage
 type vaultOutputFields map[string]vaultOutputFields
-
-// vaultOutputWildcard applies one schema to every property of an object whose
-// keys are not known in advance, such as credential field maps.
-const vaultOutputWildcard = "*"
 
 func vaultFieldsOf(names string) vaultOutputFields {
 	fields := make(vaultOutputFields)
@@ -36,12 +31,6 @@ var vaultMethodFields = vaultOutputFields{
 	"display":      vaultFieldsOf("label brand last4"),
 	"capabilities": {"single_use_card": vaultFieldsOf("eligible reasons")},
 }
-
-// Credential field maps are keyed by caller-declared names, so their schema is
-// applied to every property instead of a fixed key list.
-var vaultCredentialFieldFields = vaultOutputFields{vaultOutputWildcard: vaultFieldsOf("type required sensitive")}
-var vaultCredentialFieldStateFields = vaultOutputFields{vaultOutputWildcard: vaultFieldsOf("has_value value")}
-
 var vaultItemFields = vaultOutputFields{
 	"id": nil, "key": nil, "type": nil, "version": nil, "created_at": nil, "updated_at": nil, "expires_at": nil,
 	"available_operations": vaultOperationFields,
@@ -68,7 +57,6 @@ var vaultItemFields = vaultOutputFields{
 		"aliases":       vaultFieldsOf("number cvc exp_month exp_year"),
 		"preparation":   vaultFieldsOf("id status browser_id merchant_origin environment created_at expires_at approval_url"),
 		"authorization": vaultFieldsOf("id status psp merchant amount amount_cents currency created_at expires_at approval_url browser_id reason psp_error_code expected_cents actual_cents amount_authority amount_verified charged_amount_cents charged_currency charged_kind replay_attempted replay_status replay_delivered"),
-		"preparation":   vaultFieldsOf("id status browser_id merchant_origin environment approval_url created_at expires_at"),
 	},
 }
 var vaultEventFields = vaultOutputFields{
@@ -111,14 +99,6 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 		return nil, fmt.Errorf("invalid vault response shape")
 	}
 	result := make(vaultJSON)
-	if wildcard, hasWildcard := fields[vaultOutputWildcard]; hasWildcard {
-		for key, value := range object {
-			if err := filterVaultProperty(result, key, value, wildcard); err != nil {
-				return nil, err
-			}
-		}
-		return json.Marshal(result)
-	}
 	for key, children := range fields {
 		if key == "*" {
 			for name, value := range object {
@@ -141,26 +121,10 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 			if err != nil {
 				return nil, err
 			}
+			result[key] = filtered
 		}
 	}
 	return json.Marshal(result)
-}
-
-// Withhold any URL that is not display-safe rather than reporting an error, so a
-// credential-bearing link is dropped from output instead of being echoed back.
-func filterVaultProperty(result vaultJSON, key string, value json.RawMessage, fields vaultOutputFields) error {
-	if key == "url" || key == "approval_url" || key == "merchant_url" || key == "image_url" || key == "product_url" {
-		var address string
-		if json.Unmarshal(value, &address) != nil || !vaultDisplayURL(address) {
-			return nil
-		}
-	}
-	filtered, err := filterVaultJSON(value, fields)
-	if err != nil {
-		return err
-	}
-	result[key] = filtered
-	return nil
 }
 
 func vaultSafeJSONSlice[T util.RawJSONProvider](items []T, fields vaultOutputFields) ([]vaultJSON, error) {
@@ -271,17 +235,8 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		return err
 	}
 	rows := pterm.TableData{
-		{"Property", "Value"}, {"Key (immutable)", item.Key}, {"ID", item.ID}, {"Type", item.Type},
-	}
-	if item.Type != "credential" {
-		rows = append(rows, []string{"Provider", item.Spec.Provider})
-	}
-	rows = append(rows, []string{"Status", item.State.Status})
-	if item.Type == "credential" {
-		rows = append(rows, []string{"Version", fmt.Sprint(item.Version)})
-		if item.Spec.Description != "" {
-			rows = append(rows, []string{"Description", item.Spec.Description})
-		}
+		{"Property", "Value"}, {"Key (immutable)", item.Key}, {"ID", item.ID},
+		{"Type", item.Type}, {"Provider", item.Spec.Provider}, {"Status", item.State.Status},
 	}
 	if item.Type == "credential" {
 		rows = append(rows, []string{"Version", fmt.Sprint(item.Version)})
@@ -317,16 +272,7 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		rows = append(rows, []string{"Permitted domains (provider-assigned)", strings.Join(item.State.Domains, ", ")})
 	}
 	if actions.RequiredAction != "" {
-		// A credential form is offered whenever a session is active; on a ready
-		// item it is an invitation to edit, not an outstanding requirement.
-		label := "Required action"
-		if item.Type == "credential" {
-			label = "Collection action"
-		}
-		rows = append(rows, []string{label, actions.RequiredAction})
-		if item.Type == "credential" && !item.Action.ExpiresAt.IsZero() {
-			rows = append(rows, []string{"Collection link expires", util.FormatLocal(item.Action.ExpiresAt)})
-		}
+		rows = append(rows, []string{"Required action", actions.RequiredAction})
 	}
 	if !item.ExpiresAt.IsZero() {
 		rows = append(rows, []string{"Expires At", util.FormatLocal(item.ExpiresAt)})
@@ -357,61 +303,14 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 			rows = append(rows, []string{"Processor response delivered", fmt.Sprint(a.ReplayDelivered)})
 		}
 	}
-	if item.State.JSON.Preparation.Valid() {
-		p := item.State.Preparation
-		rows = append(rows,
-			[]string{"Checkout preparation", util.OrDash(p.ID)},
-			[]string{"Preparation status", string(p.Status)},
-			[]string{"Preparation environment (Square)", string(p.Environment)},
-			[]string{"Merchant origin", p.MerchantOrigin},
-			[]string{"Preparation browser", p.BrowserID},
-		)
-		if !p.ExpiresAt.IsZero() {
-			rows = append(rows, []string{"Submit native Pay before", util.FormatLocal(p.ExpiresAt)})
-		}
-	}
 	PrintTableNoPad(rows, true)
-	if item.Type == "credential" {
-		printVaultCredentialFields(item)
-	}
 	printVaultItemGuidance(item, actions)
 	return nil
 }
 
-// Declared schema and per-field presence answer different questions: the schema
-// says what the form collects, the state says what is stored. Sensitive values
-// are never returned, so presence is all the API discloses for them.
-func printVaultCredentialFields(item *kernel.VaultItemUnion) {
-	if len(item.Spec.Fields) == 0 {
-		return
-	}
-	names := make([]string, 0, len(item.Spec.Fields))
-	for name := range item.Spec.Fields {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	rows := pterm.TableData{{"Field", "Type", "Required", "Sensitive", "Has value", "Value"}}
-	for _, name := range names {
-		definition := item.Spec.Fields[name]
-		state := item.State.Fields[name]
-		value := "-"
-		if definition.Sensitive {
-			value = "(withheld)"
-		} else if state.Value != "" {
-			value = state.Value
-		}
-		rows = append(rows, []string{name, string(definition.Type), fmt.Sprint(definition.Required), fmt.Sprint(definition.Sensitive), fmt.Sprint(state.HasValue), value})
-	}
-	PrintTableNoPad(rows, true)
-}
-
 func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemActions) {
 	if actions.RecoveryRequired {
-		if actions.Abandonable {
-			pterm.Warning.Println("recovery_required: the original operation is unresolved, not declined or expired. Automatic reuse is blocked and no reset operation exists. No authorization ID was returned, so deleting this card explicitly abandons the attempt and lets you create a replacement; deletion is not proof that the payment did not occur. Deleting its wallet or vault stays blocked.")
-			return
-		}
-		pterm.Warning.Println("recovery_required: the original operation is unresolved, not declined or expired. Do not retry, delete, or replace it. Reconcile the known authorization ID with the provider or support; no reset operation exists.")
+		pterm.Warning.Println("recovery_required: the original operation is unresolved, not declined or expired. Do not retry, delete, or replace it. Reconcile with the provider or support; no reset operation exists.")
 		return
 	}
 	if item.Type == "wallet" && item.Spec.Provider == "link" && item.Spec.Authorization.Client.Type == "customer_managed" && item.State.Status == "degraded" {
@@ -423,7 +322,6 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	if actions.ApprovalURL != "" {
 		pterm.Printf("Approval URL:\n%s\n", actions.ApprovalURL)
 	}
-	printVaultPreparationGuidance(item)
 	for _, op := range actions.Operations {
 		pterm.Printf("Available operation: %s — %s\n", op.Type, op.Description)
 	}
@@ -453,9 +351,7 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 			pterm.Info.Println("Aliases are non-secret checkout values. Use only in a browser created with this vault attached; ready does not mean paid.")
 		}
 		pterm.Info.Println("Inspect items events for payment outcomes. Never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")
-	case "credential":
-		printVaultCredentialGuidance(item)
-	default:
+	} else {
 		wallet := item.AsWallet()
 		for _, expansion := range wallet.AvailableExpansions {
 			pterm.Printf("Available expansion: %s — %s\n", expansion.Type, expansion.Description)
@@ -464,43 +360,9 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	if item.Expanded.JSON.PaymentMethods.Valid() {
 		printVaultPaymentMethods(item.Expanded.PaymentMethods)
 	}
-	if actions.RequiredAction != "" && item.Type != "credential" {
+	if actions.RequiredAction != "" {
 		pterm.Info.Println("Complete the returned action with the provider; never pass card data or OAuth codes to the CLI. Observe with items get --wait 60.")
 	}
-}
-
-func printVaultCredentialGuidance(item *kernel.VaultItemUnion) {
-	if item.State.Status == "pending_collection" {
-		pterm.Warning.Println("pending_collection: required values are missing. Open the collection URL yourself or hand it to the person who holds the credential; treat it as a secret and keep it out of logs. Observe with items get --wait 60.")
-	} else {
-		pterm.Info.Println("ready: every required field has a value. This does not mean a login succeeded.")
-	}
-	pterm.Info.Println("Set or clear values with vaults credentials update --version, which requires the version above. Never pass credential values as shell arguments; use --values-file. Do not store card data in credential items.")
-}
-
-// Preparation state and item state answer different questions: the preparation
-// says whether egress can still claim it, the item says whether the attempt has
-// settled. Neither means an order or charge succeeded.
-func printVaultPreparationGuidance(item *kernel.VaultItemUnion) {
-	switch item.State.Status {
-	case "preparing":
-		pterm.Info.Println("preparing: the cardholder has not approved this device yet. Keep the approval page open and observe with items get --wait 60; do not prepare again.")
-	case "ready_to_submit":
-		pterm.Warning.Println("ready_to_submit: device readiness lasts at most 30 seconds. Submit native Square Pay before the preparation deadline; polling never extends it. An expired readiness window cannot be reused.")
-	case "consumed":
-		pterm.Warning.Println("consumed: the prepared attempt has settled. This does not mean an order or charge succeeded. Inspect items events and reconcile with the merchant; preparations are single-use and this one cannot be reused.")
-	case "stopped":
-		pterm.Warning.Println("stopped: this preparation cannot be reused. Do not retry it; create a replacement card only after confirming with the merchant that no payment occurred.")
-	case "outcome_unknown":
-		pterm.Warning.Println("outcome_unknown: the checkout outcome is unresolved and new requests are blocked. Reconcile with the merchant; do not retry, delete, or replace the card.")
-	}
-	if !item.State.JSON.Preparation.Valid() {
-		return
-	}
-	if item.State.Preparation.Status == kernel.AgentcardCheckoutPreparationStatusConsumed {
-		pterm.Info.Println("Preparation consumed means egress claimed it and it cannot be reused. Use the item status as the lifecycle indicator.")
-	}
-	pterm.Info.Println("The preparation amount is display-only and does not constrain the merchant's eventual charge.")
 }
 
 func printVaultPaymentMethods(methods []kernel.VaultPaymentMethod) {

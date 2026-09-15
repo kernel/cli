@@ -45,15 +45,6 @@ type AgentCardWalletSpec = {
   provider_config?: ProviderConfigReference; // omit for Kernel-managed credentials
   user_id?: string; // usr_...; enrolled in this organization under the SAME config
 };
-
-A wallet's configuration and provider binding are fixed at creation: it cannot be
-moved to a different configuration later, and renaming one does not rebind it.
-Omitting user_id returns a hosted enrollment action for the user to complete.
-
-Link wallets on your own OAuth client are created by importing an existing grant's
-access and refresh tokens. Those tokens must never be passed to the CLI; create
-such wallets from your backend instead. Only the kernel_managed client shown above
-is supported here.
 `
 
 const vaultCardSpecHelp = `
@@ -100,35 +91,4 @@ type LinkTotal = {
 };
 
 Permitted domains are provider-assigned, not configurable in the spec.
-`
-
-const vaultCredentialSpecHelp = `
---spec takes the credential specification object: an optional description and a
-fields map declaring 1-32 fields. Field names match [a-zA-Z][a-zA-Z0-9_]{0,63}.
-Values are never accepted in --spec; supply them with --values-file <path|->,
-a JSON object mapping declared field names to values. Field names, types,
-required flags, and sensitivity are fixed at creation and cannot be changed.
-
-type CredentialSpec = {
-  description?: string;        // site or service name used verbatim as the form title
-  fields: Record<string, {
-    type: "text" | "email" | "password" | "totp";
-    required?: boolean;        // default true
-    sensitive?: boolean;       // default true; password and totp must be true
-  }>;
-};
-
-Set sensitive false for ordinary usernames and email addresses so the form can
-display and prefill them; reserve true for passwords, API tokens, and TOTP seeds.
-A totp value is an RFC 4648 Base32 generator seed, not an otpauth URI or a current
-code; browser fill derives the code and never writes the seed. A required totp
-field must be given a seed at creation, because no form can collect it.
-
-If every required field has a value, the item is ready and no collection action is
-returned; invoke collect to open its form anyway. Otherwise the item is
-pending_collection with a time-scoped hosted form URL. Treat that URL as a secret.
-
-Credential items are for logins and other non-payment credentials. Do not store,
-collect, or fill credit card numbers, security codes, or expiration dates in them;
-use wallet and card items for payments instead.
 `
