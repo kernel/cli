@@ -167,7 +167,12 @@ Fill is available for credential items and ready Link cards when advertised, not
 Fill never submits forms. completed means fields were filled, not website acceptance.
 failed may leave partial writes; unknown quarantines the browser. Never automatically
 retry or fall back to aliases. Requests are not automatically retried.
-Only collect/authorize may use --open. Fill returns value-free per-field outcomes;
+prepare_checkout requires checkout.browser_id, checkout.merchant_origin (canonical HTTPS
+origin of the top-level merchant page), and checkout.environment (production or sandbox).
+Use only when advertised for an AgentCard card. Keep the returned approval page open,
+poll until ready_to_submit, then submit native Pay before preparation.expires_at.
+Preparations are single-use, including after failure or expiry; never retry automatically.
+collect/authorize/prepare_checkout may use --open. Fill returns value-free per-field outcomes;
 completed exits 0, failed/unknown exit nonzero with valid JSON retained on stdout in -o json.`,
 		Example: `  kernel vaults items invoke user-vault login collect
   kernel vaults items invoke user-vault login fill --spec-file - <<'JSON'
@@ -179,8 +184,8 @@ JSON
 			raw, _ := cmd.Flags().GetString("params")
 			paramsSet := cmd.Flags().Changed("params")
 			if cmd.Flags().Changed("spec-file") {
-				if args[2] != "fill" {
-					return fmt.Errorf("--spec-file is only supported for fill")
+				if args[2] != "fill" && args[2] != "prepare_checkout" {
+					return fmt.Errorf("--spec-file is only supported for fill and prepare_checkout")
 				}
 				data, err := readVaultSpecFile(cmd)
 				if err != nil {
@@ -194,8 +199,8 @@ JSON
 			}
 			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], params, vaultOutput(cmd), open)
 		}}
-	invoke.Flags().String("params", "", "Fill parameters JSON (maximum 128 KiB); omit type and credential values")
-	invoke.Flags().String("spec-file", "", "Fill parameters JSON file (use '-' for stdin; maximum 128 KiB)")
+	invoke.Flags().String("params", "", "Fill or prepare_checkout parameters JSON (maximum 128 KiB); omit type and credential values")
+	invoke.Flags().String("spec-file", "", "Fill or prepare_checkout parameters JSON file (use '-' for stdin; maximum 128 KiB)")
 	invoke.MarkFlagsMutuallyExclusive("params", "spec-file")
 	invoke.Flags().Bool("open", false, "Open a returned HTTPS action URL in your browser")
 	addVaultJSONOutputFlag(invoke)

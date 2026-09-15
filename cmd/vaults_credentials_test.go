@@ -38,6 +38,7 @@ func TestCredentialCreateAndUpdate(t *testing.T) {
 				if update {
 					assert.Equal(t, "PATCH", r.Method)
 					assert.JSONEq(t, `2`, string(body["version"]))
+					assert.JSONEq(t, `"credential-1"`, string(body["expected_item_id"]))
 					assert.JSONEq(t, `{"fields":{"password":{"value":null}}}`, string(body["spec"]))
 				} else {
 					assert.Equal(t, "PUT", r.Method)
@@ -50,7 +51,7 @@ func TestCredentialCreateAndUpdate(t *testing.T) {
 			if update {
 				args[2] = "update"
 				args[6] = credentialSpecFile(t, `{"fields":{"password":{"value":null}}}`)
-				args = append(args, "--version", "2")
+				args = append(args, "--version", "2", "--expected-item-id", "credential-1")
 			}
 			out, _, err := executeVaultCommand(t, client, args...)
 			require.NoError(t, err)
@@ -74,7 +75,7 @@ func TestCredentialWriteErrorsAreRedactedAndNotRetried(t *testing.T) {
 				io.WriteString(w, `{"message":"secret-echo"}`)
 			})
 			c := VaultsCmd{vaults: &client.Vaults}
-			err := c.saveCredential(context.Background(), "user", "login", []byte(`{"fields":{"password":{"type":"password","value":"secret-echo"}}}`), false, 0, "json", false)
+			err := c.saveCredential(context.Background(), "user", "login", []byte(`{"fields":{"password":{"type":"password","value":"secret-echo"}}}`), false, 0, "", "json", false)
 			require.Error(t, err)
 			assert.NotContains(t, err.Error(), "secret-echo")
 			assert.Equal(t, 1, calls)

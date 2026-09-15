@@ -12,6 +12,11 @@ import (
 	kernel "github.com/kernel/kernel-go-sdk"
 )
 
+type vaultOperationParams struct {
+	Fill     *vaultFillParams
+	Checkout *kernel.VaultCheckoutContextParam
+}
+
 type vaultFillParams struct {
 	BrowserID string           `json:"browser_id"`
 	PageURL   string           `json:"page_url,omitempty"`
@@ -67,25 +72,43 @@ func vaultParamsObject(raw, allowed string) (map[string]json.RawMessage, error) 
 	return object, nil
 }
 
-func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (*vaultFillParams, error) {
+func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (*vaultOperationParams, error) {
 	if strings.TrimSpace(operation) == "" {
 		return nil, fmt.Errorf("operation must not be empty")
 	}
-	if openSet && operation != "authorize" && operation != "collect" {
-		return nil, fmt.Errorf("--open is only supported for authorize and collect")
+	if openSet && operation != "authorize" && operation != "collect" && operation != "prepare_checkout" {
+		return nil, fmt.Errorf("--open is only supported for authorize, collect, and prepare_checkout")
+	}
+	if len(raw) > 128*1024 {
+		return nil, fmt.Errorf("operation parameters exceed 128 KiB")
+	}
+	if operation == "prepare_checkout" {
+		if !paramsSet {
+			return nil, fmt.Errorf("prepare_checkout requires --params or --spec-file with checkout")
+		}
+		checkout, err := parseVaultCheckoutParams(raw)
+		if err != nil {
+			return nil, err
+		}
+		return &vaultOperationParams{Checkout: checkout}, nil
 	}
 	if operation != "fill" {
 		if paramsSet {
-			return nil, fmt.Errorf("--params is only supported for fill; authorize takes no parameters")
+			return nil, fmt.Errorf("--params is only supported for fill and prepare_checkout; authorize takes no parameters")
 		}
 		return nil, nil
 	}
 	if !paramsSet {
 		return nil, fmt.Errorf("fill requires --params or --spec-file with browser_id and fields")
 	}
-	if len(raw) > 128*1024 {
-		return nil, fmt.Errorf("fill parameters exceed 128 KiB")
+	fill, err := parseVaultFillParams(raw)
+	if err != nil {
+		return nil, err
 	}
+	return &vaultOperationParams{Fill: fill}, nil
+}
+
+func parseVaultFillParams(raw string) (*vaultFillParams, error) {
 	object, err := vaultParamsObject(raw, "browser_id page_url fields timeout_ms")
 	if err != nil {
 		return nil, err

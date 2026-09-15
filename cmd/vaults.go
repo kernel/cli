@@ -202,12 +202,15 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 	return c.showItem(item, output, false)
 }
 
-func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, params *vaultFillParams, output string, open bool) error {
+func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, params *vaultOperationParams, output string, open bool) error {
 	if strings.TrimSpace(operation) == "" {
 		return fmt.Errorf("operation must not be empty")
 	}
-	if operation == "fill" && (params == nil || open) {
+	if operation == "fill" && (params == nil || params.Fill == nil || open) {
 		return fmt.Errorf("fill requires --params and does not support --open")
+	}
+	if operation == "prepare_checkout" && (params == nil || params.Checkout == nil) {
+		return fmt.Errorf("prepare_checkout requires checkout parameters")
 	}
 	item, err := c.vaults.Items.Get(ctx, key, kernel.VaultItemGetParams{IDOrName: vault}, option.WithMaxRetries(0))
 	if err != nil {
@@ -240,13 +243,18 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
 	if operation == "fill" {
-		if err := validateVaultFillItem(params, item); err != nil {
+		if err := validateVaultFillItem(params.Fill, item); err != nil {
 			return err
 		}
-		return c.fill(ctx, vault, key, params, output)
+		return c.fill(ctx, vault, key, params.Fill, output)
 	}
 	request := kernel.VaultItemPerformOperationParams{IDOrName: vault}
-	if operation == "collect" {
+	if operation == "prepare_checkout" {
+		if item.Type != "card" || item.Spec.Provider != "agentcard" {
+			return fmt.Errorf("prepare_checkout requires an AgentCard card")
+		}
+		request.OfPrepareCheckout = &kernel.PrepareCheckoutVaultItemOperationRequestParam{Type: "prepare_checkout", Checkout: *params.Checkout}
+	} else if operation == "collect" {
 		request.OfCollect = &kernel.CollectVaultItemOperationRequestParam{Type: "collect"}
 	} else {
 		// Preserve support for other advertised parameterless operations.

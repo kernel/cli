@@ -128,7 +128,7 @@ Commands with JSON output support:
 - **Proxies**: `create`, `list`, `get`, `update`, `check`
 - **API Keys**: `create`, `list`, `get`, `update`, `rotate`
 - **Auth Connections**: `timeline`
-- **Vaults**: `create`, `list`, `get`, `credentials create/update`, `items list/get/events/invoke` (including `collect` and `fill`), `wallets create/payment-methods`, `cards create/update` (display-safe public fields only)
+- **Vaults**: `create`, `list`, `get`, `credentials create/update`, `items list/get/events/invoke` (including `collect`, `fill`, and `prepare_checkout`), `wallets create/payment-methods`, `cards create/update` (display-safe public fields only)
 - **Projects**: `update`
 - **Org**: `limits get/set`
 - **Apps**: `list`, `history`
@@ -300,7 +300,9 @@ with a spec such as `{"fields":{"password":{"value":"replacement"}}}`. Keep actu
 secrets in protected files or stdin, never shell arguments. Omission preserves values;
 null or an empty string clears supported fields, including required text/email/password fields (returning them to pending collection). The form still requires nonempty required inputs. Field definitions cannot change. Stale versions fail,
 without retries. `items invoke <vault> <key> collect` reopens the full form without
-clearing values; compare versions to observe edits to already-ready items.
+clearing values; compare versions to observe edits to already-ready items. When an update
+is bound to an earlier read, also pass `--expected-item-id <id>` to reject a replacement
+item at the same key. Neither precondition is refreshed automatically.
 
 Do not use credential items to store, collect, or fill credit card data, including card numbers (PANs), security codes (CVV/CVC), or expiration dates. Use wallet and card item types for credit cards and payment checkout instead.
 
@@ -515,7 +517,7 @@ card spec. Otherwise, the cardholder selects a card at approval. A reusable card
 #### Invoking item operations
 
 `items get` displays every `available_operations` entry's type and description, plus
-an `items invoke` command retaining the selected project (replace `<json>` for fill).
+an `items invoke` command retaining the selected project (replace `<json>` for fill or prepare_checkout).
 Read the description and follow its approval requirements before invoking. Required user actions
 (OAuth, enrollment, MFA, spend approval) appear separately; they are not operations to invoke
 through this endpoint.
@@ -527,13 +529,36 @@ actions in `recovery_required`, even if a stale action or operation was returned
 
 `authorize` sends `{"type":"authorize"}` without `--params` and returns the updated item,
 possibly with a required user action. `collect` is also parameterless and returns a credential
-collection URL. `--open` is supported for authorize and collect.
-The [API spec](https://api.onkernel.com/spec.yaml) also accepts `fill`, with its inputs in
+collection URL. `--open` is supported for authorize, collect, and prepare_checkout.
+The [API spec](https://api.onkernel.com/spec.yaml) also accepts `fill` and `prepare_checkout`, with their inputs in
 `--params` or `--spec-file <path|->` (mutually exclusive, maximum 128 KiB). The positional
 operation supplies `type`; including `type` in either input is rejected.
 Parameters must be a JSON object without unknown or duplicate properties. There is no
 operation `--spec` flag; wallet/card `--spec` flags remain unchanged. New parameterless
 operations can still be invoked by name when advertised.
+
+##### Prepare an AgentCard checkout
+
+For an unused AgentCard card, invoke `prepare_checkout` only when advertised:
+
+```bash
+kernel vaults items invoke user-123 order-1 prepare_checkout --params '{"checkout":{"browser_id":"browser-session-id","merchant_origin":"https://shop.example","environment":"production"}}' --open
+kernel vaults items get user-123 order-1 --wait 60 -o json
+```
+
+`--spec-file <path|->` accepts the same JSON. `browser_id` is the active session with
+this vault attached. `merchant_origin` is the canonical HTTPS origin of the top-level
+merchant document, not the Square iframe; HTTP localhost is allowed for tests.
+`environment` is `production` or `sandbox` and refers to Square, not the credential mode.
+
+Keep the approval page open. Poll until the item's status is `ready_to_submit`, then
+submit native Pay before `state.preparation.expires_at`. Readiness lasts at most 30
+seconds, and polling does not extend it. The CLI displays the preparation ID, status,
+browser, origin, environment, approval URL, and submission deadline.
+
+Each preparation is single-use, including after failure or expiry. A preparation
+marked `consumed` has been claimed; it does not prove the payment settled or succeeded.
+Do not automatically retry or switch checkout paths after an uncertain result.
 
 ##### Fill browser fields
 

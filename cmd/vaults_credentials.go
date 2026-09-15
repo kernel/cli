@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	kernel "github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
@@ -49,13 +50,18 @@ func newVaultCredentialsCommand() *cobra.Command {
 				}
 				version, _ := cmd.Flags().GetInt64("version")
 				open, _ := cmd.Flags().GetBool("open")
-				return getVaultsHandler(cmd).saveCredential(cmd.Context(), args[0], args[1], data, update, version, vaultOutput(cmd), open)
+				expectedID, _ := cmd.Flags().GetString("expected-item-id")
+				if cmd.Flags().Changed("expected-item-id") && strings.TrimSpace(expectedID) == "" {
+					return fmt.Errorf("--expected-item-id must not be empty")
+				}
+				return getVaultsHandler(cmd).saveCredential(cmd.Context(), args[0], args[1], data, update, version, expectedID, vaultOutput(cmd), open)
 			},
 		}
 		if update {
 			cmd.Long += "\nUpdate preserves omitted fields, replaces nonempty string values, and clears supported values with null or an empty string. Clearing a required text/email/password field returns pending_collection; form submissions still require a nonempty value.\nField definitions are immutable. Do not automatically retry version conflicts."
 			cmd.Flags().Int64("version", 0, "Expected version from items get (required; never auto-refreshed)")
 			_ = cmd.MarkFlagRequired("version")
+			cmd.Flags().String("expected-item-id", "", "Immutable item ID from the original read; reject an update if the key now refers to a replacement item")
 			cmd.Example = "  kernel vaults credentials update user-vault login --version 2 --spec-file changes.json"
 		} else {
 			cmd.Example = `  kernel vaults credentials create user-vault login --spec-file - <<'JSON'
@@ -97,7 +103,7 @@ func readVaultSpecFile(cmd *cobra.Command) ([]byte, error) {
 	return data, nil
 }
 
-func (c VaultsCmd) saveCredential(ctx context.Context, vault, key string, data []byte, update bool, version int64, output string, open bool) error {
+func (c VaultsCmd) saveCredential(ctx context.Context, vault, key string, data []byte, update bool, version int64, expectedID, output string, open bool) error {
 	var item *kernel.VaultItemUnion
 	var err error
 	if update {
@@ -108,7 +114,11 @@ func (c VaultsCmd) saveCredential(ctx context.Context, vault, key string, data [
 		if json.Unmarshal(data, &spec) != nil {
 			return fmt.Errorf("invalid credential update spec")
 		}
-		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCredentialVaultItemUpdateRequest: &kernel.CredentialVaultItemUpdateRequestParam{Type: "credential", Version: version, Spec: spec}}, option.WithMaxRetries(0))
+		request := kernel.CredentialVaultItemUpdateRequestParam{Type: "credential", Version: version, Spec: spec}
+		if expectedID != "" {
+			request.ExpectedItemID = kernel.String(expectedID)
+		}
+		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCredentialVaultItemUpdateRequest: &request}, option.WithMaxRetries(0))
 	} else {
 		var spec kernel.CredentialVaultItemSpecInputParam
 		if json.Unmarshal(data, &spec) != nil || len(spec.Fields) == 0 {
