@@ -14,7 +14,6 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	kernel "github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
-	"github.com/kernel/kernel-go-sdk/shared/constant"
 	"github.com/pterm/pterm"
 )
 
@@ -193,7 +192,7 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 	var item *kernel.VaultItemUnion
 	var err error
 	if update {
-		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, Spec: spec}, option.WithMaxRetries(0))
+		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCardVaultItemUpdateRequest: &kernel.VaultItemUpdateParamsBodyCardVaultItemUpdateRequest{Type: "card", Spec: spec}}, option.WithMaxRetries(0))
 	} else {
 		item, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCard: &kernel.VaultItemUpsertParamsBodyCard{Spec: spec}}, option.WithMaxRetries(0))
 	}
@@ -203,12 +202,15 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 	return c.showItem(item, output, false)
 }
 
-func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, params *vaultFillParams, output string, open bool) error {
+func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, params *vaultOperationParams, output string, open bool) error {
 	if strings.TrimSpace(operation) == "" {
 		return fmt.Errorf("operation must not be empty")
 	}
-	if operation == "fill" && (params == nil || open) {
+	if operation == "fill" && (params == nil || params.Fill == nil || open) {
 		return fmt.Errorf("fill requires --params and does not support --open")
+	}
+	if operation == "prepare_checkout" && (params == nil || params.Checkout == nil) {
+		return fmt.Errorf("prepare_checkout requires checkout parameters")
 	}
 	item, err := c.vaults.Items.Get(ctx, key, kernel.VaultItemGetParams{IDOrName: vault}, option.WithMaxRetries(0))
 	if err != nil {
@@ -241,15 +243,31 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
 	if operation == "fill" {
-		return c.fill(ctx, vault, key, params, output)
+		if err := validateVaultFillItem(params.Fill, item); err != nil {
+			return err
+		}
+		return c.fill(ctx, vault, key, params.Fill, output)
 	}
-	// Preserve support for other advertised parameterless operations.
-	authorize := kernel.VaultItemPerformOperationParamsBodyAuthorize{Type: constant.Authorize(operation)}
-	response, err := c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, OfAuthorize: &authorize}, option.WithMaxRetries(0))
+	request := kernel.VaultItemPerformOperationParams{IDOrName: vault}
+	if operation == "prepare_checkout" {
+		if item.Type != "card" || item.Spec.Provider != "agentcard" {
+			return fmt.Errorf("prepare_checkout requires an AgentCard card")
+		}
+		request.OfPrepareCheckout = &kernel.PrepareCheckoutVaultItemOperationRequestParam{Type: "prepare_checkout", Checkout: *params.Checkout}
+	} else if operation == "collect" {
+		request.OfCollect = &kernel.CollectVaultItemOperationRequestParam{Type: "collect"}
+	} else {
+		// Preserve support for other advertised parameterless operations.
+		request.OfAuthorize = &kernel.AuthorizeVaultItemOperationRequestParam{Type: kernel.AuthorizeVaultItemOperationRequestType(operation)}
+	}
+	response, err := c.vaults.Items.PerformOperation(ctx, key, request, option.WithMaxRetries(0))
 	if err != nil {
+		if item.Type == "credential" {
+			return vaultCredentialError(err)
+		}
 		return util.CleanedUpSdkError{Err: err}
 	}
-	if response == nil || (response.Type != "card" && response.Type != "wallet") {
+	if response == nil || (response.Type != "card" && response.Type != "wallet" && response.Type != "credential") {
 		return fmt.Errorf("unexpected vault operation response; inspect the item and do not retry")
 	}
 	var updated kernel.VaultItemUnion

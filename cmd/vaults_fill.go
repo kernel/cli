@@ -34,6 +34,15 @@ const vaultFillUncertain = "browser fields may have been written; inspect the br
 func vaultFillRequestError(err error) error {
 	var apiErr *kernel.Error
 	if errors.As(err, &apiErr) {
+		var body struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
+			switch body.Code {
+			case "invalid_request", "invalid_selector", "duplicate_target", "timeout", "target_changed", "page_not_found", "ambiguous_page", "element_not_found", "ambiguous_selector", "element_not_editable", "option_not_found", "field_unavailable", "conflict", "destination_denied", "execution_failed":
+				return fmt.Errorf("fill failed: %s (HTTP %d); %s", body.Code, apiErr.StatusCode, vaultFillUncertain)
+			}
+		}
 		return fmt.Errorf("fill request failed (HTTP %d); %s", apiErr.StatusCode, vaultFillUncertain)
 	}
 	// Do not wrap SDK/transport errors: they can contain request or response data,
@@ -44,17 +53,19 @@ func vaultFillRequestError(err error) error {
 func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFillParams, output string) error {
 	request := kernel.FillVaultItemOperationRequestParam{
 		BrowserID: params.BrowserID,
-		PageURL:   params.PageURL,
 		Type:      kernel.FillVaultItemOperationRequestTypeFill,
-		Fields:    make([]kernel.VaultCardFillFieldUnionParam, 0, len(params.Fields)),
+		Fields:    make([]kernel.VaultFillFieldParam, 0, len(params.Fields)),
+	}
+	if params.PageURL != "" {
+		request.PageURL = kernel.Opt(params.PageURL)
 	}
 	if params.TimeoutMS != nil {
 		request.TimeoutMs = kernel.Opt(int64(*params.TimeoutMS))
 	}
 	for _, field := range params.Fields {
-		binding := kernel.VaultCardFillFieldParamOfVaultCardFillFieldVaultCardStoredFillField(field.Field, field.Selector)
-		if field.Field == "expiration" {
-			binding = kernel.VaultCardFillFieldParamOfVaultCardFillFieldVaultCardExpirationFillField(field.Field, field.Format, field.Selector)
+		binding := kernel.VaultFillFieldParam{Field: field.Field, Selector: field.Selector}
+		if field.Format != "" {
+			binding.Format = kernel.VaultFillFieldFormat(field.Format)
 		}
 		request.Fields = append(request.Fields, binding)
 	}
@@ -81,7 +92,7 @@ func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFil
 		}
 		PrintTableNoPad(rows, true)
 		if result.Status == "completed" {
-			pterm.Println("Fields filled; this does not confirm payment or merchant acceptance.")
+			pterm.Println("Fields filled; this does not confirm website acceptance or form submission.")
 		} else {
 			pterm.Println(vaultFillUncertain)
 		}

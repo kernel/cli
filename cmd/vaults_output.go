@@ -32,15 +32,16 @@ var vaultMethodFields = vaultOutputFields{
 	"capabilities": {"single_use_card": vaultFieldsOf("eligible reasons")},
 }
 var vaultItemFields = vaultOutputFields{
-	"id": nil, "key": nil, "type": nil, "created_at": nil, "updated_at": nil, "expires_at": nil,
+	"id": nil, "key": nil, "type": nil, "version": nil, "created_at": nil, "updated_at": nil, "expires_at": nil,
 	"available_operations": vaultOperationFields,
 	"available_expansions": vaultOperationFields,
-	"action":               vaultFieldsOf("name url"),
+	"action":               vaultFieldsOf("name url expires_at"),
 	"expanded":             {"payment_methods": vaultMethodFields},
 	"spec": {
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil,
 		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
-		"context": nil, "expires_at": nil,
+		"context": nil, "expires_at": nil, "description": nil,
+		"fields":          {"*": vaultFieldsOf("type required sensitive")},
 		"provider_config": vaultFieldsOf("id name"),
 		"authorization":   {"method": nil, "client": {"type": nil, "provider_config": vaultFieldsOf("id name")}},
 		"totals":          vaultTotalFields,
@@ -51,14 +52,16 @@ var vaultItemFields = vaultOutputFields{
 	},
 	"state": {
 		"provider": nil, "status": nil, "status_reason": nil, "user_id": nil, "domains": nil,
+		"fields":        {"*": vaultFieldsOf("has_value")},
 		"masks":         vaultFieldsOf("brand last4"),
 		"aliases":       vaultFieldsOf("number cvc exp_month exp_year"),
+		"preparation":   vaultFieldsOf("id status browser_id merchant_origin environment created_at expires_at approval_url"),
 		"authorization": vaultFieldsOf("id status psp merchant amount amount_cents currency created_at expires_at approval_url browser_id reason psp_error_code expected_cents actual_cents amount_authority amount_verified charged_amount_cents charged_currency charged_kind replay_attempted replay_status replay_delivered"),
 	},
 }
 var vaultEventFields = vaultOutputFields{
 	"id": nil, "name": nil, "created_at": nil, "browser_id": nil,
-	"data": vaultFieldsOf("reason operation status authorization_id vault_session_id request_kind outcome_reason provider_status provider_code provider_request_id provider_payment_status provider_error_type provider_error_code provider_decline_code provider_error_param provider_http_status provider_response_bytes provider_latency_ms payment_intent_id payment_method_id checkout_session_id replay_attempted replay_delivered charged_amount_cents charged_currency charged_kind expected_cents actual_cents currency actual_currency intent_status amount_verified psp_error_code"),
+	"data": vaultFieldsOf("reason operation status authorization_id preparation_id vault_session_id request_kind outcome_reason provider_status provider_code provider_request_id provider_payment_status provider_error_type provider_error_code provider_decline_code provider_error_param provider_http_status provider_response_bytes provider_latency_ms payment_intent_id payment_method_id checkout_session_id replay_attempted replay_delivered charged_amount_cents charged_currency charged_kind expected_cents actual_cents currency actual_currency intent_status amount_verified psp_error_code"),
 }
 
 // Vault output is a display-safe projection, not raw provider JSON. Keep presence
@@ -97,8 +100,18 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 	}
 	result := make(vaultJSON)
 	for key, children := range fields {
+		if key == "*" {
+			for name, value := range object {
+				filtered, err := filterVaultJSON(value, children)
+				if err != nil {
+					return nil, err
+				}
+				result[name] = filtered
+			}
+			continue
+		}
 		if value, ok := object[key]; ok {
-			if key == "url" || key == "approval_url" || key == "merchant_url" || key == "image_url" || key == "product_url" {
+			if key == "url" || key == "approval_url" || key == "merchant_url" || key == "merchant_origin" || key == "image_url" || key == "product_url" {
 				var address string
 				if json.Unmarshal(value, &address) != nil || !vaultDisplayURL(address) {
 					continue
@@ -196,7 +209,7 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 	}
 	for _, op := range actions.Operations {
 		command := prefix
-		if op.Type == "fill" {
+		if op.Type == "fill" || op.Type == "prepare_checkout" {
 			command += " --params '<json>'"
 		}
 		pterm.Printf("Invoke: %s -- %s %s %s\n", command, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
@@ -224,6 +237,10 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	rows := pterm.TableData{
 		{"Property", "Value"}, {"Key (immutable)", item.Key}, {"ID", item.ID},
 		{"Type", item.Type}, {"Provider", item.Spec.Provider}, {"Status", item.State.Status},
+	}
+	if item.Type == "credential" {
+		rows = append(rows, []string{"Version", fmt.Sprint(item.Version)})
+		pterm.Info.Println("Use -o json for field definitions and presence; stored values are omitted")
 	}
 	if item.Type == "wallet" {
 		configID, configName := item.Spec.ProviderConfig.ID, item.Spec.ProviderConfig.Name
@@ -264,6 +281,15 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		a := item.State.Aliases
 		rows = append(rows, []string{"Checkout alias: number", a.Number}, []string{"Checkout alias: cvc", a.Cvc}, []string{"Checkout alias: exp_month", a.ExpMonth}, []string{"Checkout alias: exp_year", a.ExpYear})
 	}
+	if item.State.JSON.Preparation.Valid() {
+		p := item.State.Preparation
+		rows = append(rows, []string{"Preparation ID", p.ID}, []string{"Preparation status", string(p.Status)},
+			[]string{"Preparation browser", p.BrowserID}, []string{"Merchant origin", p.MerchantOrigin},
+			[]string{"Environment", string(p.Environment)})
+		if !p.ExpiresAt.IsZero() {
+			rows = append(rows, []string{"Submit before", util.FormatLocal(p.ExpiresAt)})
+		}
+	}
 	if item.State.JSON.Authorization.Valid() {
 		a := item.State.Authorization
 		rows = append(rows, []string{"Checkout authorization", a.ID}, []string{"Authorization status", string(a.Status)})
@@ -299,7 +325,24 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	for _, op := range actions.Operations {
 		pterm.Printf("Available operation: %s — %s\n", op.Type, op.Description)
 	}
+	if item.Type == "credential" {
+		if actions.RequiredAction != "" {
+			pterm.Info.Println("Share the collection URL with the user to complete the credential form. Observe readiness with items get --wait 60; for edits to an already-ready item, compare versions without --wait.")
+		}
+		pterm.Info.Println("Do not use credential items for credit card data. Use wallet and card item types for credit cards and payment checkout instead.")
+		pterm.Info.Println("Ready means required fields are populated, not that login succeeded. Fill only when advertised; fill does not submit the form.")
+		return
+	}
 	if item.Type == "card" {
+		if item.State.JSON.Preparation.Valid() {
+			switch item.State.Status {
+			case "preparing":
+				pterm.Info.Println("Keep the approval page open and poll items get --wait 60 until ready_to_submit before submitting native Pay.")
+			case "ready_to_submit":
+				pterm.Info.Println("Submit native Pay before preparation.expires_at; polling does not extend the deadline.")
+			}
+			pterm.Info.Println("Preparations are single-use, including after failure or expiry. Preparation consumed means claimed, not payment success. Do not retry automatically.")
+		}
 		card := item.AsCard()
 		for _, expansion := range card.AvailableExpansions {
 			pterm.Printf("Available expansion: %s — %s\n", expansion.Type, expansion.Description)

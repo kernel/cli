@@ -26,7 +26,12 @@ const failedFillFixture = `{"type":"fill","status":"failed","fields":[{"index":0
 const unknownFillFixture = `{"type":"fill","status":"unknown","fields":[{"index":0,"status":"filled"},{"index":1,"status":"unknown","error_code":"timeout"},{"index":2,"status":"not_attempted"}]}`
 
 func TestVaultFillParamsValidation(t *testing.T) {
-	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Error("invalid params reached API") })
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		// Type-specific checks require the current item, but must never invoke fill.
+		require.Equal(t, http.MethodGet, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, readyFillCardFixture)
+	})
 	replace := func(old, value string) string { return strings.Replace(fillParamsFixture, old, value, 1) }
 	for name, raw := range map[string]string{
 		"empty": "", "null": "null", "array": "[]", "scalar": `"credential-sentinel"`,
