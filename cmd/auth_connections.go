@@ -444,13 +444,14 @@ func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateIn
 // models the one on `get` and the one on the `follow` event stream as two
 // identical but distinct types, so both are converted to this before rendering.
 type managedAuthInputField struct {
-	ID       string
-	Label    string
-	Type     string
-	Ref      string
-	Hint     string
-	Reason   string
-	Required bool
+	ID        string
+	Label     string
+	Type      string
+	Ref       string
+	Hint      string
+	InputMode string
+	Reason    string
+	Required  bool
 }
 
 // managedAuthInputChoice is the choice counterpart of managedAuthInputField.
@@ -464,13 +465,18 @@ type managedAuthInputChoice struct {
 }
 
 // formatManagedAuthField renders one canonical input field as
-// `id (Label) [type, ref=…, required, hint="…"]`. The hint carries the API's
-// context for the field, such as the masked destination a one-time code was
-// sent to, so it is often what tells the user which value to supply.
+// `id (Label) [type, input_mode=…, ref=…, required, hint="…"]`. The hint carries
+// the API's context for the field, such as the masked destination a one-time code
+// was sent to, so it is often what tells the user which value to supply. The
+// input mode is a keyboard hint that is independent of the field type, so a
+// numeric one-time code shows as `text, input_mode=numeric`.
 func formatManagedAuthField(f managedAuthInputField) string {
-	meta := make([]string, 0, 5)
+	meta := make([]string, 0, 6)
 	if f.Type != "" {
 		meta = append(meta, f.Type)
+	}
+	if f.InputMode != "" {
+		meta = append(meta, "input_mode="+f.InputMode)
 	}
 	if f.Ref != "" {
 		meta = append(meta, "ref="+f.Ref)
@@ -577,13 +583,14 @@ func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) e
 		fields := make([]string, 0, len(auth.Fields))
 		for _, f := range auth.Fields {
 			fields = append(fields, formatManagedAuthField(managedAuthInputField{
-				ID:       f.ID,
-				Label:    f.Label,
-				Type:     f.Type,
-				Ref:      f.Ref,
-				Hint:     f.Hint,
-				Required: f.Required,
-				Reason:   string(f.Reason),
+				ID:        f.ID,
+				Label:     f.Label,
+				Type:      f.Type,
+				Ref:       f.Ref,
+				Hint:      f.Hint,
+				InputMode: f.InputMode,
+				Required:  f.Required,
+				Reason:    string(f.Reason),
 			}))
 		}
 		tableData = append(tableData, []string{"Fields", strings.Join(fields, "; ")})
@@ -1138,13 +1145,14 @@ func (c AuthConnectionCmd) Follow(ctx context.Context, in AuthConnectionFollowIn
 				fields := make([]string, 0, len(state.Fields))
 				for _, f := range state.Fields {
 					fields = append(fields, formatManagedAuthField(managedAuthInputField{
-						ID:       f.ID,
-						Label:    f.Label,
-						Type:     f.Type,
-						Ref:      f.Ref,
-						Hint:     f.Hint,
-						Required: f.Required,
-						Reason:   string(f.Reason),
+						ID:        f.ID,
+						Label:     f.Label,
+						Type:      f.Type,
+						Ref:       f.Ref,
+						Hint:      f.Hint,
+						InputMode: f.InputMode,
+						Required:  f.Required,
+						Reason:    string(f.Reason),
 					}))
 				}
 				pterm.Info.Printf("  Fields: %s\n", strings.Join(fields, ", "))

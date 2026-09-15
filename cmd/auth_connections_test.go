@@ -152,13 +152,16 @@ func TestAuthConnectionsGet_PrintsCanonicalInputMetadata(t *testing.T) {
 				InteractionID: "mai_abc123xyz",
 				Fields: []kernel.ManagedAuthField{
 					{
-						ID:       "otp",
-						Label:    "One-time code",
-						Type:     "code",
-						Ref:      "totp_code",
-						Hint:     "Enter the code sent to +1 ••• ••• 1234",
-						Reason:   "rejected",
-						Required: true,
+						ID:    "otp",
+						Label: "One-time code",
+						Type:  "code",
+						Ref:   "totp_code",
+						// The keyboard hint is independent of the field type, so
+						// it is shown even though the type is already "code".
+						InputMode: "numeric",
+						Hint:      "Enter the code sent to +1 ••• ••• 1234",
+						Reason:    "rejected",
+						Required:  true,
 					},
 				},
 				Choices: []kernel.ManagedAuthChoice{
@@ -189,7 +192,7 @@ func TestAuthConnectionsGet_PrintsCanonicalInputMetadata(t *testing.T) {
 	assert.Contains(t, out, `otp (One-time code)`)
 	// The reason tells the user why the field is being asked for: "rejected"
 	// means a stored credential was refused, so a new value has to replace it.
-	assert.Contains(t, out, `code, ref=totp_code, required, reason=rejected`)
+	assert.Contains(t, out, `code, input_mode=numeric, ref=totp_code, required, reason=rejected`)
 	assert.Contains(t, out, `hint="Enter the code sent to +1 ••• ••• 1234"`)
 	assert.Contains(t, out, `mfa_sms (Text message)`)
 	assert.Contains(t, out, `mfa_method, sms, to=+1 ••• ••• 1234`)
