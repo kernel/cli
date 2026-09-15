@@ -55,7 +55,7 @@ var vaultItemFields = vaultOutputFields{
 		"fields":        {"*": vaultFieldsOf("has_value")},
 		"masks":         vaultFieldsOf("brand last4"),
 		"aliases":       vaultFieldsOf("number cvc exp_month exp_year"),
-		"preparation":   vaultFieldsOf("id status browser_id merchant_origin environment created_at expires_at approval_url"),
+		"preparation":   vaultFieldsOf("id status browser_id merchant_origin environment psp created_at expires_at approval_url"),
 		"authorization": vaultFieldsOf("id status psp merchant amount amount_cents currency created_at expires_at approval_url browser_id reason psp_error_code expected_cents actual_cents amount_authority amount_verified charged_amount_cents charged_currency charged_kind replay_attempted replay_status replay_delivered"),
 	},
 }
@@ -286,6 +286,9 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		rows = append(rows, []string{"Preparation ID", p.ID}, []string{"Preparation status", string(p.Status)},
 			[]string{"Preparation browser", p.BrowserID}, []string{"Merchant origin", p.MerchantOrigin},
 			[]string{"Environment", string(p.Environment)})
+		if p.Psp != "" {
+			rows = append(rows, []string{"Processor", string(p.Psp)})
+		}
 		if !p.ExpiresAt.IsZero() {
 			rows = append(rows, []string{"Submit before", util.FormatLocal(p.ExpiresAt)})
 		}

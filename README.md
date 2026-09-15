@@ -548,13 +548,20 @@ kernel vaults items get user-123 order-1 --wait 60 -o json
 
 `--spec-file <path|->` accepts the same JSON. `browser_id` is the active session with
 this vault attached. `merchant_origin` is the canonical HTTPS origin of the top-level
-merchant document, not the Square iframe; HTTP localhost is allowed for tests.
-`environment` is `production` or `sandbox` and refers to Square, not the credential mode.
+merchant document, not a processor iframe; HTTP localhost is allowed for tests.
+
+Optional `psp` selects the tokenization processor: `square`, `braintree`, `worldpay`,
+`bambora`, or `mercado_pago`. Omit it for Square; non-Square processors require
+multi-processor preparation enablement. `environment` is `production`, `sandbox`, or
+`shared`: use `production` or `sandbox` for Square, Braintree and Worldpay, and `shared`
+for Bambora and Mercado Pago. Shared endpoints do not establish test mode; merchant
+credentials and configuration determine processor test mode, independently of the
+AgentCard credential mode.
 
 Keep the approval page open. Poll until the item's status is `ready_to_submit`, then
 submit native Pay before `state.preparation.expires_at`. Readiness lasts at most 30
 seconds, and polling does not extend it. The CLI displays the preparation ID, status,
-browser, origin, environment, approval URL, and submission deadline.
+browser, origin, environment, processor, approval URL, and submission deadline.
 
 Each preparation is single-use, including after failure or expiry. A preparation
 marked `consumed` has been claimed; it does not prove the payment settled or succeeded.
