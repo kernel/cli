@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/kernel/cli/pkg/util"
@@ -14,6 +15,10 @@ import (
 
 type vaultJSON map[string]json.RawMessage
 type vaultOutputFields map[string]vaultOutputFields
+
+// vaultOutputWildcard applies one schema to every property of an object whose
+// keys are not known in advance, such as credential field maps.
+const vaultOutputWildcard = "*"
 
 func vaultFieldsOf(names string) vaultOutputFields {
 	fields := make(vaultOutputFields)
@@ -31,16 +36,23 @@ var vaultMethodFields = vaultOutputFields{
 	"display":      vaultFieldsOf("label brand last4"),
 	"capabilities": {"single_use_card": vaultFieldsOf("eligible reasons")},
 }
+
+// Credential field maps are keyed by caller-declared names, so their schema is
+// applied to every property instead of a fixed key list.
+var vaultCredentialFieldFields = vaultOutputFields{vaultOutputWildcard: vaultFieldsOf("type required sensitive")}
+var vaultCredentialFieldStateFields = vaultOutputFields{vaultOutputWildcard: vaultFieldsOf("has_value value")}
+
 var vaultItemFields = vaultOutputFields{
-	"id": nil, "key": nil, "type": nil, "created_at": nil, "updated_at": nil, "expires_at": nil,
+	"id": nil, "key": nil, "type": nil, "version": nil, "created_at": nil, "updated_at": nil, "expires_at": nil,
 	"available_operations": vaultOperationFields,
 	"available_expansions": vaultOperationFields,
-	"action":               vaultFieldsOf("name url"),
+	"action":               vaultFieldsOf("name url expires_at"),
 	"expanded":             {"payment_methods": vaultMethodFields},
 	"spec": {
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil,
 		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
-		"context": nil, "expires_at": nil,
+		"context": nil, "expires_at": nil, "description": nil,
+		"fields":          vaultCredentialFieldFields,
 		"provider_config": vaultFieldsOf("id name"),
 		"authorization":   {"method": nil, "client": {"type": nil, "provider_config": vaultFieldsOf("id name")}},
 		"totals":          vaultTotalFields,
@@ -51,6 +63,7 @@ var vaultItemFields = vaultOutputFields{
 	},
 	"state": {
 		"provider": nil, "status": nil, "status_reason": nil, "user_id": nil, "domains": nil,
+		"fields":        vaultCredentialFieldStateFields,
 		"masks":         vaultFieldsOf("brand last4"),
 		"aliases":       vaultFieldsOf("number cvc exp_month exp_year"),
 		"authorization": vaultFieldsOf("id status psp merchant amount amount_cents currency created_at expires_at approval_url browser_id reason psp_error_code expected_cents actual_cents amount_authority amount_verified charged_amount_cents charged_currency charged_kind replay_attempted replay_status replay_delivered"),
@@ -97,22 +110,39 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 		return nil, fmt.Errorf("invalid vault response shape")
 	}
 	result := make(vaultJSON)
-	for key, children := range fields {
-		if value, ok := object[key]; ok {
-			if key == "url" || key == "approval_url" || key == "merchant_url" || key == "image_url" || key == "product_url" {
-				var address string
-				if json.Unmarshal(value, &address) != nil || !vaultDisplayURL(address) {
-					continue
-				}
-			}
-			filtered, err := filterVaultJSON(value, children)
-			if err != nil {
+	if wildcard, hasWildcard := fields[vaultOutputWildcard]; hasWildcard {
+		for key, value := range object {
+			if err := filterVaultProperty(result, key, value, wildcard); err != nil {
 				return nil, err
 			}
-			result[key] = filtered
+		}
+		return json.Marshal(result)
+	}
+	for key, children := range fields {
+		if value, ok := object[key]; ok {
+			if err := filterVaultProperty(result, key, value, children); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return json.Marshal(result)
+}
+
+// Withhold any URL that is not display-safe rather than reporting an error, so a
+// credential-bearing link is dropped from output instead of being echoed back.
+func filterVaultProperty(result vaultJSON, key string, value json.RawMessage, fields vaultOutputFields) error {
+	if key == "url" || key == "approval_url" || key == "merchant_url" || key == "image_url" || key == "product_url" {
+		var address string
+		if json.Unmarshal(value, &address) != nil || !vaultDisplayURL(address) {
+			return nil
+		}
+	}
+	filtered, err := filterVaultJSON(value, fields)
+	if err != nil {
+		return err
+	}
+	result[key] = filtered
+	return nil
 }
 
 func vaultSafeJSONSlice[T util.RawJSONProvider](items []T, fields vaultOutputFields) ([]vaultJSON, error) {
@@ -223,8 +253,17 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		return err
 	}
 	rows := pterm.TableData{
-		{"Property", "Value"}, {"Key (immutable)", item.Key}, {"ID", item.ID},
-		{"Type", item.Type}, {"Provider", item.Spec.Provider}, {"Status", item.State.Status},
+		{"Property", "Value"}, {"Key (immutable)", item.Key}, {"ID", item.ID}, {"Type", item.Type},
+	}
+	if item.Type != "credential" {
+		rows = append(rows, []string{"Provider", item.Spec.Provider})
+	}
+	rows = append(rows, []string{"Status", item.State.Status})
+	if item.Type == "credential" {
+		rows = append(rows, []string{"Version", fmt.Sprint(item.Version)})
+		if item.Spec.Description != "" {
+			rows = append(rows, []string{"Description", item.Spec.Description})
+		}
 	}
 	if item.Type == "wallet" {
 		configID, configName := item.Spec.ProviderConfig.ID, item.Spec.ProviderConfig.Name
@@ -256,7 +295,16 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		rows = append(rows, []string{"Permitted domains (provider-assigned)", strings.Join(item.State.Domains, ", ")})
 	}
 	if actions.RequiredAction != "" {
-		rows = append(rows, []string{"Required action", actions.RequiredAction})
+		// A credential form is offered whenever a session is active; on a ready
+		// item it is an invitation to edit, not an outstanding requirement.
+		label := "Required action"
+		if item.Type == "credential" {
+			label = "Collection action"
+		}
+		rows = append(rows, []string{label, actions.RequiredAction})
+		if item.Type == "credential" && !item.Action.ExpiresAt.IsZero() {
+			rows = append(rows, []string{"Collection link expires", util.FormatLocal(item.Action.ExpiresAt)})
+		}
 	}
 	if !item.ExpiresAt.IsZero() {
 		rows = append(rows, []string{"Expires At", util.FormatLocal(item.ExpiresAt)})
@@ -292,8 +340,38 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		}
 	}
 	PrintTableNoPad(rows, true)
+	if item.Type == "credential" {
+		printVaultCredentialFields(item)
+	}
 	printVaultItemGuidance(item, actions)
 	return nil
+}
+
+// Declared schema and per-field presence answer different questions: the schema
+// says what the form collects, the state says what is stored. Sensitive values
+// are never returned, so presence is all the API discloses for them.
+func printVaultCredentialFields(item *kernel.VaultItemUnion) {
+	if len(item.Spec.Fields) == 0 {
+		return
+	}
+	names := make([]string, 0, len(item.Spec.Fields))
+	for name := range item.Spec.Fields {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	rows := pterm.TableData{{"Field", "Type", "Required", "Sensitive", "Has value", "Value"}}
+	for _, name := range names {
+		definition := item.Spec.Fields[name]
+		state := item.State.Fields[name]
+		value := "-"
+		if definition.Sensitive {
+			value = "(withheld)"
+		} else if state.Value != "" {
+			value = state.Value
+		}
+		rows = append(rows, []string{name, string(definition.Type), fmt.Sprint(definition.Required), fmt.Sprint(definition.Sensitive), fmt.Sprint(state.HasValue), value})
+	}
+	PrintTableNoPad(rows, true)
 }
 
 func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemActions) {
@@ -318,7 +396,8 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	for _, op := range actions.Operations {
 		pterm.Printf("Available operation: %s — %s\n", op.Type, op.Description)
 	}
-	if item.Type == "card" {
+	switch item.Type {
+	case "card":
 		card := item.AsCard()
 		for _, expansion := range card.AvailableExpansions {
 			pterm.Printf("Available expansion: %s — %s\n", expansion.Type, expansion.Description)
@@ -327,7 +406,9 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 			pterm.Info.Println("Aliases are non-secret checkout values. Use only in a browser created with this vault attached; ready does not mean paid.")
 		}
 		pterm.Info.Println("Inspect items events for payment outcomes. Do not retry failed, timed-out, rejected, or indeterminate payments.")
-	} else {
+	case "credential":
+		printVaultCredentialGuidance(item)
+	default:
 		wallet := item.AsWallet()
 		for _, expansion := range wallet.AvailableExpansions {
 			pterm.Printf("Available expansion: %s — %s\n", expansion.Type, expansion.Description)
@@ -336,9 +417,18 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	if item.Expanded.JSON.PaymentMethods.Valid() {
 		printVaultPaymentMethods(item.Expanded.PaymentMethods)
 	}
-	if actions.RequiredAction != "" {
+	if actions.RequiredAction != "" && item.Type != "credential" {
 		pterm.Info.Println("Complete the returned action with the provider; never pass card data or OAuth codes to the CLI. Observe with items get --wait 60.")
 	}
+}
+
+func printVaultCredentialGuidance(item *kernel.VaultItemUnion) {
+	if item.State.Status == "pending_collection" {
+		pterm.Warning.Println("pending_collection: required values are missing. Open the collection URL yourself or hand it to the person who holds the credential; treat it as a secret and keep it out of logs. Observe with items get --wait 60.")
+	} else {
+		pterm.Info.Println("ready: every required field has a value. This does not mean a login succeeded.")
+	}
+	pterm.Info.Println("Set or clear values with vaults credentials update --version, which requires the version above. Never pass credential values as shell arguments; use --values-file. Do not store card data in credential items.")
 }
 
 // Preparation state and item state answer different questions: the preparation

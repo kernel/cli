@@ -143,7 +143,7 @@ func (c VaultsCmd) ListItems(ctx context.Context, vault, output string) error {
 		if err != nil {
 			return err
 		}
-		rows = append(rows, []string{item.Key, item.Type, item.Spec.Provider, item.State.Status, util.OrDash(actions.RequiredAction)})
+		rows = append(rows, []string{item.Key, item.Type, util.OrDash(item.Spec.Provider), item.State.Status, util.OrDash(actions.RequiredAction)})
 	}
 	PrintTableNoPad(rows, true)
 	return nil
@@ -192,7 +192,7 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 	var item *kernel.VaultItemUnion
 	var err error
 	if update {
-		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, Spec: spec}, option.WithMaxRetries(0))
+		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCardVaultItemUpdateRequest: &kernel.VaultItemUpdateParamsBodyCardVaultItemUpdateRequest{Spec: spec}}, option.WithMaxRetries(0))
 	} else {
 		item, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCard: &kernel.VaultItemUpsertParamsBodyCard{Spec: spec}}, option.WithMaxRetries(0))
 	}
@@ -246,10 +246,16 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
 	if operation == "fill" {
-		return c.fill(ctx, vault, key, params.Fill, output)
+		if err := validateVaultFillForItem(item, params.Fill); err != nil {
+			return err
+		}
+		return c.fill(ctx, vault, key, item.Type, params.Fill, output)
 	}
 	body := kernel.VaultItemPerformOperationParams{IDOrName: vault}
-	if operation == "prepare_checkout" {
+	switch operation {
+	case "collect":
+		body.OfCollect = &kernel.CollectVaultItemOperationRequestParam{Type: kernel.CollectVaultItemOperationRequestTypeCollect}
+	case "prepare_checkout":
 		body.OfPrepareCheckout = &kernel.PrepareCheckoutVaultItemOperationRequestParam{
 			Type: kernel.PrepareCheckoutVaultItemOperationRequestTypePrepareCheckout,
 			Checkout: kernel.VaultCheckoutContextParam{
@@ -258,7 +264,7 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 				Environment:    kernel.VaultCheckoutContextEnvironment(params.Checkout.Environment),
 			},
 		}
-	} else {
+	default:
 		// Preserve support for other advertised parameterless operations.
 		body.OfAuthorize = &kernel.AuthorizeVaultItemOperationRequestParam{Type: kernel.AuthorizeVaultItemOperationRequestType(operation)}
 	}
@@ -269,7 +275,7 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		}
 		return util.CleanedUpSdkError{Err: err}
 	}
-	if response == nil || (response.Type != "card" && response.Type != "wallet") {
+	if response == nil || (response.Type != "card" && response.Type != "wallet" && response.Type != "credential") {
 		return fmt.Errorf("unexpected vault operation response; inspect the item and do not retry")
 	}
 	var updated kernel.VaultItemUnion

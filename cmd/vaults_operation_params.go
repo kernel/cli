@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	kernel "github.com/kernel/kernel-go-sdk"
 )
 
 // vaultOperationParams holds the parsed --params payload for the one operation
@@ -39,6 +41,13 @@ type vaultFillField struct {
 }
 
 var vaultFillPageURLPattern = regexp.MustCompile(`^https://[^/?#@*\s]+(?:[/?#][^\s]*)?$`)
+
+// Declared credential field names; card field names also satisfy this pattern.
+var vaultFieldNamePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`)
+
+// Card fields the API fills from the decrypted card, excluding the combined
+// expiration field, which additionally requires a format.
+var vaultCardFillFields = []string{"number", "cvc", "exp_month", "exp_year", "billing_name", "billing_line1", "billing_line2", "billing_city", "billing_state", "billing_postal_code", "billing_country"}
 
 // Reject duplicate and unknown keys without including payloads in diagnostics.
 func vaultParamsObject(raw, allowed string) (map[string]json.RawMessage, error) {
@@ -84,8 +93,8 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 	if strings.TrimSpace(operation) == "" {
 		return nil, fmt.Errorf("operation must not be empty")
 	}
-	if openSet && operation != "authorize" && operation != "prepare_checkout" {
-		return nil, fmt.Errorf("--open is only supported for authorize and prepare_checkout")
+	if openSet && operation != "authorize" && operation != "prepare_checkout" && operation != "collect" {
+		return nil, fmt.Errorf("--open is only supported for authorize, collect, and prepare_checkout")
 	}
 	if operation == "prepare_checkout" {
 		checkout, err := parseVaultCheckoutContext(raw, paramsSet)
@@ -96,12 +105,12 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 	}
 	if operation != "fill" {
 		if paramsSet {
-			return nil, fmt.Errorf("--params is only supported for fill and prepare_checkout; authorize takes no parameters")
+			return nil, fmt.Errorf("--params is only supported for fill and prepare_checkout; authorize and collect take no parameters")
 		}
 		return nil, nil
 	}
 	if !paramsSet {
-		return nil, fmt.Errorf("fill requires --params with browser_id, page_url, and fields")
+		return nil, fmt.Errorf("fill requires --params with browser_id, fields, and page_url for cards")
 	}
 	object, err := vaultParamsObject(raw, "browser_id page_url fields timeout_ms")
 	if err != nil {
@@ -111,12 +120,16 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 	if json.Unmarshal(object["browser_id"], &params.BrowserID) != nil || strings.TrimSpace(params.BrowserID) == "" {
 		return nil, fmt.Errorf("--params.browser_id must be a non-empty browser session ID, not a name")
 	}
-	if json.Unmarshal(object["page_url"], &params.PageURL) != nil || !vaultFillPageURLPattern.MatchString(params.PageURL) {
-		return nil, fmt.Errorf("--params.page_url must be an exact HTTPS URL without credentials or a wildcard host")
-	}
-	u, err := url.Parse(params.PageURL)
-	if err != nil || u.Hostname() == "" || u.User != nil || u.Opaque != "" {
-		return nil, fmt.Errorf("--params.page_url must be an exact HTTPS URL without credentials")
+	// Cards require page_url; credential items may omit it to require exactly one
+	// open page. The item type decides, so only validate the value when supplied.
+	if _, ok := object["page_url"]; ok {
+		if json.Unmarshal(object["page_url"], &params.PageURL) != nil || !vaultFillPageURLPattern.MatchString(params.PageURL) {
+			return nil, fmt.Errorf("--params.page_url must be an exact HTTPS URL without credentials or a wildcard host")
+		}
+		u, err := url.Parse(params.PageURL)
+		if err != nil || u.Hostname() == "" || u.User != nil || u.Opaque != "" {
+			return nil, fmt.Errorf("--params.page_url must be an exact HTTPS URL without credentials")
+		}
 	}
 	if timeout, ok := object["timeout_ms"]; ok {
 		if json.Unmarshal(timeout, &params.TimeoutMS) != nil || params.TimeoutMS == nil || *params.TimeoutMS < 1 || *params.TimeoutMS > 30000 {
@@ -137,20 +150,15 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 		if json.Unmarshal(field["selector"], &binding.Selector) != nil || strings.TrimSpace(binding.Selector) == "" {
 			return nil, fmt.Errorf("--params.fields[%d].selector must be a non-empty CSS selector", i)
 		}
-		if json.Unmarshal(field["field"], &binding.Field) != nil {
-			return nil, fmt.Errorf("--params.fields[%d].field must be a supported card field", i)
+		if json.Unmarshal(field["field"], &binding.Field) != nil || !vaultFieldNamePattern.MatchString(binding.Field) {
+			return nil, fmt.Errorf("--params.fields[%d].field must be a supported card field or a declared credential field name", i)
 		}
-		switch binding.Field {
-		case "expiration":
+		if binding.Field == "expiration" {
 			if json.Unmarshal(field["format"], &binding.Format) != nil || (binding.Format != "MM/YY" && binding.Format != "MM/YYYY") {
 				return nil, fmt.Errorf("--params.fields[%d].format must be MM/YY or MM/YYYY for expiration", i)
 			}
-		case "number", "cvc", "exp_month", "exp_year", "billing_name", "billing_line1", "billing_line2", "billing_city", "billing_state", "billing_postal_code", "billing_country":
-			if _, ok := field["format"]; ok {
-				return nil, fmt.Errorf("--params.fields[%d].format is only supported for expiration", i)
-			}
-		default:
-			return nil, fmt.Errorf("--params.fields[%d].field must be a supported card field", i)
+		} else if _, ok := field["format"]; ok {
+			return nil, fmt.Errorf("--params.fields[%d].format is only supported for a card's combined expiration field", i)
 		}
 		params.Fields = append(params.Fields, binding)
 	}
@@ -206,4 +214,29 @@ func vaultMerchantOrigin(value string) (string, error) {
 		return "", invalid
 	}
 	return u.Scheme + "://" + u.Host, nil
+}
+
+// Card and credential items accept different bindings, and the item type is only
+// known after the item is read. Reject mismatches before any browser writes.
+func validateVaultFillForItem(item *kernel.VaultItemUnion, params *vaultFillParams) error {
+	if item.Type == "credential" {
+		for i, field := range params.Fields {
+			if field.Format != "" {
+				return fmt.Errorf("--params.fields[%d].format is only supported for a card's combined expiration field", i)
+			}
+			if _, declared := item.Spec.Fields[field.Field]; !declared {
+				return fmt.Errorf("--params.fields[%d].field %q is not declared on this credential item", i, field.Field)
+			}
+		}
+		return nil
+	}
+	if params.PageURL == "" {
+		return fmt.Errorf("--params.page_url is required for card items; only credential items may omit it")
+	}
+	for i, field := range params.Fields {
+		if field.Field != "expiration" && !slices.Contains(vaultCardFillFields, field.Field) {
+			return fmt.Errorf("--params.fields[%d].field must be a supported card field", i)
+		}
+	}
+	return nil
 }

@@ -33,7 +33,23 @@ func vaultCredentialError(err error) error {
 	return fmt.Errorf("vault request failed; details withheld to protect credentials; inspect existing state before taking further action")
 }
 
-func readVaultSecrets(cmd *cobra.Command, flag string, fields ...string) (map[string]string, error) {
+// Credential item writes fail for reasons a wallet or provider configuration
+// cannot, so map their conflicts to what the caller must actually reconcile.
+// Details stay withheld: bodies and transport errors can echo submitted values.
+func vaultCredentialItemError(err error) error {
+	var apiErr *kernel.Error
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case 400:
+			return fmt.Errorf("credential request rejected (HTTP 400); field names must be declared, values must satisfy their declared type, and a required totp field needs a valid Base32 seed that no form can collect")
+		case 409:
+			return fmt.Errorf("credential conflict (HTTP 409); the item changed since your last read or is not a credential item. Re-read it with items get and retry with the version it returns")
+		}
+	}
+	return vaultCredentialError(err)
+}
+
+func readVaultSecretFile(cmd *cobra.Command, flag string) ([]byte, error) {
 	path, _ := cmd.Flags().GetString(flag)
 	if path == "" {
 		return nil, fmt.Errorf("--%s requires a file path or '-' for stdin", flag)
@@ -51,6 +67,14 @@ func readVaultSecrets(cmd *cobra.Command, flag string, fields ...string) (map[st
 	data, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
 	if err != nil || len(data) > maxBytes {
 		return nil, fmt.Errorf("could not read --%s (maximum 1 MiB)", flag)
+	}
+	return data, nil
+}
+
+func readVaultSecrets(cmd *cobra.Command, flag string, fields ...string) (map[string]string, error) {
+	data, err := readVaultSecretFile(cmd, flag)
+	if err != nil {
+		return nil, err
 	}
 	var values map[string]string
 	if json.Unmarshal(data, &values) != nil || len(values) != len(fields) {
@@ -80,4 +104,24 @@ func vaultSpecHasSecrets(value json.RawMessage) bool {
 		}
 	}
 	return false
+}
+
+// Credential values are write-only secrets, so they arrive through a protected
+// file or stdin rather than shell arguments. A null value clears a stored value
+// on update; creation rejects null and empty values separately.
+func readVaultFieldValues(cmd *cobra.Command, flag string) (map[string]*string, error) {
+	data, err := readVaultSecretFile(cmd, flag)
+	if err != nil {
+		return nil, err
+	}
+	var values map[string]*string
+	if json.Unmarshal(data, &values) != nil || len(values) < 1 || len(values) > 32 {
+		return nil, fmt.Errorf("--%s must be a JSON object mapping 1-32 field names to string or null values", flag)
+	}
+	for name := range values {
+		if !vaultFieldNamePattern.MatchString(name) {
+			return nil, fmt.Errorf("--%s field names must match [a-zA-Z][a-zA-Z0-9_]{0,63}", flag)
+		}
+	}
+	return values, nil
 }

@@ -52,7 +52,7 @@ func vaultPreRun(cmd *cobra.Command, args []string) error {
 func newVaultsCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "vaults", Aliases: []string{"vault"}, Short: "Prepare and observe project-owned payment credentials",
-		Long: `Prepare and observe payment credentials; vault commands do not submit merchant payments.
+		Long: `Prepare and observe payment credentials and stored logins; vault commands do not submit merchant payments.
 
 Optionally select a project with --project <id-or-name> or KERNEL_PROJECT.
 Otherwise, the API resolves the project from your credentials and its defaults.
@@ -67,6 +67,12 @@ Vault names, item keys, and project ownership are immutable.
    use advertised fill with --params to bind checkout fields. Returned non-secret
    aliases are an alternative for explicitly chosen egress-substitution integrations,
    not a fallback after fill. Inspect items get/events for payment outcomes.
+
+For logins and other non-payment credentials, use credentials create instead of a
+wallet and card: declare the fields, supply any known values with --values-file,
+and hand the returned collection URL to whoever holds the credential. Attach the
+vault with browsers create --vault, then use advertised fill to bind its fields.
+Credential items must never hold card numbers, security codes, or expiration dates.
 
 Permitted checkout domains are provider-assigned and displayed when returned;
 there is no domain-setting API.
@@ -139,6 +145,10 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 Read its description with items get before invoking; follow any approval requirements.
 Authorize sends {"type":"authorize"} without --params and returns an updated item;
 --open opens its returned HTTPS action URL.
+Collect is advertised by ready and pending_collection credential items. It takes no
+--params and returns the item with a time-scoped hosted form URL, reusing an active
+session or renewing an expired one; --open opens it. Opening the form clears no
+values and changes neither readiness nor the item version. Treat the URL as a secret.
 Prepare_checkout is advertised by eligible unused AgentCard cards before the first
 Square Pay action. It requires --params with browser_id (session ID of a browser
 created with this vault attached), merchant_origin (canonical origin of the
@@ -150,13 +160,17 @@ submit native Pay before the preparation deadline; readiness lasts at most 30
 seconds and polling never extends it. Unused preparations expire automatically.
 Every preparation is single-use, including after failure or expiry: do not
 automatically retry, and reconcile uncertain outcomes with the merchant.
-Fill requires --params JSON with browser_id (session ID, not name), exact HTTPS
-page_url, and 1-32 fields. Each binding has field and selector; expiration also
-requires format MM/YY or MM/YYYY. Stored fields: number, cvc, exp_month (MM),
-exp_year (YYYY), billing_name, billing_line1, billing_line2, billing_city,
-billing_state, billing_postal_code, billing_country. Optional timeout_ms is 1-30000
-(default 10000). Do not include type, values, or frame IDs in --params.
-Fill is available only when advertised by a ready Link card, not AgentCard.
+Fill requires --params JSON with browser_id (session ID, not name) and 1-32 fields.
+Each binding has field and selector. Optional timeout_ms is 1-30000 (default 10000).
+Do not include type, values, or frame IDs in --params.
+For cards, page_url is a required exact HTTPS URL and each field is one of number,
+cvc, exp_month (MM), exp_year (YYYY), billing_name, billing_line1, billing_line2,
+billing_city, billing_state, billing_postal_code, billing_country, or the combined
+expiration, which also requires format MM/YY or MM/YYYY. Fill is available only when
+advertised by a ready Link card, not AgentCard.
+For credentials, each field is a declared field name with a stored value, format is
+not accepted, and page_url may be omitted to require exactly one open page. A totp
+field fills a freshly generated code; its seed never enters the browser.
 The API searches the selected page and descendant frames, including payment iframes.
 Fill returns value-free per-field outcomes, not an updated item. Completed exits 0;
 failed/unknown exit nonzero while preserving the result in -o json.
@@ -166,7 +180,9 @@ Inspect the browser before deciding what to do next; completed does not mean pai
 		Example: `  kernel vaults items get checkout order-1
   kernel vaults items invoke checkout order-1 authorize --open
   kernel vaults items invoke checkout order-1 prepare_checkout --params '{"browser_id":"browser-session-id","merchant_origin":"https://shop.example.com","environment":"production"}' --open
-  kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browser-session-id","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#card-number"},{"field":"expiration","format":"MM/YY","selector":"#expiry"},{"field":"cvc","selector":"#security-code"}],"timeout_ms":10000}' -o json`,
+  kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browser-session-id","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#card-number"},{"field":"expiration","format":"MM/YY","selector":"#expiry"},{"field":"cvc","selector":"#security-code"}],"timeout_ms":10000}' -o json
+  kernel vaults items invoke logins hacker-news collect --open
+  kernel vaults items invoke logins hacker-news fill --params '{"browser_id":"browser-session-id","fields":[{"field":"username","selector":"#login"},{"field":"password","selector":"#password"}]}' -o json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			open, _ := cmd.Flags().GetBool("open")
 			raw, _ := cmd.Flags().GetString("params")
@@ -177,7 +193,7 @@ Inspect the browser before deciding what to do next; completed does not mean pai
 			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], params, vaultOutput(cmd), open)
 		}}
 	invoke.Flags().String("params", "", "Operation-specific JSON object for fill and prepare_checkout; omit type (supplied by <operation>)")
-	invoke.Flags().Bool("open", false, "Open a returned HTTPS action or approval URL for authorize and prepare_checkout")
+	invoke.Flags().Bool("open", false, "Open a returned HTTPS action or approval URL for authorize, collect, and prepare_checkout")
 	addVaultJSONOutputFlag(invoke)
 	items.AddCommand(itemList, itemGet, itemEvents, invoke, newVaultDeleteCommand(true))
 
@@ -220,8 +236,83 @@ Inspect the browser before deciding what to do next; completed does not mean pai
 
 	cards := &cobra.Command{Use: "cards", Short: "Configure card requests"}
 	cards.AddCommand(newVaultCardCommand(false), newVaultCardCommand(true))
-	cmd.AddCommand(items, wallets, cards)
+
+	credentials := &cobra.Command{Use: "credentials", Aliases: []string{"credential"}, Short: "Store logins and other non-payment credentials"}
+	credentials.AddCommand(newVaultCredentialCreateCommand(), newVaultCredentialUpdateCommand())
+	cmd.AddCommand(items, wallets, cards, credentials)
 	return cmd
+}
+
+func newVaultCredentialCreateCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "create <vault> <key> --spec '<json>'", Short: "Declare a credential item and optionally seed its values", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+		Long: `Create a credential item at an immutable key, without a wallet or provider.
+Repeating the original creation request returns the current item without
+overwriting later edits; a different request at the same key returns 409.
+Use vaults credentials update for changes.
+` + vaultCredentialSpecHelp,
+		Example: `  kernel vaults credentials create logins hacker-news     --spec '{
+      "description": "Hacker News",
+      "fields": {
+        "username": {"type": "text", "sensitive": false},
+        "password": {"type": "password"}
+      }
+    }' --values-file ./values.json --open`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			spec, err := vaultCredentialSpecFromFlags(cmd)
+			if err != nil {
+				return err
+			}
+			open, _ := cmd.Flags().GetBool("open")
+			return getVaultsHandler(cmd).CreateCredential(cmd.Context(), args[0], args[1], spec, vaultOutput(cmd), open)
+		}}
+	cmd.Flags().String("spec", "", "Credential specification JSON with fields and an optional description (required)")
+	_ = cmd.MarkFlagRequired("spec")
+	addVaultCredentialValuesFlag(cmd)
+	cmd.Flags().Bool("open", false, "Open a returned HTTPS collection URL in your browser")
+	addVaultJSONOutputFlag(cmd)
+	return cmd
+}
+
+func newVaultCredentialUpdateCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "update <vault> <key> --version <n>", Short: "Set or clear credential values and the description", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+		Long: `Atomically update the description and selected values; omitted properties are preserved.
+--version is the expected current item version from the latest read, so a
+concurrent edit returns 409 instead of being overwritten. Read it with items get.
+Field names, types, required flags, and sensitivity cannot change, and unknown
+field names return 400. A successful update increments the version and invalidates
+outstanding hosted collection sessions.
+
+--values-file sets values; a JSON null or empty string clears one immediately.
+Clearing a required field reopens collection and returns a fresh collection action;
+clearing a required totp field returns 400 because no form can collect it.
+--description "" clears the description.`,
+		Example: `  kernel vaults credentials update logins hacker-news --version 3 --values-file ./values.json
+  kernel vaults credentials update logins hacker-news --version 3 --description "Hacker News"`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			version, _ := cmd.Flags().GetInt64("version")
+			if version < 1 {
+				return fmt.Errorf("--version must be the expected current item version (1 or greater)")
+			}
+			expectedItemID, _ := cmd.Flags().GetString("expected-item-id")
+			spec, err := vaultCredentialUpdateSpecFromFlags(cmd)
+			if err != nil {
+				return err
+			}
+			open, _ := cmd.Flags().GetBool("open")
+			return getVaultsHandler(cmd).UpdateCredential(cmd.Context(), args[0], args[1], version, expectedItemID, spec, vaultOutput(cmd), open)
+		}}
+	cmd.Flags().Int64("version", 0, "Expected current item version from the latest read (required)")
+	_ = cmd.MarkFlagRequired("version")
+	cmd.Flags().String("description", "", "Replacement form title; an empty string clears it")
+	cmd.Flags().String("expected-item-id", "", "Immutable item ID precondition; returns 409 if the key now identifies a different item")
+	addVaultCredentialValuesFlag(cmd)
+	cmd.Flags().Bool("open", false, "Open a returned HTTPS collection URL in your browser")
+	addVaultJSONOutputFlag(cmd)
+	return cmd
+}
+
+func addVaultCredentialValuesFlag(cmd *cobra.Command) {
+	cmd.Flags().String("values-file", "", "JSON object of field names to values, read from a file (use '-' for stdin); never pass values as shell arguments")
 }
 
 func newVaultDeleteCommand(item bool) *cobra.Command {

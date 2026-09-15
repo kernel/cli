@@ -289,9 +289,11 @@ cannot switch projects.
 | `kernel vaults wallets payment-methods <vault> <key>` | Fetch advertised live payment methods; JSON is the item with `expanded.payment_methods` |
 | `kernel vaults cards create <vault> <key> --provider link\|agentcard --spec '<json>'` | Create a card request; never implicitly authorize Link |
 | `kernel vaults cards update <vault> <key> --provider link\|agentcard --spec '<json>'` | Update a card spec; pending issuance preserves omitted optional fields, and the API enforces state/provider constraints |
+| `kernel vaults credentials create <vault> <key> --spec '<json>'` | Declare a credential item's fields; `--values-file <path\|->` seeds values, `--open` opens a returned collection URL |
+| `kernel vaults credentials update <vault> <key> --version <n>` | Set or clear values and the description; `--values-file <path\|->`, `--description`, `--expected-item-id` |
 | `kernel vaults items list <vault>` | List item keys, types, providers, status, and required actions |
 | `kernel vaults items get <vault> <key>` | Inspect state/actions/returned aliases and copyable operation commands; `--wait 0..60`, `--expand payment_methods`, `--open` |
-| `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; `authorize --open` opens a returned HTTPS action; `prepare_checkout --params '<json>'` prepares an unused AgentCard card for Square Pay; `fill --params '<json>'` fills checkout fields |
+| `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; `authorize --open` opens a returned HTTPS action; `prepare_checkout --params '<json>'` prepares an unused AgentCard card for Square Pay; `fill --params '<json>'` fills checkout or login fields; `collect --open` opens a credential item's hosted form |
 | `kernel vaults items events <vault> <key>` | Read ordered audit events; `--after <event-id>`, `--wait 0..60` |
 | `kernel vaults items delete <vault> <key>` | Invalidate an item; `--yes` skips confirmation |
 | `kernel vaults provider-configs create --name <name> --provider link\|agentcard --client-id <id>` | Register customer-owned provider credentials; `--client-secret` or `--client-secret-file` (`-` reads stdin) |
@@ -542,10 +544,10 @@ that an order or charge succeeded; `stopped` cannot be reused; `outcome_unknown`
 and requires merchant reconciliation. Inspect `items events` and reconcile uncertain outcomes with
 the merchant rather than preparing again.
 
-##### Fill checkout fields
+##### Fill checkout or login fields
 
-Fill is supported only when advertised by a ready Link card, not AgentCard. It writes stored
-card data without returning the values or submitting checkout:
+Fill is supported when advertised by a ready credential item or a ready Link card, not
+AgentCard. It writes stored values without returning them or submitting the form:
 
 ```bash
 kernel vaults items get checkout order-1
@@ -556,6 +558,7 @@ kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browse
   the CLI does not resolve names.
 - `page_url` is the exact current top-level HTTPS URL, including path, query, and fragment,
   without embedded credentials. It must match exactly one open page; no prefix/glob matching.
+  Cards require it. Credential items may omit it, which then requires exactly one open page.
 - `fields` contains 1-32 bindings in write order. Each has `field` and a nonempty CSS
   `selector` targeting an editable input/select or its container. The API searches the selected
   page and descendants, including payment iframes. Do not supply frame IDs or literal values.
@@ -564,6 +567,9 @@ kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browse
   `billing_country`. Billing fields use the stored address without reformatting; request only
   needed fields. Missing requested billing data fails validation before browser writes.
 - Combined `expiration` requires `format: "MM/YY"` or `"MM/YYYY"`. Other fields reject `format`.
+- For a credential item, each `field` is a declared field name that has a stored value, and
+  `format` is rejected. A `totp` field fills a freshly generated code; its seed never enters
+  the browser.
 - Optional `timeout_ms` is an integer from 1 to 30000 (default 10000), for the whole operation.
 
 Fill returns an execution result, **not an updated item**. Normal output shows zero-based
@@ -891,10 +897,11 @@ vaults to a session with `kernel browsers create --vault <id-or-name>`.
 
 #### Vault Items
 
-An item is either a wallet (an authorized funding source) or a card (a payment
-credential minted from a wallet). Items advertise the operations valid in their
-current state, so run `kernel vaults items get` and read `Available Operations`
-before invoking one.
+An item is a wallet (an authorized funding source), a card (a payment credential
+minted from a wallet), or a credential (a login or other non-payment secret with
+no wallet or provider). Items advertise the operations valid in their current
+state, so run `kernel vaults items get` and read `Available Operations` before
+invoking one.
 
 - `kernel vaults items list <vault-id-or-name>` - List a vault's items; secret values are never returned
   - `--output json`, `-o json` - Output raw JSON array
@@ -925,9 +932,9 @@ before invoking one.
   - `--spec <json>` / `--spec-file <path>` - Full replacement card spec (only card items can be updated)
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel vaults items invoke <vault-id-or-name> <key> <operation>` - Perform an operation the item advertises
-  - `<operation>` - Operation to perform, e.g. `authorize`, `prepare_checkout`, or `fill`. Operations may call an external provider and return the item's updated state.
-  - `--params <json>` - Operation inputs for `prepare_checkout` and `fill`; omit `type`
-  - `--open` - Open a returned HTTPS action or approval URL for `authorize` and `prepare_checkout`
+  - `<operation>` - Operation to perform, e.g. `authorize`, `collect`, `prepare_checkout`, or `fill`. Operations may call an external provider and return the item's updated state.
+  - `--params <json>` - Operation inputs for `prepare_checkout` and `fill`; omit `type`. `authorize` and `collect` take none.
+  - `--open` - Open a returned HTTPS action or approval URL for `authorize`, `collect`, and `prepare_checkout`
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel vaults items events <vault-id-or-name> <key>` - List an item's immutable audit events, oldest first
   - `--after <event-id>` - Return only events after this event ID
@@ -935,6 +942,45 @@ before invoking one.
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel vaults items delete <vault-id-or-name> <key>` - Delete an item; its secret value is invalidated
   - `-y, --yes` - Skip confirmation prompt
+
+#### Credential Items
+
+A credential item stores a login or other non-payment secret with no wallet and no
+external provider. Declare its fields once; field names, types, required flags, and
+sensitivity are fixed at creation. Never store card numbers, security codes, or
+expiration dates in a credential item - use wallet and card items for payments.
+
+Values are write-only and never appear in shell arguments: pass them through
+`--values-file <path>` (or `-` for stdin) as a JSON object of field names to values.
+
+- `kernel vaults credentials create <vault-id-or-name> <key> --spec <json>` - Declare a credential item
+  - `--spec <json>` - `{"description"?: string, "fields": {"<name>": {"type": "text"|"email"|"password"|"totp", "required"?: bool, "sensitive"?: bool}}}` (required). Field names match `[a-zA-Z][a-zA-Z0-9_]{0,63}`; 1-32 fields. Values are rejected here.
+  - `--values-file <path>` - JSON object of declared field names to non-empty string values (`-` reads stdin)
+  - `--open` - Open a returned HTTPS collection URL
+  - `--output json`, `-o json` - Output raw JSON object
+- `kernel vaults credentials update <vault-id-or-name> <key> --version <n>` - Set or clear values and the description
+  - `--version <n>` - Expected current item version from the latest read (required). A concurrent edit returns 409 instead of being overwritten.
+  - `--values-file <path>` - JSON object of field names to values; `null` or `""` clears one immediately (`-` reads stdin)
+  - `--description <text>` - Replacement form title; `""` clears it
+  - `--expected-item-id <id>` - Immutable item ID precondition; returns 409 if the key now identifies a different item
+  - `--output json`, `-o json` - Output raw JSON object
+
+  Example:
+
+  ```bash
+  kernel vaults credentials create logins hacker-news     --spec '{"description":"Hacker News","fields":{"username":{"type":"text","sensitive":false},"password":{"type":"password"}}}'     --values-file ./values.json --open
+
+  # Open the hosted form again for the person who holds the credential
+  kernel vaults items invoke logins hacker-news collect --open
+
+  # Fill the login into a browser created with --vault logins
+  kernel vaults items invoke logins hacker-news fill -o json     --params '{"browser_id":"browser-session-id","fields":[{"field":"username","selector":"#login"},{"field":"password","selector":"#password"}]}'
+  ```
+
+If every required field has a value, the item is `ready` and no collection action is
+returned; `collect` still opens its form. Otherwise the item is `pending_collection`
+with a time-scoped hosted form URL - treat that URL as a secret. `ready` means the
+required values are present, not that a login succeeded.
 
 ### Projects
 

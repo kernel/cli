@@ -41,20 +41,23 @@ func vaultFillRequestError(err error) error {
 	return fmt.Errorf("fill result unavailable; %s", vaultFillUncertain)
 }
 
-func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFillParams, output string) error {
+func (c VaultsCmd) fill(ctx context.Context, vault, key, itemType string, params *vaultFillParams, output string) error {
 	request := kernel.FillVaultItemOperationRequestParam{
 		BrowserID: params.BrowserID,
-		PageURL:   params.PageURL,
 		Type:      kernel.FillVaultItemOperationRequestTypeFill,
-		Fields:    make([]kernel.VaultCardFillFieldUnionParam, 0, len(params.Fields)),
+		Fields:    make([]kernel.VaultFillFieldParam, 0, len(params.Fields)),
+	}
+	// Credential items may omit page_url to require exactly one open page.
+	if params.PageURL != "" {
+		request.PageURL = kernel.Opt(params.PageURL)
 	}
 	if params.TimeoutMS != nil {
 		request.TimeoutMs = kernel.Opt(int64(*params.TimeoutMS))
 	}
 	for _, field := range params.Fields {
-		binding := kernel.VaultCardFillFieldParamOfVaultCardFillFieldVaultCardStoredFillField(field.Field, field.Selector)
-		if field.Field == "expiration" {
-			binding = kernel.VaultCardFillFieldParamOfVaultCardFillFieldVaultCardExpirationFillField(field.Field, field.Format, field.Selector)
+		binding := kernel.VaultFillFieldParam{Field: field.Field, Selector: field.Selector}
+		if field.Format != "" {
+			binding.Format = kernel.VaultFillFieldFormat(field.Format)
 		}
 		request.Fields = append(request.Fields, binding)
 	}
@@ -81,7 +84,11 @@ func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFil
 		}
 		PrintTableNoPad(rows, true)
 		if result.Status == "completed" {
-			pterm.Println("Fields filled; this does not confirm payment or merchant acceptance.")
+			if itemType == "credential" {
+				pterm.Println("Fields filled; this does not confirm that the site accepted the values or that a login succeeded.")
+			} else {
+				pterm.Println("Fields filled; this does not confirm payment or merchant acceptance.")
+			}
 		} else {
 			pterm.Println(vaultFillUncertain)
 		}
