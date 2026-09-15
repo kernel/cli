@@ -87,7 +87,8 @@ there is no domain-setting API.
 Never supply card data, OAuth codes, ciphertext, or secrets in shell arguments.
 Use vault-provider-configs for client credentials and wallets create --tokens-file
 for imported Link grants; both accept protected files or stdin.
-Never retry failed, timed-out, rejected, or indeterminate payments.
+Never automatically retry failed, timed-out, rejected, or indeterminate payments.
+When an item explicitly permits user-confirmed abandonment, delete that card before creating a replacement.
 JSON output preserves returned public fields but omits unknown/opaque provider data.`,
 		Run: func(cmd *cobra.Command, args []string) { _ = cmd.Help() },
 	}
@@ -257,7 +258,7 @@ func newVaultDeleteCommand(item bool) *cobra.Command {
 			yes, _ := cmd.Flags().GetBool("yes")
 			return getVaultsHandler(cmd).Delete(cmd.Context(), args[0], key, yes)
 		}}
-	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt; abandon recovery only after explicit user confirmation")
 	return cmd
 }
 
@@ -273,7 +274,8 @@ optional fields; explicit empty lists clear them. The API restricts fields after
 authorization starts; wallet/provider bindings cannot change. An uncertain update
 enters recovery_required and must not be retried. Checkout cards can be edited
 between authorizations. Identical creates return existing state without resetting it.
-Never reconfigure to retry a failed, timed-out, rejected, or indeterminate payment.
+Never reconfigure the same item to retry a failed, timed-out, rejected, or indeterminate payment.
+A recovery item that permits abandonment must be deleted after explicit user confirmation before creating a replacement.
 ` + vaultSpecHelp + vaultCardSpecHelp,
 		Example: "  kernel vaults cards " + use + ` checkout order-1 \
     --provider agentcard --spec '{
