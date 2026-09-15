@@ -405,10 +405,8 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		if item.State.JSON.Aliases.Valid() {
 			pterm.Info.Println("Aliases are non-secret checkout values. Use only in a browser created with this vault attached; ready does not mean paid.")
 		}
-		pterm.Info.Println("Inspect items events for payment outcomes. Do not retry failed, timed-out, rejected, or indeterminate payments.")
-	case "credential":
-		printVaultCredentialGuidance(item)
-	default:
+		pterm.Info.Println("Inspect items events for payment outcomes. Never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")
+	} else {
 		wallet := item.AsWallet()
 		for _, expansion := range wallet.AvailableExpansions {
 			pterm.Printf("Available expansion: %s — %s\n", expansion.Type, expansion.Description)
