@@ -14,7 +14,6 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	kernel "github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
-	"github.com/kernel/kernel-go-sdk/shared/constant"
 	"github.com/pterm/pterm"
 )
 
@@ -193,7 +192,7 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 	var item *kernel.VaultItemUnion
 	var err error
 	if update {
-		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCard: &kernel.VaultItemUpdateParamsBodyCard{Spec: spec}}, option.WithMaxRetries(0))
+		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCardVaultItemUpdateRequest: &kernel.VaultItemUpdateParamsBodyCardVaultItemUpdateRequest{Type: "card", Spec: spec}}, option.WithMaxRetries(0))
 	} else {
 		item, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCard: &kernel.VaultItemUpsertParamsBodyCard{Spec: spec}}, option.WithMaxRetries(0))
 	}
@@ -251,7 +250,7 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		request.OfCollect = &kernel.CollectVaultItemOperationRequestParam{Type: "collect"}
 	} else {
 		// Preserve support for other advertised parameterless operations.
-		request.OfAuthorize = &kernel.VaultItemPerformOperationParamsBodyAuthorize{Type: constant.Authorize(operation)}
+		request.OfAuthorize = &kernel.AuthorizeVaultItemOperationRequestParam{Type: kernel.AuthorizeVaultItemOperationRequestType(operation)}
 	}
 	response, err := c.vaults.Items.PerformOperation(ctx, key, request, option.WithMaxRetries(0))
 	if err != nil {

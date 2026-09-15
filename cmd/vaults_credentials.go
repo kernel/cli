@@ -108,7 +108,7 @@ func (c VaultsCmd) saveCredential(ctx context.Context, vault, key string, data [
 		if json.Unmarshal(data, &spec) != nil {
 			return fmt.Errorf("invalid credential update spec")
 		}
-		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCredential: &kernel.CredentialVaultItemUpdateRequestParam{Type: "credential", Version: version, Spec: spec}}, option.WithMaxRetries(0))
+		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCredentialVaultItemUpdateRequest: &kernel.CredentialVaultItemUpdateRequestParam{Type: "credential", Version: version, Spec: spec}}, option.WithMaxRetries(0))
 	} else {
 		var spec kernel.CredentialVaultItemSpecInputParam
 		if json.Unmarshal(data, &spec) != nil || len(spec.Fields) == 0 {
