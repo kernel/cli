@@ -547,10 +547,13 @@ does not merge the new JSON with the existing spec.
 
 Waits are single bounded observations, not readiness guarantees or payment retries. Pending
 state is returned as-is. Requests are not automatically retried by the vault commands.
-**Never retry failed, timed-out, rejected, or indeterminate payments.** Inspect state/events
-and reconcile the outcome instead. Do not pass card data, OAuth codes/tokens, ciphertext,
-provider secrets, or sensitive provider responses to the CLI. Complete collection, OAuth,
-and approval actions through the provider's returned URL/UI; no callback-code command exists.
+**Never automatically retry failed, timed-out, rejected, or indeterminate payments.** Inspect
+state/events and reconcile the outcome instead. If an AgentCard recovery state explicitly
+permits user-confirmed abandonment, delete that card before creating a replacement; deletion
+does not prove the original attempt failed. Do not pass card data, OAuth codes/tokens,
+ciphertext, provider secrets, or sensitive provider responses to the CLI. Complete collection,
+OAuth, and approval actions through the provider's returned URL/UI; no callback-code command
+exists.
 
 ### Browser Pools
 
