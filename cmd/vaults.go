@@ -192,7 +192,7 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 	var item *kernel.VaultItemUnion
 	var err error
 	if update {
-		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCardVaultItemUpdateRequest: &kernel.VaultItemUpdateParamsBodyCardVaultItemUpdateRequest{Spec: spec}}, option.WithMaxRetries(0))
+		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCardVaultItemUpdateRequest: &kernel.VaultItemUpdateParamsBodyCardVaultItemUpdateRequest{Type: "card", Spec: spec}}, option.WithMaxRetries(0))
 	} else {
 		item, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCard: &kernel.VaultItemUpsertParamsBodyCard{Spec: spec}}, option.WithMaxRetries(0))
 	}
@@ -210,7 +210,7 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		return fmt.Errorf("fill requires --params and does not support --open")
 	}
 	if operation == "prepare_checkout" && (params == nil || params.Checkout == nil) {
-		return fmt.Errorf("prepare_checkout requires --params with browser_id, merchant_origin, and environment")
+		return fmt.Errorf("prepare_checkout requires checkout parameters")
 	}
 	item, err := c.vaults.Items.Get(ctx, key, kernel.VaultItemGetParams{IDOrName: vault}, option.WithMaxRetries(0))
 	if err != nil {
@@ -246,32 +246,27 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
 	if operation == "fill" {
-		if err := validateVaultFillForItem(item, params.Fill); err != nil {
+		if err := validateVaultFillItem(params.Fill, item); err != nil {
 			return err
 		}
-		return c.fill(ctx, vault, key, item.Type, params.Fill, output)
+		return c.fill(ctx, vault, key, params.Fill, output)
 	}
-	body := kernel.VaultItemPerformOperationParams{IDOrName: vault}
-	switch operation {
-	case "collect":
-		body.OfCollect = &kernel.CollectVaultItemOperationRequestParam{Type: kernel.CollectVaultItemOperationRequestTypeCollect}
-	case "prepare_checkout":
-		body.OfPrepareCheckout = &kernel.PrepareCheckoutVaultItemOperationRequestParam{
-			Type: kernel.PrepareCheckoutVaultItemOperationRequestTypePrepareCheckout,
-			Checkout: kernel.VaultCheckoutContextParam{
-				BrowserID:      params.Checkout.BrowserID,
-				MerchantOrigin: params.Checkout.MerchantOrigin,
-				Environment:    kernel.VaultCheckoutContextEnvironment(params.Checkout.Environment),
-			},
+	request := kernel.VaultItemPerformOperationParams{IDOrName: vault}
+	if operation == "prepare_checkout" {
+		if item.Type != "card" || item.Spec.Provider != "agentcard" {
+			return fmt.Errorf("prepare_checkout requires an AgentCard card")
 		}
-	default:
+		request.OfPrepareCheckout = &kernel.PrepareCheckoutVaultItemOperationRequestParam{Type: "prepare_checkout", Checkout: *params.Checkout}
+	} else if operation == "collect" {
+		request.OfCollect = &kernel.CollectVaultItemOperationRequestParam{Type: "collect"}
+	} else {
 		// Preserve support for other advertised parameterless operations.
-		body.OfAuthorize = &kernel.AuthorizeVaultItemOperationRequestParam{Type: kernel.AuthorizeVaultItemOperationRequestType(operation)}
+		request.OfAuthorize = &kernel.AuthorizeVaultItemOperationRequestParam{Type: kernel.AuthorizeVaultItemOperationRequestType(operation)}
 	}
-	response, err := c.vaults.Items.PerformOperation(ctx, key, body, option.WithMaxRetries(0))
+	response, err := c.vaults.Items.PerformOperation(ctx, key, request, option.WithMaxRetries(0))
 	if err != nil {
-		if operation == "prepare_checkout" {
-			return vaultPrepareCheckoutRequestError(err)
+		if item.Type == "credential" {
+			return vaultCredentialError(err)
 		}
 		return util.CleanedUpSdkError{Err: err}
 	}

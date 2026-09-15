@@ -40,10 +40,8 @@ func effectiveVaultItemActions(item *kernel.VaultItemUnion) (vaultItemActions, e
 	if err := json.Unmarshal([]byte(item.RawJSON()), &fields); err != nil {
 		return vaultItemActions{}, fmt.Errorf("invalid vault item operations: %w", err)
 	}
-	// An AgentCard preparation carries its own approval URL instead of a
-	// required action; the cardholder must keep that page open through handoff.
 	approvalURL := item.State.Authorization.ApprovalURL
-	if approvalURL == "" {
+	if item.State.Status == "preparing" && item.State.Preparation.ApprovalURL != "" {
 		approvalURL = item.State.Preparation.ApprovalURL
 	}
 	return vaultItemActions{

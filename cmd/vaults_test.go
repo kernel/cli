@@ -286,12 +286,8 @@ func TestVaultCardRequestMapping(t *testing.T) {
 					assert.Equal(t, "/vaults/checkout/items/order-1", r.URL.Path)
 					var body map[string]json.RawMessage
 					require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-					if operation == "create" {
-						assert.JSONEq(t, `"card"`, string(body["type"]))
-						assert.Len(t, body, 2)
-					} else {
-						assert.Len(t, body, 1)
-					}
+					assert.JSONEq(t, `"card"`, string(body["type"]))
+					assert.Len(t, body, 2)
 					if provider == "link" {
 						assert.JSONEq(t, fmt.Sprintf(`{"provider":"link","wallet":"wallet-1","amount":1234,"currency":"USD","merchant_name":"Example Shop","merchant_url":"https://shop.example","payment_method_id":"pm-1","context":%q}`, strings.Repeat("Purchase purpose. ", 7)), string(body["spec"]))
 					} else {

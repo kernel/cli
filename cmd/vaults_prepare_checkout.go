@@ -1,22 +1,39 @@
 package cmd
 
 import (
-	"errors"
+	"encoding/json"
 	"fmt"
+	"net/url"
+	"strings"
 
 	kernel "github.com/kernel/kernel-go-sdk"
 )
 
-// A preparation is single-use even after failure or expiry, so a failed request
-// is not a retry signal: the attempt may already have consumed one.
-const vaultPrepareCheckoutUncertain = "a single-use preparation may still have been created; inspect the item and its events, and do not automatically retry"
-
-func vaultPrepareCheckoutRequestError(err error) error {
-	var apiErr *kernel.Error
-	if errors.As(err, &apiErr) {
-		return fmt.Errorf("prepare_checkout failed (HTTP %d); %s", apiErr.StatusCode, vaultPrepareCheckoutUncertain)
+func parseVaultCheckoutParams(raw string) (*kernel.VaultCheckoutContextParam, error) {
+	object, err := vaultParamsObject(raw, "checkout")
+	if err != nil {
+		return nil, err
 	}
-	// Do not wrap SDK/transport errors: they can contain request or response data,
-	// and the root error handler extracts raw SDK error messages through Unwrap.
-	return fmt.Errorf("prepare_checkout result unavailable; %s", vaultPrepareCheckoutUncertain)
+	checkout, err := vaultParamsObject(string(object["checkout"]), "browser_id merchant_origin environment")
+	if err != nil {
+		return nil, fmt.Errorf("invalid checkout: %w", err)
+	}
+	var params kernel.VaultCheckoutContextParam
+	if json.Unmarshal(checkout["browser_id"], &params.BrowserID) != nil || strings.TrimSpace(params.BrowserID) == "" {
+		return nil, fmt.Errorf("checkout.browser_id must be a non-empty browser session ID")
+	}
+	if json.Unmarshal(checkout["environment"], &params.Environment) != nil || (params.Environment != "production" && params.Environment != "sandbox") {
+		return nil, fmt.Errorf("checkout.environment must be production or sandbox")
+	}
+	if json.Unmarshal(checkout["merchant_origin"], &params.MerchantOrigin) != nil {
+		return nil, fmt.Errorf("checkout.merchant_origin must be a canonical HTTPS origin (HTTP localhost is allowed for tests)")
+	}
+	u, err := url.Parse(params.MerchantOrigin)
+	if err != nil || u.Hostname() == "" || u.User != nil || u.Opaque != "" ||
+		u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
+		params.MerchantOrigin != u.Scheme+"://"+u.Host || strings.ContainsAny(u.Host, "*\\") ||
+		(u.Scheme != "https" && !(u.Scheme == "http" && u.Hostname() == "localhost")) {
+		return nil, fmt.Errorf("checkout.merchant_origin must be a canonical HTTPS origin (HTTP localhost is allowed for tests)")
+	}
+	return &params, nil
 }

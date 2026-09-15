@@ -4,177 +4,130 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"slices"
-	"sort"
+	"io"
+	"os"
+	"strings"
 
 	kernel "github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
-	"github.com/kernel/kernel-go-sdk/packages/param"
 	"github.com/spf13/cobra"
 )
 
-var vaultCredentialFieldTypes = []string{"text", "email", "password", "totp"}
+const vaultCredentialHelp = `Create credentials from the fields observed on a website.
 
-// CreateCredential stores a credential item without a wallet or provider. Values
-// arrive through a file so secrets never appear in shell arguments; omitted
-// required values leave the item pending_collection with a hosted form action.
-func (c VaultsCmd) CreateCredential(ctx context.Context, vault, key string, spec map[string]json.RawMessage, output string, open bool) error {
-	item, err := c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{
-		IDOrName: vault,
-		OfCredential: &kernel.CredentialVaultItemRequestParam{
-			Type: kernel.CredentialVaultItemRequestTypeCredential,
-			Spec: param.Override[kernel.CredentialVaultItemSpecInputParam](spec),
-		},
-	}, option.WithMaxRetries(0))
+Do not use credential items to store, collect, or fill credit card data, including
+card numbers (PANs), security codes (CVV/CVC), or expiration dates. Use wallet and
+card item types for credit cards and payment checkout instead.
+
+First create a vault for the end user and attach it with browsers create --vault.
+Use a protected JSON file or stdin, never secret values in shell arguments.
+The spec contains description and fields keyed by name. Field types are text,
+email, password, and totp; definitions accept required, sensitive, and value.
+Set description to the recognizable site name only, e.g. "Hacker News", not
+"Hacker News sign-in credentials". This text is the user-facing form title.
+Set sensitive:false explicitly for ordinary usernames and email addresses.
+Reserve sensitive:true for secrets such as passwords, API tokens, and TOTP seeds.
+Password and totp must be sensitive. Omitted sensitive defaults to true for safety.
+Omit required values to receive a collection URL to present to the user.
+Poll items get --wait 60 until state.status is ready, then use items invoke fill.
+Ready means populated, not a successful login. An agent controlling the browser
+can read filled values. TOTP seeds must not be collected through the hosted form.
+Get/list output includes definitions and has_value, not stored field values.
+Collection URLs are bearer credentials: share only with the intended user.`
+
+func newVaultCredentialsCommand() *cobra.Command {
+	group := &cobra.Command{Use: "credentials", Short: "Collect, update, and fill user credentials", Long: vaultCredentialHelp}
+	for _, update := range []bool{false, true} {
+		name, short := "create", "Create a credential and return its collection URL"
+		if update {
+			name, short = "update", "Update credential values or description using an expected version"
+		}
+		cmd := &cobra.Command{Use: name + " <vault> <key> --spec-file <path|->", Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun, Long: vaultCredentialHelp,
+			RunE: func(cmd *cobra.Command, args []string) error {
+				data, err := readVaultSpecFile(cmd)
+				if err != nil {
+					return err
+				}
+				version, _ := cmd.Flags().GetInt64("version")
+				open, _ := cmd.Flags().GetBool("open")
+				expectedID, _ := cmd.Flags().GetString("expected-item-id")
+				if cmd.Flags().Changed("expected-item-id") && strings.TrimSpace(expectedID) == "" {
+					return fmt.Errorf("--expected-item-id must not be empty")
+				}
+				return getVaultsHandler(cmd).saveCredential(cmd.Context(), args[0], args[1], data, update, version, expectedID, vaultOutput(cmd), open)
+			},
+		}
+		if update {
+			cmd.Long += "\nUpdate preserves omitted fields, replaces nonempty string values, and clears supported values with null or an empty string. Clearing a required text/email/password field returns pending_collection; form submissions still require a nonempty value.\nField definitions are immutable. Do not automatically retry version conflicts."
+			cmd.Flags().Int64("version", 0, "Expected version from items get (required; never auto-refreshed)")
+			_ = cmd.MarkFlagRequired("version")
+			cmd.Flags().String("expected-item-id", "", "Immutable item ID from the original read; reject an update if the key now refers to a replacement item")
+			cmd.Example = "  kernel vaults credentials update user-vault login --version 2 --spec-file changes.json"
+		} else {
+			cmd.Example = `  kernel vaults credentials create user-vault login --spec-file - <<'JSON'
+{"description":"Hacker News","fields":{"username":{"type":"text","required":true,"sensitive":false},"password":{"type":"password","required":true,"sensitive":true}}}
+JSON`
+		}
+		cmd.Flags().String("spec-file", "", "Credential spec JSON file (use '-' for stdin; maximum 128 KiB)")
+		_ = cmd.MarkFlagRequired("spec-file")
+		cmd.Flags().Bool("open", false, "Open the returned HTTPS collection URL")
+		addVaultJSONOutputFlag(cmd)
+		group.AddCommand(cmd)
+	}
+	return group
+}
+
+func readVaultSpecFile(cmd *cobra.Command) ([]byte, error) {
+	path, _ := cmd.Flags().GetString("spec-file")
+	if path == "" {
+		return nil, fmt.Errorf("--spec-file is required (use '-' for stdin)")
+	}
+	var reader io.Reader = cmd.InOrStdin()
+	if path != "-" {
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, fmt.Errorf("could not open --spec-file")
+		}
+		defer f.Close()
+		reader = f
+	}
+	const limit = 128 * 1024
+	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if err != nil || len(data) > limit {
+		return nil, fmt.Errorf("could not read --spec-file (maximum 128 KiB)")
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(data, &object) != nil || object == nil {
+		return nil, fmt.Errorf("--spec-file must contain a JSON object")
+	}
+	return data, nil
+}
+
+func (c VaultsCmd) saveCredential(ctx context.Context, vault, key string, data []byte, update bool, version int64, expectedID, output string, open bool) error {
+	var item *kernel.VaultItemUnion
+	var err error
+	if update {
+		if version < 1 {
+			return fmt.Errorf("--version must be positive")
+		}
+		var spec kernel.CredentialVaultItemSpecUpdateParam
+		if json.Unmarshal(data, &spec) != nil {
+			return fmt.Errorf("invalid credential update spec")
+		}
+		request := kernel.CredentialVaultItemUpdateRequestParam{Type: "credential", Version: version, Spec: spec}
+		if expectedID != "" {
+			request.ExpectedItemID = kernel.String(expectedID)
+		}
+		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCredentialVaultItemUpdateRequest: &request}, option.WithMaxRetries(0))
+	} else {
+		var spec kernel.CredentialVaultItemSpecInputParam
+		if json.Unmarshal(data, &spec) != nil || len(spec.Fields) == 0 {
+			return fmt.Errorf("credential spec requires fields")
+		}
+		item, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCredential: &kernel.CredentialVaultItemRequestParam{Type: "credential", Spec: spec}}, option.WithMaxRetries(0))
+	}
 	if err != nil {
-		return vaultCredentialItemError(err)
+		return vaultCredentialError(err)
 	}
 	return c.showItem(item, output, open)
-}
-
-// UpdateCredential atomically replaces selected values and the description.
-// --version is the expected current item version, so a concurrent edit returns
-// 409 instead of silently overwriting it.
-func (c VaultsCmd) UpdateCredential(ctx context.Context, vault, key string, version int64, expectedItemID string, spec map[string]json.RawMessage, output string, open bool) error {
-	request := kernel.CredentialVaultItemUpdateRequestParam{
-		Type:    kernel.CredentialVaultItemUpdateRequestTypeCredential,
-		Version: version,
-		Spec:    param.Override[kernel.CredentialVaultItemSpecUpdateParam](spec),
-	}
-	if expectedItemID != "" {
-		request.ExpectedItemID = kernel.Opt(expectedItemID)
-	}
-	item, err := c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCredentialVaultItemUpdateRequest: &request}, option.WithMaxRetries(0))
-	if err != nil {
-		return vaultCredentialItemError(err)
-	}
-	return c.showItem(item, output, open)
-}
-
-// The spec is forwarded without defaults or normalization, like card and wallet
-// specs. Only the shape the CLI must reason about is checked here.
-func vaultCredentialSpecFromFlags(cmd *cobra.Command) (map[string]json.RawMessage, error) {
-	raw, _ := cmd.Flags().GetString("spec")
-	var spec map[string]json.RawMessage
-	if json.Unmarshal([]byte(raw), &spec) != nil || spec == nil {
-		return nil, fmt.Errorf("--spec must be a JSON object with fields and an optional description")
-	}
-	for key := range spec {
-		if key != "fields" && key != "description" {
-			return nil, fmt.Errorf("--spec supports only description and fields")
-		}
-	}
-	fields, err := vaultCredentialFieldsFromSpec(spec["fields"])
-	if err != nil {
-		return nil, err
-	}
-	if cmd.Flags().Changed("values-file") {
-		values, err := readVaultFieldValues(cmd, "values-file")
-		if err != nil {
-			return nil, err
-		}
-		if err := vaultCredentialApplyValues(fields, values); err != nil {
-			return nil, err
-		}
-	}
-	encoded, err := json.Marshal(fields)
-	if err != nil {
-		return nil, err
-	}
-	spec["fields"] = encoded
-	return spec, nil
-}
-
-func vaultCredentialFieldsFromSpec(raw json.RawMessage) (map[string]json.RawMessage, error) {
-	var fields map[string]json.RawMessage
-	if raw == nil || json.Unmarshal(raw, &fields) != nil || len(fields) < 1 || len(fields) > 32 {
-		return nil, fmt.Errorf("--spec.fields must be a JSON object declaring 1-32 fields")
-	}
-	for name, raw := range fields {
-		if !vaultFieldNamePattern.MatchString(name) {
-			return nil, fmt.Errorf("--spec.fields names must match [a-zA-Z][a-zA-Z0-9_]{0,63}")
-		}
-		var field map[string]json.RawMessage
-		if json.Unmarshal(raw, &field) != nil || field == nil {
-			return nil, fmt.Errorf("--spec.fields[%q] must be a JSON object", name)
-		}
-		if _, ok := field["value"]; ok {
-			return nil, fmt.Errorf("--spec must not contain field values; supply them with --values-file")
-		}
-		var fieldType string
-		if json.Unmarshal(field["type"], &fieldType) != nil || !slices.Contains(vaultCredentialFieldTypes, fieldType) {
-			return nil, fmt.Errorf("--spec.fields[%q].type must be text, email, password, or totp", name)
-		}
-	}
-	return fields, nil
-}
-
-// Creation rejects null and empty values, so refuse them before sending a
-// request that cannot succeed.
-func vaultCredentialApplyValues(fields map[string]json.RawMessage, values map[string]*string) error {
-	for _, name := range sortedVaultFieldNames(values) {
-		raw, declared := fields[name]
-		if !declared {
-			return fmt.Errorf("--values-file field %q is not declared in --spec.fields", name)
-		}
-		if values[name] == nil || *values[name] == "" {
-			return fmt.Errorf("--values-file value for %q must be a non-empty string; omit the field to leave it unset", name)
-		}
-		var field map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &field); err != nil {
-			return err
-		}
-		encoded, err := json.Marshal(*values[name])
-		if err != nil {
-			return err
-		}
-		field["value"] = encoded
-		if fields[name], err = json.Marshal(field); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// An update must change something: the API rejects an empty spec.
-func vaultCredentialUpdateSpecFromFlags(cmd *cobra.Command) (map[string]json.RawMessage, error) {
-	spec := make(map[string]json.RawMessage)
-	if cmd.Flags().Changed("description") {
-		description, _ := cmd.Flags().GetString("description")
-		encoded, err := json.Marshal(description)
-		if err != nil {
-			return nil, err
-		}
-		spec["description"] = encoded
-	}
-	if cmd.Flags().Changed("values-file") {
-		values, err := readVaultFieldValues(cmd, "values-file")
-		if err != nil {
-			return nil, err
-		}
-		fields := make(map[string]json.RawMessage, len(values))
-		for _, name := range sortedVaultFieldNames(values) {
-			encoded, err := json.Marshal(map[string]*string{"value": values[name]})
-			if err != nil {
-				return nil, err
-			}
-			fields[name] = encoded
-		}
-		if spec["fields"], err = json.Marshal(fields); err != nil {
-			return nil, err
-		}
-	}
-	if len(spec) == 0 {
-		return nil, fmt.Errorf("update requires --description, --values-file, or both")
-	}
-	return spec, nil
-}
-
-func sortedVaultFieldNames[T any](values map[string]T) []string {
-	names := make([]string, 0, len(values))
-	for name := range values {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }

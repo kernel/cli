@@ -6,13 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 
+	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
 	"github.com/kernel/kernel-go-sdk/packages/ssestream"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -341,6 +346,163 @@ func TestAuthConnectionsCreate_ProviderWithPath_DoesNotSetAuto(t *testing.T) {
 	require.True(t, cred.Path.Valid())
 	assert.Equal(t, "Employees/Google Workspace", cred.Path.Value)
 	assert.False(t, cred.Auto.Valid(), "auto should remain unset when --credential-path is explicit")
+}
+
+func TestAuthConnectionsRegion_CreateUpdateAndLogin(t *testing.T) {
+	var createParams kernel.AuthConnectionNewParams
+	var updateParams kernel.AuthConnectionUpdateParams
+	var loginParams kernel.AuthConnectionLoginParams
+	fake := &FakeAuthConnectionService{
+		NewFunc: func(ctx context.Context, body kernel.AuthConnectionNewParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			createParams = body
+			return &kernel.ManagedAuth{ID: "conn-new"}, nil
+		},
+		UpdateFunc: func(ctx context.Context, id string, body kernel.AuthConnectionUpdateParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			updateParams = body
+			return &kernel.ManagedAuth{ID: id}, nil
+		},
+		LoginFunc: func(ctx context.Context, id string, body kernel.AuthConnectionLoginParams, opts ...option.RequestOption) (*kernel.LoginResponse, error) {
+			loginParams = body
+			return &kernel.LoginResponse{}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+
+	require.NoError(t, c.Create(context.Background(), AuthConnectionCreateInput{
+		Domain: "example.com", ProfileName: "work", Region: "eu-west", Output: "json",
+	}))
+	assert.Equal(t, kernel.ManagedAuthBrowserConfigRegionEuWest, createParams.ManagedAuthCreateRequest.Browser.Region)
+
+	require.NoError(t, c.Update(context.Background(), AuthConnectionUpdateInput{
+		ID: "conn-new", Region: "ap-southeast", Output: "json",
+	}))
+	assert.Equal(t, kernel.ManagedAuthBrowserConfigRegionApSoutheast, updateParams.ManagedAuthUpdateRequest.Browser.Region)
+
+	require.NoError(t, c.Login(context.Background(), AuthConnectionLoginInput{
+		ID: "conn-new", Region: "us-east", Output: "json",
+	}))
+	assert.Equal(t, kernel.ManagedAuthBrowserConfigRegionUsEast, loginParams.Browser.Region)
+}
+
+func runAuthConnectionCommand(t *testing.T, command *cobra.Command, method, path string, args ...string) map[string]any {
+	t.Helper()
+
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, method, r.Method)
+		assert.Equal(t, path, r.URL.Path)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"conn-1","domain":"example.com","profile_name":"work","status":"NEEDS_AUTH","save_credentials":true,"record_session":false,"flow_type":"LOGIN","hosted_url":"https://auth.example.com","flow_expires_at":"2030-01-01T00:00:00Z"}`)
+	}))
+	t.Cleanup(server.Close)
+
+	resetFlags := func() {
+		command.Flags().VisitAll(func(flag *pflag.Flag) {
+			if flag.Changed {
+				require.NoError(t, flag.Value.Set(flag.DefValue))
+				flag.Changed = false
+			}
+		})
+	}
+	resetFlags()
+	t.Cleanup(resetFlags)
+	client := kernel.NewClient(option.WithBaseURL(server.URL), option.WithAPIKey("test"))
+	originalContext := command.Context()
+	command.SetContext(context.WithValue(context.Background(), util.KernelClientKey, client))
+	t.Cleanup(func() { command.SetContext(originalContext) })
+	require.NoError(t, command.Flags().Parse(args))
+	positional := command.Flags().Args()
+	require.NoError(t, command.Args(command, positional))
+
+	var runErr error
+	_ = captureStdout(t, func() { runErr = command.RunE(command, positional) })
+	require.NoError(t, runErr)
+	return body
+}
+
+func TestAuthConnectionsRegion_CommandFlags(t *testing.T) {
+	tests := []struct {
+		name       string
+		command    *cobra.Command
+		method     string
+		path       string
+		args       []string
+		wantRegion string
+	}{
+		{
+			name:       "create maps region",
+			command:    authConnectionsCreateCmd,
+			method:     http.MethodPost,
+			path:       "/auth/connections",
+			args:       []string{"--domain", "example.com", "--profile-name", "work", "--region", "eu-west", "--output", "json"},
+			wantRegion: "eu-west",
+		},
+		{
+			name:    "create omits region",
+			command: authConnectionsCreateCmd,
+			method:  http.MethodPost,
+			path:    "/auth/connections",
+			args:    []string{"--domain", "example.com", "--profile-name", "work", "--output", "json"},
+		},
+		{
+			name:       "update maps region",
+			command:    authConnectionsUpdateCmd,
+			method:     http.MethodPatch,
+			path:       "/auth/connections/conn-1",
+			args:       []string{"conn-1", "--region", "ap-southeast", "--output", "json"},
+			wantRegion: "ap-southeast",
+		},
+		{
+			name:    "update omits region",
+			command: authConnectionsUpdateCmd,
+			method:  http.MethodPatch,
+			path:    "/auth/connections/conn-1",
+			args:    []string{"conn-1", "--login-url", "https://example.com/login", "--output", "json"},
+		},
+		{
+			name:       "login maps region",
+			command:    authConnectionsLoginCmd,
+			method:     http.MethodPost,
+			path:       "/auth/connections/conn-1/login",
+			args:       []string{"conn-1", "--region", "us-east", "--output", "json"},
+			wantRegion: "us-east",
+		},
+		{
+			name:    "login omits region",
+			command: authConnectionsLoginCmd,
+			method:  http.MethodPost,
+			path:    "/auth/connections/conn-1/login",
+			args:    []string{"conn-1", "--output", "json"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := runAuthConnectionCommand(t, tt.command, tt.method, tt.path, tt.args...)
+			browser, _ := body["browser"].(map[string]any)
+			if tt.wantRegion == "" {
+				assert.NotContains(t, browser, "region")
+				return
+			}
+			assert.Equal(t, tt.wantRegion, browser["region"])
+		})
+	}
+}
+
+func TestAuthConnectionsRegion_RejectsUnknownValue(t *testing.T) {
+	c := AuthConnectionCmd{svc: &FakeAuthConnectionService{}}
+	err := c.Create(context.Background(), AuthConnectionCreateInput{
+		Domain: "example.com", ProfileName: "work", Region: "emea", Output: "json",
+	})
+	assert.ErrorContains(t, err, "invalid --region value")
+}
+
+func TestManagedAuthBrowserRows_IncludesRegion(t *testing.T) {
+	rows := managedAuthBrowserRows(kernel.ManagedAuthBrowserConfig{
+		Region: kernel.ManagedAuthBrowserConfigRegionEuWest,
+	})
+	assert.Contains(t, rows, []string{"Browser Region", "eu-west"})
 }
 
 // --credential-auto should still be honored (it was a no-op redundant flag

@@ -128,7 +128,7 @@ Commands with JSON output support:
 - **Proxies**: `create`, `list`, `get`, `update`, `check`
 - **API Keys**: `create`, `list`, `get`, `update`, `rotate`
 - **Auth Connections**: `timeline`
-- **Vaults**: `create`, `list`, `get`, `items list/get/events/invoke`, `wallets create/payment-methods`, `cards create/update` (display-safe public fields only)
+- **Vaults**: `create`, `list`, `get`, `credentials create/update`, `items list/get/events/invoke` (including `collect`, `fill`, and `prepare_checkout`), `wallets create/payment-methods`, `cards create/update` (display-safe public fields only)
 - **Projects**: `update`
 - **Org**: `limits get/set`
 - **Apps**: `list`, `history`
@@ -270,7 +270,50 @@ Commands with JSON output support:
 
 ### Vaults
 
-Vault commands **prepare and observe payment credentials; they do not submit merchant payments**.
+Vault commands **collect user credentials and manage payment credentials; fill does not submit website forms**.
+
+#### User credentials
+
+Create a vault for the end user, attach it when creating a browser, then navigate to the
+sensitive form. Define the observed fields without supplying values:
+
+```sh
+kernel vaults create --name user-vault
+kernel browsers create --vault user-vault
+kernel vaults credentials create user-vault login --spec-file - <<'JSON'
+{"description":"Hacker News","fields":{"username":{"type":"text","required":true,"sensitive":false},"password":{"type":"password","required":true,"sensitive":true}}}
+JSON
+kernel vaults items get user-vault login --wait 60 -o json
+kernel vaults items invoke user-vault login fill --spec-file - <<'JSON'
+{"browser_id":"<browser-id>","fields":[{"field":"username","selector":"#username"},{"field":"password","selector":"#password"}]}
+JSON
+```
+
+Present the returned collection URL to the user before waiting for `ready`. It is a
+bearer credential: share it only with that user. Readiness means required values are
+populated, not that login succeeded. `fill` requires an already-open page and never
+navigates or submits it. Optional `page_url` selects the exact page; cards require it.
+Do not automatically retry failed/unknown fills or fall back to aliases.
+
+Use `credentials update <vault> <key> --version <version> --spec-file changes.json`
+with a spec such as `{"fields":{"password":{"value":"replacement"}}}`. Keep actual
+secrets in protected files or stdin, never shell arguments. Omission preserves values;
+null or an empty string clears supported fields, including required text/email/password fields (returning them to pending collection). The form still requires nonempty required inputs. Field definitions cannot change. Stale versions fail,
+without retries. `items invoke <vault> <key> collect` reopens the full form without
+clearing values; compare versions to observe edits to already-ready items. When an update
+is bound to an earlier read, also pass `--expected-item-id <id>` to reject a replacement
+item at the same key. Neither precondition is refreshed automatically.
+
+Do not use credential items to store, collect, or fill credit card data, including card numbers (PANs), security codes (CVV/CVC), or expiration dates. Use wallet and card item types for credit cards and payment checkout instead.
+
+Set `description` to the recognizable site name only, such as `Hacker News`, not `Hacker News sign-in credentials`. Set `sensitive: false` explicitly for ordinary usernames and email addresses. Reserve `sensitive: true` for passwords, API tokens, and TOTP seeds; the omitted default remains true for safety.
+
+Types are `text`, `email`, `password`, and `totp`. TOTP seeds must be provided through
+create/update, never the form; only generated codes enter the browser. Unrestricted
+browser access can read filled values. CLI output omits all stored credential values,
+including non-sensitive values, and retains definitions, version, and `has_value`.
+Credential spec input is capped at 128 KiB; write errors are redacted.
+
 Vault names, item keys, and project ownership are immutable. Optionally select a project with
 `--project <id-or-name>` or `KERNEL_PROJECT`; otherwise, the API resolves the project from your
 credentials and its defaults (the default project for org-wide credentials, not all projects).
@@ -490,7 +533,7 @@ being `ready` does not mean the last payment succeeded.
 #### Invoking item operations
 
 `items get` displays every `available_operations` entry's type and description, plus
-an `items invoke` command retaining the selected project (replace `<json>` for fill).
+an `items invoke` command retaining the selected project (replace `<json>` for fill or prepare_checkout).
 Read the description and follow its approval requirements before invoking. Required user actions
 (OAuth, enrollment, MFA, spend approval) appear separately; they are not operations to invoke
 through this endpoint.
@@ -501,53 +544,45 @@ advertised. The API controls availability. The CLI additionally refuses invocati
 actions in `recovery_required`, even if a stale action or operation was returned.
 
 `authorize` sends `{"type":"authorize"}` without `--params` and returns the updated item,
-possibly with a required user action. `--open` is supported for `authorize` and `prepare_checkout`.
-The [API spec](https://api.onkernel.com/spec.yaml) also accepts `prepare_checkout` and `fill`, with
-their inputs in `--params`. The positional operation supplies `type`; including `type` in params is
-rejected.
+possibly with a required user action. `collect` is also parameterless and returns a credential
+collection URL. `--open` is supported for authorize, collect, and prepare_checkout.
+The [API spec](https://api.onkernel.com/spec.yaml) also accepts `fill` and `prepare_checkout`, with their inputs in
+`--params` or `--spec-file <path|->` (mutually exclusive, maximum 128 KiB). The positional
+operation supplies `type`; including `type` in either input is rejected.
 Parameters must be a JSON object without unknown or duplicate properties. There is no
 operation `--spec` flag; wallet/card `--spec` flags remain unchanged. New parameterless
 operations can still be invoked by name when advertised.
 
-##### Prepare a Square checkout
+##### Prepare an AgentCard checkout
 
-Eligible unused AgentCard cards advertise `prepare_checkout` before the first native Square Pay
-action. Preparation obtains cardholder device approval and binds consent to one browser session and
-one declared merchant origin:
+For an unused AgentCard card, invoke `prepare_checkout` only when advertised:
 
 ```bash
-kernel vaults items get agentcard-checkout order-1
-kernel vaults items invoke agentcard-checkout order-1 prepare_checkout --params '{"browser_id":"browser-session-id","merchant_origin":"https://shop.example.com","environment":"production"}' --open
+kernel vaults items invoke user-123 order-1 prepare_checkout --params '{"checkout":{"browser_id":"browser-session-id","merchant_origin":"https://shop.example","environment":"production"}}' --open
+kernel vaults items get user-123 order-1 --wait 60 -o json
 ```
 
-- `browser_id` is a browser **session ID** of a browser created with this vault attached, not a
-  reusable browser name. It is sent unchanged; the CLI does not resolve names.
-- `merchant_origin` is the canonical origin of the **top-level merchant document**, not the Square
-  iframe. Only a scheme and host (with an optional port) are accepted; `http` only for localhost.
-- `environment` is `production` or `sandbox`. It describes Square, not the AgentCard credential mode.
+`--spec-file <path|->` accepts the same JSON. `browser_id` is the active session with
+this vault attached. `merchant_origin` is the canonical HTTPS origin of the top-level
+merchant document, not the Square iframe; HTTP localhost is allowed for tests.
+`environment` is `production` or `sandbox` and refers to Square, not the credential mode.
 
-The response is the updated item carrying `state.preparation` with its status, approval URL, and
-submission deadline. Deliver the approval URL and keep that page open through token handoff;
-`--open` opens it for you. Then poll:
+Keep the approval page open. Poll until the item's status is `ready_to_submit`, then
+submit native Pay before `state.preparation.expires_at`. Readiness lasts at most 30
+seconds, and polling does not extend it. The CLI displays the preparation ID, status,
+browser, origin, environment, approval URL, and submission deadline.
 
-```bash
-kernel vaults items get agentcard-checkout order-1 --wait 60
-```
+Each preparation is single-use, including after failure or expiry. A preparation
+marked `consumed` has been claimed; it does not prove the payment settled or succeeded.
+Do not automatically retry or switch checkout paths after an uncertain result.
 
-Submit native Square Pay only once the item reaches `ready_to_submit`, and before the printed
-deadline. Readiness lasts at most 30 seconds, and polling never extends it. The preparation amount
-is display-only and does not constrain the merchant's eventual charge.
+##### Fill browser fields
 
-Every preparation is single-use, including after failure or expiry. A failed request is not a retry
-signal: one may already have been created. Item `consumed` means the prepared attempt settled, not
-that an order or charge succeeded; `stopped` cannot be reused; `outcome_unknown` blocks new requests
-and requires merchant reconciliation. Inspect `items events` and reconcile uncertain outcomes with
-the merchant rather than preparing again.
-
-##### Fill checkout or login fields
-
-Fill is supported when advertised by a ready credential item or a ready Link card, not
-AgentCard. It writes stored values without returning them or submitting the form:
+Fill supports credential items and ready Link cards when advertised by the API, not AgentCard.
+Both use the same execution and outcome handling. Credential bindings use declared field names,
+including TOTP fields, and must omit `format`. Credentials may omit `page_url` only when the API
+can resolve a unique page. Card bindings require an exact HTTPS `page_url` and the card fields
+listed below. It writes stored values without returning them or submitting the website form:
 
 ```bash
 kernel vaults items get checkout order-1
@@ -556,20 +591,17 @@ kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browse
 
 - `browser_id` is a browser **session ID**, not a reusable browser name. It is sent unchanged;
   the CLI does not resolve names.
-- `page_url` is the exact current top-level HTTPS URL, including path, query, and fragment,
+- For cards, `page_url` is the exact current top-level HTTPS URL, including path, query, and fragment,
   without embedded credentials. It must match exactly one open page; no prefix/glob matching.
   Cards require it. Credential items may omit it, which then requires exactly one open page.
 - `fields` contains 1-32 bindings in write order. Each has `field` and a nonempty CSS
   `selector` targeting an editable input/select or its container. The API searches the selected
   page and descendants, including payment iframes. Do not supply frame IDs or literal values.
-- Stored fields: `number`, `cvc`, `exp_month` (MM), `exp_year` (YYYY), `billing_name`,
+- Stored card fields: `number`, `cvc`, `exp_month` (MM), `exp_year` (YYYY), `billing_name`,
   `billing_line1`, `billing_line2`, `billing_city`, `billing_state`, `billing_postal_code`,
   `billing_country`. Billing fields use the stored address without reformatting; request only
   needed fields. Missing requested billing data fails validation before browser writes.
-- Combined `expiration` requires `format: "MM/YY"` or `"MM/YYYY"`. Other fields reject `format`.
-- For a credential item, each `field` is a declared field name that has a stored value, and
-  `format` is rejected. A `totp` field fills a freshly generated code; its seed never enters
-  the browser.
+- Combined card `expiration` requires `format: "MM/YY"` or `"MM/YYYY"`. Other fields reject `format`.
 - Optional `timeout_ms` is an integer from 1 to 30000 (default 10000), for the whole operation.
 
 Fill returns an execution result, **not an updated item**. Normal output shows zero-based
@@ -586,8 +618,8 @@ errors are printed in fill results.
 
 Fill is non-atomic: execution stops at the first failed/unknown field and earlier writes are
 not rolled back. `filled` does not mean the site retained or accepted the value; `completed`
-does not mean paid. Transport errors do not prove no writes occurred. Inspect the browser
-before deciding what to do next. The CLI never retries, submits checkout, or falls back to
+does not mean logged in or paid. Transport errors do not prove no writes occurred. Inspect the browser
+before deciding what to do next. The CLI never retries, submits website forms, or falls back to
 aliases. Returned `state.aliases` remain an alternative for explicitly chosen egress-substitution
 integrations, not a recovery path after a failed or indeterminate fill.
 
@@ -1075,18 +1107,21 @@ Managed auth connections (`kernel auth connections`). The commands below are new
   - `--per-page <n>` - Items per page (default: 20)
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel auth connections create` - New flags:
+  - `--region us-east|eu-west|ap-southeast` - Region for this connection's login, reauth, and health-check browser sessions. Defaults to `us-east`.
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy configuration for this connection's login, reauth, and health-check browser sessions (mutually exclusive). Omit to derive the default from stealth.
   - `--region us-east|eu-west|ap-southeast` - Region for this connection's browser sessions (default: `us-east`). Non-default regions require an eligible plan and organization access.
   - `--stealth` - Whether those browser sessions run in stealth mode (default: true); use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Default telemetry for this connection's browser sessions. Same semantics as `kernel browsers create`
   - `--telemetry-export-otlp <id-or-name>` - Export this connection's captured telemetry over OTLP to one of the org's configured destinations. Implies `--telemetry=all` when `--telemetry` is not set. Use `=off` to disable export.
 - `kernel auth connections update <id>` - New flags:
+  - `--region us-east|eu-west|ap-southeast` - Update the region for browser sessions created after this command. Active sessions don't move.
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy configuration for future browser sessions (mutually exclusive). Use `--proxy-mode=default` to drop a selected proxy rather than passing an empty value.
   - `--region us-east|eu-west|ap-southeast` - Region for future browser sessions; omit to keep the current region
   - `--stealth` - Set whether future browser sessions run in stealth mode; use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Update telemetry for future browser sessions
   - `--telemetry-export-otlp <id-or-name>` - Update where future sessions export captured telemetry. Naming a destination requires passing `--telemetry` in the same command, since the API validates capture and export together and enabling capture here would replace the connection's current category selection. Use `=off` to disable export.
 - `kernel auth connections login <id>` - New flags:
+  - `--region us-east|eu-west|ap-southeast` - Region override for this login only. Omit it to inherit the connection region.
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy override for this login's browser session (mutually exclusive); omitted properties inherit the connection defaults
   - `--region us-east|eu-west|ap-southeast` - Region override for this login's browser session; omit to inherit the connection's region. Applies only to this login.
   - `--stealth` - Stealth override for this login's browser session; use `--stealth=false` to disable
