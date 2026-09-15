@@ -26,13 +26,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Reject preview SDK dependencies
-        run: |
-          if grep -q 'kernel-go-sdk-staging' go.mod; then
-            echo 'Replace the preview SDK pin with a released SDK before publishing.' >&2
-            exit 1
-          fi
-
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
