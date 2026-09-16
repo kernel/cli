@@ -15,48 +15,93 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const readyCardFixture = `{
+const readyAgentCardFixture = `{
   "id":"card-id","key":"order-1","type":"card",
-  "spec":{"provider":"link","wallet":"wallet-1","payment_method_id":"pm-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://shop.example","provider_secret":"SECRET_SPEC"},
-  "state":{"provider":"link","status":"ready","domains":["shop.example"],"aliases":{"number":"9999999999999999","cvc":"999","exp_month":"01","exp_year":"2099","secret":"SECRET_ALIAS"},"card_number":"SECRET_CARD","secret_enc":"SECRET_CIPHERTEXT"},
+  "spec":{"provider":"agentcard","wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop","provider_secret":"SECRET_SPEC"},
+  "state":{"provider":"agentcard","status":"ready","aliases":{"number":"9999999999999999","cvc":"999","exp_month":"01","exp_year":"2099","secret":"SECRET_ALIAS"},"card_number":"SECRET_CARD","secret_enc":"SECRET_CIPHERTEXT"},
   "available_operations":[],"available_expansions":[],"oauth_tokens":"SECRET_OAUTH"
 }`
 
-func TestVaultOutputAliasesPresenceAndRedaction(t *testing.T) {
+const readyLinkCardFixture = `{
+  "id":"card-id","key":"order-1","type":"card",
+  "spec":{"provider":"link","wallet":"wallet-1","payment_method_id":"pm-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://shop.example","provider_secret":"SECRET_SPEC"},
+  "state":{"provider":"link","status":"ready","domains":["shop.example"],"masks":{"brand":"visa","last4":"1234"},"card_number":"SECRET_CARD","secret_enc":"SECRET_CIPHERTEXT"},
+  "available_operations":[{"type":"fill","description":"Fill checkout fields."}],"available_expansions":[],"oauth_tokens":"SECRET_OAUTH"
+}`
+
+func TestVaultOutputAgentCardAliasesPresenceAndRedaction(t *testing.T) {
 	var item kernel.VaultItemUnion
-	require.NoError(t, json.Unmarshal([]byte(readyCardFixture), &item))
+	require.NoError(t, json.Unmarshal([]byte(readyAgentCardFixture), &item))
 	buf := capturePtermOutput(t)
 	require.NoError(t, printVaultItem(&item, ""))
 	human := buf.String()
-	assert.Contains(t, human, "9999999999999999")
-	assert.Contains(t, human, "Checkout alias: cvc")
-	assert.Contains(t, human, "Permitted domains (provider-assigned)")
-	assert.Contains(t, human, "shop.example")
+	for _, value := range []string{"9999999999999999", "999", "01", "2099"} {
+		assert.Contains(t, human, value)
+	}
+	for _, field := range []string{"number", "cvc", "exp_month", "exp_year"} {
+		assert.Contains(t, human, "Checkout alias: "+field)
+	}
 	assert.Contains(t, human, "ready does not mean paid")
 	assert.Contains(t, human, "Never retry automatically")
 	assert.Contains(t, human, "explicit user confirmation")
 	assert.NotContains(t, human, "SECRET")
 	out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
 	assert.NotContains(t, out, "SECRET")
-	assert.Contains(t, out, "9999999999999999")
+	var decoded struct {
+		State vaultJSON `json:"state"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &decoded))
+	assert.JSONEq(t, `{"number":"9999999999999999","cvc":"999","exp_month":"01","exp_year":"2099"}`, string(decoded.State["aliases"]))
 	assert.NotContains(t, out, "authorization")
 	assert.NotContains(t, out, "expires_at")
 
-	require.NoError(t, json.Unmarshal([]byte(requestedCardFixture), &item))
+	withoutAliases := `{"id":"card-id","key":"order-1","type":"card","spec":{"provider":"agentcard"},"state":{"provider":"agentcard","status":"requested"},"available_operations":[]}`
+	require.NoError(t, json.Unmarshal([]byte(withoutAliases), &item))
 	buf.Reset()
 	require.NoError(t, printVaultItem(&item, ""))
 	assert.NotContains(t, buf.String(), "Checkout alias")
-	assert.Contains(t, buf.String(), "Available operation: authorize")
 	out = captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
 	assert.NotContains(t, out, "aliases")
 
-	nullAliases := strings.Replace(requestedCardFixture, `"status":"requested"`, `"status":"requested","aliases":null`, 1)
+	nullAliases := strings.Replace(withoutAliases, `"status":"requested"`, `"status":"requested","aliases":null`, 1)
 	require.NoError(t, json.Unmarshal([]byte(nullAliases), &item))
 	buf.Reset()
 	require.NoError(t, printVaultItem(&item, ""))
 	assert.NotContains(t, buf.String(), "Checkout alias")
 	out = captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
 	assert.Contains(t, out, `"aliases": null`)
+}
+
+func TestVaultOutputLinkHasNoAliases(t *testing.T) {
+	for _, fixture := range []string{requestedCardFixture, readyLinkCardFixture} {
+		var item kernel.VaultItemUnion
+		require.NoError(t, json.Unmarshal([]byte(fixture), &item))
+		t.Run(item.State.Status, func(t *testing.T) {
+			buf := capturePtermOutput(t)
+			require.NoError(t, printVaultItem(&item, ""))
+			assert.NotContains(t, buf.String(), "alias")
+			assert.NotContains(t, buf.String(), "SECRET")
+			operation := "authorize"
+			if item.State.Status == "ready" {
+				operation = "fill"
+				assert.Contains(t, buf.String(), "Permitted domains (provider-assigned)")
+				assert.Contains(t, buf.String(), "shop.example")
+			}
+			assert.Contains(t, buf.String(), "Available operation: "+operation)
+			out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
+			assert.NotContains(t, out, "aliases")
+			assert.NotContains(t, out, "SECRET")
+			var decoded struct {
+				State vaultJSON `json:"state"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(out), &decoded))
+			assert.JSONEq(t, fmt.Sprintf("%q", item.State.Status), string(decoded.State["status"]))
+			if item.State.Status == "ready" {
+				assert.JSONEq(t, `["shop.example"]`, string(decoded.State["domains"]))
+				assert.JSONEq(t, `{"brand":"visa","last4":"1234"}`, string(decoded.State["masks"]))
+			}
+		})
+	}
 }
 
 func TestVaultOutputAgentCardAuthorizationIsNotPaymentSuccess(t *testing.T) {

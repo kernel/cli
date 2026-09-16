@@ -334,7 +334,7 @@ cannot switch projects.
 | `kernel vaults cards create <vault> <key> --provider link\|agentcard --spec '<json>'` | Create a card request; never implicitly authorize Link |
 | `kernel vaults cards update <vault> <key> --provider link\|agentcard --spec '<json>'` | Update a card spec; pending issuance preserves omitted optional fields, and the API enforces state/provider constraints |
 | `kernel vaults items list <vault>` | List item keys, types, providers, status, and required actions |
-| `kernel vaults items get <vault> <key>` | Inspect state/actions/returned aliases and copyable operation commands; `--wait 0..60`, `--expand payment_methods`, `--open` |
+| `kernel vaults items get <vault> <key>` | Inspect state/actions/returned AgentCard aliases and copyable operation commands; `--wait 0..60`, `--expand payment_methods`, `--open` |
 | `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; `authorize --open` opens a returned HTTPS action; `fill --params '<json>'` fills checkout fields |
 | `kernel vaults items events <vault> <key>` | Read ordered audit events; `--after <event-id>`, `--wait 0..60` |
 | `kernel vaults items delete <vault> <key>` | Invalidate an item; `--yes` skips confirmation |
@@ -342,9 +342,10 @@ cannot switch projects.
 `<vault>` accepts an ID or name. `<key>` is the immutable item key within that vault, not
 its generated item ID. Names and keys use letters, digits, dots, underscores, and hyphens
 (1–255 characters; not `.` or `..`). All commands except delete support `-o json`.
-JSON preserves field presence and API-returned aliases, while omitting unknown fields,
+JSON preserves field presence and API-returned AgentCard aliases, while omitting unknown fields,
 opaque metadata, and unrecognized event data. Human output labels aliases as non-secret
 checkout values and distinguishes card readiness from checkout authorization/payment outcomes.
+Link cards do not expose aliases or support egress substitution; browser checkout uses only `fill`.
 Action and approval URLs print in full on separate lines, without table truncation.
 Most API failures use the CLI's standard error formatter. Wallet creation and provider config
 commands withhold response/transport details to prevent credential echoes; HTTP status remains visible.
@@ -439,6 +440,9 @@ wallet and vault deletion. Time passing or deletion is not evidence of non-execu
 
 #### Link checkout preparation
 
+Link OAuth, user approval, and provider-issued single-use card issuance precede browser checkout.
+Issued Link cards use only the advertised vault-item `fill` operation for checkout fields.
+
 1. Create/select a vault in the effective project. Connect the wallet in the provider's UI:
 
    ```bash
@@ -512,8 +516,10 @@ kernel browsers create --vault agentcard-checkout
 
 AgentCard authorizes at checkout and does not currently advertise `authorize`. To select a
 vaulted card in advance, inspect `wallets payment-methods` and include its ID as `card_id` in the
-card spec. Otherwise, the cardholder selects a card at approval. A reusable card being
-`ready` does not mean the last payment succeeded.
+card spec. Otherwise, the cardholder selects a card at approval. AgentCard-only
+`state.aliases` support egress substitution with checkout hold, approval, and replay
+in a browser with the vault attached. This is not a fallback after Link fill.
+A reusable card being `ready` does not mean the last payment succeeded.
 
 #### Invoking item operations
 
@@ -567,7 +573,10 @@ Fill supports credential items and ready Link cards when advertised by the API, 
 Both use the same execution and outcome handling. Credential bindings use declared field names,
 including TOTP fields, and must omit `format`. Credentials may omit `page_url` only when the API
 can resolve a unique page. Card bindings require an exact HTTPS `page_url` and the card fields
-listed below. It writes stored values without returning them or submitting the website form:
+listed below. The vault must already be attached to the browser for fill authorization.
+Fill writes real stored values into the browser without returning them in the result;
+unrestricted browser/CDP access can read those values. It does not explicitly submit forms
+or click buttons, though input/change events may trigger site behavior:
 
 ```bash
 kernel vaults items get checkout order-1
@@ -606,9 +615,10 @@ Transport loss and other uncertain failures retain the no-retry warning.
 Fill is non-atomic: execution stops at the first failed/unknown field and earlier writes are
 not rolled back. `filled` does not mean the site retained or accepted the value; `completed`
 does not mean logged in or paid. Transport errors do not prove no writes occurred. Inspect the browser
-before deciding what to do next. The CLI never retries, submits website forms, or falls back to
-aliases. Returned `state.aliases` remain an alternative for explicitly chosen egress-substitution
-integrations, not a recovery path after a failed or indeterminate fill.
+before deciding what to do next. The CLI never retries, explicitly submits website forms, or falls
+back to aliases. Link cards do not expose `state.aliases` or support egress substitution.
+AgentCard-only checkout aliases are a separate integration, not a recovery path after a failed
+or indeterminate fill.
 
 #### Expansions, updates, and lifecycle
 
