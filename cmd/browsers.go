@@ -413,6 +413,7 @@ type BrowsersUpdateInput struct {
 	ProfileID           string
 	ProfileName         string
 	ProfileSaveChanges  BoolFlag
+	StartURL            string
 	Viewport            string
 	Force               bool
 	Telemetry           string
@@ -897,6 +898,9 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
 	}
+	if err := validateStartURLFlag(in.StartURL); err != nil {
+		return err
+	}
 
 	// Validate profile selection: at most one of profile-id or profile-name must be provided
 	if in.ProfileID != "" && in.ProfileName != "" {
@@ -938,6 +942,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 
 	hasProxyChange := proxySel.set()
 	hasProfileChange := in.ProfileID != "" || in.ProfileName != ""
+	hasStartURLChange := in.StartURL != ""
 	hasViewportChange := in.Viewport != ""
 	// By this point a set name is guaranteed non-empty (the guard above rejects --name "").
 	hasNameChange := in.SetName || in.ClearName
@@ -954,8 +959,8 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	// Validate that at least one update option is provided
-	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && !hasNameChange && !hasTagsChange {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --name, --clear-name, --tag, or --clear-tags")
+	if !hasProxyChange && !hasProfileChange && !hasStartURLChange && !hasViewportChange && in.Telemetry == "" && !hasNameChange && !hasTagsChange {
+		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --start-url, --viewport, --telemetry, --name, --clear-name, --tag, or --clear-tags")
 	}
 
 	params := kernel.BrowserUpdateParams{}
@@ -995,6 +1000,10 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		if in.ProfileSaveChanges.Set {
 			params.Profile.SaveChanges = kernel.Opt(in.ProfileSaveChanges.Value)
 		}
+	}
+
+	if hasStartURLChange {
+		params.StartURL = kernel.Opt(in.StartURL)
 	}
 
 	// Handle telemetry changes
@@ -2644,6 +2653,7 @@ Supported operations:
   - Select a proxy by ID or name (--proxy-id or --proxy-name)
   - Change proxy egress mode (--proxy-mode=direct or --proxy-mode=default)
   - Load a profile into a session that doesn't have one (--profile-id or --profile-name)
+  - Navigate to a URL after the update (--start-url)
   - Change viewport dimensions (--viewport)
   - Force viewport resize during active live view or recording (--force with --viewport)
   - Rename or clear the session name (--name or --clear-name)
@@ -2692,6 +2702,7 @@ func init() {
 	browsersUpdateCmd.Flags().String("profile-id", "", "Profile ID to load into the browser session (mutually exclusive with --profile-name)")
 	browsersUpdateCmd.Flags().String("profile-name", "", "Profile name to load into the browser session (mutually exclusive with --profile-id)")
 	browsersUpdateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
+	browsersUpdateCmd.Flags().String("start-url", "", "URL to navigate the browser to after applying this update")
 	browsersUpdateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersUpdateCmd.Flags().Bool("force", false, "Force viewport resize even when a live view or recording/replay is active")
 	browsersUpdateCmd.Flags().String("telemetry", "", "Update telemetry: --telemetry=all (reset to default set), --telemetry=off (disable), or --telemetry=console,network (merge those categories into the current selection)")
@@ -3311,6 +3322,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	profileID, _ := cmd.Flags().GetString("profile-id")
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	saveChanges, _ := cmd.Flags().GetBool("save-changes")
+	startURL, _ := cmd.Flags().GetString("start-url")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	force, _ := cmd.Flags().GetBool("force")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
@@ -3331,6 +3343,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 		ProfileID:           profileID,
 		ProfileName:         profileName,
 		ProfileSaveChanges:  BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
+		StartURL:            startURL,
 		Viewport:            viewport,
 		Force:               force,
 		Telemetry:           telemetry,

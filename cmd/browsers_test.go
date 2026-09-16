@@ -2408,6 +2408,39 @@ func captureUpdateParams(t *testing.T) (*FakeBrowsersService, *kernel.BrowserUpd
 	return fake, captured
 }
 
+func TestBrowsersUpdate_WithStartURL_ForwardsParam(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		StartURL:   "https://example.com/checkout",
+	})
+
+	require.NoError(t, err)
+	assert.True(t, captured.StartURL.Valid())
+	assert.Equal(t, "https://example.com/checkout", captured.StartURL.Value)
+}
+
+func TestBrowsersUpdate_RejectsStartURLFlagToken(t *testing.T) {
+	called := false
+	fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+		called = true
+		return &kernel.BrowserUpdateResponse{}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		StartURL:   "--viewport",
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--start-url requires a URL value")
+	assert.False(t, called)
+}
+
 func TestBrowsersUpdate_WithName_ForwardsParam(t *testing.T) {
 	setupStdoutCapture(t)
 	fake, captured := captureUpdateParams(t)
