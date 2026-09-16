@@ -32,7 +32,8 @@ Omit required values to receive a collection URL to present to the user.
 Poll items get --wait 60 until state.status is ready, then use items invoke fill.
 Ready means populated, not a successful login. An agent controlling the browser
 can read filled values. TOTP seeds must not be collected through the hosted form.
-Get/list output includes definitions and has_value, not stored field values.
+Get/list output includes definitions, has_value, and explicitly non-sensitive text/email values.
+Sensitive values and TOTP seeds are omitted.
 Collection URLs are bearer credentials: share only with the intended user.`
 
 func newVaultCredentialsCommand() *cobra.Command {
