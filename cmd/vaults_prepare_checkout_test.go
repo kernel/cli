@@ -50,6 +50,34 @@ func TestVaultPrepareCheckout(t *testing.T) {
 	}
 }
 
+func TestVaultPrepareCheckoutProcessor(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	posts := 0
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "POST" {
+			posts++
+			body, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"type":"prepare_checkout","checkout":{"browser_id":"browser-1","merchant_origin":"https://shop.example","environment":"shared","psp":"bambora"}}`, string(body))
+		}
+		fmt.Fprint(w, strings.Replace(strings.Replace(preparationCardFixture, `"environment":"production"`, `"environment":"shared"`, 1), `"merchant_origin":"https://shop.example"`, `"merchant_origin":"https://shop.example","psp":"bambora"`, 1))
+	})
+	params := strings.Replace(strings.Replace(checkoutParamsFixture, `"production"`, `"shared"`, 1), `"environment":`, `"psp":"bambora","environment":`, 1)
+	out, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "user-123", "order-1", "prepare_checkout", "--params", params, "-o", "json")
+	require.NoError(t, err)
+	assert.Equal(t, 1, posts)
+	assert.True(t, json.Valid([]byte(out)))
+	assert.Contains(t, out, "bambora")
+	assert.Contains(t, out, "shared")
+	assert.NotContains(t, out, "never-print")
+
+	_, text, err := executeVaultCommand(t, client, "vaults", "items", "get", "user-123", "order-1")
+	require.NoError(t, err)
+	assert.Contains(t, text, "Processor")
+	assert.Contains(t, text, "bambora")
+}
+
 func TestVaultPrepareCheckoutInvalidParams(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
 	for _, raw := range []string{
@@ -58,6 +86,9 @@ func TestVaultPrepareCheckoutInvalidParams(t *testing.T) {
 		strings.Replace(checkoutParamsFixture, `"browser-1"`, `null`, 1),
 		strings.Replace(checkoutParamsFixture, `"browser-1"`, `""`, 1),
 		strings.Replace(checkoutParamsFixture, `"production"`, `"invalid"`, 1),
+		strings.Replace(checkoutParamsFixture, `"environment":`, `"psp":"stripe","environment":`, 1),
+		strings.Replace(checkoutParamsFixture, `"environment":`, `"psp":null,"environment":`, 1),
+		strings.Replace(checkoutParamsFixture, `"environment":`, `"psp":"square","psp":"braintree","environment":`, 1),
 		strings.Replace(checkoutParamsFixture, `"environment":`, `"extra":"never-print","environment":`, 1),
 		strings.Replace(checkoutParamsFixture, `"browser_id":`, `"browser_id":"duplicate","browser_id":`, 1),
 		strings.Repeat("x", 128*1024+1),
@@ -77,6 +108,21 @@ func TestVaultPrepareCheckoutInvalidParams(t *testing.T) {
 	}
 	_, err := parseVaultCheckoutParams(strings.Replace(checkoutParamsFixture, "https://shop.example", "http://localhost:3000", 1))
 	require.NoError(t, err)
+	for _, psp := range []string{"square", "braintree", "worldpay", "bambora", "mercado_pago"} {
+		params, err := parseVaultCheckoutParams(strings.Replace(checkoutParamsFixture, `"environment":`, `"psp":"`+psp+`","environment":`, 1))
+		require.NoError(t, err, psp)
+		assert.Equal(t, psp, string(params.Psp))
+	}
+	for _, environment := range []string{"production", "sandbox", "shared"} {
+		params, err := parseVaultCheckoutParams(strings.Replace(checkoutParamsFixture, `"production"`, `"`+environment+`"`, 1))
+		require.NoError(t, err, environment)
+		assert.Equal(t, environment, string(params.Environment))
+	}
+	// psp is optional and must stay absent from the request body when omitted.
+	params, err := parseVaultCheckoutParams(checkoutParamsFixture)
+	require.NoError(t, err)
+	assert.Empty(t, string(params.Psp))
+
 	_, err = parseVaultOperationParams("prepare_checkout", "", false, false)
 	require.Error(t, err)
 }

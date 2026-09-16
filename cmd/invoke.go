@@ -185,7 +185,7 @@ func runInvoke(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		succeeded := resp.Status == kernel.InvocationNewResponseStatusSucceeded
-		printResult(succeeded, resp.Output)
+		printResult(succeeded, resp.Output, resp.StatusReason)
 
 		duration := time.Since(startTime)
 		if succeeded {
@@ -268,7 +268,7 @@ func runInvoke(cmd *cobra.Command, args []string) error {
 			if status == string(kernel.InvocationGetResponseStatusSucceeded) || status == string(kernel.InvocationGetResponseStatusFailed) {
 				// Finished – print output and exit accordingly
 				succeeded := status == string(kernel.InvocationGetResponseStatusSucceeded)
-				printResult(succeeded, stateEv.Invocation.Output)
+				printResult(succeeded, stateEv.Invocation.Output, stateEv.Invocation.StatusReason)
 
 				duration := time.Since(startTime)
 				if succeeded {
@@ -313,14 +313,20 @@ func handleSdkError(err error) error {
 	return nil
 }
 
-func printResult(success bool, output string) {
+func printResult(success bool, output, statusReason string) {
 	output = formatJSONValue(output)
 	// use pterm.Success if succeeded, pterm.Error if failed
 	if success {
 		pterm.Success.Printf("Result:\n%s\n", output)
-	} else {
-		pterm.Error.Printf("Result:\n%s\n", output)
+		return
 	}
+	// The API populates status_reason with a customer-safe summary of the failure
+	// whenever an invocation fails; show it above the raw output, which may be
+	// plain text rather than JSON.
+	if statusReason != "" {
+		pterm.Error.Printf("Reason: %s\n", statusReason)
+	}
+	pterm.Error.Printf("Result:\n%s\n", output)
 }
 
 func formatJSONValue(value string) string {
