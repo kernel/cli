@@ -2826,6 +2826,30 @@ func TestBrowsersRepl_SendsResetAndTimeout(t *testing.T) {
 	assert.Contains(t, outBuf.String(), "r1")
 }
 
+func TestBrowsersRepl_DoesNotRetryExecution(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"cdp_ws_url":"ws://localhost","created_at":"2026-01-01T00:00:00Z","headless":true,"memory":"1GiB","region":"us-east","session_id":"session123","stealth":false,"timeout_seconds":60,"webdriver_ws_url":"ws://localhost"}`))
+			return
+		}
+
+		calls++
+		w.Header().Set("x-should-retry", "true")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"temporary failure"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	client := kernel.NewClient(option.WithBaseURL(server.URL), option.WithAPIKey("test"))
+	b := BrowsersCmd{browsers: &client.Browsers}
+
+	err := b.Repl(context.Background(), BrowsersReplInput{Identifier: "session123", Code: "sideEffect()"})
+	require.Error(t, err)
+	assert.Equal(t, 1, calls)
+}
+
 func TestBrowsersRepl_RequiresCodeUnlessReset(t *testing.T) {
 	setupStdoutCapture(t)
 	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()

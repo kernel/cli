@@ -1843,7 +1843,7 @@ func (b BrowsersCmd) Repl(ctx context.Context, in BrowsersReplInput) error {
 	if in.TimeoutSec > 0 {
 		params.BrowserReplRequest.TimeoutSec = kernel.Opt(in.TimeoutSec)
 	}
-	res, err := b.browsers.Repl(ctx, br.SessionID, params)
+	res, err := b.browsers.Repl(ctx, br.SessionID, params, option.WithMaxRetries(0))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
