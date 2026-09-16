@@ -2574,6 +2574,76 @@ func TestBrowsersUpdate_NameOnly_SatisfiesAtLeastOne(t *testing.T) {
 	assert.Equal(t, "renamed", captured.Name.Value)
 }
 
+func TestBrowsersUpdate_WithStartURL_ForwardsParam(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		StartURL:   "https://example.com",
+	})
+
+	assert.NoError(t, err)
+	assert.True(t, captured.StartURL.Valid())
+	assert.Equal(t, "https://example.com", captured.StartURL.Value)
+}
+
+// An omitted --start-url must stay out of the request body so an unrelated
+// update (a rename, say) does not renavigate the session.
+func TestBrowsersUpdate_OmitStartURL_NotSent(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Name:       "new-name",
+		SetName:    true,
+	})
+
+	assert.NoError(t, err)
+	assert.False(t, captured.StartURL.Valid())
+	raw, marshalErr := json.Marshal(*captured)
+	require.NoError(t, marshalErr)
+	assert.NotContains(t, string(raw), "start_url")
+}
+
+func TestBrowsersUpdate_RejectsStartURLFlagToken(t *testing.T) {
+	setupStdoutCapture(t)
+	called := false
+	fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, idOrName string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+		called = true
+		return &kernel.BrowserUpdateResponse{}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		StartURL:   "--clear-name",
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--start-url requires a URL value")
+	assert.False(t, called)
+}
+
+// --start-url on its own is a complete update, so it must satisfy the
+// at-least-one-option guard.
+func TestBrowsersUpdate_StartURLOnly_SatisfiesAtLeastOne(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		StartURL:   "https://example.com",
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "https://example.com", captured.StartURL.Value)
+}
+
 func TestBrowsersUpdate_NoOptions_Errors(t *testing.T) {
 	setupStdoutCapture(t)
 	fake := &FakeBrowsersService{}

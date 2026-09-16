@@ -442,6 +442,7 @@ type BrowsersUpdateInput struct {
 	Tags                map[string]string
 	TagsProvided        bool
 	ClearTags           bool
+	StartURL            string
 	Output              string
 }
 
@@ -939,6 +940,10 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return err
 	}
 
+	if err := validateStartURLFlag(in.StartURL); err != nil {
+		return err
+	}
+
 	// Cannot specify both --name and --clear-name
 	if in.SetName && in.ClearName {
 		return fmt.Errorf("cannot specify both --name and --clear-name")
@@ -970,6 +975,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	// By this point a set name is guaranteed non-empty (the guard above rejects --name "").
 	hasNameChange := in.SetName || in.ClearName
 	hasTagsChange := len(in.Tags) > 0 || in.ClearTags
+	hasStartURLChange := in.StartURL != ""
 
 	// Validate --save-changes is only used with a profile
 	if in.ProfileSaveChanges.Set && !hasProfileChange {
@@ -982,8 +988,8 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	// Validate that at least one update option is provided
-	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && in.TelemetryCdpExclude == "" && !hasNameChange && !hasTagsChange {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --telemetry-cdp-exclude, --name, --clear-name, --tag, or --clear-tags")
+	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && in.TelemetryCdpExclude == "" && !hasNameChange && !hasTagsChange && !hasStartURLChange {
+		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --telemetry-cdp-exclude, --name, --clear-name, --tag, --clear-tags, or --start-url")
 	}
 
 	params := kernel.BrowserUpdateParams{}
@@ -1001,6 +1007,12 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		params.Tags = kernel.Tags{}
 	} else if len(in.Tags) > 0 {
 		params.Tags = kernel.Tags(in.Tags)
+	}
+
+	// Navigation is best-effort server-side, so an empty value is simply omitted
+	// rather than treated as a request to blank the current page.
+	if hasStartURLChange {
+		params.StartURL = kernel.String(in.StartURL)
 	}
 
 	// Handle proxy changes
@@ -1076,6 +1088,9 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 	if hasProfileChange {
 		pterm.Info.Printf("Profile save changes: %t\n", browser.ProfileSaveChanges)
+	}
+	if hasStartURLChange {
+		pterm.Info.Printf("Start URL: %s\n", util.OrDash(browser.StartURL))
 	}
 	if in.Telemetry != "" || in.TelemetryCdpExclude != "" {
 		printTelemetrySummary(browser.Telemetry)
@@ -2676,9 +2691,12 @@ Supported operations:
   - Force viewport resize during active live view or recording (--force with --viewport)
   - Rename or clear the session name (--name or --clear-name)
   - Replace or clear the session tags (--tag or --clear-tags)
+  - Navigate the session to a URL (--start-url)
 
 Notes:
   - Profiles can only be loaded into sessions that don't already have a profile.
+  - --start-url navigation is best-effort: the update succeeds even if the page fails to load.
+  - --start-url combined with --profile-id/--profile-name overrides the profile's restored tabs.
   - --tag replaces the entire tag set (it is not merged with existing tags).`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
@@ -2728,6 +2746,7 @@ func init() {
 	browsersUpdateCmd.Flags().Bool("clear-name", false, "Clear the browser session name")
 	browsersUpdateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE (repeatable; up to 50 pairs). Replaces the entire tag set; mutually exclusive with --clear-tags")
 	browsersUpdateCmd.Flags().Bool("clear-tags", false, "Remove all tags from the browser session")
+	browsersUpdateCmd.Flags().String("start-url", "", "Navigate the browser to this URL after applying the update. Overrides the restored tabs when a profile is loaded in the same update. Navigation is best-effort, so failures do not fail the update")
 
 	browsersCmd.AddCommand(browsersListCmd)
 	browsersCmd.AddCommand(browsersCreateCmd)
@@ -3351,6 +3370,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	clearName, _ := cmd.Flags().GetBool("clear-name")
 	tags, tagsProvided := tagsFromFlag(cmd, "tag")
 	clearTags, _ := cmd.Flags().GetBool("clear-tags")
+	startURL, _ := cmd.Flags().GetString("start-url")
 
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
@@ -3374,6 +3394,7 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 		Tags:                tags,
 		TagsProvided:        tagsProvided,
 		ClearTags:           clearTags,
+		StartURL:            startURL,
 		Output:              out,
 	})
 }
