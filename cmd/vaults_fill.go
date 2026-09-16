@@ -149,6 +149,14 @@ func parseVaultFillResult(raw json.RawMessage, count int) (*vaultFillResult, err
 	if json.Unmarshal(safe, &result) != nil || result.Type != "fill" || len(result.Fields) != count {
 		return nil, invalid
 	}
+	if count == 0 {
+		switch result.Status {
+		case "completed", "failed", "unknown":
+			return &result, nil
+		default:
+			return nil, invalid
+		}
+	}
 	status := "completed"
 	stopped := false
 	for i, field := range result.Fields {

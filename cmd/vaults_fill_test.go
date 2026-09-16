@@ -342,6 +342,17 @@ func TestVaultFillCLIValidationDoesNotReachAPI(t *testing.T) {
 	assert.Zero(t, calls.Load())
 }
 
+func TestVaultPaymentTokenFillOutcomesHaveNoFieldBindings(t *testing.T) {
+	for _, status := range []string{"completed", "failed", "unknown"} {
+		t.Run(status, func(t *testing.T) {
+			result, err := parseVaultFillResult(json.RawMessage(`{"type":"fill","status":"`+status+`","fields":[]}`), 0)
+			require.NoError(t, err)
+			require.Equal(t, status, result.Status)
+			require.Empty(t, result.Fields)
+		})
+	}
+}
+
 func TestVaultPaymentTokenFillOmitsFieldBindings(t *testing.T) {
 	const token = `{"id":"token-1","key":"order-token","type":"payment_token","spec":{"provider":"link","wallet":"wallet-1","browser_id":"browser-1","page_url":"https://shop.example/checkout","payment_method_id":"pm-1","amount":1234,"currency":"usd","context":"Final checkout purchase context."},"state":{"provider":"link","status":"ready"},"available_operations":[{"type":"fill","description":"Authenticate this checkout without submitting payment."}],"available_expansions":[]}`
 	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
