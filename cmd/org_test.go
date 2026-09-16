@@ -45,12 +45,13 @@ func testOrgEntitlementsWithUnlimitedValues(t *testing.T) *kernel.OrgEntitlement
 			"managed_auth":{"enabled":true,"max_connections":null,"health_check_interval_min_seconds":1200,"health_check_interval_default_seconds":3600,"health_check_interval_max_seconds":86400},
 			"credentials":{"enabled":true},
 			"credential_providers":{"enabled":true},
+			"vaults":{"enabled":true},
 			"managed_proxies":{"enabled":true},
 			"custom_proxies":{"enabled":true},
 			"proxy_bypass_hosts":{"enabled":true},
 			"gpu":{"enabled":false}
 		},
-		"limits":{"max_concurrent_browsers":150,"max_concurrent_invocations":150,"default_max_concurrent_invocations_per_app":20}
+		"limits":{"max_concurrent_browsers":150,"max_concurrent_invocations":150,"default_max_concurrent_invocations_per_app":20,"max_vaults":null}
 	}`), &entitlements)
 	assert.NoError(t, err)
 	return &entitlements
@@ -69,12 +70,13 @@ func TestOrgEntitlementRows_CompleteProjection(t *testing.T) {
 			"managed_auth":{"enabled":false,"max_connections":29,"health_check_interval_min_seconds":31,"health_check_interval_default_seconds":37,"health_check_interval_max_seconds":41},
 			"credentials":{"enabled":true},
 			"credential_providers":{"enabled":false},
+			"vaults":{"enabled":true},
 			"managed_proxies":{"enabled":true},
 			"custom_proxies":{"enabled":false},
 			"proxy_bypass_hosts":{"enabled":true},
 			"gpu":{"enabled":false}
 		},
-		"limits":{"max_concurrent_browsers":43,"max_concurrent_invocations":47,"default_max_concurrent_invocations_per_app":53}
+		"limits":{"max_concurrent_browsers":43,"max_concurrent_invocations":47,"default_max_concurrent_invocations_per_app":53,"max_vaults":59}
 	}`), &entitlements)
 	assert.NoError(t, err)
 
@@ -99,6 +101,7 @@ func TestOrgEntitlementRows_CompleteProjection(t *testing.T) {
 		{"Feature", "Health check maximum (seconds)", "41"},
 		{"Feature", "Credentials", "true"},
 		{"Feature", "Credential providers", "false"},
+		{"Feature", "Vaults", "true"},
 		{"Feature", "Managed proxies", "true"},
 		{"Feature", "Custom proxies", "false"},
 		{"Feature", "Proxy bypass hosts", "true"},
@@ -106,6 +109,7 @@ func TestOrgEntitlementRows_CompleteProjection(t *testing.T) {
 		{"Limit", "Max concurrent browsers", "43"},
 		{"Limit", "Max concurrent invocations", "47"},
 		{"Limit", "Default max concurrent invocations per app", "53"},
+		{"Limit", "Max vaults", "59"},
 	}, orgEntitlementRows(&entitlements))
 }
 
@@ -123,6 +127,7 @@ func TestOrgEntitlementRows_BooleanFieldProvenance(t *testing.T) {
 		{"Managed auth", func(e *kernel.OrgEntitlements) { e.Features.ManagedAuth.Enabled = true }},
 		{"Credentials", func(e *kernel.OrgEntitlements) { e.Features.Credentials.Enabled = true }},
 		{"Credential providers", func(e *kernel.OrgEntitlements) { e.Features.CredentialProviders.Enabled = true }},
+		{"Vaults", func(e *kernel.OrgEntitlements) { e.Features.Vaults.Enabled = true }},
 		{"Managed proxies", func(e *kernel.OrgEntitlements) { e.Features.ManagedProxies.Enabled = true }},
 		{"Custom proxies", func(e *kernel.OrgEntitlements) { e.Features.CustomProxies.Enabled = true }},
 		{"Proxy bypass hosts", func(e *kernel.OrgEntitlements) { e.Features.ProxyBypassHosts.Enabled = true }},
@@ -345,6 +350,57 @@ func TestOrgLimitsGet_OmitsManagedAuthRowsWhenAbsent(t *testing.T) {
 	assert.NotContains(t, out, "Max Auth Connections")
 	assert.NotContains(t, out, "Auth Connections Used")
 	assert.NotContains(t, out, "Min Health Check Interval")
+}
+
+func TestOrgLimitsGet_RendersVaultLimits(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fake := &FakeOrgLimitsService{
+		GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgLimits, error) {
+			limits := &kernel.OrgLimits{
+				MaxConcurrentSessions: 100,
+				MaxVaults:             3,
+				VaultsUsed:            2,
+			}
+			limits.JSON.MaxVaults = respjson.NewField("3")
+			limits.JSON.VaultsUsed = respjson.NewField("2")
+			return limits, nil
+		},
+	}
+	c := OrgCmd{limits: fake}
+	assert.NoError(t, c.LimitsGet(context.Background(), OrgLimitsGetInput{}))
+
+	out := buf.String()
+	assert.Contains(t, out, "Max Vaults")
+	assert.Contains(t, out, "Vaults Used")
+}
+
+func TestOrgLimitsGet_NullMaxVaultsShownAsUnlimited(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fake := &FakeOrgLimitsService{
+		GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgLimits, error) {
+			limits := &kernel.OrgLimits{MaxConcurrentSessions: 100, DefaultProjectMaxConcurrentSessions: 25}
+			limits.JSON.DefaultProjectMaxConcurrentSessions = respjson.NewField("25")
+			// Null (not omitted) means a paid plan or active trial: no vault cap.
+			limits.JSON.MaxVaults = respjson.NewField(respjson.Null)
+			return limits, nil
+		},
+	}
+	c := OrgCmd{limits: fake}
+	assert.NoError(t, c.LimitsGet(context.Background(), OrgLimitsGetInput{}))
+
+	out := buf.String()
+	assert.Contains(t, out, "Max Vaults")
+	assert.Contains(t, out, "unlimited")
+}
+
+func TestOrgLimitsGet_OmitsVaultRowsWhenAbsent(t *testing.T) {
+	buf := capturePtermOutput(t)
+	c := OrgCmd{limits: &FakeOrgLimitsService{}}
+	assert.NoError(t, c.LimitsGet(context.Background(), OrgLimitsGetInput{}))
+
+	out := buf.String()
+	assert.NotContains(t, out, "Max Vaults")
+	assert.NotContains(t, out, "Vaults Used")
 }
 
 func TestOrgLimitsGet_SurfacesAPIError(t *testing.T) {

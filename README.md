@@ -335,7 +335,7 @@ cannot switch projects.
 | `kernel vaults cards update <vault> <key> --provider link\|agentcard --spec '<json>'` | Update a card spec; pending issuance preserves omitted optional fields, and the API enforces state/provider constraints |
 | `kernel vaults items list <vault>` | List item keys, types, providers, status, and required actions |
 | `kernel vaults items get <vault> <key>` | Inspect state/actions/returned aliases and copyable operation commands; `--wait 0..60`, `--expand payment_methods`, `--open` |
-| `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; `authorize --open` opens a returned HTTPS action; `fill --params '<json>'` fills checkout fields |
+| `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; `authorize --open` opens a returned HTTPS action; `prepare_checkout --params '<json>'` prepares an unused AgentCard card for Square Pay; `fill --params '<json>'` fills checkout or login fields; `collect --open` opens a credential item's hosted form |
 | `kernel vaults items events <vault> <key>` | Read ordered audit events; `--after <event-id>`, `--wait 0..60` |
 | `kernel vaults items delete <vault> <key>` | Invalidate an item; `--yes` skips confirmation |
 
@@ -549,13 +549,20 @@ kernel vaults items get user-123 order-1 --wait 60 -o json
 
 `--spec-file <path|->` accepts the same JSON. `browser_id` is the active session with
 this vault attached. `merchant_origin` is the canonical HTTPS origin of the top-level
-merchant document, not the Square iframe; HTTP localhost is allowed for tests.
-`environment` is `production` or `sandbox` and refers to Square, not the credential mode.
+merchant document, not a processor iframe; HTTP localhost is allowed for tests.
+
+Optional `psp` selects the tokenization processor: `square`, `braintree`, `worldpay`,
+`bambora`, or `mercado_pago`. Omit it for Square; non-Square processors require
+multi-processor preparation enablement. `environment` is `production`, `sandbox`, or
+`shared`: use `production` or `sandbox` for Square, Braintree and Worldpay, and `shared`
+for Bambora and Mercado Pago. Shared endpoints do not establish test mode; merchant
+credentials and configuration determine processor test mode, independently of the
+AgentCard credential mode.
 
 Keep the approval page open. Poll until the item's status is `ready_to_submit`, then
 submit native Pay before `state.preparation.expires_at`. Readiness lasts at most 30
 seconds, and polling does not extend it. The CLI displays the preparation ID, status,
-browser, origin, environment, approval URL, and submission deadline.
+browser, origin, environment, processor, approval URL, and submission deadline.
 
 Each preparation is single-use, including after failure or expiry. A preparation
 marked `consumed` has been claimed; it does not prove the payment settled or succeeded.
@@ -868,6 +875,18 @@ Destinations are the OTLP/HTTP endpoints sessions export to, managed per project
   - `--timeout <seconds>` - Maximum execution time in seconds (defaults server-side)
   - If `[code]` is omitted, code is read from stdin
 
+### Browser REPL
+
+- `kernel browsers repl <id> [code]` - Execute JavaScript in the browser's persistent REPL
+  - `--reset` - Terminate the current REPL and start a fresh one before evaluating code
+  - `--timeout-sec <seconds>` - Maximum execution time in seconds (default 60)
+  - `--image-dir <path>` - Directory to save images emitted by `repl.emitImage(...)`
+  - `--json`, `--output json`, `-o json` - Output the raw response
+  - If `[code]` is omitted, code is read from stdin (`--reset` may be used with no code)
+  - Top-level bindings persist across calls until the REPL is reset or terminated. Start with `repl.help()` to list the available methods
+  - Expression values are ignored; emit output with `repl.write(...)`, console methods, or `repl.emitImage(...)`
+  - A timeout, crash, or protocol failure terminates the REPL and changes its REPL ID, discarding top-level bindings. This is unrestricted code execution inside the browser VM and is not sandboxed
+
 ### Browser WebMCP
 
 - `kernel browsers webmcp list <id-or-name>` - Discover native page tools across all browser tabs and embedded frames
@@ -1007,6 +1026,7 @@ Managed auth connections (`kernel auth connections`). The commands below are new
 - `kernel auth connections submit <id>` - New flags:
   - `--field-value <id=value>` - Canonical field-id=value pair from the connection's `fields` list (repeatable); preferred over the legacy `--field`
   - `--choice-id <id>` - Canonical choice ID from the connection's `choices` list
+  - `--interaction-id <id>` - Canonical interaction the submitted values answer. Only valid with `--field-value` or `--choice-id`; omit it and the CLI reads the connection's current interaction ID for you. Pass it to pin the submission, so the API rejects it if the flow has already moved on.
 
 `kernel auth connections get` and `follow` list those IDs alongside the metadata the API captured for them, so you can tell the options apart before submitting. Fields show their type, ref, and any hint (which names the masked destination a one-time code was sent to); choices show their type, semantic MFA method (`sms`, `totp`, `push`, …), and masked destination.
 
@@ -1301,6 +1321,29 @@ const durationMs = Date.now() - start;
 const opsPerSec = ops / (durationMs / 1000);
 return { opsPerSec, ops, durationMs };
 TS
+```
+
+### Persistent REPL
+
+```bash
+# List the methods the REPL exposes
+kernel browsers repl my-browser 'repl.help()'
+
+# Define state once, then reuse it in a later call
+kernel browsers repl my-browser 'globalThis.visits = 0; await page.goto("https://example.com")'
+kernel browsers repl my-browser 'visits++; repl.write(`visits: ${visits}`)'
+
+# Or pipe code from stdin
+cat <<'JS' | kernel browsers repl my-browser
+const { chromium } = await import("patchright");
+repl.write(await page.title());
+JS
+
+# Start a fresh REPL, discarding top-level bindings
+kernel browsers repl my-browser --reset
+
+# Raise the execution timeout and save emitted images
+kernel browsers repl my-browser --timeout-sec 120 --image-dir ./repl-images 'await repl.emitImage(await page.screenshot())'
 ```
 
 ### Extension management
