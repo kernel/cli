@@ -31,19 +31,42 @@ var vaultFillResultFields = vaultOutputFields{
 
 const vaultFillUncertain = "browser fields may have been written; inspect the browser and do not retry or fall back to aliases"
 
+var vaultFillErrorMessages = map[string]string{
+	"invalid_request":      "check field names, formats, and browser parameters",
+	"invalid_selector":     "inspect the page and correct the selector",
+	"duplicate_target":     "multiple bindings resolve to the same element; use distinct targets",
+	"timeout":              "the fill deadline elapsed",
+	"target_changed":       "the page or target changed; inspect the current page",
+	"page_not_found":       "no open page matches page_url; use the exact current URL",
+	"ambiguous_page":       "more than one page matches; identify exactly one open page",
+	"element_not_found":    "no editable target matches a selector; inspect the page and correct the binding",
+	"ambiguous_selector":   "a selector matches multiple targets across frames; use a unique selector",
+	"element_not_editable": "choose an editable input or select",
+	"option_not_found":     "the select has no matching option value",
+	"field_unavailable":    "a field has no usable stored value; inspect definitions and presence, and collect missing values",
+	"conflict":             "the item or browser is not ready; inspect readiness, binding, and unresolved prior operations",
+	"destination_denied":   "destination or browser vault binding is not authorized; check the bound browser and destination",
+	"not_found":            "check the vault, item, browser identifiers, and project",
+	"execution_failed":     "fill execution failed",
+}
+
 func vaultFillRequestError(err error) error {
 	var apiErr *kernel.Error
 	if errors.As(err, &apiErr) {
 		var body struct {
 			Code string `json:"code"`
 		}
+		guidance := vaultFillUncertain
+		switch apiErr.StatusCode {
+		case 400, 403, 404, 409:
+			guidance = "no fields were written by this request; inspect and correct the cause before deciding on a new fill; do not automatically retry"
+		}
 		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
-			switch body.Code {
-			case "invalid_request", "invalid_selector", "duplicate_target", "timeout", "target_changed", "page_not_found", "ambiguous_page", "element_not_found", "ambiguous_selector", "element_not_editable", "option_not_found", "field_unavailable", "conflict", "destination_denied", "execution_failed":
-				return fmt.Errorf("fill failed: %s (HTTP %d); %s", body.Code, apiErr.StatusCode, vaultFillUncertain)
+			if message, ok := vaultFillErrorMessages[body.Code]; ok {
+				return fmt.Errorf("fill failed: %s (HTTP %d): %s; %s", body.Code, apiErr.StatusCode, message, guidance)
 			}
 		}
-		return fmt.Errorf("fill request failed (HTTP %d); %s", apiErr.StatusCode, vaultFillUncertain)
+		return fmt.Errorf("fill request failed (HTTP %d); %s", apiErr.StatusCode, guidance)
 	}
 	// Do not wrap SDK/transport errors: they can contain request or response data,
 	// and the root error handler extracts raw SDK error messages through Unwrap.

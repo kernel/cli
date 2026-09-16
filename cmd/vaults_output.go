@@ -124,7 +124,49 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 			result[key] = filtered
 		}
 	}
+	var itemType string
+	if result["spec"] != nil && result["state"] != nil && json.Unmarshal(result["type"], &itemType) == nil && itemType == "credential" {
+		if err := preservePublicCredentialValues(object, result); err != nil {
+			return nil, err
+		}
+	}
 	return json.Marshal(result)
+}
+
+func preservePublicCredentialValues(source, result vaultJSON) error {
+	var spec struct {
+		Fields map[string]struct {
+			Type      string `json:"type"`
+			Sensitive *bool  `json:"sensitive"`
+		} `json:"fields"`
+	}
+	var values struct {
+		Fields map[string]struct {
+			HasValue bool    `json:"has_value"`
+			Value    *string `json:"value,omitempty"`
+		} `json:"fields"`
+	}
+	if json.Unmarshal(source["spec"], &spec) != nil || json.Unmarshal(source["state"], &values) != nil || values.Fields == nil {
+		return nil
+	}
+	for name, field := range values.Fields {
+		definition := spec.Fields[name]
+		if definition.Sensitive == nil || *definition.Sensitive || (definition.Type != "text" && definition.Type != "email") || !field.HasValue {
+			field.Value = nil
+		}
+		values.Fields[name] = field
+	}
+	var state vaultJSON
+	if err := json.Unmarshal(result["state"], &state); err != nil {
+		return err
+	}
+	fields, err := json.Marshal(values.Fields)
+	if err != nil {
+		return err
+	}
+	state["fields"] = fields
+	result["state"], err = json.Marshal(state)
+	return err
 }
 
 func vaultSafeJSONSlice[T util.RawJSONProvider](items []T, fields vaultOutputFields) ([]vaultJSON, error) {
@@ -240,7 +282,7 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	}
 	if item.Type == "credential" {
 		rows = append(rows, []string{"Version", fmt.Sprint(item.Version)})
-		pterm.Info.Println("Use -o json for field definitions and presence; stored values are omitted")
+		pterm.Info.Println("Use -o json for field definitions, presence, and non-sensitive values; sensitive values are omitted")
 	}
 	if item.Type == "wallet" {
 		configID, configName := item.Spec.ProviderConfig.ID, item.Spec.ProviderConfig.Name

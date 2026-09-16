@@ -127,7 +127,7 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 		}}
 	addVaultJSONOutputFlag(itemList)
 	itemGet := &cobra.Command{Use: "get <vault> <key>", Short: "Get item state and any required action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: "Get item state, available operations, provider actions, and returned checkout aliases.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nAn item still pending after the wait is returned as-is; ready means populated for credentials, not logged in or paid.\nFor credential edits on an already-ready item, compare versions without --wait. Stored field values are omitted from CLI output.\nrecovery_required stops waiting and means unresolved, not declined or expired.\nReconcile with the provider or support; do not retry, delete, or replace the payment.",
+		Long: "Get item state, available operations, provider actions, and returned checkout aliases.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nAn item still pending after the wait is returned as-is; ready means populated for credentials, not logged in or paid.\nFor credential edits on an already-ready item, compare versions without --wait. Explicitly non-sensitive text/email values are returned; sensitive values and TOTP seeds are omitted.\nrecovery_required stops waiting and means unresolved, not declined or expired.\nReconcile with the provider or support; do not retry, delete, or replace the payment.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			wait, _ := cmd.Flags().GetInt64("wait")
 			expand, _ := cmd.Flags().GetStringSlice("expand")
@@ -167,6 +167,9 @@ Fill is available for credential items and ready Link cards when advertised, not
 Fill never submits forms. completed means fields were filled, not website acceptance.
 failed may leave partial writes; unknown quarantines the browser. Never automatically
 retry or fall back to aliases. Requests are not automatically retried.
+API validation errors (400/403/404/409) include HTTP status, recognized error codes,
+and corrective guidance; no fields were written by that request. Inspect and correct
+the cause before deciding on a new fill. Transport loss remains an uncertain outcome.
 prepare_checkout requires checkout.browser_id, checkout.merchant_origin (canonical HTTPS
 origin of the top-level merchant page, not a processor iframe), and checkout.environment
 (production, sandbox, or shared). Optional checkout.psp selects the tokenization processor:

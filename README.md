@@ -310,8 +310,9 @@ Set `description` to the recognizable site name only, such as `Hacker News`, not
 
 Types are `text`, `email`, `password`, and `totp`. TOTP seeds must be provided through
 create/update, never the form; only generated codes enter the browser. Unrestricted
-browser access can read filled values. CLI output omits all stored credential values,
-including non-sensitive values, and retains definitions, version, and `has_value`.
+browser access can read filled values. CLI JSON output retains explicitly non-sensitive
+text/email values, definitions, version, and `has_value`. Sensitive values and TOTP
+seeds are omitted.
 Credential spec input is capped at 128 KiB; write errors are redacted.
 
 Vault names, item keys, and project ownership are immutable. Optionally select a project with
@@ -604,7 +605,10 @@ field indices, statuses, and error codes. `-o json` preserves the display-safe r
 `completed` exits 0; `failed` and `unknown` exit nonzero **with the result still on stdout**,
 without appended error text. API/transport errors exit nonzero with a sanitized diagnostic on
 stderr, not a fabricated execution result. No values, selectors, DOM content, or raw browser
-errors are printed in fill results.
+errors are printed in fill results. Pre-write API rejections (400/403/404/409) retain
+HTTP status, recognized error codes, and corrective guidance, and confirm that the
+request wrote no fields. Inspect and correct the cause before deciding on a new fill.
+Transport loss and other uncertain failures retain the no-retry warning.
 
 Fill is non-atomic: execution stops at the first failed/unknown field and earlier writes are
 not rolled back. `filled` does not mean the site retained or accepted the value; `completed`
