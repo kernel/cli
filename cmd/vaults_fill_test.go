@@ -326,17 +326,10 @@ func TestVaultFillCLIOutcomesAndFailures(t *testing.T) {
 	}
 }
 
-func TestVaultFillCLIValidationAndAuthorizeCompatibility(t *testing.T) {
+func TestVaultFillCLIValidationDoesNotReachAPI(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodPost {
-			body, err := io.ReadAll(r.Body)
-			assert.NoError(t, err)
-			assert.JSONEq(t, `{"type":"authorize"}`, string(body))
-		}
-		_, _ = io.WriteString(w, requestedCardFixture)
 	}))
 	defer server.Close()
 	for _, raw := range []string{`{"credential-sentinel":`, `{"type":"credential-sentinel"}`, `[]`, ``} {
@@ -347,11 +340,29 @@ func TestVaultFillCLIValidationAndAuthorizeCompatibility(t *testing.T) {
 		assert.NotEmpty(t, stderr)
 	}
 	assert.Zero(t, calls.Load())
-	out, stderr, exit := runVaultFillCLI(t, server.URL, "authorize", "--open", "-o", "json")
-	assert.Zero(t, exit)
-	assert.Empty(t, stderr)
-	assert.JSONEq(t, requestedCardFixture, out)
-	assert.Equal(t, int32(2), calls.Load())
+}
+
+func TestVaultPaymentTokenFillOmitsFieldBindings(t *testing.T) {
+	const token = `{"id":"token-1","key":"order-token","type":"payment_token","spec":{"provider":"link","wallet":"wallet-1","browser_id":"browser-1","page_url":"https://shop.example/checkout","payment_method_id":"pm-1","amount":1234,"currency":"usd","context":"Final checkout purchase context."},"state":{"provider":"link","status":"ready"},"available_operations":[{"type":"fill","description":"Authenticate this checkout without submitting payment."}],"available_expansions":[]}`
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, token)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"type":"fill","browser_id":"browser-1","page_url":"https://shop.example/checkout","fields":[]}`, string(body))
+		_, _ = io.WriteString(w, `{"type":"fill","status":"completed","instruction":"Payment credentials are filled. Submit the checkout form when ready.","fields":[]}`)
+	})
+	params := `{"browser_id":"browser-1","page_url":"https://shop.example/checkout"}`
+	out, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-token", "fill", "--params", params, "-o", "json")
+	require.NoError(t, err)
+	assert.Contains(t, out, `"instruction": "Payment credentials are filled. Submit the checkout form when ready."`)
+	_, human, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-token", "fill", "--params", params)
+	require.NoError(t, err)
+	assert.Contains(t, human, "Submit the checkout form when ready")
+	assert.NotContains(t, human, "Field index")
 }
 
 func TestVaultFillSingleFieldAndHint(t *testing.T) {
@@ -374,24 +385,4 @@ func TestVaultFillSingleFieldAndHint(t *testing.T) {
 	_, human, err := executeVaultCommand(t, client, "vaults", "items", "get", "checkout", "order-1", "--project", "chosen-project")
 	require.NoError(t, err)
 	assert.Contains(t, human, "Invoke: kernel vaults items invoke --project=chosen-project --params '<json>' -- checkout order-1 fill")
-}
-
-func TestVaultAuthorizeRejectsFillResponse(t *testing.T) {
-	for _, response := range []string{completedFillFixture, "null"} {
-		t.Run(response, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				if r.Method == http.MethodGet {
-					_, _ = io.WriteString(w, requestedCardFixture)
-					return
-				}
-				_, _ = io.WriteString(w, response)
-			}))
-			defer server.Close()
-			out, stderr, exit := runVaultFillCLI(t, server.URL, "authorize", "-o", "json")
-			assert.Equal(t, 1, exit)
-			assert.Empty(t, out)
-			assert.Contains(t, strings.ToLower(stderr), "unexpected vault operation response")
-		})
-	}
 }

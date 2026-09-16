@@ -32,14 +32,14 @@ var vaultMethodFields = vaultOutputFields{
 	"capabilities": {"single_use_card": vaultFieldsOf("eligible reasons")},
 }
 var vaultItemFields = vaultOutputFields{
-	"id": nil, "key": nil, "type": nil, "version": nil, "created_at": nil, "updated_at": nil, "expires_at": nil,
+	"id": nil, "key": nil, "type": nil, "description": nil, "version": nil, "created_at": nil, "updated_at": nil, "expires_at": nil,
 	"available_operations": vaultOperationFields,
 	"available_expansions": vaultOperationFields,
 	"action":               vaultFieldsOf("name url expires_at"),
 	"expanded":             {"payment_methods": vaultMethodFields},
 	"spec": {
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil,
-		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
+		"browser_id": nil, "page_url": nil, "amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
 		"context": nil, "expires_at": nil, "description": nil,
 		"fields":          {"*": vaultFieldsOf("type required sensitive")},
 		"provider_config": vaultFieldsOf("id name"),
@@ -259,6 +259,25 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 	return nil
 }
 
+type vaultPaymentTokenDisplay struct {
+	Spec struct {
+		BrowserID       string `json:"browser_id"`
+		PageURL         string `json:"page_url"`
+		Wallet          string `json:"wallet"`
+		PaymentMethodID string `json:"payment_method_id"`
+		Amount          int64  `json:"amount"`
+		Currency        string `json:"currency"`
+	} `json:"spec"`
+}
+
+func vaultItemDescription(item *kernel.VaultItemUnion) string {
+	var value struct {
+		Description string `json:"description"`
+	}
+	_ = json.Unmarshal([]byte(item.RawJSON()), &value)
+	return value.Description
+}
+
 func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	raw, err := filterVaultJSON(json.RawMessage(item.RawJSON()), vaultItemFields)
 	if err != nil {
@@ -280,6 +299,9 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		{"Property", "Value"}, {"Key (immutable)", item.Key}, {"ID", item.ID},
 		{"Type", item.Type}, {"Provider", item.Spec.Provider}, {"Status", item.State.Status},
 	}
+	if description := vaultItemDescription(item); description != "" {
+		rows = append(rows, []string{"Description", description})
+	}
 	if item.Type == "credential" {
 		rows = append(rows, []string{"Version", fmt.Sprint(item.Version)})
 		pterm.Info.Println("Use -o json for field definitions, presence, and non-sensitive values; sensitive values are omitted")
@@ -299,6 +321,19 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	}
 	if item.State.StatusReason != "" {
 		rows = append(rows, []string{"Status reason", item.State.StatusReason})
+	}
+	if item.Type == "payment_token" {
+		var token vaultPaymentTokenDisplay
+		if json.Unmarshal([]byte(item.RawJSON()), &token) != nil {
+			return fmt.Errorf("invalid payment token response")
+		}
+		rows = append(rows,
+			[]string{"Wallet key", token.Spec.Wallet},
+			[]string{"Amount (minor units)", fmt.Sprintf("%d %s", token.Spec.Amount, token.Spec.Currency)},
+			[]string{"Payment method ID", token.Spec.PaymentMethodID},
+			[]string{"Browser session ID", token.Spec.BrowserID},
+			[]string{"Checkout page", token.Spec.PageURL},
+		)
 	}
 	if item.Type == "card" {
 		merchant := item.Spec.MerchantName
@@ -393,6 +428,8 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 			pterm.Info.Println("Aliases are non-secret checkout values. Use only in a browser created with this vault attached; ready does not mean paid.")
 		}
 		pterm.Info.Println("Inspect items events for payment outcomes. Never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")
+	} else if item.Type == "payment_token" {
+		pterm.Info.Println("Inspect items events for payment outcomes. Fill authenticates checkout but does not submit payment. Do not retry failed or indeterminate payments.")
 	} else {
 		wallet := item.AsWallet()
 		for _, expansion := range wallet.AvailableExpansions {
@@ -422,7 +459,7 @@ func printVaultPaymentMethods(methods []kernel.VaultPaymentMethod) {
 		rows = append(rows, []string{m.ID, m.Provider, m.Type, m.Display.Label, m.Display.Brand, m.Display.Last4, fmt.Sprint(m.IsDefault), eligible, strings.Join(capability.Reasons, ", ")})
 	}
 	PrintTableNoPad(rows, true)
-	pterm.Info.Println("Select an ID explicitly in the card --spec JSON: Link uses payment_method_id; AgentCard uses card_id (or omit it for cardholder selection). Capabilities are advisory; missing means unknown, not ineligible.")
+	pterm.Info.Println("Select an ID explicitly: try a Link payment token with payment_method_id first, then create a Link card only when the API returns lpt_not_supported. AgentCard uses card_id (or omit it for cardholder selection). Capabilities are advisory; missing means unknown, not ineligible.")
 }
 
 func printVaultEvents(events []kernel.VaultItemEvent, data []vaultJSON) {
