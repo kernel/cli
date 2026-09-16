@@ -243,9 +243,6 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
 	if operation == "fill" {
-		if err := validateVaultFillItem(params.Fill, item); err != nil {
-			return err
-		}
 		return c.fill(ctx, vault, key, params.Fill, output)
 	}
 	request := kernel.VaultItemPerformOperationParams{IDOrName: vault}
