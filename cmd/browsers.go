@@ -3142,9 +3142,9 @@ ignored: emit output with 'repl.write(...)', console methods, or
 'repl.emitImage(...)'. The runtime also exposes browser-control helpers, WebMCP,
 Patchright, Playwright, and raw CDP.
 
-Executions are serialized. A timeout, crash, or protocol failure terminates the
-REPL and changes its REPL ID, discarding top-level bindings. This is unrestricted
-code execution inside the browser VM and is not sandboxed.`,
+Executions are serialized. A timeout, crash, OOM, or protocol failure terminates
+the REPL and changes its repl_id, discarding top-level bindings. This is
+unrestricted code execution inside the browser VM and is not sandboxed.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: runBrowsersRepl,
 	}
