@@ -188,18 +188,25 @@ func (c VaultsCmd) CreateWallet(ctx context.Context, vault, key string, spec ker
 	return c.showItem(item, output, open)
 }
 
-func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.CardVaultItemSpecUnionParam, update bool, output string) error {
-	var item *kernel.VaultItemUnion
-	var err error
-	if update {
-		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCardVaultItemUpdateRequest: &kernel.VaultItemUpdateParamsBodyCardVaultItemUpdateRequest{Type: "card", Spec: spec}}, option.WithMaxRetries(0))
-	} else {
-		item, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCard: &kernel.VaultItemUpsertParamsBodyCard{Spec: spec}}, option.WithMaxRetries(0))
-	}
+func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.CardVaultItemSpecUnionParam, output string) error {
+	item, err := c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCard: &kernel.VaultItemUpsertParamsBodyCard{Spec: spec}}, option.WithMaxRetries(0))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 	return c.showItem(item, output, false)
+}
+
+func (c VaultsCmd) CreatePaymentToken(ctx context.Context, vault, key string, spec map[string]json.RawMessage, output string) error {
+	body, err := json.Marshal(map[string]any{"type": "payment_token", "spec": spec})
+	if err != nil {
+		return err
+	}
+	var item kernel.VaultItemUnion
+	_, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault}, option.WithRequestBody("application/json", body), option.WithResponseBodyInto(&item), option.WithMaxRetries(0))
+	if err != nil {
+		return vaultPaymentTokenError(err)
+	}
+	return c.showItem(&item, output, false)
 }
 
 func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, params *vaultOperationParams, output string, open bool) error {
@@ -243,6 +250,15 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
 	if operation == "fill" {
+		if item.Type == "payment_token" {
+			if params.Fill.PageURL == "" || len(params.Fill.Fields) != 0 {
+				return fmt.Errorf("payment-token fill requires page_url and must omit fields")
+			}
+		} else if len(params.Fill.Fields) == 0 {
+			return fmt.Errorf("credential and card fill requires 1-32 field bindings")
+		} else if item.Type == "card" && params.Fill.PageURL == "" {
+			return fmt.Errorf("card fill requires page_url")
+		}
 		return c.fill(ctx, vault, key, params.Fill, output)
 	}
 	request := kernel.VaultItemPerformOperationParams{IDOrName: vault}
@@ -254,8 +270,7 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	} else if operation == "collect" {
 		request.OfCollect = &kernel.CollectVaultItemOperationRequestParam{Type: "collect"}
 	} else {
-		// Preserve support for other advertised parameterless operations.
-		request.OfAuthorize = &kernel.AuthorizeVaultItemOperationRequestParam{Type: kernel.AuthorizeVaultItemOperationRequestType(operation)}
+		return fmt.Errorf("unsupported vault item operation %q", operation)
 	}
 	response, err := c.vaults.Items.PerformOperation(ctx, key, request, option.WithMaxRetries(0))
 	if err != nil {

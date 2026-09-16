@@ -13,7 +13,7 @@ import (
 
 func TestVaultRawSpecForwarding(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
-	for _, path := range []string{"wallets create", "cards create", "cards update"} {
+	for _, path := range []string{"wallets create", "cards create"} {
 		for _, provider := range []string{"link", "agentcard"} {
 			for _, raw := range []string{
 				`{}`,
@@ -34,13 +34,8 @@ func TestVaultRawSpecForwarding(t *testing.T) {
 						require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 						assert.Equal(t, expected, body.Spec, "preserve exact numbers, false, zero, null, nested fields, and omissions")
 						assert.Equal(t, "/vaults/checkout/items/item-1", r.URL.Path)
-						if path == "cards update" {
-							assert.Equal(t, http.MethodPatch, r.Method)
-							assert.Equal(t, "card", body.Type)
-						} else {
-							assert.Equal(t, http.MethodPut, r.Method)
-							assert.Equal(t, strings.TrimSuffix(strings.Fields(path)[0], "s"), body.Type)
-						}
+						assert.Equal(t, http.MethodPut, r.Method)
+						assert.Equal(t, strings.TrimSuffix(strings.Fields(path)[0], "s"), body.Type)
 						w.Header().Set("Content-Type", "application/json")
 						_, _ = io.WriteString(w, requestedCardFixture)
 					})
@@ -51,6 +46,56 @@ func TestVaultRawSpecForwarding(t *testing.T) {
 					assert.Equal(t, 1, calls)
 				})
 			}
+		}
+	}
+}
+
+func TestVaultPaymentTokenRequestKeepsMerchantBindingServerOwned(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPut, r.Method)
+		var body struct {
+			Type string                     `json:"type"`
+			Spec map[string]json.RawMessage `json:"spec"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.Equal(t, "payment_token", body.Type)
+		assert.JSONEq(t, `"link"`, string(body.Spec["provider"]))
+		assert.NotContains(t, body.Spec, "merchant_account_id")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, paymentTokenFixture)
+	})
+	spec := `{"wallet":"wallet-1","browser_id":"browser-1","page_url":"https://shop.example/checkout","payment_method_id":"pm-1","amount":1234,"currency":"usd","context":"Final checkout purchase context."}`
+	out, _, err := executeVaultCommand(t, client, "vaults", "payment-tokens", "create", "checkout", "order-token", "--spec", spec, "-o", "json")
+	require.NoError(t, err)
+	assert.Contains(t, out, `"type": "payment_token"`)
+	assert.Contains(t, out, `"browser_id": "browser-1"`)
+}
+
+func TestVaultPaymentTokenFallbackOnlyForUnsupportedCheckout(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		code   string
+		want   string
+	}{
+		{400, "lpt_not_supported", "create a card instead"},
+		{409, "browser_unavailable", "correct the browser or page and retry"},
+		{409, "conflict", "vault conflict"},
+		{500, "provider_error", "outcome may be unresolved"},
+	} {
+		client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(tc.status)
+			_, _ = io.WriteString(w, `{"code":"`+tc.code+`","message":"detail"}`)
+		})
+		spec := `{"wallet":"wallet-1","browser_id":"browser-1","page_url":"https://shop.example/checkout","payment_method_id":"pm-1","amount":1234,"currency":"usd","context":"Final checkout purchase context."}`
+		_, _, err := executeVaultCommand(t, client, "vaults", "payment-tokens", "create", "checkout", "order-token", "--spec", spec)
+		require.ErrorContains(t, err, tc.want)
+		if tc.code != "lpt_not_supported" {
+			assert.NotContains(t, err.Error(), "create a card")
+		}
+		if tc.code == "conflict" {
+			assert.NotContains(t, err.Error(), "retry")
 		}
 	}
 }
@@ -71,8 +116,18 @@ func TestVaultRawSpecValidationIsLeftToAPI(t *testing.T) {
 	require.ErrorContains(t, err, "invalid_request: wallet is required")
 }
 
+func TestVaultPaymentTokenHelp(t *testing.T) {
+	cmd, _, err := newVaultsCommand().Find([]string{"payment-tokens", "create"})
+	require.NoError(t, err)
+	for _, text := range []string{"browser_id", "page_url", "lpt_not_supported", "merchant_account_id", "immutable", "does not submit"} {
+		assert.Contains(t, cmd.Long, text)
+	}
+	assert.Nil(t, cmd.Flags().Lookup("provider"))
+	assert.NotNil(t, cmd.Flags().Lookup("spec"))
+}
+
 func TestVaultSpecHelpAndFlags(t *testing.T) {
-	for _, path := range []string{"wallets create", "cards create", "cards update"} {
+	for _, path := range []string{"wallets create", "cards create"} {
 		t.Run(path, func(t *testing.T) {
 			cmd, _, err := newVaultsCommand().Find(strings.Fields(path))
 			require.NoError(t, err)

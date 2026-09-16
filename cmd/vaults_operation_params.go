@@ -73,8 +73,8 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 	if strings.TrimSpace(operation) == "" {
 		return nil, fmt.Errorf("operation must not be empty")
 	}
-	if openSet && operation != "authorize" && operation != "collect" && operation != "prepare_checkout" {
-		return nil, fmt.Errorf("--open is only supported for authorize, collect, and prepare_checkout")
+	if openSet && operation != "collect" && operation != "prepare_checkout" {
+		return nil, fmt.Errorf("--open is only supported for collect and prepare_checkout")
 	}
 	if len(raw) > 128*1024 {
 		return nil, fmt.Errorf("operation parameters exceed 128 KiB")
@@ -91,12 +91,12 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 	}
 	if operation != "fill" {
 		if paramsSet {
-			return nil, fmt.Errorf("--params is only supported for fill and prepare_checkout; authorize takes no parameters")
+			return nil, fmt.Errorf("--params is only supported for fill and prepare_checkout")
 		}
 		return nil, nil
 	}
 	if !paramsSet {
-		return nil, fmt.Errorf("fill requires --params or --spec-file with browser_id and fields")
+		return nil, fmt.Errorf("fill requires --params or --spec-file with browser_id")
 	}
 	fill, err := parseVaultFillParams(raw)
 	if err != nil {
@@ -129,8 +129,10 @@ func parseVaultFillParams(raw string) (*vaultFillParams, error) {
 		}
 	}
 	var fields []json.RawMessage
-	if json.Unmarshal(object["fields"], &fields) != nil || len(fields) < 1 || len(fields) > 32 {
-		return nil, fmt.Errorf("fields must be an array of 1-32 field bindings")
+	if rawFields, present := object["fields"]; present {
+		if json.Unmarshal(rawFields, &fields) != nil || len(fields) < 1 || len(fields) > 32 {
+			return nil, fmt.Errorf("fields must be an array of 1-32 field bindings")
+		}
 	}
 	params.Fields = make([]vaultFillField, 0, len(fields))
 	for i, rawField := range fields {

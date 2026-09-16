@@ -48,6 +48,10 @@ type AgentCardWalletSpec = {
 `
 
 const vaultCardSpecHelp = `
+Create the card only after reaching final checkout and gathering the final spend details.
+Creation starts human approval. Card requests are immutable; changed purchase details
+require cancellation and a new item. Never replace an uncertain payment.
+
 type LinkCardSpec = {
   provider: "link";
   wallet: string;             // wallet item key
@@ -72,6 +76,10 @@ type AgentCardCardSpec = {
   card_id?: string;           // vc_...; otherwise chosen at approval
 };
 
+Permitted domains are provider-assigned, not configurable in the spec.
+`
+
+const vaultLinkPurchaseTypesHelp = `
 type LinkLineItem = {
   name: string;
   quantity?: number;          // integer >= 1
@@ -89,6 +97,28 @@ type LinkTotal = {
   display_text: string;
   amount: number;             // integer minor units
 };
+`
 
-Permitted domains are provider-assigned, not configurable in the spec.
+const vaultPaymentTokenSpecHelp = `
+Create a Link payment token only after reaching final checkout. Kernel inspects the
+vault-linked browser, reveals Link's agent controls, and binds the request to the
+observed Stripe merchant. Do not inspect hidden controls or provide merchant_account_id.
+If creation returns lpt_not_supported, create a card instead. No other error is a
+fallback signal. Creation starts human approval and requests are immutable.
+After approval, invoke fill; filling authenticates the checkout but does not submit it.
+
+type LinkPaymentTokenSpec = {
+  provider: "link";
+  wallet: string;             // connected wallet item key
+  browser_id: string;         // active vault-linked browser session ID
+  page_url: string;           // exact final checkout page URL
+  payment_method_id: string;  // from wallets payment-methods
+  amount: number;             // integer minor units; 1..500000
+  currency: string;           // three letters
+  context: string;            // at least 100 characters
+  line_items?: LinkLineItem[];
+  totals?: LinkTotal[];
+  metadata?: Record<string, string>;
+  expires_at?: number;        // int64
+};
 `

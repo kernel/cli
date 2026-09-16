@@ -13,9 +13,10 @@ import (
 )
 
 type vaultFillResult struct {
-	Type   string                 `json:"type"`
-	Status string                 `json:"status"`
-	Fields []vaultFillFieldResult `json:"fields"`
+	Type        string                 `json:"type"`
+	Status      string                 `json:"status"`
+	Instruction string                 `json:"instruction,omitempty"`
+	Fields      []vaultFillFieldResult `json:"fields"`
 }
 
 type vaultFillFieldResult struct {
@@ -25,7 +26,7 @@ type vaultFillFieldResult struct {
 }
 
 var vaultFillResultFields = vaultOutputFields{
-	"type": nil, "status": nil,
+	"type": nil, "status": nil, "instruction": nil,
 	"fields": vaultFieldsOf("index status error_code"),
 }
 
@@ -109,13 +110,19 @@ func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFil
 		}
 	} else {
 		pterm.Printf("Fill: %s\n", result.Status)
-		rows := pterm.TableData{{"Field index", "Status", "Error code"}}
-		for _, field := range result.Fields {
-			rows = append(rows, []string{strconv.Itoa(*field.Index), field.Status, field.ErrorCode})
+		if len(result.Fields) > 0 {
+			rows := pterm.TableData{{"Field index", "Status", "Error code"}}
+			for _, field := range result.Fields {
+				rows = append(rows, []string{strconv.Itoa(*field.Index), field.Status, field.ErrorCode})
+			}
+			PrintTableNoPad(rows, true)
 		}
-		PrintTableNoPad(rows, true)
 		if result.Status == "completed" {
-			pterm.Println("Fields filled; this does not confirm website acceptance or form submission.")
+			if result.Instruction != "" {
+				pterm.Println(result.Instruction)
+			} else {
+				pterm.Println("Fields filled; this does not confirm website acceptance or form submission.")
+			}
 		} else {
 			pterm.Println(vaultFillUncertain)
 		}
@@ -141,6 +148,14 @@ func parseVaultFillResult(raw json.RawMessage, count int) (*vaultFillResult, err
 	var result vaultFillResult
 	if json.Unmarshal(safe, &result) != nil || result.Type != "fill" || len(result.Fields) != count {
 		return nil, invalid
+	}
+	if count == 0 {
+		switch result.Status {
+		case "completed", "failed", "unknown":
+			return &result, nil
+		default:
+			return nil, invalid
+		}
 	}
 	status := "completed"
 	stopped := false

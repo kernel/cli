@@ -5,44 +5,34 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestVaultInvokeUsesAdvertisedTypeAcrossItems(t *testing.T) {
+func TestVaultInvokeCollect(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
-	operation := `[{"type":"refresh","description":"Refresh this item explicitly."}]`
-	for _, fixture := range []string{
-		strings.ReplaceAll(requestedCardFixture, `[{"type":"authorize","description":"Use only after explicit user approval."}]`, operation),
-		strings.ReplaceAll(connectedWalletFixture, `"available_operations":[]`, `"available_operations":`+operation),
-		strings.ReplaceAll(strings.ReplaceAll(connectedWalletFixture, `"provider":"link"`, `"provider":"agentcard"`), `"available_operations":[]`, `"available_operations":`+operation),
-	} {
-		t.Run(fixture, func(t *testing.T) {
-			calls := 0
-			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-				calls++
-				if calls == 1 {
-					assert.Equal(t, http.MethodGet, r.Method)
-				} else {
-					assert.Equal(t, http.MethodPost, r.Method)
-					assert.Equal(t, "/vaults/checkout/items/item-1/operations", r.URL.Path)
-					body, err := io.ReadAll(r.Body)
-					require.NoError(t, err)
-					assert.JSONEq(t, `{"type":"refresh"}`, string(body))
-				}
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, fixture)
-			})
-			out, human, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "item-1", "refresh", "-o", "json")
+	calls := 0
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if calls == 1 {
+			assert.Equal(t, http.MethodGet, r.Method)
+		} else {
+			assert.Equal(t, http.MethodPost, r.Method)
+			assert.Equal(t, "/vaults/checkout/items/login/operations", r.URL.Path)
+			body, err := io.ReadAll(r.Body)
 			require.NoError(t, err)
-			assert.Equal(t, 2, calls)
-			assert.JSONEq(t, fixture, out)
-			assert.Empty(t, human)
-		})
-	}
+			assert.JSONEq(t, `{"type":"collect"}`, string(body))
+		}
+		_, _ = io.WriteString(w, credentialFixture)
+	})
+	out, human, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "login", "collect", "-o", "json")
+	require.NoError(t, err)
+	assert.Equal(t, 2, calls)
+	assert.Contains(t, out, `"type": "credential"`)
+	assert.Empty(t, human)
 }
 
 func TestVaultInvokeRejectsUnadvertisedOperation(t *testing.T) {
@@ -54,8 +44,8 @@ func TestVaultInvokeRejectsUnadvertisedOperation(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, requestedCardFixture)
 	})
-	_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "refresh")
-	require.ErrorContains(t, err, `operation "refresh" is not advertised`)
+	_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "authorize")
+	require.ErrorContains(t, err, `operation "authorize" is not advertised`)
 	assert.Equal(t, 1, calls)
 }
 
@@ -71,7 +61,7 @@ func TestVaultInvokeGetFailureDoesNotPostOrRetry(t *testing.T) {
 				w.WriteHeader(status)
 				_, _ = io.WriteString(w, `{"code":"item_unavailable","message":"Item unavailable"}`)
 			})
-			_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "authorize")
+			_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "login", "collect")
 			require.ErrorContains(t, err, "item_unavailable: Item unavailable")
 			assert.Equal(t, 1, calls)
 		})
@@ -84,8 +74,8 @@ func TestVaultInvokeArgumentsAndHelp(t *testing.T) {
 	for _, args := range [][]string{
 		{"checkout", "order-1"},
 		{"checkout", "order-1", ""},
-		{"checkout", "order-1", "authorize", "extra"},
-		{"checkout", "order-1", "authorize", "--spec", "{}"},
+		{"checkout", "order-1", "fill", "extra"},
+		{"checkout", "order-1", "collect", "--params", "{}"},
 	} {
 		_, _, err := executeVaultCommand(t, client, append([]string{"vaults", "items", "invoke"}, args...)...)
 		require.Error(t, err)
@@ -96,8 +86,8 @@ func TestVaultInvokeArgumentsAndHelp(t *testing.T) {
 	assert.NotNil(t, cmd.Flags().Lookup("open"))
 	assert.NotNil(t, cmd.Flags().Lookup("params"))
 	assert.Contains(t, cmd.Long, "failed/unknown exit nonzero")
-	assert.Contains(t, cmd.Long, `{"type":"authorize"}`)
-	assert.Contains(t, cmd.Long, "available_operations")
+	assert.Contains(t, cmd.Long, "there is no separate authorize operation")
+	assert.Contains(t, cmd.Long, "Payment tokens require")
 }
 
 func TestVaultInvokeOpensOnlyReturnedActionExplicitly(t *testing.T) {
@@ -106,25 +96,19 @@ func TestVaultInvokeOpensOnlyReturnedActionExplicitly(t *testing.T) {
 			calls := 0
 			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 				calls++
-				body := requestedCardFixture
-				if r.Method == http.MethodPost {
-					body = strings.ReplaceAll(body, `"status":"requested"`, `"status":"pending_authorization"`)
-					body = strings.ReplaceAll(body, `"available_operations":`, `"action":{"name":"spend_approval","url":"https://provider.example/approve"},"available_operations":`)
-				}
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, body)
+				_, _ = io.WriteString(w, credentialFixture)
 			})
 			opened := ""
 			c := VaultsCmd{vaults: &client.Vaults, openURL: func(url string) error { opened = url; return nil }}
 			var err error
-			out := captureStdout(t, func() {
-				err = c.Invoke(context.Background(), "checkout", "order-1", "authorize", nil, "json", open)
+			captureStdout(t, func() {
+				err = c.Invoke(context.Background(), "checkout", "login", "collect", nil, "json", open)
 			})
 			require.NoError(t, err)
 			assert.Equal(t, 2, calls)
-			assert.Contains(t, out, `"status": "pending_authorization"`)
 			if open {
-				assert.Equal(t, "https://provider.example/approve", opened)
+				assert.Equal(t, "https://vault.kernel.sh/collect#token=item.random", opened)
 			} else {
 				assert.Empty(t, opened)
 			}
@@ -132,55 +116,32 @@ func TestVaultInvokeOpensOnlyReturnedActionExplicitly(t *testing.T) {
 	}
 }
 
-func TestVaultGetOperationHintUsesExplicitProject(t *testing.T) {
-	t.Setenv("KERNEL_PROJECT", "other-project")
-	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "chosen-project", r.Header.Get("X-Kernel-Project"))
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, requestedCardFixture)
-	})
-	_, human, err := executeVaultCommand(t, client, "vaults", "items", "get", "checkout", "order-1", "--project", "chosen-project")
-	require.NoError(t, err)
-	assert.Contains(t, human, "Invoke: kernel vaults items invoke --project=chosen-project -- checkout order-1 authorize")
-	assert.NotContains(t, human, "other-project")
-}
-
 func TestVaultGetOperationHints(t *testing.T) {
 	for _, project := range []string{"", "project-1", "team's $(touch /tmp/nope)"} {
-		for _, wallet := range []bool{false, true} {
-			t.Run(fmt.Sprint(project, wallet), func(t *testing.T) {
-				t.Setenv("KERNEL_PROJECT", project)
-				fixture := requestedCardFixture
-				if wallet {
-					fixture = strings.ReplaceAll(connectedWalletFixture, `"available_operations":[]`, `"available_operations":[{"type":"refresh","description":"Refresh this item explicitly."}]`)
-				}
-				client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-					assert.Equal(t, http.MethodGet, r.Method)
-					w.Header().Set("Content-Type", "application/json")
-					_, _ = io.WriteString(w, fixture)
-				})
-				_, human, err := executeVaultCommand(t, client, "vaults", "items", "get", "checkout", "item-1")
-				require.NoError(t, err)
-				op := "authorize"
-				if wallet {
-					op = "refresh"
-				}
-				assert.Contains(t, human, "Available operation: "+op)
-				assert.Contains(t, human, "Invoke: kernel vaults items invoke")
-				assert.Contains(t, human, " -- checkout item-1 "+op)
-				switch project {
-				case "":
-					assert.NotContains(t, human, "--project")
-				case "project-1":
-					assert.Contains(t, human, "--project=project-1")
-				default:
-					assert.Contains(t, human, `--project='team'\''s $(touch /tmp/nope)'`)
-				}
-				out, human, err := executeVaultCommand(t, client, "vaults", "items", "get", "checkout", "item-1", "-o", "json")
-				require.NoError(t, err)
-				assert.JSONEq(t, fixture, out)
-				assert.Empty(t, human)
+		t.Run(project, func(t *testing.T) {
+			t.Setenv("KERNEL_PROJECT", project)
+			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, http.MethodGet, r.Method)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, credentialFixture)
 			})
-		}
+			_, human, err := executeVaultCommand(t, client, "vaults", "items", "get", "checkout", "login")
+			require.NoError(t, err)
+			assert.Contains(t, human, "Available operation: collect")
+			assert.Contains(t, human, "Invoke: kernel vaults items invoke")
+			assert.Contains(t, human, " -- checkout login collect")
+			switch project {
+			case "":
+				assert.NotContains(t, human, "--project")
+			case "project-1":
+				assert.Contains(t, human, "--project=project-1")
+			default:
+				assert.Contains(t, human, `--project='team'\''s $(touch /tmp/nope)'`)
+			}
+			out, human, err := executeVaultCommand(t, client, "vaults", "items", "get", "checkout", "login", "-o", "json")
+			require.NoError(t, err)
+			assert.Contains(t, out, `"type": "credential"`)
+			assert.Empty(t, human)
+		})
 	}
 }
