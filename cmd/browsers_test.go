@@ -65,6 +65,7 @@ type FakeBrowsersService struct {
 	DeleteByIDFunc     func(ctx context.Context, id string, opts ...option.RequestOption) error
 	HTTPClientFunc     func(id string, opts ...option.RequestOption) (*http.Client, error)
 	LoadExtensionsFunc func(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) error
+	ReplFunc           func(ctx context.Context, id string, body kernel.BrowserReplParams, opts ...option.RequestOption) (*kernel.BrowserReplResult, error)
 }
 
 func (f *FakeBrowsersService) Get(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
@@ -114,6 +115,13 @@ func (f *FakeBrowsersService) LoadExtensions(ctx context.Context, id string, bod
 		return f.LoadExtensionsFunc(ctx, id, body, opts...)
 	}
 	return nil
+}
+
+func (f *FakeBrowsersService) Repl(ctx context.Context, id string, body kernel.BrowserReplParams, opts ...option.RequestOption) (*kernel.BrowserReplResult, error) {
+	if f.ReplFunc != nil {
+		return f.ReplFunc(ctx, id, body, opts...)
+	}
+	return &kernel.BrowserReplResult{}, nil
 }
 
 func TestBrowsersCurlRawUsesBrowserHTTPClient(t *testing.T) {
@@ -2767,4 +2775,113 @@ func TestBrowsersUpdate_AllMalformedTags_Errors(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no valid --tag")
+}
+
+// --- Tests for REPL ---
+
+func mustReplContent(t *testing.T, raw string) kernel.BrowserReplContentUnion {
+	t.Helper()
+	var content kernel.BrowserReplContentUnion
+	require.NoError(t, json.Unmarshal([]byte(raw), &content))
+	return content
+}
+
+func TestBrowsersRepl_PrintsResultAndTextOutput(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	fakeBrowsers.ReplFunc = func(ctx context.Context, id string, body kernel.BrowserReplParams, opts ...option.RequestOption) (*kernel.BrowserReplResult, error) {
+		assert.Equal(t, "repl.help()", body.BrowserReplRequest.Code)
+		assert.False(t, body.BrowserReplRequest.Reset.Valid())
+		assert.False(t, body.BrowserReplRequest.TimeoutSec.Valid())
+		return &kernel.BrowserReplResult{
+			ReplID:     "abcdefghijklmnopqrstuvwx",
+			Success:    true,
+			DurationMs: 42,
+			Content: []kernel.BrowserReplContentUnion{
+				mustReplContent(t, `{"type":"text","channel":"write","text":"hello repl\n"}`),
+			},
+		}, nil
+	}
+
+	b := BrowsersCmd{browsers: fakeBrowsers}
+	require.NoError(t, b.Repl(context.Background(), BrowsersReplInput{Identifier: "id", Code: "repl.help()"}))
+
+	out := outBuf.String()
+	assert.Contains(t, out, "abcdefghijklmnopqrstuvwx")
+	assert.Contains(t, out, "42ms")
+	assert.Contains(t, out, "hello repl")
+}
+
+func TestBrowsersRepl_SendsResetAndTimeout(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	fakeBrowsers.ReplFunc = func(ctx context.Context, id string, body kernel.BrowserReplParams, opts ...option.RequestOption) (*kernel.BrowserReplResult, error) {
+		assert.True(t, body.BrowserReplRequest.Reset.Value)
+		assert.Equal(t, int64(5), body.BrowserReplRequest.TimeoutSec.Value)
+		return &kernel.BrowserReplResult{ReplID: "r1", Success: true}, nil
+	}
+
+	b := BrowsersCmd{browsers: fakeBrowsers}
+	require.NoError(t, b.Repl(context.Background(), BrowsersReplInput{Identifier: "id", Reset: true, TimeoutSec: 5}))
+	assert.Contains(t, outBuf.String(), "r1")
+}
+
+func TestBrowsersRepl_RequiresCodeUnlessReset(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	fakeBrowsers.ReplFunc = func(ctx context.Context, id string, body kernel.BrowserReplParams, opts ...option.RequestOption) (*kernel.BrowserReplResult, error) {
+		t.Fatal("Repl should not be called without code")
+		return nil, nil
+	}
+
+	b := BrowsersCmd{browsers: fakeBrowsers}
+	require.NoError(t, b.Repl(context.Background(), BrowsersReplInput{Identifier: "id"}))
+	assert.Contains(t, outBuf.String(), "no code provided")
+}
+
+func TestBrowsersRepl_SavesImagesToImageDir(t *testing.T) {
+	setupStdoutCapture(t)
+	dir := filepath.Join(t.TempDir(), "images")
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	fakeBrowsers.ReplFunc = func(ctx context.Context, id string, body kernel.BrowserReplParams, opts ...option.RequestOption) (*kernel.BrowserReplResult, error) {
+		return &kernel.BrowserReplResult{
+			ReplID:  "r1",
+			Success: true,
+			Content: []kernel.BrowserReplContentUnion{
+				mustReplContent(t, `{"type":"image","mime_type":"image/png","data_b64":"aGVsbG8="}`),
+			},
+		}, nil
+	}
+
+	b := BrowsersCmd{browsers: fakeBrowsers}
+	require.NoError(t, b.Repl(context.Background(), BrowsersReplInput{Identifier: "id", Code: "repl.emitImage(buf)", ImageDir: dir}))
+
+	saved := filepath.Join(dir, "repl-image-1.png")
+	data, err := os.ReadFile(saved)
+	require.NoError(t, err)
+	assert.Equal(t, "hello", string(data))
+	assert.Contains(t, outBuf.String(), saved)
+}
+
+func TestBrowsersRepl_ReportsFailureAndTermination(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := newFakeBrowsersServiceWithSimpleGet()
+	fakeBrowsers.ReplFunc = func(ctx context.Context, id string, body kernel.BrowserReplParams, opts ...option.RequestOption) (*kernel.BrowserReplResult, error) {
+		return &kernel.BrowserReplResult{
+			ReplID:           "r1",
+			Success:          false,
+			Error:            "boom",
+			Stack:            "Error: boom\n    at <anonymous>",
+			ContentTruncated: true,
+			ReplTerminated:   true,
+		}, nil
+	}
+
+	b := BrowsersCmd{browsers: fakeBrowsers}
+	require.NoError(t, b.Repl(context.Background(), BrowsersReplInput{Identifier: "id", Code: "throw new Error('boom')"}))
+
+	out := outBuf.String()
+	assert.Contains(t, out, "boom")
+	assert.Contains(t, out, "truncated")
+	assert.Contains(t, out, "terminated")
 }

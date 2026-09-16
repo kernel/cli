@@ -40,6 +40,7 @@ type BrowsersService interface {
 	DeleteByID(ctx context.Context, idOrName string, opts ...option.RequestOption) (err error)
 	HTTPClient(id string, opts ...option.RequestOption) (*http.Client, error)
 	LoadExtensions(ctx context.Context, idOrName string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) (err error)
+	Repl(ctx context.Context, idOrName string, body kernel.BrowserReplParams, opts ...option.RequestOption) (res *kernel.BrowserReplResult, err error)
 }
 
 // BrowserReplaysService defines the subset we use for browser replays.
@@ -1812,6 +1813,133 @@ func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrigh
 	return nil
 }
 
+// REPL
+type BrowsersReplInput struct {
+	Identifier string
+	Code       string
+	Reset      bool
+	TimeoutSec int64
+	ImageDir   string
+	Output     string
+}
+
+func (b BrowsersCmd) Repl(ctx context.Context, in BrowsersReplInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+	if in.Code == "" && !in.Reset {
+		pterm.Error.Println("no code provided. Provide code as an argument, pipe it via stdin, or pass --reset")
+		return nil
+	}
+
+	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	params := kernel.BrowserReplParams{BrowserReplRequest: kernel.BrowserReplRequestParam{Code: in.Code}}
+	if in.Reset {
+		params.BrowserReplRequest.Reset = kernel.Opt(true)
+	}
+	if in.TimeoutSec > 0 {
+		params.BrowserReplRequest.TimeoutSec = kernel.Opt(in.TimeoutSec)
+	}
+	res, err := b.browsers.Repl(ctx, br.SessionID, params)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(res)
+	}
+
+	rows := pterm.TableData{
+		{"Property", "Value"},
+		{"Success", fmt.Sprintf("%t", res.Success)},
+		{"REPL ID", res.ReplID},
+	}
+	if res.DurationMs > 0 {
+		rows = append(rows, []string{"Duration", fmt.Sprintf("%dms", res.DurationMs)})
+	}
+	PrintTableNoPad(rows, true)
+
+	if err := printBrowserReplContent(res.Content, in.ImageDir); err != nil {
+		pterm.Error.Printf("%v\n", err)
+		return nil
+	}
+
+	if !res.Success {
+		if res.Error != "" {
+			pterm.Error.Printf("error: %s\n", res.Error)
+		}
+		if res.Stack != "" {
+			pterm.Printf("%s\n", res.Stack)
+		}
+	}
+	if res.ContentTruncated {
+		pterm.Warning.Println("Output was truncated because it exceeded the response limit")
+	}
+	if res.ReplTerminated {
+		pterm.Warning.Println("The REPL was terminated; the next execution starts a fresh REPL and top-level bindings are lost")
+	}
+	return nil
+}
+
+// replImageExtensions maps the image MIME types the REPL can emit to a file extension.
+var replImageExtensions = map[string]string{
+	"image/png":  ".png",
+	"image/jpeg": ".jpg",
+	"image/webp": ".webp",
+	"image/gif":  ".gif",
+}
+
+// printBrowserReplContent renders the ordered text and image output of a REPL
+// execution. Text is written verbatim so the caller sees exactly what the code
+// emitted; images are saved to imageDir when one is provided.
+func printBrowserReplContent(content []kernel.BrowserReplContentUnion, imageDir string) error {
+	trailingNewline := true
+	images := 0
+	for _, item := range content {
+		switch variant := item.AsAny().(type) {
+		case kernel.BrowserReplTextContent:
+			if variant.Text == "" {
+				continue
+			}
+			if variant.Channel == kernel.BrowserReplTextContentChannelStderr {
+				fmt.Fprint(os.Stderr, variant.Text)
+			} else {
+				pterm.Printf("%s", variant.Text)
+			}
+			trailingNewline = strings.HasSuffix(variant.Text, "\n")
+		case kernel.BrowserReplImageContent:
+			images++
+			if !trailingNewline {
+				pterm.Printf("\n")
+				trailingNewline = true
+			}
+			data, err := base64.StdEncoding.DecodeString(variant.DataB64)
+			if err != nil {
+				return fmt.Errorf("decoding image %d: %w", images, err)
+			}
+			if imageDir == "" {
+				pterm.Info.Printfln("image %d: %s (%d bytes); pass --image-dir to save it", images, variant.MimeType, len(data))
+				continue
+			}
+			if err := os.MkdirAll(imageDir, 0o755); err != nil {
+				return fmt.Errorf("creating image directory: %w", err)
+			}
+			path := filepath.Join(imageDir, fmt.Sprintf("repl-image-%d%s", images, replImageExtensions[variant.MimeType]))
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				return fmt.Errorf("writing image %d: %w", images, err)
+			}
+			pterm.Success.Printfln("Saved image %d (%s) to %s", images, variant.MimeType, path)
+		}
+	}
+	if !trailingNewline {
+		pterm.Printf("\n")
+	}
+	return nil
+}
+
 func (b BrowsersCmd) ProcessExec(ctx context.Context, in BrowsersProcessExecInput) error {
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
@@ -2999,6 +3127,32 @@ func init() {
 	addJSONOutputFlag(playwrightExecute)
 	playwrightRoot.AddCommand(playwrightExecute)
 	browsersCmd.AddCommand(playwrightRoot)
+
+	// repl
+	replCmd := &cobra.Command{
+		Use:   "repl <id> [code]",
+		Short: "Execute JavaScript in the browser's persistent REPL",
+		Long: `Execute JavaScript in a persistent Node.js runtime inside the browser VM.
+Top-level bindings, closures, mutations, and dynamically imported modules persist
+across calls until the REPL is reset or replaced. Run 'repl.help()' to list the
+available methods, or 'repl.help("click")' for detailed help on one of them.
+
+Code may be passed as an argument or piped via stdin. Expression values are
+ignored: emit output with 'repl.write(...)', console methods, or
+'repl.emitImage(...)'. The runtime also exposes browser-control helpers, WebMCP,
+Patchright, Playwright, and raw CDP.
+
+Executions are serialized. A timeout, crash, or protocol failure terminates the
+REPL and changes its REPL ID, discarding top-level bindings. This is unrestricted
+code execution inside the browser VM and is not sandboxed.`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: runBrowsersRepl,
+	}
+	replCmd.Flags().Bool("reset", false, "Terminate the current REPL and start a fresh one before evaluating code")
+	replCmd.Flags().Int64("timeout-sec", 0, "Maximum execution time in seconds (default 60)")
+	replCmd.Flags().String("image-dir", "", "Directory to save images emitted by repl.emitImage(...)")
+	addJSONOutputFlag(replCmd)
+	browsersCmd.AddCommand(replCmd)
 	browsersCmd.AddCommand(newBrowsersWebMCPCommand())
 
 	// Add flags for create command
@@ -3600,6 +3754,42 @@ func runBrowsersPlaywrightExecute(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 	b := BrowsersCmd{browsers: &svc, playwright: &svc.Playwright}
 	return b.PlaywrightExecute(cmd.Context(), BrowsersPlaywrightExecuteInput{Identifier: args[0], Code: strings.TrimSpace(code), Timeout: timeout, Output: output})
+}
+
+func runBrowsersRepl(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+
+	reset, _ := cmd.Flags().GetBool("reset")
+
+	var code string
+	if len(args) >= 2 {
+		code = strings.Join(args[1:], " ")
+	} else if stat, _ := os.Stdin.Stat(); (stat.Mode() & os.ModeCharDevice) == 0 {
+		// Read code from stdin
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			pterm.Error.Printf("failed to read stdin: %v\n", err)
+			return nil
+		}
+		code = string(data)
+	} else if !reset {
+		pterm.Error.Println("no code provided. Provide code as an argument, pipe it via stdin, or pass --reset")
+		return nil
+	}
+
+	timeoutSec, _ := cmd.Flags().GetInt64("timeout-sec")
+	imageDir, _ := cmd.Flags().GetString("image-dir")
+	output, _ := cmd.Flags().GetString("output")
+	b := BrowsersCmd{browsers: &svc}
+	return b.Repl(cmd.Context(), BrowsersReplInput{
+		Identifier: args[0],
+		Code:       strings.TrimSpace(code),
+		Reset:      reset,
+		TimeoutSec: timeoutSec,
+		ImageDir:   imageDir,
+		Output:     output,
+	})
 }
 
 func runBrowsersFSNewDirectory(cmd *cobra.Command, args []string) error {

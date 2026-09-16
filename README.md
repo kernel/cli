@@ -875,6 +875,18 @@ Destinations are the OTLP/HTTP endpoints sessions export to, managed per project
   - `--timeout <seconds>` - Maximum execution time in seconds (defaults server-side)
   - If `[code]` is omitted, code is read from stdin
 
+### Browser REPL
+
+- `kernel browsers repl <id> [code]` - Execute JavaScript in the browser's persistent REPL
+  - `--reset` - Terminate the current REPL and start a fresh one before evaluating code
+  - `--timeout-sec <seconds>` - Maximum execution time in seconds (default 60)
+  - `--image-dir <path>` - Directory to save images emitted by `repl.emitImage(...)`
+  - `--json`, `--output json`, `-o json` - Output the raw response
+  - If `[code]` is omitted, code is read from stdin (`--reset` may be used with no code)
+  - Top-level bindings persist across calls until the REPL is reset or terminated. Start with `repl.help()` to list the available methods
+  - Expression values are ignored; emit output with `repl.write(...)`, console methods, or `repl.emitImage(...)`
+  - A timeout, crash, or protocol failure terminates the REPL and changes its REPL ID, discarding top-level bindings. This is unrestricted code execution inside the browser VM and is not sandboxed
+
 ### Browser WebMCP
 
 - `kernel browsers webmcp list <id-or-name>` - Discover native page tools across all browser tabs and embedded frames
@@ -1309,6 +1321,29 @@ const durationMs = Date.now() - start;
 const opsPerSec = ops / (durationMs / 1000);
 return { opsPerSec, ops, durationMs };
 TS
+```
+
+### Persistent REPL
+
+```bash
+# List the methods the REPL exposes
+kernel browsers repl my-browser 'repl.help()'
+
+# Define state once, then reuse it in a later call
+kernel browsers repl my-browser 'globalThis.visits = 0; await page.goto("https://example.com")'
+kernel browsers repl my-browser 'visits++; repl.write(`visits: ${visits}`)'
+
+# Or pipe code from stdin
+cat <<'JS' | kernel browsers repl my-browser
+const { chromium } = await import("patchright");
+repl.write(await page.title());
+JS
+
+# Start a fresh REPL, discarding top-level bindings
+kernel browsers repl my-browser --reset
+
+# Raise the execution timeout and save emitted images
+kernel browsers repl my-browser --timeout-sec 120 --image-dir ./repl-images 'await repl.emitImage(await page.screenshot())'
 ```
 
 ### Extension management
