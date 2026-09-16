@@ -27,10 +27,14 @@ const unknownFillFixture = `{"type":"fill","status":"unknown","fields":[{"index"
 
 func TestVaultFillParamsValidation(t *testing.T) {
 	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		// Type-specific checks require the current item, but must never invoke fill.
-		require.Equal(t, http.MethodGet, r.Method)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, readyFillCardFixture)
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, readyFillCardFixture)
+			return
+		}
+		require.Equal(t, http.MethodPost, r.Method)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"code":"invalid_request"}`)
 	})
 	replace := func(old, value string) string { return strings.Replace(fillParamsFixture, old, value, 1) }
 	for name, raw := range map[string]string{
@@ -310,7 +314,12 @@ func TestVaultFillCLIOutcomesAndFailures(t *testing.T) {
 				assert.Empty(t, out)
 				assert.NotEmpty(t, stderr)
 				if !tt.getFailure {
-					assert.Contains(t, stderr, "may have been written")
+					if tt.status == 400 || tt.status == 403 || tt.status == 404 || tt.status == 409 {
+						assert.Contains(t, stderr, "no fields were written")
+						assert.NotContains(t, stderr, "may have been written")
+					} else {
+						assert.Contains(t, stderr, "may have been written")
+					}
 				}
 			}
 		})

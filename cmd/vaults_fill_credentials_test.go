@@ -62,9 +62,14 @@ func TestVaultCredentialFillValidation(t *testing.T) {
 		} {
 			t.Run(input+"/"+params, func(t *testing.T) {
 				client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-					require.Equal(t, http.MethodGet, r.Method)
 					w.Header().Set("Content-Type", "application/json")
-					io.WriteString(w, readyFillCredentialFixture)
+					if r.Method == http.MethodGet {
+						io.WriteString(w, readyFillCredentialFixture)
+						return
+					}
+					require.Equal(t, http.MethodPost, r.Method)
+					w.WriteHeader(http.StatusBadRequest)
+					io.WriteString(w, `{"code":"invalid_request"}`)
 				})
 				value := params
 				if input == "spec-file" {

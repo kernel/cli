@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -29,8 +28,6 @@ type vaultFillField struct {
 	Selector string `json:"selector"`
 	Format   string `json:"format,omitempty"`
 }
-
-var vaultFillPageURLPattern = regexp.MustCompile(`^https?://[^/?#@*\s]+(?:[/?#][^\s]*)?$`)
 
 // Reject duplicate and unknown keys without including payloads in diagnostics.
 func vaultParamsObject(raw, allowed string) (map[string]json.RawMessage, error) {
@@ -118,12 +115,12 @@ func parseVaultFillParams(raw string) (*vaultFillParams, error) {
 		return nil, fmt.Errorf("browser_id must be a non-empty browser session ID, not a name")
 	}
 	if rawURL, present := object["page_url"]; present {
-		if json.Unmarshal(rawURL, &params.PageURL) != nil || !vaultFillPageURLPattern.MatchString(params.PageURL) {
-			return nil, fmt.Errorf("page_url must be an exact HTTP or HTTPS URL without credentials or a wildcard host")
+		if json.Unmarshal(rawURL, &params.PageURL) != nil {
+			return nil, fmt.Errorf("page_url must be an absolute URL")
 		}
-		u, err := url.Parse(params.PageURL)
-		if err != nil || u.Hostname() == "" || u.User != nil || u.Opaque != "" {
-			return nil, fmt.Errorf("page_url must be an exact HTTP or HTTPS URL without credentials")
+		u, err := url.ParseRequestURI(params.PageURL)
+		if err != nil || u.Scheme == "" {
+			return nil, fmt.Errorf("page_url must be an absolute URL")
 		}
 	}
 	if timeout, ok := object["timeout_ms"]; ok {
@@ -156,50 +153,4 @@ func parseVaultFillParams(raw string) (*vaultFillParams, error) {
 		params.Fields = append(params.Fields, binding)
 	}
 	return &params, nil
-}
-
-func validateVaultFillItem(params *vaultFillParams, item *kernel.VaultItemUnion) error {
-	switch item.Type {
-	case "credential":
-		var definition struct {
-			Spec struct {
-				Fields map[string]json.RawMessage `json:"fields"`
-			} `json:"spec"`
-		}
-		if json.Unmarshal([]byte(item.RawJSON()), &definition) != nil || len(definition.Spec.Fields) == 0 {
-			return fmt.Errorf("credential field definitions unavailable; fill was not invoked")
-		}
-		for i, field := range params.Fields {
-			if len(field.Selector) > 2048 {
-				return fmt.Errorf("fill binding %d: credential selectors must not exceed 2048 bytes", i)
-			}
-			if _, exists := definition.Spec.Fields[field.Field]; !exists {
-				return fmt.Errorf("fill binding %d must reference a declared credential field", i)
-			}
-			if field.Format != "" {
-				return fmt.Errorf("fill binding %d: format is not supported for credentials", i)
-			}
-		}
-	case "card":
-		if !strings.HasPrefix(params.PageURL, "https://") {
-			return fmt.Errorf("card fill requires an exact HTTPS page_url")
-		}
-		for i, field := range params.Fields {
-			switch field.Field {
-			case "expiration":
-				if field.Format != "MM/YY" && field.Format != "MM/YYYY" {
-					return fmt.Errorf("fill binding %d: expiration requires format MM/YY or MM/YYYY", i)
-				}
-			case "number", "cvc", "exp_month", "exp_year", "billing_name", "billing_line1", "billing_line2", "billing_city", "billing_state", "billing_postal_code", "billing_country":
-				if field.Format != "" {
-					return fmt.Errorf("fill binding %d: format is only supported for expiration", i)
-				}
-			default:
-				return fmt.Errorf("fill binding %d must reference a supported card field", i)
-			}
-		}
-	default:
-		return fmt.Errorf("fill is not supported for this item type")
-	}
-	return nil
 }
