@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/charmbracelet/fang"
 	"github.com/charmbracelet/lipgloss/v2"
 	"github.com/kernel/cli/pkg/auth"
+	"github.com/pterm/pterm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -90,6 +92,18 @@ func TestCompleteLoginOutput(t *testing.T) {
 				"Successfully authenticated",
 			},
 		},
+		{
+			name:       "ambient cancellation does not mask authentication failure",
+			authErr:    errors.New("callback server failed"),
+			cancel:     true,
+			wantErr:    true,
+			wantErrors: 1,
+			wantOutput: []string{"authentication failed: callback server failed"},
+			absentOutput: []string{
+				"authentication cancelled",
+				"Successfully authenticated",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -139,4 +153,45 @@ func TestCompleteLoginOutput(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoginSpinnerClearsWaitingOutput(t *testing.T) {
+	rawOutput := pterm.RawOutput
+	pterm.RawOutput = false
+	t.Cleanup(func() { pterm.RawOutput = rawOutput })
+
+	var output bytes.Buffer
+	spinner := newLoginSpinner().WithWriter(&output)
+	spinner.IsActive = true
+	spinner.UpdateText("Waiting for authentication...")
+	require.Contains(t, output.String(), "Waiting for authentication...")
+
+	require.NoError(t, spinner.Stop())
+	assert.NotContains(t, visibleTerminalOutput(output.String()), "Waiting for authentication...")
+}
+
+func visibleTerminalOutput(output string) string {
+	var visible strings.Builder
+	line := make([]rune, 0, len(output))
+	cursor := 0
+	for _, r := range output {
+		switch r {
+		case '\r':
+			cursor = 0
+		case '\n':
+			visible.WriteString(string(line))
+			visible.WriteRune('\n')
+			line = line[:0]
+			cursor = 0
+		default:
+			if cursor == len(line) {
+				line = append(line, r)
+			} else {
+				line[cursor] = r
+			}
+			cursor++
+		}
+	}
+	visible.WriteString(string(line))
+	return visible.String()
 }

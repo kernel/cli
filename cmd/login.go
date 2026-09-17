@@ -56,8 +56,12 @@ func runLogin(cmd *cobra.Command, args []string) error {
 
 	pterm.Debug.Printf("Starting local callback server on %s\n", oauthConfig.Config.RedirectURL)
 
-	spinner, _ := pterm.DefaultSpinner.WithRemoveWhenDone().Start("Waiting for authentication...")
+	spinner, _ := newLoginSpinner().Start("Waiting for authentication...")
 	return completeLogin(ctx, spinner, oauthConfig.StartOAuthFlow, auth.SaveTokens)
+}
+
+func newLoginSpinner() *pterm.SpinnerPrinter {
+	return pterm.DefaultSpinner.WithRemoveWhenDone()
 }
 
 type spinnerStopper interface {
@@ -76,7 +80,7 @@ func completeLogin(
 		if errors.Is(err, auth.ErrAuthorizationDenied) {
 			return err
 		}
-		if errors.Is(ctx.Err(), context.Canceled) {
+		if errors.Is(err, context.Canceled) {
 			return errors.New("authentication cancelled by user")
 		}
 		return fmt.Errorf("authentication failed: %w", err)
