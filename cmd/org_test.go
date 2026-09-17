@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -294,6 +295,63 @@ func TestOrgLimitsGet_NullDefaultShownAsUnlimited(t *testing.T) {
 	c := OrgCmd{limits: &FakeOrgLimitsService{}}
 	assert.NoError(t, c.LimitsGet(context.Background(), OrgLimitsGetInput{}))
 	assert.Contains(t, buf.String(), "unlimited")
+}
+
+func TestOrgLimitsGet_RendersConcurrencyUsage(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fake := &FakeOrgLimitsService{
+		GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgLimits, error) {
+			limits := &kernel.OrgLimits{
+				MaxConcurrentSessions:       100,
+				ConcurrentSessionsUsed:      12,
+				ConcurrentSessionsAvailable: 88,
+			}
+			limits.JSON.ConcurrentSessionsUsed = respjson.NewField("12")
+			limits.JSON.ConcurrentSessionsAvailable = respjson.NewField("88")
+			return limits, nil
+		},
+	}
+	c := OrgCmd{limits: fake}
+	assert.NoError(t, c.LimitsGet(context.Background(), OrgLimitsGetInput{}))
+
+	out := buf.String()
+	assert.Contains(t, out, "Concurrent Sessions Used")
+	assert.Contains(t, out, "12")
+	assert.Contains(t, out, "Concurrent Sessions Available")
+	assert.Contains(t, out, "88")
+}
+
+func TestOrgLimitsGet_NullConcurrencyUsageShownAsUnknown(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fake := &FakeOrgLimitsService{
+		GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgLimits, error) {
+			limits := &kernel.OrgLimits{MaxConcurrentSessions: 100}
+			// Null (not omitted) means usage could not be read, which is not
+			// the same as unlimited.
+			limits.JSON.ConcurrentSessionsUsed = respjson.NewField(respjson.Null)
+			limits.JSON.ConcurrentSessionsAvailable = respjson.NewField(respjson.Null)
+			return limits, nil
+		},
+	}
+	c := OrgCmd{limits: fake}
+	assert.NoError(t, c.LimitsGet(context.Background(), OrgLimitsGetInput{}))
+
+	out := buf.String()
+	// Both usage rows render as unknown rather than borrowing the "unlimited"
+	// meaning a null limit would have.
+	assert.Contains(t, out, "Concurrent Sessions Used")
+	assert.Contains(t, out, "Concurrent Sessions Available")
+	assert.Equal(t, 2, strings.Count(out, "unknown"))
+}
+
+func TestOrgLimitsGet_OmitsConcurrencyUsageRowsWhenAbsent(t *testing.T) {
+	buf := capturePtermOutput(t)
+	c := OrgCmd{limits: &FakeOrgLimitsService{}}
+	assert.NoError(t, c.LimitsGet(context.Background(), OrgLimitsGetInput{}))
+
+	out := buf.String()
+	assert.NotContains(t, out, "Concurrent Sessions Used")
+	assert.NotContains(t, out, "Concurrent Sessions Available")
 }
 
 func TestOrgLimitsGet_RendersManagedAuthLimits(t *testing.T) {
