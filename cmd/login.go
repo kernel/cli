@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -59,6 +60,10 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	spinner, _ := pterm.DefaultSpinner.Start("Waiting for authentication...")
 	tokens, err := oauthConfig.StartOAuthFlow(ctx)
 	if err != nil {
+		if errors.Is(err, auth.ErrAuthorizationDenied) {
+			spinner.Stop()
+			return err
+		}
 		spinner.Fail("Authentication failed")
 
 		// Handle common error cases with helpful messages

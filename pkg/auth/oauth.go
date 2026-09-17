@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -19,20 +18,6 @@ import (
 	"github.com/pkg/browser"
 	"github.com/pterm/pterm"
 	"golang.org/x/oauth2"
-)
-
-//go:embed success.html
-var successHTMLTemplate string
-
-//go:embed favicon.svg
-var faviconSVG string
-
-// Inlined as a data URI because the callback server shuts down before the browser could fetch a served icon.
-var successHTML = strings.Replace(
-	successHTMLTemplate,
-	"__KERNEL_FAVICON__",
-	"data:image/svg+xml;base64,"+base64.StdEncoding.EncodeToString([]byte(faviconSVG)),
-	1,
 )
 
 const (
@@ -211,71 +196,7 @@ func (oc *OAuthConfig) StartOAuthFlow(ctx context.Context) (*TokenStorage, error
 	errChan := make(chan error, 1)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
-		// Extract and decode state parameter to get CSRF token and org_id
-		encodedState := r.URL.Query().Get("state")
-		var csrfToken, orgID, accessScope, projectID string
-
-		if encodedState != "" {
-			// Try to decode the state parameter
-			if decodedBytes, err := base64.StdEncoding.DecodeString(encodedState); err == nil {
-				var stateData map[string]string
-				if json.Unmarshal(decodedBytes, &stateData) == nil {
-					csrfToken = stateData["csrf"]
-					orgID = stateData["org_id"]
-					accessScope = stateData["access_scope"]
-					projectID = stateData["project_id"]
-				}
-			}
-
-			// Fallback to treating the entire state as CSRF token if decoding fails
-			if csrfToken == "" {
-				csrfToken = encodedState
-			}
-		}
-
-		// Verify CSRF token to prevent CSRF attacks
-		// Extract the expected CSRF token from our stored state
-		var expectedCSRF string
-		if decodedBytes, err := base64.StdEncoding.DecodeString(oc.State); err == nil {
-			var stateData map[string]string
-			if json.Unmarshal(decodedBytes, &stateData) == nil {
-				expectedCSRF = stateData["csrf"]
-			}
-		}
-
-		if csrfToken != expectedCSRF || expectedCSRF == "" {
-			http.Error(w, "Invalid state parameter", http.StatusBadRequest)
-			errChan <- fmt.Errorf("invalid state parameter")
-			return
-		}
-
-		code := r.URL.Query().Get("code")
-		if code == "" {
-			http.Error(w, "Missing authorization code", http.StatusBadRequest)
-			errChan <- fmt.Errorf("missing authorization code")
-			return
-		}
-
-		// Success page
-		w.Header().Set("Content-Type", "text/html")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(successHTML))
-
-		// Pass both code and org_id to the channel using JSON encoding
-		result := AuthResult{
-			Code:        code,
-			OrgID:       orgID,
-			AccessScope: accessScope,
-			ProjectID:   projectID,
-		}
-		resultJSON, err := json.Marshal(result)
-		if err != nil {
-			errChan <- fmt.Errorf("failed to encode auth result: %w", err)
-			return
-		}
-		codeChan <- string(resultJSON)
-	})
+	mux.HandleFunc("/callback", oc.callbackHandler(codeChan, errChan))
 
 	server := &http.Server{Handler: mux}
 
