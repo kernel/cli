@@ -41,7 +41,7 @@ var vaultItemFields = vaultOutputFields{
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil,
 		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
 		"context": nil, "expires_at": nil, "description": nil,
-		"fields":          {"*": vaultFieldsOf("type required sensitive")},
+		"fields":          vaultFieldsOf("name type required sensitive"),
 		"provider_config": vaultFieldsOf("id name"),
 		"authorization":   {"method": nil, "client": {"type": nil, "provider_config": vaultFieldsOf("id name")}},
 		"totals":          vaultTotalFields,
@@ -134,11 +134,14 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 }
 
 func preservePublicCredentialValues(source, result vaultJSON) error {
+	type credentialDefinition struct {
+		Name      string `json:"name"`
+		Type      string `json:"type"`
+		Sensitive *bool  `json:"sensitive"`
+	}
+	// Definitions are an ordered array keyed by name; state values stay keyed by name.
 	var spec struct {
-		Fields map[string]struct {
-			Type      string `json:"type"`
-			Sensitive *bool  `json:"sensitive"`
-		} `json:"fields"`
+		Fields []credentialDefinition `json:"fields"`
 	}
 	var values struct {
 		Fields map[string]struct {
@@ -149,8 +152,12 @@ func preservePublicCredentialValues(source, result vaultJSON) error {
 	if json.Unmarshal(source["spec"], &spec) != nil || json.Unmarshal(source["state"], &values) != nil || values.Fields == nil {
 		return nil
 	}
+	definitions := make(map[string]credentialDefinition, len(spec.Fields))
+	for _, definition := range spec.Fields {
+		definitions[definition.Name] = definition
+	}
 	for name, field := range values.Fields {
-		definition := spec.Fields[name]
+		definition := definitions[name]
 		if definition.Sensitive == nil || *definition.Sensitive || (definition.Type != "text" && definition.Type != "email") || !field.HasValue {
 			field.Value = nil
 		}

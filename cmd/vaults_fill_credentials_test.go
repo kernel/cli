@@ -13,13 +13,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const readyFillCredentialFixture = `{"id":"credential-1","type":"credential","spec":{"fields":{"expiration":{"type":"password"},"custom field":{"type":"text"},"otp":{"type":"totp"}}},"state":{"status":"ready"},"available_operations":[{"type":"fill","description":"Fill credential fields."}]}`
+const readyFillCredentialFixture = `{"id":"credential-1","type":"credential","spec":{"fields":[{"name":"expiration","type":"password"},{"name":"custom_field","type":"text"},{"name":"otp","type":"totp"}]},"state":{"status":"ready"},"available_operations":[{"type":"fill","description":"Fill credential fields."}]}`
 
 func TestVaultFillBothItemTypesAndInputs(t *testing.T) {
 	for _, input := range []string{"params", "spec-file"} {
 		for _, test := range []struct{ name, item, params, result string }{
 			{"card", readyFillCardFixture, fillParamsFixture, completedFillFixture},
-			{"credential", readyFillCredentialFixture, `{"browser_id":"browser-id","fields":[{"field":"expiration","selector":"#password"},{"field":"custom field","selector":"#custom"},{"field":"otp","selector":"#code"}]}`, completedFillFixture},
+			{"credential", readyFillCredentialFixture, `{"browser_id":"browser-id","fields":[{"field":"expiration","selector":"#password"},{"field":"custom_field","selector":"#custom"},{"field":"otp","selector":"#code"}]}`, completedFillFixture},
 			{"credential URL", readyFillCredentialFixture, `{"browser_id":"browser-id","page_url":"http://localhost/login","fields":[{"field":"expiration","selector":"#password"}]}`, `{"type":"fill","status":"completed","fields":[{"index":0,"status":"filled"}]}`},
 		} {
 			t.Run(input+"/"+test.name, func(t *testing.T) {
@@ -56,7 +56,7 @@ func TestVaultCredentialFillValidation(t *testing.T) {
 		for _, params := range []string{
 			`{"browser_id":"id","fields":[{"field":"unknown","selector":"#field"}]}`,
 			`{"browser_id":"id","fields":[{"field":"expiration","selector":"#field","format":"MM/YY"}]}`,
-			`{"browser_id":"id","fields":[{"field":"custom field","selector":"#field","format":"MM/YYYY"}]}`,
+			`{"browser_id":"id","fields":[{"field":"custom_field","selector":"#field","format":"MM/YYYY"}]}`,
 			`{"browser_id":"id","fields":[{"field":"expiration","selector":"#field","value":"secret-sentinel"}]}`,
 			`{"browser_id":"id","browser_id":"secret-sentinel","fields":[{"field":"expiration","selector":"#field"}]}`,
 		} {
@@ -106,7 +106,7 @@ func TestCredentialFillCLIOutcomes(t *testing.T) {
 				io.WriteString(w, result)
 			}))
 			defer server.Close()
-			out, stderr, exit := runVaultFillCLI(t, server.URL, "fill", "--params", `{"browser_id":"id","fields":[{"field":"expiration","selector":"#password"},{"field":"custom field","selector":"#custom"},{"field":"otp","selector":"#code"}]}`, "-o", "json")
+			out, stderr, exit := runVaultFillCLI(t, server.URL, "fill", "--params", `{"browser_id":"id","fields":[{"field":"expiration","selector":"#password"},{"field":"custom_field","selector":"#custom"},{"field":"otp","selector":"#code"}]}`, "-o", "json")
 			assert.True(t, json.Valid([]byte(out)))
 			assert.JSONEq(t, result, out)
 			assert.Empty(t, stderr)
