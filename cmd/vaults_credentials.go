@@ -21,8 +21,10 @@ card item types for credit cards and payment checkout instead.
 
 First create a vault for the end user and attach it with browsers create --vault.
 Use a protected JSON file or stdin, never secret values in shell arguments.
-The spec contains description and fields keyed by name. Field types are text,
-email, password, and totp; definitions accept required, sensitive, and value.
+The spec contains description and fields as an ordered array of named definitions.
+Inspect the website and list fields in its natural top-to-bottom order because the
+user-facing collection form renders that order unchanged. Field types are text,
+email, password, and totp; definitions accept name, required, sensitive, and value.
 Set description to the recognizable site name only, e.g. "Hacker News", not
 "Hacker News sign-in credentials". This text is the user-facing form title.
 Set sensitive:false explicitly for ordinary usernames and email addresses.
@@ -66,7 +68,7 @@ func newVaultCredentialsCommand() *cobra.Command {
 			cmd.Example = "  kernel vaults credentials update user-vault login --version 2 --spec-file changes.json"
 		} else {
 			cmd.Example = `  kernel vaults credentials create user-vault login --spec-file - <<'JSON'
-{"description":"Hacker News","fields":{"username":{"type":"text","required":true,"sensitive":false},"password":{"type":"password","required":true,"sensitive":true}}}
+{"description":"Hacker News","fields":[{"name":"username","type":"text","required":true,"sensitive":false},{"name":"password","type":"password","required":true,"sensitive":true}]}
 JSON`
 		}
 		cmd.Flags().String("spec-file", "", "Credential spec JSON file (use '-' for stdin; maximum 128 KiB)")

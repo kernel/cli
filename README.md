@@ -275,13 +275,14 @@ Vault commands **collect user credentials and manage payment credentials; fill d
 #### User credentials
 
 Create a vault for the end user, attach it when creating a browser, then navigate to the
-sensitive form. Define the observed fields without supplying values:
+sensitive form. Define the observed fields in the website's natural top-to-bottom order;
+the collection form renders this array order unchanged. Omit values for user collection:
 
 ```sh
 kernel vaults create --name user-vault
 kernel browsers create --vault user-vault
 kernel vaults credentials create user-vault login --spec-file - <<'JSON'
-{"description":"Hacker News","fields":{"username":{"type":"text","required":true,"sensitive":false},"password":{"type":"password","required":true,"sensitive":true}}}
+{"description":"Hacker News","fields":[{"name":"username","type":"text","required":true,"sensitive":false},{"name":"password","type":"password","required":true,"sensitive":true}]}
 JSON
 kernel vaults items get user-vault login --wait 60 -o json
 kernel vaults items invoke user-vault login fill --spec-file - <<'JSON'
