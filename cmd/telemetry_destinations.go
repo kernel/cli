@@ -146,7 +146,7 @@ func (c TelemetryDestinationsCmd) List(ctx context.Context, in TelemetryDestinat
 		return nil
 	}
 
-	rows := pterm.TableData{{"ID", "Name", "Endpoint", "Description", "Headers", "Created At"}}
+	rows := pterm.TableData{{"ID", "Name", "Endpoint", "Description", "Headers", "Delivery", "Created At"}}
 	for _, d := range items {
 		rows = append(rows, []string{
 			d.ID,
@@ -154,6 +154,7 @@ func (c TelemetryDestinationsCmd) List(ctx context.Context, in TelemetryDestinat
 			d.Endpoint,
 			util.OrDash(d.Description),
 			util.OrDash(formatOtlpDestinationHeaders(d.Headers)),
+			formatOtlpDestinationDelivery(d),
 			util.FormatLocal(d.CreatedAt),
 		})
 	}
@@ -332,6 +333,20 @@ func formatOtlpDestinationHeaders(headers map[string]string) string {
 	return strings.Join(names, ", ")
 }
 
+// formatOtlpDestinationDelivery summarizes whether exports are currently
+// landing. Only ConsecutiveFailures answers that: LastError and LastErrorAt are
+// retained after a later success, so a destination can carry both a recorded
+// error and a healthy status.
+func formatOtlpDestinationDelivery(d kernel.OtlpDestination) string {
+	if d.ConsecutiveFailures > 0 {
+		return fmt.Sprintf("failing (%d consecutive)", d.ConsecutiveFailures)
+	}
+	if d.LastExportAt.IsZero() && d.LastErrorAt.IsZero() {
+		return "no deliveries yet"
+	}
+	return "ok"
+}
+
 func printOtlpDestinationDetail(d *kernel.OtlpDestination) {
 	rows := pterm.TableData{
 		{"Property", "Value"},
@@ -340,6 +355,13 @@ func printOtlpDestinationDetail(d *kernel.OtlpDestination) {
 		{"Endpoint", d.Endpoint},
 		{"Description", util.OrDash(d.Description)},
 		{"Headers", util.OrDash(formatOtlpDestinationHeaders(d.Headers))},
+		{"Delivery", formatOtlpDestinationDelivery(*d)},
+		{"Consecutive Failures", fmt.Sprintf("%d", d.ConsecutiveFailures)},
+		{"Last Export At", util.FormatLocal(d.LastExportAt)},
+		// Kept even once exports recover, so it is labelled as the last recorded
+		// failure rather than as the destination's current state.
+		{"Last Error", util.OrDash(d.LastError)},
+		{"Last Error At", util.FormatLocal(d.LastErrorAt)},
 		{"Created At", util.FormatLocal(d.CreatedAt)},
 		{"Updated At", util.FormatLocal(d.UpdatedAt)},
 	}
@@ -379,8 +401,13 @@ var telemetryDestinationsListCmd = &cobra.Command{
 var telemetryDestinationsGetCmd = &cobra.Command{
 	Use:   "get <id-or-name>",
 	Short: "Get an OTLP destination by ID or name",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runTelemetryDestinationsGet,
+	Long: "Get an OTLP destination, including its delivery health.\n\n" +
+		"Delivery reads Consecutive Failures: zero means the most recently recorded delivery succeeded. " +
+		"Last Error and Last Error At describe the last failure Kernel recorded and are kept after a later " +
+		"success, so they can predate Last Export At and do not by themselves mean export is broken. " +
+		"Response bodies, endpoint URLs and credentials are never returned in Last Error.",
+	Args: cobra.ExactArgs(1),
+	RunE: runTelemetryDestinationsGet,
 }
 
 var telemetryDestinationsCreateCmd = &cobra.Command{
