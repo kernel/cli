@@ -244,6 +244,17 @@ func TestWebMCPInvokeFailedStatus(t *testing.T) {
 	}
 }
 
+func TestWebMCPInvokeAwaitingSubmission(t *testing.T) {
+	stdout, warning, err := executeWebMCPCommand(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"invocation_id":"inv-1","status":"awaiting_submission","output":{"filled":["email"]}}`)
+	}, "", "invoke", "browser", "--tool-ref", "ref", "--input", "{}")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"filled":["email"]}`, stdout)
+	assert.Contains(t, warning, "inv-1")
+	assert.Contains(t, warning, "without submitting it")
+}
+
 func TestWebMCPListAPIError(t *testing.T) {
 	_, _, err := executeWebMCPCommand(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

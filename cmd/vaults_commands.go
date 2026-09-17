@@ -77,10 +77,12 @@ Vault names, item keys, and project ownership are immutable.
 3. Create a card request with --provider and --spec JSON.
 4. Inspect items get, then use items invoke <vault> <key> <operation> only when advertised.
    Follow the operation description and any returned provider action.
-5. Attach the vault with browsers create --vault <id-or-name>. For ready Link cards,
-   use advertised fill with --params to bind checkout fields. Returned non-secret
-   aliases are an alternative for explicitly chosen egress-substitution integrations,
-   not a fallback after fill. Inspect items get/events for payment outcomes.
+5. Attach the vault with browsers create --vault <id-or-name>; attachment is required for fill.
+   Ready Link cards use only advertised fill with --params for browser checkout.
+   Link cards do not expose aliases or support egress substitution.
+   AgentCard-only checkout aliases support egress substitution with checkout hold,
+   approval, and replay; they are not a fallback after fill.
+   Inspect items get/events for payment outcomes.
 
 Permitted checkout domains are provider-assigned and displayed when returned;
 there is no domain-setting API.
@@ -127,7 +129,7 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 		}}
 	addVaultJSONOutputFlag(itemList)
 	itemGet := &cobra.Command{Use: "get <vault> <key>", Short: "Get item state and any required action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: "Get item state, available operations, provider actions, and returned checkout aliases.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nAn item still pending after the wait is returned as-is; ready means populated for credentials, not logged in or paid.\nFor credential edits on an already-ready item, compare versions without --wait. Explicitly non-sensitive text/email values are returned; sensitive values and TOTP seeds are omitted.\nrecovery_required stops waiting and means unresolved, not declined or expired.\nReconcile with the provider or support; do not retry, delete, or replace the payment.",
+		Long: "Get item state, available operations, provider actions, and returned AgentCard checkout aliases.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nAn item still pending after the wait is returned as-is; ready means populated for credentials, not logged in or paid.\nFor credential edits on an already-ready item, compare versions without --wait. Explicitly non-sensitive text/email values are returned; sensitive values and TOTP seeds are omitted.\nrecovery_required stops waiting and means unresolved, not declined or expired.\nReconcile with the provider or support; do not retry, delete, or replace the payment.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			wait, _ := cmd.Flags().GetInt64("wait")
 			expand, _ := cmd.Flags().GetStringSlice("expand")
@@ -164,14 +166,22 @@ billing_state, billing_postal_code, billing_country. expiration requires format 
 or MM/YYYY. Optional timeout_ms is 1-30000 (default 10000).
 The API searches the page and descendant frames, including payment iframes.
 Fill is available for credential items and ready Link cards when advertised, not AgentCard.
-Fill never submits forms. completed means fields were filled, not website acceptance.
+Link cards do not expose aliases or support egress substitution.
+Fill writes real values into the browser; unrestricted browser/CDP access can read them.
+Fill never explicitly submits forms or clicks buttons, but input/change events may trigger site behavior.
+completed means fields were filled, not website acceptance, login, or payment success.
 failed may leave partial writes; unknown quarantines the browser. Never automatically
 retry or fall back to aliases. Requests are not automatically retried.
 API validation errors (400/403/404/409) include HTTP status, recognized error codes,
 and corrective guidance; no fields were written by that request. Inspect and correct
 the cause before deciding on a new fill. Transport loss remains an uncertain outcome.
 prepare_checkout requires checkout.browser_id, checkout.merchant_origin (canonical HTTPS
-origin of the top-level merchant page), and checkout.environment (production or sandbox).
+origin of the top-level merchant page, not a processor iframe), and checkout.environment
+(production, sandbox, or shared). Optional checkout.psp selects the tokenization processor:
+square, braintree, worldpay, bambora, or mercado_pago. Omit psp for Square; non-Square
+processors require multi-processor preparation enablement. Use production or sandbox for
+square, braintree and worldpay; shared for bambora and mercado_pago. Shared endpoints do not
+establish test mode; merchant credentials determine it.
 Use only when advertised for an AgentCard card. Keep the returned approval page open,
 poll until ready_to_submit, then submit native Pay before preparation.expires_at.
 Preparations are single-use, including after failure or expiry; never retry automatically.

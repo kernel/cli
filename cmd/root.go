@@ -221,54 +221,56 @@ func Execute(m Metadata) {
 	if err := fang.Execute(context.Background(), rootCmd,
 		fang.WithVersion(metadata.Version),
 		fang.WithCommit(metadata.Commit),
-		fang.WithErrorHandler(func(w io.Writer, styles fang.Styles, err error) {
-			err = util.CleanedUpSdkError{Err: err}
-
-			// Some subcommands intentionally suppress diagnostics for curl-like
-			// quiet modes while still returning a non-zero exit status.
-			var silent interface{ Silent() bool }
-			if errors.As(err, &silent) && silent.Silent() {
-				return
-			}
-
-			// remove margins so that it matches other pterm.error "style"
-			// we should add them back later as it looks cleaner
-			errorTextStyle := styles.ErrorText.UnsetMargins()
-
-			// Keep command errors on fang's error stream, normally stderr. This
-			// gives curl-like commands a quiet stdout for response bodies and
-			// scripts while preserving the existing pterm error styling.
-			oldErrorWriter := pterm.Error.Writer
-			pterm.Error.Writer = w
-			defer func() {
-				pterm.Error.Writer = oldErrorWriter
-			}()
-			// Fail-fast interactivity errors render one problem per line.
-			// The default ErrorText style must not apply: its width-based
-			// word-wrap splits flag tokens like --template across lines, and
-			// its transform (strings.Fields + Join) collapses the newlines
-			// between problems.
-			msg := strings.TrimSpace(err.Error())
-			style := errorTextStyle
-			var promptErr *interactive.PromptError
-			if errors.As(err, &promptErr) {
-				msg = capitalizeFirst(promptErr.Display())
-				style = style.UnsetWidth().UnsetTransform()
-			}
-			pterm.Error.Println(style.Render(msg))
-			if isUsageError(err) {
-				fmt.Fprintln(w)
-				fmt.Fprintln(w, lipgloss.JoinHorizontal(
-					lipgloss.Left,
-					errorTextStyle.UnsetWidth().Render("Try"),
-					styles.Program.Flag.Render("--help"),
-					errorTextStyle.UnsetWidth().UnsetTransform().PaddingLeft(1).Render("for usage."),
-				))
-			}
-		}),
+		fang.WithErrorHandler(renderCommandError),
 	); err != nil {
 		// fang takes care of printing the error
 		os.Exit(1)
+	}
+}
+
+func renderCommandError(w io.Writer, styles fang.Styles, err error) {
+	err = util.CleanedUpSdkError{Err: err}
+
+	// Some subcommands intentionally suppress diagnostics for curl-like
+	// quiet modes while still returning a non-zero exit status.
+	var silent interface{ Silent() bool }
+	if errors.As(err, &silent) && silent.Silent() {
+		return
+	}
+
+	// remove margins so that it matches other pterm.error "style"
+	// we should add them back later as it looks cleaner
+	errorTextStyle := styles.ErrorText.UnsetMargins()
+
+	// Keep command errors on fang's error stream, normally stderr. This
+	// gives curl-like commands a quiet stdout for response bodies and
+	// scripts while preserving the existing pterm error styling.
+	oldErrorWriter := pterm.Error.Writer
+	pterm.Error.Writer = w
+	defer func() {
+		pterm.Error.Writer = oldErrorWriter
+	}()
+	// Fail-fast interactivity errors render one problem per line.
+	// The default ErrorText style must not apply: its width-based
+	// word-wrap splits flag tokens like --template across lines, and
+	// its transform (strings.Fields + Join) collapses the newlines
+	// between problems.
+	msg := strings.TrimSpace(err.Error())
+	style := errorTextStyle
+	var promptErr *interactive.PromptError
+	if errors.As(err, &promptErr) {
+		msg = capitalizeFirst(promptErr.Display())
+		style = style.UnsetWidth().UnsetTransform()
+	}
+	pterm.Error.Println(style.Render(msg))
+	if isUsageError(err) {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, lipgloss.JoinHorizontal(
+			lipgloss.Left,
+			errorTextStyle.UnsetWidth().Render("Try"),
+			styles.Program.Flag.Render("--help"),
+			errorTextStyle.UnsetWidth().UnsetTransform().PaddingLeft(1).Render("for usage."),
+		))
 	}
 }
 
