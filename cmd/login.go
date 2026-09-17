@@ -56,36 +56,37 @@ func runLogin(cmd *cobra.Command, args []string) error {
 
 	pterm.Debug.Printf("Starting local callback server on %s\n", oauthConfig.Config.RedirectURL)
 
-	// Start OAuth flow
 	spinner, _ := pterm.DefaultSpinner.Start("Waiting for authentication...")
-	tokens, err := oauthConfig.StartOAuthFlow(ctx)
+	return completeLogin(ctx, spinner, oauthConfig.StartOAuthFlow, auth.SaveTokens)
+}
+
+type spinnerStopper interface {
+	Stop() error
+}
+
+func completeLogin(
+	ctx context.Context,
+	spinner spinnerStopper,
+	authenticate func(context.Context) (*auth.TokenStorage, error),
+	saveTokens func(*auth.TokenStorage) error,
+) error {
+	tokens, err := authenticate(ctx)
+	_ = spinner.Stop()
 	if err != nil {
 		if errors.Is(err, auth.ErrAuthorizationDenied) {
-			spinner.Stop()
 			return err
 		}
-		spinner.Fail("Authentication failed")
-
-		// Handle common error cases with helpful messages
-		if ctx.Err() == context.Canceled {
-			pterm.Info.Println("Authentication cancelled by user")
-			return nil
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return errors.New("authentication cancelled by user")
 		}
-
 		return fmt.Errorf("authentication failed: %w", err)
 	}
 
-	spinner.Success("Authentication successful!")
-
-	// Save tokens securely
-	if err := auth.SaveTokens(tokens); err != nil {
-		pterm.Warning.Printf("Authentication succeeded but failed to save credentials: %v\n", err)
-		pterm.Warning.Println("You may need to re-authenticate on your next CLI usage")
-		return nil
+	if err := saveTokens(tokens); err != nil {
+		return fmt.Errorf("OAuth authorization completed, but credentials could not be saved: %w; fix credential storage and run 'kernel login' again", err)
 	}
 
-	pterm.Success.Println("✓ Successfully authenticated with Kernel!")
+	pterm.Success.Println("Successfully authenticated with Kernel!")
 	pterm.Info.Println("You can now use other Kernel CLI commands without setting KERNEL_API_KEY")
-
 	return nil
 }
