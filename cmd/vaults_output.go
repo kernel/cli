@@ -41,7 +41,7 @@ var vaultItemFields = vaultOutputFields{
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil,
 		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
 		"context": nil, "expires_at": nil, "description": nil,
-		"fields":          {"*": vaultFieldsOf("type required sensitive")},
+		"fields":          vaultFieldsOf("name type required sensitive"),
 		"provider_config": vaultFieldsOf("id name"),
 		"authorization":   {"method": nil, "client": {"type": nil, "provider_config": vaultFieldsOf("id name")}},
 		"totals":          vaultTotalFields,
@@ -134,11 +134,13 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 }
 
 func preservePublicCredentialValues(source, result vaultJSON) error {
+	type definition struct {
+		Name      string `json:"name"`
+		Type      string `json:"type"`
+		Sensitive *bool  `json:"sensitive"`
+	}
 	var spec struct {
-		Fields map[string]struct {
-			Type      string `json:"type"`
-			Sensitive *bool  `json:"sensitive"`
-		} `json:"fields"`
+		Fields []definition `json:"fields"`
 	}
 	var values struct {
 		Fields map[string]struct {
@@ -149,8 +151,12 @@ func preservePublicCredentialValues(source, result vaultJSON) error {
 	if json.Unmarshal(source["spec"], &spec) != nil || json.Unmarshal(source["state"], &values) != nil || values.Fields == nil {
 		return nil
 	}
+	definitions := make(map[string]definition, len(spec.Fields))
+	for _, field := range spec.Fields {
+		definitions[field.Name] = field
+	}
 	for name, field := range values.Fields {
-		definition := spec.Fields[name]
+		definition := definitions[name]
 		if definition.Sensitive == nil || *definition.Sensitive || (definition.Type != "text" && definition.Type != "email") || !field.HasValue {
 			field.Value = nil
 		}

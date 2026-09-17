@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const readyFillCredentialFixture = `{"id":"credential-1","type":"credential","spec":{"fields":{"expiration":{"type":"password"},"custom field":{"type":"text"},"otp":{"type":"totp"}}},"state":{"status":"ready"},"available_operations":[{"type":"fill","description":"Fill credential fields."}]}`
+const readyFillCredentialFixture = `{"id":"credential-1","type":"credential","spec":{"fields":[{"name":"expiration","type":"password"},{"name":"custom field","type":"text"},{"name":"otp","type":"totp"}]},"state":{"status":"ready"},"available_operations":[{"type":"fill","description":"Fill credential fields."}]}`
 
 func TestVaultFillBothItemTypesAndInputs(t *testing.T) {
 	for _, input := range []string{"params", "spec-file"} {

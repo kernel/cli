@@ -22,7 +22,7 @@ func TestCredentialHumanGuidance(t *testing.T) {
 				args := []string{"vaults", "items", "get", "user", "login"}
 				switch operation {
 				case "create":
-					args = []string{"vaults", "credentials", "create", "user", "login", "--spec-file", credentialSpecFile(t, `{"fields":{"password":{"type":"password"}}}`)}
+					args = []string{"vaults", "credentials", "create", "user", "login", "--spec-file", credentialSpecFile(t, `{"fields":[{"name":"password","type":"password"}]}`)}
 				case "collect":
 					args = []string{"vaults", "items", "invoke", "user", "login", "collect"}
 				}

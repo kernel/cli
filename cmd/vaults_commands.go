@@ -59,7 +59,7 @@ Use wallet and card item types for credit cards and payment checkout instead.
 
 User credential flow:
 1. Create a vault per end user and create a browser with --vault <id-or-name>.
-2. Navigate to a sensitive form and define its fields with credentials create --spec-file.
+2. Navigate to a sensitive form and define its fields in natural top-to-bottom order with credentials create --spec-file; that array order controls the user-facing collection form.
 3. Present the returned collection URL to the user. Poll items get --wait 60 for ready.
 4. Use items invoke <vault> <key> fill --spec-file with browser_id and field selectors.
 Use credentials update --version for edits, or items invoke collect to reopen the form.
