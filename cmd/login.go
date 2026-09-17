@@ -56,7 +56,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 
 	pterm.Debug.Printf("Starting local callback server on %s\n", oauthConfig.Config.RedirectURL)
 
-	spinner, _ := pterm.DefaultSpinner.Start("Waiting for authentication...")
+	spinner, _ := pterm.DefaultSpinner.WithRemoveWhenDone().Start("Waiting for authentication...")
 	return completeLogin(ctx, spinner, oauthConfig.StartOAuthFlow, auth.SaveTokens)
 }
 
