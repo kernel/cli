@@ -66,7 +66,7 @@ func TestCredentialUpdateIdentityPrecondition(t *testing.T) {
 
 func TestCredentialInitialValuesWithGeneratedSDK(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
-	spec := `{"description":"Example","fields":[{"name":"username","type":"text","sensitive":false,"value":"synthetic-user"},{"name":"email","type":"email","sensitive":false,"value":"test@example.com"},{"name":"password","type":"password","sensitive":true,"value":"synthetic-password"},{"name":"otp","type":"totp","sensitive":true,"value":"JBSWY3DPEHPK3PXP"}]}`
+	spec := `{"description":"Example","fields":[{"name":"username","label":"Membership Number or Username","type":"text","sensitive":false,"value":"synthetic-user"},{"name":"email","type":"email","sensitive":false,"value":"test@example.com"},{"name":"password","type":"password","sensitive":true,"value":"synthetic-password"},{"name":"otp","type":"totp","sensitive":true,"value":"JBSWY3DPEHPK3PXP"}]}`
 	calls := 0
 	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -84,6 +84,7 @@ func TestCredentialInitialValuesWithGeneratedSDK(t *testing.T) {
 		assert.NotContains(t, out, value)
 	}
 	assert.Contains(t, out, `"has_value": true`)
+	assert.Contains(t, out, `"label": "Membership Number or Username"`)
 }
 
 func TestVaultPreparationApprovalURLIsPrintedInFull(t *testing.T) {
