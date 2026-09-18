@@ -134,14 +134,13 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 }
 
 func preservePublicCredentialValues(source, result vaultJSON) error {
-	type credentialDefinition struct {
+	type definition struct {
 		Name      string `json:"name"`
 		Type      string `json:"type"`
 		Sensitive *bool  `json:"sensitive"`
 	}
-	// Definitions are an ordered array keyed by name; state values stay keyed by name.
 	var spec struct {
-		Fields []credentialDefinition `json:"fields"`
+		Fields []definition `json:"fields"`
 	}
 	var values struct {
 		Fields map[string]struct {
@@ -152,9 +151,9 @@ func preservePublicCredentialValues(source, result vaultJSON) error {
 	if json.Unmarshal(source["spec"], &spec) != nil || json.Unmarshal(source["state"], &values) != nil || values.Fields == nil {
 		return nil
 	}
-	definitions := make(map[string]credentialDefinition, len(spec.Fields))
-	for _, definition := range spec.Fields {
-		definitions[definition.Name] = definition
+	definitions := make(map[string]definition, len(spec.Fields))
+	for _, field := range spec.Fields {
+		definitions[field.Name] = field
 	}
 	for name, field := range values.Fields {
 		definition := definitions[name]

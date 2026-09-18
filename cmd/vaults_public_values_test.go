@@ -44,6 +44,24 @@ func TestVaultPublicValuesAcrossCommands(t *testing.T) {
 	}
 }
 
+func TestVaultCredentialDefinitionOrderIsPreserved(t *testing.T) {
+	out, err := filterVaultJSON(json.RawMessage(publicCredentialFixture), vaultItemFields)
+	require.NoError(t, err)
+	var item struct {
+		Spec struct {
+			Fields []struct {
+				Name string `json:"name"`
+			} `json:"fields"`
+		} `json:"spec"`
+	}
+	require.NoError(t, json.Unmarshal(out, &item))
+	names := make([]string, 0, len(item.Spec.Fields))
+	for _, field := range item.Spec.Fields {
+		names = append(names, field.Name)
+	}
+	assert.Equal(t, []string{"username", "email", "password", "otp"}, names)
+}
+
 func TestVaultPublicValueBoundary(t *testing.T) {
 	for _, tc := range []struct {
 		kind, sensitive   string

@@ -22,12 +22,10 @@ card item types for credit cards and payment checkout instead.
 
 First create a vault for the end user and attach it with browsers create --vault.
 Use a protected JSON file or stdin, never secret values in shell arguments.
-The spec contains description and an ordered fields array. Each field carries a
-stable name (letters, digits, and underscores; must start with a letter) used to
-key values, updates, and browser fills. List fields in the same top-to-bottom
-order as the website: the collection form renders that order unchanged.
-Field types are text, email, password, and totp; definitions accept required,
-sensitive, and value.
+The spec contains description and fields as an ordered array of named definitions.
+Inspect the website and list fields in its natural top-to-bottom order because the
+user-facing collection form renders that order unchanged. Field types are text,
+email, password, and totp; definitions accept name, required, sensitive, and value.
 Set description to the recognizable site name only, e.g. "Hacker News", not
 "Hacker News sign-in credentials". This text is the user-facing form title.
 Set sensitive:false explicitly for ordinary usernames and email addresses.

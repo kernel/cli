@@ -64,7 +64,7 @@ func TestCredentialUpdateIdentityPrecondition(t *testing.T) {
 	}
 }
 
-func TestCredentialInitialValuesWithReleasedSDK(t *testing.T) {
+func TestCredentialInitialValuesWithGeneratedSDK(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
 	spec := `{"description":"Example","fields":[{"name":"username","type":"text","sensitive":false,"value":"synthetic-user"},{"name":"email","type":"email","sensitive":false,"value":"test@example.com"},{"name":"password","type":"password","sensitive":true,"value":"synthetic-password"},{"name":"otp","type":"totp","sensitive":true,"value":"JBSWY3DPEHPK3PXP"}]}`
 	calls := 0
