@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const publicCredentialFixture = `{"id":"credential-1","key":"login","type":"credential","version":2,"spec":{"description":"Example","fields":[{"name":"username","type":"text","sensitive":false},{"name":"email","type":"email","sensitive":false},{"name":"password","type":"password"},{"name":"otp","type":"totp","sensitive":true}]},"state":{"status":"ready","fields":{"username":{"has_value":true,"value":"user-123"},"email":{"has_value":true,"value":"user@example.com"},"password":{"has_value":true,"value":"private-password"},"otp":{"has_value":true,"value":"private-seed"}}},"action":{"name":"collect","url":"https://vault.example/collect#token=user-123.token"},"available_operations":[{"type":"collect","description":"Open form"}],"available_expansions":[]}`
+const publicCredentialFixture = `{"id":"credential-1","key":"login","type":"credential","version":2,"spec":{"description":"Example","fields":[{"name":"username","label":"Membership Number or Username","type":"text","sensitive":false},{"name":"email","type":"email","sensitive":false},{"name":"password","type":"password"},{"name":"otp","type":"totp","sensitive":true}]},"state":{"status":"ready","fields":{"username":{"has_value":true,"value":"user-123"},"email":{"has_value":true,"value":"user@example.com"},"password":{"has_value":true,"value":"private-password"},"otp":{"has_value":true,"value":"private-seed"}}},"action":{"name":"collect","url":"https://vault.example/collect#token=user-123.token"},"available_operations":[{"type":"collect","description":"Open form"}],"available_expansions":[]}`
 
 func TestVaultPublicValuesAcrossCommands(t *testing.T) {
 	spec := credentialSpecFile(t, `{"fields":[{"name":"username","type":"text","sensitive":false,"value":"user-123"}]}`)
@@ -50,7 +50,8 @@ func TestVaultCredentialDefinitionOrderIsPreserved(t *testing.T) {
 	var item struct {
 		Spec struct {
 			Fields []struct {
-				Name string `json:"name"`
+				Name  string `json:"name"`
+				Label string `json:"label"`
 			} `json:"fields"`
 		} `json:"spec"`
 	}
@@ -60,6 +61,8 @@ func TestVaultCredentialDefinitionOrderIsPreserved(t *testing.T) {
 		names = append(names, field.Name)
 	}
 	assert.Equal(t, []string{"username", "email", "password", "otp"}, names)
+	assert.Equal(t, "Membership Number or Username", item.Spec.Fields[0].Label)
+	assert.Empty(t, item.Spec.Fields[1].Label)
 }
 
 func TestVaultPublicValueBoundary(t *testing.T) {
