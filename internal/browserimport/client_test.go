@@ -63,6 +63,33 @@ func TestClientRunsBrowserImportLifecycleWithScopedTokens(t *testing.T) {
 	assert.Equal(t, "completed", status.Phase)
 }
 
+func TestCreateRetriesWithSameIdempotencyKey(t *testing.T) {
+	var calls atomic.Int32
+	var firstKey string
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		key := request.Header.Get("Idempotency-Key")
+		require.NotEmpty(t, key)
+		if calls.Add(1) == 1 {
+			firstKey = key
+			hijacker := response.(http.Hijacker)
+			connection, _, err := hijacker.Hijack()
+			require.NoError(t, err)
+			connection.Close()
+			return
+		}
+		assert.Equal(t, firstKey, key)
+		response.WriteHeader(http.StatusCreated)
+		fmt.Fprint(response, `{"id":"imp_1","helper_token":"helper","helper_token_expires_at":"2030-01-01T00:00:00Z"}`)
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, "token", "")
+	require.NoError(t, err)
+	created, err := client.Create(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "imp_1", created.ID)
+	assert.EqualValues(t, 2, calls.Load())
+}
+
 func TestClientRejectsUntrustedPlaintextAPI(t *testing.T) {
 	_, err := NewClient("http://api.example.com", "token", "")
 	assert.EqualError(t, err, "Kernel API URL must use HTTPS or local development")

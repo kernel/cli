@@ -3,6 +3,8 @@ package browserimport
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -53,9 +55,33 @@ func NewClient(baseURL, token, projectID string) (*Client, error) {
 }
 
 func (c *Client) Create(ctx context.Context) (CreateResponse, error) {
-	var result CreateResponse
-	err := c.doJSON(ctx, http.MethodPost, "/browser-imports", c.token, nil, &result)
-	return result, err
+	keyBytes := make([]byte, 16)
+	if _, err := rand.Read(keyBytes); err != nil {
+		return CreateResponse{}, fmt.Errorf("create browser import idempotency key: %w", err)
+	}
+	idempotencyKey := hex.EncodeToString(keyBytes)
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/browser-imports", nil)
+		if err != nil {
+			return CreateResponse{}, err
+		}
+		c.setHeaders(request, c.token)
+		request.Header.Set("Idempotency-Key", idempotencyKey)
+		response, err := c.http.Do(request)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		var result CreateResponse
+		err = decodeResponse(response, &result)
+		response.Body.Close()
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+	}
+	return CreateResponse{}, lastErr
 }
 
 func (c *Client) SubmitInventory(ctx context.Context, id, helperToken string, inventory Inventory) (Status, error) {
