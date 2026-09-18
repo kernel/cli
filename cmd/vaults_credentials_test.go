@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const credentialFixture = `{"id":"credential-1","key":"login","type":"credential","version":2,"spec":{"description":"Website login","fields":[{"name":"password","type":"password","required":true,"sensitive":true,"value":"never-print"}]},"state":{"status":"pending_collection","fields":{"password":{"has_value":false,"value":"never-print"}}},"action":{"name":"collect","url":"https://vault.kernel.sh/collect#token=item.random","expires_at":"2026-10-01T00:00:00Z"},"available_operations":[{"type":"collect","description":"Open the form"},{"type":"fill","description":"Fill the form"}],"available_expansions":[]}`
+const credentialFixture = `{"id":"credential-1","key":"login","type":"credential","version":2,"spec":{"description":"Website login","fields":[{"name":"password","label":"Account Password","type":"password","required":true,"sensitive":true,"value":"never-print"}]},"state":{"status":"pending_collection","fields":{"password":{"has_value":false,"value":"never-print"}}},"action":{"name":"collect","url":"https://vault.kernel.sh/collect#token=item.random","expires_at":"2026-10-01T00:00:00Z"},"available_operations":[{"type":"collect","description":"Open the form"},{"type":"fill","description":"Fill the form"}],"available_expansions":[]}`
 
 func credentialSpecFile(t *testing.T, data string) string {
 	t.Helper()
@@ -42,12 +42,12 @@ func TestCredentialCreateAndUpdate(t *testing.T) {
 					assert.JSONEq(t, `{"fields":{"password":{"value":null}}}`, string(body["spec"]))
 				} else {
 					assert.Equal(t, "PUT", r.Method)
-					assert.JSONEq(t, `{"fields":[{"name":"password","type":"password","required":true}]}`, string(body["spec"]))
+					assert.JSONEq(t, `{"fields":[{"name":"password","label":"Account Password","type":"password","required":true}]}`, string(body["spec"]))
 				}
 				w.Header().Set("Content-Type", "application/json")
 				io.WriteString(w, credentialFixture)
 			})
-			args := []string{"vaults", "credentials", "create", "user", "login", "--spec-file", credentialSpecFile(t, `{"fields":[{"name":"password","type":"password","required":true}]}`), "-o", "json"}
+			args := []string{"vaults", "credentials", "create", "user", "login", "--spec-file", credentialSpecFile(t, `{"fields":[{"name":"password","label":"Account Password","type":"password","required":true}]}`), "-o", "json"}
 			if update {
 				args[2] = "update"
 				args[6] = credentialSpecFile(t, `{"fields":{"password":{"value":null}}}`)
@@ -59,6 +59,7 @@ func TestCredentialCreateAndUpdate(t *testing.T) {
 			assert.NotContains(t, out, "never-print")
 			assert.Contains(t, out, `"has_value": false`)
 			assert.Contains(t, out, `"version": 2`)
+			assert.Contains(t, out, `"label": "Account Password"`)
 			assert.Contains(t, out, "#token=item.random")
 		})
 	}
