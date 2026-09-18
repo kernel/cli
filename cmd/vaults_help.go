@@ -69,7 +69,7 @@ type AgentCardCardSpec = {
   merchant: string;           // approval-screen name; 1..120 characters
   amount: number;             // integer minor units; 1..9007199254740991
   currency: string;           // three letters
-  card_id?: string;           // vc_...; otherwise chosen at approval
+  card_id?: string;           // opaque AgentCard ID, pass through unchanged; else chosen at approval
 };
 
 type LinkLineItem = {

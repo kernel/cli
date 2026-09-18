@@ -298,8 +298,17 @@ populated, not that login succeeded. `fill` requires an already-open page and ne
 navigates or submits it. Optional `page_url` selects the exact page; cards require it.
 Do not automatically retry failed/unknown fills or fall back to aliases.
 
+Create specs list `fields` as an ordered array. Each entry carries a stable `name`
+(letters, digits, and underscores, starting with a letter) that keys values, updates,
+and fills. Order is preserved: list fields in the same top-to-bottom order as the
+website, because the collection form renders that order unchanged. An optional `label`
+supplies non-secret display text for that field on the collection form; it never
+affects value keys, updates, or fills. Use a single trimmed line of at most 128 UTF-8
+bytes, and it is returned as metadata in `get`/`list` output.
+
 Use `credentials update <vault> <key> --version <version> --spec-file changes.json`
-with a spec such as `{"fields":{"password":{"value":"replacement"}}}`. Keep actual
+with a spec such as `{"fields":{"password":{"value":"replacement"}}}`; update specs key
+`fields` by name rather than using the ordered array. Keep actual
 secrets in protected files or stdin, never shell arguments. Omission preserves values;
 null or an empty string clears supported fields, including required text/email/password fields (returning them to pending collection). The form still requires nonempty required inputs. Field definitions cannot change. Stale versions fail,
 without retries. `items invoke <vault> <key> collect` reopens the full form without
