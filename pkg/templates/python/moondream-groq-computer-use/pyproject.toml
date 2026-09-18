@@ -1,0 +1,16 @@
+[project]
+name = "python-moondream-cua"
+version = "0.1.0"
+description = "Moondream computer use agent for Kernel"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "groq",
+    "httpx",
+    "json-repair",
+    "kernel",
+    "playwright",
+]
+
+[tool.uv]
+dev-dependencies = []
