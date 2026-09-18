@@ -36,4 +36,5 @@ func TestCredentialHelpSteering(t *testing.T) {
 	assert.Contains(t, cmd.Example, `"description":"Hacker News"`)
 	assert.Contains(t, cmd.Example, `"fields":[{"name":"username"`)
 	assert.Contains(t, cmd.Example, `"sensitive":false`)
+	assert.Contains(t, cmd.Long, "definitions accept name, label, required, sensitive")
 }
