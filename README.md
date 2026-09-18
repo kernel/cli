@@ -299,7 +299,10 @@ Do not automatically retry failed/unknown fills or fall back to aliases.
 Create specs list `fields` as an ordered array. Each entry carries a stable `name`
 (letters, digits, and underscores, starting with a letter) that keys values, updates,
 and fills. Order is preserved: list fields in the same top-to-bottom order as the
-website, because the collection form renders that order unchanged.
+website, because the collection form renders that order unchanged. An optional `label`
+supplies non-secret display text for that field on the collection form; it never
+affects value keys, updates, or fills. Use a single trimmed line of at most 128 UTF-8
+bytes, and it is returned as metadata in `get`/`list` output.
 
 Use `credentials update <vault> <key> --version <version> --spec-file changes.json`
 with a spec such as `{"fields":{"password":{"value":"replacement"}}}`; update specs key

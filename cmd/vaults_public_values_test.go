@@ -118,3 +118,41 @@ func TestVaultFillActionableErrors(t *testing.T) {
 		})
 	}
 }
+
+// label is non-secret display metadata: it must reach the API unchanged on create
+// and survive the display-safe output projection on every read.
+func TestVaultCredentialLabelsRoundTrip(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	spec := `{"description":"Hacker News","fields":[{"name":"username","label":"Username or email","type":"text","required":true,"sensitive":false},{"name":"password","label":"Password","type":"password","required":true,"sensitive":true}]}`
+	fixture := fmt.Sprintf(`{"id":"credential-1","key":"login","type":"credential","version":1,"spec":%s,"state":{"status":"pending_collection","fields":{"username":{"has_value":false},"password":{"has_value":false}}},"available_operations":[],"available_expansions":[]}`, spec)
+	sent := ""
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Spec struct {
+				Fields json.RawMessage `json:"fields"`
+			} `json:"spec"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		sent = string(body.Spec.Fields)
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, fixture)
+	})
+	out, _, err := executeVaultCommand(t, client, "vaults", "credentials", "create", "user-123", "login", "--spec-file", credentialSpecFile(t, spec), "-o", "json")
+	require.NoError(t, err)
+	assert.Contains(t, sent, `"label":"Username or email"`)
+	assert.Contains(t, sent, `"label":"Password"`)
+	assert.Contains(t, out, `"label": "Username or email"`)
+	assert.Contains(t, out, `"label": "Password"`)
+}
+
+// A label is metadata only; it must never carry a value into the output.
+func TestVaultCredentialLabelDoesNotExposeValues(t *testing.T) {
+	fixture := strings.Replace(publicCredentialFixture,
+		`{"name":"password","type":"password"}`,
+		`{"name":"password","label":"Password","type":"password"}`, 1)
+	require.NotEqual(t, publicCredentialFixture, fixture)
+	out, err := filterVaultJSON(json.RawMessage(fixture), vaultItemFields)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), `"label":"Password"`)
+	assert.NotContains(t, string(out), "private-password")
+}

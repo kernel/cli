@@ -25,7 +25,9 @@ Use a protected JSON file or stdin, never secret values in shell arguments.
 The spec contains description and fields as an ordered array of named definitions.
 Inspect the website and list fields in its natural top-to-bottom order because the
 user-facing collection form renders that order unchanged. Field types are text,
-email, password, and totp; definitions accept name, required, sensitive, and value.
+email, password, and totp; definitions accept name, label, required, sensitive, and value.
+Optional label is non-secret display text for the form; it never changes value keys,
+updates, or fills. Use a single trimmed line of at most 128 UTF-8 bytes.
 Set description to the recognizable site name only, e.g. "Hacker News", not
 "Hacker News sign-in credentials". This text is the user-facing form title.
 Set sensitive:false explicitly for ordinary usernames and email addresses.
