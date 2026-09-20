@@ -20,6 +20,7 @@ Supported targets:
   cursor      - Cursor editor
   claude      - Claude Desktop app
   claude-code - Claude Code CLI
+  antigravity - Google Antigravity
   windsurf    - Windsurf editor
   vscode      - Visual Studio Code
   goose       - Goose AI
@@ -118,6 +119,12 @@ func printPostInstallInstructions(target Target) {
 		pterm.Info.Println("Next steps:")
 		pterm.Println("  1. Run '/mcp' in the Claude Code REPL to authenticate")
 		pterm.Println("  2. The Kernel tools will then be available")
+
+	case TargetAntigravity:
+		pterm.Info.Println("Next steps:")
+		pterm.Println("  1. Reload the Antigravity window")
+		pterm.Println("  2. Open agent settings and click 'Authenticate' next to kernel on the Customizations tab")
+		pterm.Println("  3. Paste the authorization code from your browser back into the settings panel")
 
 	case TargetWindsurf:
 		pterm.Info.Println("Next steps:")

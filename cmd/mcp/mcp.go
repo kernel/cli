@@ -27,14 +27,15 @@ var MCPCmd = &cobra.Command{
 type Target string
 
 const (
-	TargetCursor     Target = "cursor"
-	TargetClaude     Target = "claude"
-	TargetClaudeCode Target = "claude-code"
-	TargetWindsurf   Target = "windsurf"
-	TargetVSCode     Target = "vscode"
-	TargetGoose      Target = "goose"
-	TargetZed        Target = "zed"
-	TargetFx         Target = "fx"
+	TargetCursor      Target = "cursor"
+	TargetClaude      Target = "claude"
+	TargetClaudeCode  Target = "claude-code"
+	TargetAntigravity Target = "antigravity"
+	TargetWindsurf    Target = "windsurf"
+	TargetVSCode      Target = "vscode"
+	TargetGoose       Target = "goose"
+	TargetZed         Target = "zed"
+	TargetFx          Target = "fx"
 )
 
 // KernelMCPURL is the URL for the Kernel MCP server
@@ -46,6 +47,7 @@ func AllTargets() []Target {
 		TargetCursor,
 		TargetClaude,
 		TargetClaudeCode,
+		TargetAntigravity,
 		TargetWindsurf,
 		TargetVSCode,
 		TargetGoose,
@@ -86,6 +88,8 @@ func getConfigPath(target Target) (string, error) {
 	case TargetClaudeCode:
 		// Claude Code uses the ~/.claude.json file
 		return filepath.Join(homeDir, ".claude.json"), nil
+	case TargetAntigravity:
+		return filepath.Join(homeDir, ".gemini", "config", "mcp_config.json"), nil
 	case TargetWindsurf:
 		return filepath.Join(homeDir, ".codeium", "windsurf", "mcp_config.json"), nil
 	case TargetVSCode:
@@ -327,6 +331,28 @@ func installForClaudeCode(configPath string) error {
 	return writeJSONFile(configPath, config)
 }
 
+// installForAntigravity installs MCP config for Google Antigravity
+func installForAntigravity(configPath string) error {
+	config, err := readJSONFile(configPath)
+	if err != nil {
+		return err
+	}
+
+	// Get or create mcpServers section
+	mcpServers, ok := config["mcpServers"].(map[string]interface{})
+	if !ok {
+		mcpServers = make(map[string]interface{})
+	}
+
+	// Antigravity keys remote servers off serverUrl; it ignores url and httpUrl
+	mcpServers["kernel"] = map[string]interface{}{
+		"serverUrl": KernelMCPURL,
+	}
+	config["mcpServers"] = mcpServers
+
+	return writeJSONFile(configPath, config)
+}
+
 // installForWindsurf installs MCP config for Windsurf
 func installForWindsurf(configPath string) error {
 	config, err := readJSONFile(configPath)
@@ -453,6 +479,8 @@ func Install(target Target) error {
 		return installForClaude(configPath)
 	case TargetClaudeCode:
 		return installForClaudeCode(configPath)
+	case TargetAntigravity:
+		return installForAntigravity(configPath)
 	case TargetWindsurf:
 		return installForWindsurf(configPath)
 	case TargetVSCode:

@@ -119,3 +119,95 @@ func TestInstallForFxClean(t *testing.T) {
 		t.Fatalf("config directory permissions = %o, want 700", got)
 	}
 }
+
+func TestInstallForAntigravity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	configPath := filepath.Join(home, ".gemini", "config", "mcp_config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	existing := `{
+  "mcpServers": {
+    "existing": {
+      "serverUrl": "https://example.com/mcp"
+    }
+  },
+  "setting": "preserved"
+}`
+	if err := os.WriteFile(configPath, []byte(existing), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Install(TargetAntigravity); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var config map[string]interface{}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config["setting"] != "preserved" {
+		t.Fatalf("setting = %v, want preserved", config["setting"])
+	}
+
+	servers, ok := config["mcpServers"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("mcpServers = %#v, want object", config["mcpServers"])
+	}
+	if _, ok := servers["existing"]; !ok {
+		t.Fatal("existing MCP server was removed")
+	}
+
+	kernel, ok := servers["kernel"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("kernel = %#v, want object", servers["kernel"])
+	}
+	if kernel["serverUrl"] != KernelMCPURL {
+		t.Fatalf("serverUrl = %v, want %s", kernel["serverUrl"], KernelMCPURL)
+	}
+	// Antigravity ignores url and httpUrl, so writing either would silently do nothing
+	if _, ok := kernel["url"]; ok {
+		t.Fatalf("kernel = %#v, want no url key", kernel)
+	}
+}
+
+func TestInstallForAntigravityClean(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	if err := Install(TargetAntigravity); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".gemini", "config", "mcp_config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var config map[string]interface{}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+
+	servers, ok := config["mcpServers"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("mcpServers = %#v, want object", config["mcpServers"])
+	}
+	kernel, ok := servers["kernel"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("kernel = %#v, want object", servers["kernel"])
+	}
+	if kernel["serverUrl"] != KernelMCPURL {
+		t.Fatalf("serverUrl = %v, want %s", kernel["serverUrl"], KernelMCPURL)
+	}
+}
