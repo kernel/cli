@@ -1069,7 +1069,7 @@ func (c AuthConnectionCmd) Timeline(ctx context.Context, in AuthConnectionTimeli
 		return nil
 	}
 
-	tableData := pterm.TableData{{"Timestamp", "Type", "Status", "Step", "Browser Session", "Telemetry", "Details"}}
+	tableData := pterm.TableData{{"Timestamp", "Completed", "Type", "Status", "Step", "Browser Session", "Telemetry", "Details"}}
 	for _, e := range events {
 		details := e.ErrorMessage
 		if details == "" {
@@ -1087,6 +1087,9 @@ func (c AuthConnectionCmd) Timeline(ctx context.Context, in AuthConnectionTimeli
 		}
 		tableData = append(tableData, []string{
 			util.FormatLocal(e.Timestamp),
+			// Absent (dashed out) for in-progress attempts, health checks, and
+			// older attempts recorded before completion times were persisted.
+			util.FormatLocal(e.CompletedAt),
 			string(e.Type),
 			string(e.Status),
 			string(e.Step),

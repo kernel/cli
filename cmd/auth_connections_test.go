@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
@@ -1223,7 +1224,8 @@ func TestTimeline_RendersEventsAndPagination(t *testing.T) {
 		"type": "login",
 		"status": "SUCCESS",
 		"browser_session_id": "browser_1",
-		"telemetry_captured": true
+		"telemetry_captured": true,
+		"completed_at": "2026-09-21T12:00:00Z"
 	}`), &loginEvent))
 	fake := &FakeAuthConnectionService{
 		TimelineFunc: func(ctx context.Context, id string, query kernel.AuthConnectionTimelineParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ManagedAuthTimelineEvent], error) {
@@ -1252,6 +1254,9 @@ func TestTimeline_RendersEventsAndPagination(t *testing.T) {
 	// Telemetry capture is reported for events that have a browser session.
 	assert.Contains(t, out, "Telemetry")
 	assert.Regexp(t, `browser_1.*yes`, out)
+	// completed_at is shown for terminal attempts and dashed out otherwise.
+	assert.Contains(t, out, "Completed")
+	assert.Contains(t, out, util.FormatLocal(time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)))
 	// The third event is truncated off the page.
 	assert.NotContains(t, out, "health_check")
 	assert.Contains(t, out, "Has more: yes")
