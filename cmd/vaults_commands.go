@@ -177,11 +177,13 @@ and corrective guidance; no fields were written by that request. Inspect and cor
 the cause before deciding on a new fill. Transport loss remains an uncertain outcome.
 prepare_checkout requires checkout.browser_id, checkout.merchant_origin (canonical HTTPS
 origin of the top-level merchant page, not a processor iframe), and checkout.environment
-(production, sandbox, or shared). Optional checkout.psp selects the tokenization processor:
-square, braintree, worldpay, bambora, or mercado_pago. Omit psp for Square; non-Square
+(production, sandbox, or shared). Optional checkout.psp selects the checkout processor:
+square, braintree, worldpay, bambora, mercado_pago, or adyen. Omit psp for Square; non-Square
 processors require multi-processor preparation enablement. Use production or sandbox for
-square, braintree and worldpay; shared for bambora and mercado_pago. Shared endpoints do not
-establish test mode; merchant credentials determine it.
+square, braintree, worldpay and adyen; shared for bambora and mercado_pago. Shared endpoints do
+not establish test mode; merchant credentials determine it. adyen prepares fresh-card Sessions
+requests on Adyen hosts only: fill public dummy card fields, not vault aliases. Adyen device
+approval and browser Authorised responses are not capture or fulfillment evidence.
 Use only when advertised for an AgentCard card. Keep the returned approval page open,
 poll until ready_to_submit, then submit native Pay before preparation.expires_at.
 Preparations are single-use, including after failure or expiry; never retry automatically.

@@ -108,7 +108,7 @@ func TestVaultPrepareCheckoutInvalidParams(t *testing.T) {
 	}
 	_, err := parseVaultCheckoutParams(strings.Replace(checkoutParamsFixture, "https://shop.example", "http://localhost:3000", 1))
 	require.NoError(t, err)
-	for _, psp := range []string{"square", "braintree", "worldpay", "bambora", "mercado_pago"} {
+	for _, psp := range []string{"square", "braintree", "worldpay", "bambora", "mercado_pago", "adyen"} {
 		params, err := parseVaultCheckoutParams(strings.Replace(checkoutParamsFixture, `"environment":`, `"psp":"`+psp+`","environment":`, 1))
 		require.NoError(t, err, psp)
 		assert.Equal(t, psp, string(params.Psp))

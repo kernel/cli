@@ -569,13 +569,20 @@ kernel vaults items get user-123 order-1 --wait 60 -o json
 this vault attached. `merchant_origin` is the canonical HTTPS origin of the top-level
 merchant document, not a processor iframe; HTTP localhost is allowed for tests.
 
-Optional `psp` selects the tokenization processor: `square`, `braintree`, `worldpay`,
-`bambora`, or `mercado_pago`. Omit it for Square; non-Square processors require
+Optional `psp` selects the checkout processor: `square`, `braintree`, `worldpay`,
+`bambora`, `mercado_pago`, or `adyen`. Omit it for Square; non-Square processors require
 multi-processor preparation enablement. `environment` is `production`, `sandbox`, or
-`shared`: use `production` or `sandbox` for Square, Braintree and Worldpay, and `shared`
-for Bambora and Mercado Pago. Shared endpoints do not establish test mode; merchant
+`shared`: use `production` or `sandbox` for Square, Braintree, Worldpay and Adyen, and
+`shared` for Bambora and Mercado Pago. Shared endpoints do not establish test mode; merchant
 credentials and configuration determine processor test mode, independently of the
 AgentCard credential mode.
+
+`adyen` supports fresh-card Sessions requests on Adyen hosts only. Fill the public dummy
+card fields rather than vault aliases, and keep the approval page open through device
+handoff, including Adyen encryption. The unique armed preparation is associated with the
+next eligible request from the declared browser and merchant origin; competing preparations
+are rejected. Adyen device approval and browser `Authorised` responses are not capture or
+fulfillment evidence.
 
 Keep the approval page open. Poll until the item's status is `ready_to_submit`, then
 submit native Pay before `state.preparation.expires_at`. Readiness lasts at most 30
