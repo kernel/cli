@@ -1395,3 +1395,43 @@ func TestAuthConnectionsGet_TelemetryRowOmittedWhenOff(t *testing.T) {
 	require.NoError(t, c.Get(context.Background(), AuthConnectionGetInput{ID: "conn-1"}))
 	assert.NotContains(t, outBuf.String(), "Browser Telemetry")
 }
+
+func TestLogin_SkillMode(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.AuthConnectionLoginParams
+	fake := &FakeAuthConnectionService{
+		LoginFunc: func(ctx context.Context, id string, body kernel.AuthConnectionLoginParams, opts ...option.RequestOption) (*kernel.LoginResponse, error) {
+			captured = body
+			return &kernel.LoginResponse{ID: id}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+	require.NoError(t, c.Login(context.Background(), AuthConnectionLoginInput{ID: "auth_1", SkillMode: "disabled"}))
+	assert.Equal(t, kernel.AuthConnectionLoginParamsSkillModeDisabled, captured.SkillMode)
+}
+
+// Omitting --skill-mode leaves the field unset, so the API keeps its default of
+// enabled rather than the CLI pinning a mode the user never asked for.
+func TestLogin_SkillModeOmitted(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.AuthConnectionLoginParams
+	fake := &FakeAuthConnectionService{
+		LoginFunc: func(ctx context.Context, id string, body kernel.AuthConnectionLoginParams, opts ...option.RequestOption) (*kernel.LoginResponse, error) {
+			captured = body
+			return &kernel.LoginResponse{ID: id}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+	require.NoError(t, c.Login(context.Background(), AuthConnectionLoginInput{ID: "auth_1"}))
+	assert.Empty(t, string(captured.SkillMode))
+}
+
+func TestLogin_InvalidSkillModeErrors(t *testing.T) {
+	capturePtermOutput(t)
+	c := AuthConnectionCmd{svc: &FakeAuthConnectionService{}}
+
+	err := c.Login(context.Background(), AuthConnectionLoginInput{ID: "auth_1", SkillMode: "mars"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid --skill-mode value")
+}
