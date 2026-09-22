@@ -142,13 +142,17 @@ func executeSearchRequest(cmd *cobra.Command, method, path string, body json.Raw
 			opts = append(opts, option.WithHeader("Idempotency-Key", key))
 		}
 	}
-	if err := client.Execute(cmd.Context(), method, path, body, &response, opts...); err != nil {
+	var requestBody any
+	if method == http.MethodPost {
+		requestBody = body
+	}
+	if err := client.Execute(cmd.Context(), method, path, requestBody, &response, opts...); err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 	data, err := json.MarshalIndent(response, "", "  ")
 	if err != nil {
 		return err
 	}
-	fmt.Println(string(data))
-	return nil
+	_, err = fmt.Fprintln(cmd.OutOrStdout(), string(data))
+	return err
 }
