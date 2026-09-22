@@ -44,7 +44,7 @@ func TestSearchCreate(t *testing.T) {
 		stdin, want string
 	}{
 		{"auto", []string{"test"}, "", `{"query":"test"}`},
-		{"pinned", []string{"test", "--provider", "exa", "--max-results", "5", "--idempotency-key", "search-001"}, "", `{"query":"test","max_results":5,"strategy":{"type":"pinned","provider":{"provider":"exa"}}}`},
+		{"pinned", []string{"test", "--provider", "exa", "--max-results", "5"}, "", `{"query":"test","max_results":5,"strategy":{"type":"pinned","provider":{"provider":"exa"}}}`},
 		{"inline", []string{"--request", advanced}, "", advanced},
 		{"stdin", []string{"--request-file", "-"}, advanced, advanced},
 		{"file", []string{"--request-file", path}, "", advanced},
@@ -58,9 +58,6 @@ func TestSearchCreate(t *testing.T) {
 				assert.Equal(t, "/search", r.URL.Path)
 				assert.Equal(t, "Bearer test", r.Header.Get("Authorization"))
 				assert.Equal(t, "project-test", r.Header.Get("X-Kernel-Project"))
-				if tc.name == "pinned" {
-					assert.Equal(t, "search-001", r.Header.Get("Idempotency-Key"))
-				}
 				data, err := io.ReadAll(r.Body)
 				require.NoError(t, err)
 				assert.JSONEq(t, tc.want, string(data))
@@ -104,7 +101,7 @@ func TestSearchReadCommands(t *testing.T) {
 func TestSearchInvalidInput(t *testing.T) {
 	for _, args := range [][]string{
 		{}, {" "}, {strings.Repeat("x", 2049)}, {"a", "b"}, {"test", "--provider", ""},
-		{"test", "--max-results", "0"}, {"test", "--max-results", "101"}, {"test", "--idempotency-key", ""},
+		{"test", "--max-results", "0"}, {"test", "--max-results", "101"},
 		{"--request", "null"}, {"--request", "[]"}, {"--request", "{"}, {"--request", `{}`}, {"--request", `{"query":1}`},
 		{"test", "--request", `{"query":"test"}`}, {"--request", `{}`, "--provider", "exa"},
 		{"--request", `{}`, "--max-results", "5"}, {"--request", `{}`, "--request-file", "-"},

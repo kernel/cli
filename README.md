@@ -159,8 +159,8 @@ kernel search get srch_123
 # Ordered fallback with portable filters and provider-native options
 kernel search --request '{"query":"browser automation","strategy":{"type":"fallback","providers":[{"provider":"exa"},{"provider":"brave"}],"fallback_on":["error","timeout","empty"]},"include_domains":["example.com"],"strict_params":true}'
 
-# Complete request from a file or stdin, with an optional replay key
-kernel search --request-file request.json --idempotency-key search-001
+# Complete request from a file or stdin
+kernel search --request-file request.json
 cat request.json | kernel search --request-file -
 ```
 
@@ -170,8 +170,8 @@ cat request.json | kernel search --request-file -
   They cannot be combined with a positional query, `--provider`, or `--max-results`.
   Provider-specific and advanced request validation is performed by the API.
 - Create requests are not automatically retried, to avoid duplicate billable
-  searches after an ambiguous failure. Reuse an `--idempotency-key` only with the
-  same request when replaying it manually.
+  searches after an ambiguous failure. If a request fails ambiguously, use
+  `search get` only when the API returned a retained search ID.
 - Retained searches return 404 when missing, expired, or inaccessible. Deferred
   content retrieval is not exposed because it is reserved but unavailable in the
   current API contract.

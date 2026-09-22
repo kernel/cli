@@ -28,7 +28,6 @@ func newSearchCommand() *cobra.Command {
 	cmd.Flags().Int("max-results", 10, "Requested result count (1–100; subject to provider cap)")
 	cmd.Flags().String("request", "", "Complete Search API request as a JSON object; cannot be combined with query flags")
 	cmd.Flags().String("request-file", "", "Complete Search API request file (use '-' for stdin)")
-	cmd.Flags().String("idempotency-key", "", "Idempotency key for safely replaying the same request")
 	cmd.MarkFlagsMutuallyExclusive("request", "request-file")
 	for _, input := range []string{"request", "request-file"} {
 		cmd.MarkFlagsMutuallyExclusive(input, "provider")
@@ -134,13 +133,6 @@ func executeSearchRequest(cmd *cobra.Command, method, path string, body json.Raw
 	if method == http.MethodPost {
 		// Avoid duplicate billable searches after an ambiguous failure.
 		opts = append(opts, option.WithMaxRetries(0))
-		if cmd.Flags().Changed("idempotency-key") {
-			key, _ := cmd.Flags().GetString("idempotency-key")
-			if strings.TrimSpace(key) == "" {
-				return fmt.Errorf("--idempotency-key must not be empty")
-			}
-			opts = append(opts, option.WithHeader("Idempotency-Key", key))
-		}
 	}
 	var requestBody any
 	if method == http.MethodPost {
