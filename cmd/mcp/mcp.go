@@ -344,14 +344,19 @@ func installForAntigravity(configPath string) error {
 		mcpServers = make(map[string]interface{})
 	}
 
-	// Merge into any existing entry so hand-added fields survive a reinstall.
-	// Antigravity keys remote servers off serverUrl and ignores url and httpUrl,
-	// so those are dropped rather than left behind looking meaningful.
+	// Antigravity's remote-server client can finish OAuth and still send
+	// initialize without the bearer token, so Kernel goes over stdio via
+	// mcp-remote like Claude Desktop, Windsurf and Zed.
+	//
+	// Merge into any existing entry so hand-added fields survive a reinstall;
+	// the remote-transport keys are dropped now that nothing reads them.
 	kernel, ok := mcpServers["kernel"].(map[string]interface{})
 	if !ok {
 		kernel = make(map[string]interface{})
 	}
-	kernel["serverUrl"] = KernelMCPURL
+	kernel["command"] = "npx"
+	kernel["args"] = []string{"-y", "mcp-remote", KernelMCPURL}
+	delete(kernel, "serverUrl")
 	delete(kernel, "url")
 	delete(kernel, "httpUrl")
 

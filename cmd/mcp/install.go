@@ -122,9 +122,9 @@ func printPostInstallInstructions(target Target) {
 
 	case TargetAntigravity:
 		pterm.Info.Println("Next steps:")
-		pterm.Println("  1. Reload the Antigravity window")
-		pterm.Println("  2. Open agent settings and click 'Authenticate' next to kernel on the Customizations tab")
-		pterm.Println("  3. Paste the authorization code from your browser back into the settings panel")
+		pterm.Println("  1. Go to Settings -> Customizations, scroll to Installed MCP Servers, click the reload button")
+		pterm.Println("  2. Complete the OAuth flow that opens in your browser")
+		pterm.Println("  3. Verify that Kernel appears connected in Antigravity")
 
 	case TargetWindsurf:
 		pterm.Info.Println("Next steps:")

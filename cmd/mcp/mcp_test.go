@@ -120,6 +120,33 @@ func TestInstallForFxClean(t *testing.T) {
 	}
 }
 
+func assertMCPRemoteShape(t *testing.T, kernel map[string]interface{}) {
+	t.Helper()
+
+	if kernel["command"] != "npx" {
+		t.Fatalf("command = %v, want npx", kernel["command"])
+	}
+	args, ok := kernel["args"].([]interface{})
+	if !ok {
+		t.Fatalf("args = %#v, want array", kernel["args"])
+	}
+	want := []string{"-y", "mcp-remote", KernelMCPURL}
+	if len(args) != len(want) {
+		t.Fatalf("args = %v, want %v", args, want)
+	}
+	for i, w := range want {
+		if args[i] != w {
+			t.Fatalf("args[%d] = %v, want %s", i, args[i], w)
+		}
+	}
+	// A leftover remote-transport key would misrepresent how the server is reached
+	for _, key := range []string{"serverUrl", "url", "httpUrl"} {
+		if _, ok := kernel[key]; ok {
+			t.Fatalf("kernel = %#v, want %s removed", kernel, key)
+		}
+	}
+}
+
 func TestInstallForAntigravity(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -171,13 +198,7 @@ func TestInstallForAntigravity(t *testing.T) {
 	if !ok {
 		t.Fatalf("kernel = %#v, want object", servers["kernel"])
 	}
-	if kernel["serverUrl"] != KernelMCPURL {
-		t.Fatalf("serverUrl = %v, want %s", kernel["serverUrl"], KernelMCPURL)
-	}
-	// Antigravity ignores url and httpUrl, so writing either would silently do nothing
-	if _, ok := kernel["url"]; ok {
-		t.Fatalf("kernel = %#v, want no url key", kernel)
-	}
+	assertMCPRemoteShape(t, kernel)
 }
 
 func TestInstallForAntigravityClean(t *testing.T) {
@@ -207,9 +228,7 @@ func TestInstallForAntigravityClean(t *testing.T) {
 	if !ok {
 		t.Fatalf("kernel = %#v, want object", servers["kernel"])
 	}
-	if kernel["serverUrl"] != KernelMCPURL {
-		t.Fatalf("serverUrl = %v, want %s", kernel["serverUrl"], KernelMCPURL)
-	}
+	assertMCPRemoteShape(t, kernel)
 }
 
 func TestInstallForAntigravityPreservesExistingKernelFields(t *testing.T) {
@@ -227,6 +246,7 @@ func TestInstallForAntigravityPreservesExistingKernelFields(t *testing.T) {
 	existing := `{
   "mcpServers": {
     "kernel": {
+      "serverUrl": "https://mcp.onkernel.com/stale",
       "url": "https://mcp.onkernel.com/stale",
       "httpUrl": "https://mcp.onkernel.com/stale",
       "headers": {
@@ -270,14 +290,7 @@ func TestInstallForAntigravityPreservesExistingKernelFields(t *testing.T) {
 		t.Fatalf("Authorization = %v, want the existing value", headers["Authorization"])
 	}
 
-	if kernel["serverUrl"] != KernelMCPURL {
-		t.Fatalf("serverUrl = %v, want %s", kernel["serverUrl"], KernelMCPURL)
-	}
-	for _, key := range []string{"url", "httpUrl"} {
-		if _, ok := kernel[key]; ok {
-			t.Fatalf("kernel = %#v, want %s removed", kernel, key)
-		}
-	}
+	assertMCPRemoteShape(t, kernel)
 
 	// The preserved headers block can hold an API key, so the file must not stay
 	// world-readable after a reinstall.
