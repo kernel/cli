@@ -26,6 +26,7 @@ Kernel provides sandboxed, ready-to-use Chrome browsers for browser automations 
 - Invoke app actions (sync or async) and stream logs
 - Create, list, view, and delete managed browser sessions
 - Get a live view URL for visual monitoring and remote control
+- Search the web across providers and retrieve page content for results
 
 ## Installation
 
@@ -1168,6 +1169,50 @@ Automated authentication for web services. The `run` command orchestrates the fu
 - `kernel org limits set` - Set the default per-project concurrency cap applied to projects without an explicit override
   - `--default-project-max-concurrent-sessions <n>` - Default maximum concurrent browsers for projects without an explicit override (`0` to remove the default)
   - `--output json`, `-o json` - Output raw JSON object
+
+### Search
+
+- `kernel search <query>` - Search the web through Kernel's search providers
+  - `--country <code>` - ISO 3166-1 alpha-2 search locale preference
+  - `--language <tag>` - BCP 47 search language preference
+  - `--max-results <n>` - Requested result count, 1-100 (clamped to the serving provider's cap)
+  - `--recency <window>` - Relative search window: `hour`, `day`, `week`, `month`, or `year`
+  - `--safe-search <level>` - Safety preference: `off`, `moderate`, or `strict`
+  - `--start-date <YYYY-MM-DD>` / `--end-date <YYYY-MM-DD>` - Inclusive publication-date bounds (`--recency` takes precedence)
+  - `--include-domains <hosts>` / `--exclude-domains <hosts>` - Hostname preferences, matching a hostname and its subdomains
+  - `--strict-params` - Require every supplied portable parameter to be honored exactly instead of approximated
+  - `--include-raw` - Include untouched provider payloads in the response's raw fields
+  - `--timeout-ms <ms>` - Overall deadline across search attempts and inline retrieval
+  - `--content` - Retrieve page content for each result using portable defaults
+  - `--show-content` - Print the extracted content text for each result (implies `--content`)
+  - `--content-source <source>` - Retrieval source: `auto`, `provider`, or `browser`
+  - `--content-format <format>` - Extracted content format: `markdown` or `text`
+  - `--content-max-chars <n>` - Per-result Unicode character limit after extraction
+  - `--content-max-age-hours <n>` - Maximum acceptable age of cached page content; `0` forces a live fetch
+  - `--content-timeout-ms <ms>` - Per-result retrieval deadline
+  - `--content-browser-id <id>` - Retrieve through an existing browser session (requires `--content-source browser`)
+  - `--content-browser-mode <mode>` - Browser retrieval mode: `curl` or `render`
+  - `--provider <slug>` - Pin a single provider (`brave`, `exa`, `perplexity`, `context`, `parallel`, `valyu`, `octen`, `you`, `tavily`, `serpapi`)
+  - `--fallback-providers <slugs>` - Ordered provider chain to try in turn
+  - `--fallback-on <outcomes>` - Outcomes that advance to the next provider: `error`, `timeout`, `empty`
+  - `--provider-options <json>` - Provider-native options as a JSON object keyed by provider slug
+  - `--output json`, `-o json` - Output raw JSON object
+- `kernel search get <id>` - Re-read a retained search without calling a provider or incurring cost
+  - `--show-content` - Print the extracted content text for each result
+  - `--output json`, `-o json` - Output raw JSON object
+- `kernel search providers` - List providers, result caps, and content capabilities
+  - `--slug <slug>` - Filter to a single provider; also prints its portable-parameter support matrix and notes
+  - `--output json`, `-o json` - Output raw JSON array
+- `kernel search contents <id>` - Deferred content retrieval for a retained search
+  - `--result-ids <ids>` - Result IDs from the retained search, in the desired response order
+  - `--limit <n>` - Number of results to fetch starting from rank 1 (mutually exclusive with `--result-ids`)
+  - `--timeout-ms <ms>` - Overall deadline across all selected results
+  - Accepts the same `--content-*` flags as `kernel search`
+  - This endpoint is reserved and returns 404 until deferred retrieval ships; use `kernel search --content` for inline retrieval
+
+Searches are retained for 24 hours. Omitting the strategy flags lets Kernel pick an
+eligible provider; portable filters a provider cannot honor are approximated or
+dropped and reported as warnings unless `--strict-params` is set.
 
 ## Examples
 
