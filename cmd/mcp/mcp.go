@@ -344,10 +344,18 @@ func installForAntigravity(configPath string) error {
 		mcpServers = make(map[string]interface{})
 	}
 
-	// Antigravity keys remote servers off serverUrl; it ignores url and httpUrl
-	mcpServers["kernel"] = map[string]interface{}{
-		"serverUrl": KernelMCPURL,
+	// Merge into any existing entry so hand-added fields survive a reinstall.
+	// Antigravity keys remote servers off serverUrl and ignores url and httpUrl,
+	// so those are dropped rather than left behind looking meaningful.
+	kernel, ok := mcpServers["kernel"].(map[string]interface{})
+	if !ok {
+		kernel = make(map[string]interface{})
 	}
+	kernel["serverUrl"] = KernelMCPURL
+	delete(kernel, "url")
+	delete(kernel, "httpUrl")
+
+	mcpServers["kernel"] = kernel
 	config["mcpServers"] = mcpServers
 
 	return writeJSONFile(configPath, config)

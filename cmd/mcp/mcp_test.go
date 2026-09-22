@@ -211,3 +211,71 @@ func TestInstallForAntigravityClean(t *testing.T) {
 		t.Fatalf("serverUrl = %v, want %s", kernel["serverUrl"], KernelMCPURL)
 	}
 }
+
+func TestInstallForAntigravityPreservesExistingKernelFields(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	configPath := filepath.Join(home, ".gemini", "config", "mcp_config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// headers carries the documented API-key workaround, and url is a stale key
+	// from an earlier install that Antigravity ignores.
+	existing := `{
+  "mcpServers": {
+    "kernel": {
+      "url": "https://mcp.onkernel.com/stale",
+      "httpUrl": "https://mcp.onkernel.com/stale",
+      "headers": {
+        "Authorization": "Bearer sk-test"
+      }
+    }
+  }
+}`
+	if err := os.WriteFile(configPath, []byte(existing), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Install(TargetAntigravity); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var config map[string]interface{}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+
+	servers, ok := config["mcpServers"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("mcpServers = %#v, want object", config["mcpServers"])
+	}
+	kernel, ok := servers["kernel"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("kernel = %#v, want object", servers["kernel"])
+	}
+
+	headers, ok := kernel["headers"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("headers = %#v, want the existing block preserved", kernel["headers"])
+	}
+	if headers["Authorization"] != "Bearer sk-test" {
+		t.Fatalf("Authorization = %v, want the existing value", headers["Authorization"])
+	}
+
+	if kernel["serverUrl"] != KernelMCPURL {
+		t.Fatalf("serverUrl = %v, want %s", kernel["serverUrl"], KernelMCPURL)
+	}
+	for _, key := range []string{"url", "httpUrl"} {
+		if _, ok := kernel[key]; ok {
+			t.Fatalf("kernel = %#v, want %s removed", kernel, key)
+		}
+	}
+}
