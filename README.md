@@ -145,21 +145,17 @@ OAuth authentication and global `--project` scope. Your organization must have
 Search API access enabled.
 
 ```bash
-# Discover providers and their capabilities
+# Discover currently configured providers and capabilities
 kernel search providers
-kernel search providers --slug exa
 
 # Automatic routing
 kernel search "Playwright browser automation" --max-results 5
 
-# Pin a provider
-kernel search "Playwright browser automation" --provider exa --max-results 5
-
 # Retrieve a retained result without another provider call or search charge
 kernel search get srch_01jsearchresult
 
-# Use an ordered fallback strategy or other advanced request fields
-kernel search --request '{"query":"browser automation","strategy":{"type":"fallback","providers":[{"provider":"exa"},{"provider":"brave"}],"fallback_on":["error","timeout","empty"]},"include_domains":["example.com"],"strict_params":true}'
+# Use portable filters or other advanced request fields
+kernel search --request '{"query":"browser automation","include_domains":["example.com"],"strict_params":true}'
 
 # Load a complete request from a file or stdin
 kernel search --request-file request.json
