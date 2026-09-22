@@ -137,6 +137,47 @@ Commands with JSON output support:
 - **Browser Sub-commands**: `replays list/start`, `process exec/spawn`, `fs file-info/list-files`, `webmcp list` (`webmcp invoke` always prints JSON output)
 - **Browser NDJSON streaming**: `telemetry stream`
 
+### Search
+
+Search commands always return the full API response as JSON, including results,
+warnings, provider attempts, usage, and expiry. They use the normal API key or
+OAuth authentication and global `--project` scope. Your organization must have
+Search API access enabled.
+
+```bash
+# Automatic routing (server defaults to 10 results)
+kernel search 'browser automation benchmarks'
+
+# Pin one provider; discover available slugs and capabilities first
+kernel search providers
+kernel search providers --slug exa
+kernel search 'browser automation benchmarks' --provider exa --max-results 5
+
+# Retrieve a retained result without another provider call or search charge
+kernel search get srch_123
+
+# Ordered fallback with portable filters and provider-native options
+kernel search --request '{"query":"browser automation","strategy":{"type":"fallback","providers":[{"provider":"exa"},{"provider":"brave"}],"fallback_on":["error","timeout","empty"]},"include_domains":["example.com"],"strict_params":true}'
+
+# Complete request from a file or stdin, with an optional replay key
+kernel search --request-file request.json --idempotency-key search-001
+cat request.json | kernel search --request-file -
+```
+
+- `--max-results` accepts 1–100; the API may clamp it to the provider cap.
+- `--request` and `--request-file` accept the complete Search API JSON object,
+  including `content`, `include_raw`, date/locale filters, and typed strategies.
+  They cannot be combined with a positional query, `--provider`, or `--max-results`.
+  Provider-specific and advanced request validation is performed by the API.
+- Create requests are not automatically retried, to avoid duplicate billable
+  searches after an ambiguous failure. Reuse an `--idempotency-key` only with the
+  same request when replaying it manually.
+- Retained searches return 404 when missing, expired, or inaccessible. Deferred
+  content retrieval is not exposed because it is reserved but unavailable in the
+  current API contract.
+- To search for a literal query equal to a subcommand name (`get` or `providers`),
+  use `--request '{"query":"providers"}'`.
+
 ### Authentication
 
 - `kernel login [--force]` - Login via OAuth 2.0
