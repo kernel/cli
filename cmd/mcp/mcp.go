@@ -358,7 +358,9 @@ func installForAntigravity(configPath string) error {
 	mcpServers["kernel"] = kernel
 	config["mcpServers"] = mcpServers
 
-	return writeJSONFile(configPath, config)
+	// Preserving headers means this file can now hold an API key, so it is
+	// written 0600 rather than world-readable.
+	return writePrivateJSONFile(configPath, config)
 }
 
 // installForWindsurf installs MCP config for Windsurf

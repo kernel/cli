@@ -278,4 +278,14 @@ func TestInstallForAntigravityPreservesExistingKernelFields(t *testing.T) {
 			t.Fatalf("kernel = %#v, want %s removed", kernel, key)
 		}
 	}
+
+	// The preserved headers block can hold an API key, so the file must not stay
+	// world-readable after a reinstall.
+	info, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("config permissions = %o, want 600", got)
+	}
 }
