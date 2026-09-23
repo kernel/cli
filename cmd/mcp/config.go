@@ -78,7 +78,7 @@ func appDataPath(home string) string {
 
 var targetSpecs = []targetSpec{
 	{target: TargetCursor, description: "Cursor editor", path: homePath(".cursor", "mcp.json"), section: "mcpServers", transport: http,
-		fields: []configField{{name: "url", value: KernelMCPURL}}},
+		fields: []configField{{name: "url", value: KernelMCPURL}}, remove: []string{"type"}},
 	{target: TargetClaude, description: "Claude Desktop app", path: claudePath, section: "mcpServers", transport: stdio},
 	{target: TargetClaudeCode, description: "Claude Code CLI", path: homePath(".claude.json"), section: "mcpServers", transport: http,
 		fields: []configField{{name: "type", value: "http"}, {name: "url", value: KernelMCPURL}}},

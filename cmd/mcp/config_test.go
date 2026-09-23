@@ -78,6 +78,7 @@ func TestInstallPreservesTargetConfigs(t *testing.T) {
 						"httpUrl":   "https://old.example",
 						"command":   "old",
 						"args":      []any{"old"},
+						"type":      "stdio",
 					},
 				},
 			}
@@ -136,6 +137,13 @@ func TestInstallPreservesTargetConfigs(t *testing.T) {
 			} else {
 				if kernel["url"] != KernelMCPURL || kernel["command"] != nil || kernel["args"] != nil {
 					t.Fatalf("HTTP entry = %#v", kernel)
+				}
+				if tc.target == TargetCursor {
+					if _, exists := kernel["type"]; exists {
+						t.Fatal("stale Cursor transport type retained")
+					}
+				} else if kernel["type"] != "http" {
+					t.Fatalf("HTTP transport type = %#v", kernel["type"])
 				}
 				if tc.target == TargetFx {
 					if !reflect.DeepEqual(kernel["oauth"], map[string]any{"clientId": "custom"}) {
