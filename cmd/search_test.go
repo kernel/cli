@@ -6,8 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -36,8 +34,6 @@ func executeSearchCommand(t *testing.T, handler http.HandlerFunc, stdin string, 
 
 func TestSearchCreate(t *testing.T) {
 	const advanced = `{"query":"test","strategy":{"type":"fallback","providers":[{"provider":"exa","options":{"type":"auto"}},{"provider":"brave"}],"fallback_on":["error","timeout","empty"]},"content":true,"strict_params":true,"include_raw":true,"include_domains":["example.com"]}`
-	path := filepath.Join(t.TempDir(), "request.json")
-	require.NoError(t, os.WriteFile(path, []byte(advanced), 0600))
 	for _, tc := range []struct {
 		name        string
 		args        []string
@@ -45,9 +41,7 @@ func TestSearchCreate(t *testing.T) {
 	}{
 		{"auto", []string{"test"}, "", `{"query":"test"}`},
 		{"pinned", []string{"test", "--provider", "exa", "--max-results", "5"}, "", `{"query":"test","max_results":5,"strategy":{"type":"pinned","provider":{"provider":"exa"}}}`},
-		{"inline", []string{"--request", advanced}, "", advanced},
-		{"stdin", []string{"--request-file", "-"}, advanced, advanced},
-		{"file", []string{"--request-file", path}, "", advanced},
+		{"advanced request", []string{"--request", advanced}, "", advanced},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
@@ -104,8 +98,8 @@ func TestSearchInvalidInput(t *testing.T) {
 		{"test", "--max-results", "0"}, {"test", "--max-results", "101"},
 		{"--request", "null"}, {"--request", "[]"}, {"--request", "{"}, {"--request", `{}`}, {"--request", `{"query":1}`},
 		{"test", "--request", `{"query":"test"}`}, {"--request", `{}`, "--provider", "exa"},
-		{"--request", `{}`, "--max-results", "5"}, {"--request", `{}`, "--request-file", "-"},
-		{"--request-file", "/nonexistent/search-request.json"}, {"get"}, {"providers", "extra"},
+		{"--request", `{}`, "--max-results", "5"}, {"--request-file", "request.json"},
+		{"get"}, {"providers", "extra"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			_, err := executeSearchCommand(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unexpected API call") }, "", args...)

@@ -3,10 +3,8 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"unicode/utf8"
 
@@ -17,22 +15,20 @@ import (
 
 func newSearchCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "search [query]",
-		Short:   "Search the web and return the full result as JSON",
-		Long:    "Search the web using automatic routing or a pinned provider. Returns the full JSON resource, including warnings, attempts, usage, and expiry. Use --request or --request-file for the complete Search API request, including fallback strategies, portable filters, content, and provider-native options. Requires Search API access for your organization.",
-		Example: "  kernel search 'browser automation' --provider exa --max-results 5\n  kernel search --request-file request.json\n  kernel search get srch_123\n  kernel search providers --slug exa",
+		Use:   "search [query]",
+		Short: "Search the web and return the full result as JSON",
+		Long: "Search the web using automatic routing or a pinned provider. Returns the full JSON resource, including warnings, attempts, usage, and expiry.\n\n" +
+			"Use --request with a JSON object for advanced searches. The request schema includes query (required), max_results, strategy (auto, pinned, or fallback), content, include_raw, include_domains, exclude_domains, date and locale filters, strict_params, and provider-specific options. Strategy objects accept provider configuration; fallback strategies also accept fallback_on. The API validates provider-specific and advanced fields.\n\n" +
+			"Requires Search API access for your organization.",
+		Example: "  kernel search 'browser automation' --provider exa --max-results 5\n  kernel search --request '{\"query\":\"browser automation\",\"include_domains\":[\"example.com\"],\"strict_params\":true}'\n  kernel search get srch_123\n  kernel search providers --slug exa",
 		Args:    cobra.MaximumNArgs(1),
 		RunE:    runSearch,
 	}
 	cmd.Flags().String("provider", "", "Pin a provider slug (default: automatic routing)")
 	cmd.Flags().Int("max-results", 10, "Requested result count (1–100; subject to provider cap)")
 	cmd.Flags().String("request", "", "Complete Search API request as a JSON object; cannot be combined with query flags")
-	cmd.Flags().String("request-file", "", "Complete Search API request file (use '-' for stdin)")
-	cmd.MarkFlagsMutuallyExclusive("request", "request-file")
-	for _, input := range []string{"request", "request-file"} {
-		cmd.MarkFlagsMutuallyExclusive(input, "provider")
-		cmd.MarkFlagsMutuallyExclusive(input, "max-results")
-	}
+	cmd.MarkFlagsMutuallyExclusive("request", "provider")
+	cmd.MarkFlagsMutuallyExclusive("request", "max-results")
 	get := &cobra.Command{Use: "get <id>", Short: "Retrieve a retained search as JSON without running it again", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if strings.TrimSpace(args[0]) == "" {
 			return fmt.Errorf("search ID must not be empty")
@@ -54,25 +50,11 @@ func newSearchCommand() *cobra.Command {
 
 func runSearch(cmd *cobra.Command, args []string) error {
 	var body json.RawMessage
-	if cmd.Flags().Changed("request") || cmd.Flags().Changed("request-file") {
+	if cmd.Flags().Changed("request") {
 		if len(args) != 0 {
-			return fmt.Errorf("query cannot be combined with --request or --request-file")
+			return fmt.Errorf("query cannot be combined with --request")
 		}
 		input, _ := cmd.Flags().GetString("request")
-		if cmd.Flags().Changed("request-file") {
-			path, _ := cmd.Flags().GetString("request-file")
-			var data []byte
-			var err error
-			if path == "-" {
-				data, err = io.ReadAll(cmd.InOrStdin())
-			} else {
-				data, err = os.ReadFile(path)
-			}
-			if err != nil {
-				return fmt.Errorf("read search request: %w", err)
-			}
-			input = string(data)
-		}
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(input), &fields); err != nil {
 			return fmt.Errorf("search request must be a JSON object: %w", err)
@@ -90,7 +72,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		body = json.RawMessage(input)
 	} else {
 		if len(args) != 1 {
-			return fmt.Errorf("provide a query or --request/--request-file")
+			return fmt.Errorf("provide a query or --request")
 		}
 		if err := validateSearchQuery(args[0]); err != nil {
 			return err

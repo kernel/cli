@@ -156,17 +156,14 @@ kernel search get srch_01jsearchresult
 
 # Use portable filters or other advanced request fields
 kernel search --request '{"query":"browser automation","include_domains":["example.com"],"strict_params":true}'
-
-# Load a complete request from a file or stdin
-kernel search --request-file request.json
-cat request.json | kernel search --request-file -
 ```
 
 - `--max-results` accepts 1–100; the API may clamp it to the provider cap.
-- `--request` and `--request-file` accept the complete Search API JSON object,
-  including `content`, `include_raw`, date/locale filters, and typed strategies.
-  They cannot be combined with a positional query, `--provider`, or `--max-results`.
-  Provider-specific and advanced request validation is performed by the API.
+- `--request` accepts the complete Search API JSON object, including `max_results`,
+  typed strategies (`auto`, `pinned`, or `fallback`), portable filters, `content`,
+  `include_raw`, date/locale filters, and provider-specific options. It cannot be
+  combined with a positional query, `--provider`, or `--max-results`. Provider-specific
+  and advanced request validation is performed by the API.
 - Create requests are not automatically retried, to avoid duplicate billable
   searches after an ambiguous failure. If a request fails ambiguously, use
   `search get` only when the API returned a retained search ID.
