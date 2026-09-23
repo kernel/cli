@@ -10,7 +10,11 @@ import (
 )
 
 func TestGooseConfigNamesOAuthClient(t *testing.T) {
-	config := gooseConfig("Goose", "/home/example/.mcp-auth/kernel-goose")
+	spec, _ := specFor(TargetGoose)
+	config := gooseConfig(spec, "/home/example/.mcp-auth/kernel-goose")
+	if !strings.Contains(config, "      - https://mcp.onkernel.com/mcp\n      - \"46096\"\n") {
+		t.Fatalf("Goose config missing separate callback port: %s", config)
+	}
 	if !strings.Contains(config, "      - --static-oauth-client-metadata\n      - '{\"client_name\":\"Goose\"}'") {
 		t.Fatalf("Goose config missing client metadata: %s", config)
 	}
@@ -144,7 +148,7 @@ func assertMCPRemoteShape(t *testing.T, kernel map[string]interface{}) {
 	if !ok {
 		t.Fatalf("args = %#v, want array", kernel["args"])
 	}
-	want := []string{"-y", "mcp-remote", KernelMCPURL, "--static-oauth-client-metadata", `{"client_name":"Antigravity"}`}
+	want := []string{"-y", "mcp-remote", KernelMCPURL, "46094", "--static-oauth-client-metadata", `{"client_name":"Antigravity"}`}
 	if len(args) != len(want) {
 		t.Fatalf("args = %v, want %v", args, want)
 	}

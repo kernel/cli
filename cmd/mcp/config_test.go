@@ -44,15 +44,16 @@ func TestInstallPreservesTargetConfigs(t *testing.T) {
 		section string
 		stdio   bool
 		name    string
+		port    string
 	}{
-		{TargetCursor, "mcpServers", false, ""},
-		{TargetClaude, "mcpServers", true, "Claude Desktop"},
-		{TargetClaudeCode, "mcpServers", false, ""},
-		{TargetAntigravity, "mcpServers", true, "Antigravity"},
-		{TargetWindsurf, "mcpServers", true, "Windsurf"},
-		{TargetVSCode, "servers", false, ""},
-		{TargetZed, "context_servers", true, "Zed"},
-		{TargetFx, "mcp", false, ""},
+		{TargetCursor, "mcpServers", false, "", ""},
+		{TargetClaude, "mcpServers", true, "Claude Desktop", "46093"},
+		{TargetClaudeCode, "mcpServers", false, "", ""},
+		{TargetAntigravity, "mcpServers", true, "Antigravity", "46094"},
+		{TargetWindsurf, "mcpServers", true, "Windsurf", "46095"},
+		{TargetVSCode, "servers", false, "", ""},
+		{TargetZed, "context_servers", true, "Zed", "46097"},
+		{TargetFx, "mcp", false, "", ""},
 	}
 	if got := AllTargets(); len(got) != len(targets)+1 {
 		t.Fatalf("registered targets = %d, want %d including Goose", len(got), len(targets)+1)
@@ -127,11 +128,11 @@ func TestInstallPreservesTargetConfigs(t *testing.T) {
 				if args[0] != "-y" || args[1] != "mcp-remote" || args[2] != KernelMCPURL {
 					t.Fatalf("stdio args = %#v", args)
 				}
-				if len(args) != 5 || args[3] != "--static-oauth-client-metadata" {
+				if len(args) != 6 || args[3] != tc.port || args[4] != "--static-oauth-client-metadata" {
 					t.Fatalf("stdio metadata args = %#v", args)
 				}
 				var metadata map[string]string
-				if err := json.Unmarshal([]byte(args[4].(string)), &metadata); err != nil || metadata["client_name"] != tc.name {
+				if err := json.Unmarshal([]byte(args[5].(string)), &metadata); err != nil || metadata["client_name"] != tc.name {
 					t.Fatalf("stdio client metadata = %#v: %v", metadata, err)
 				}
 				cacheDir := kernel["env"].(map[string]any)["MCP_REMOTE_CONFIG_DIR"]
@@ -629,7 +630,9 @@ func TestInstallVSCodeWriteFailureDoesNotChmodLegacy(t *testing.T) {
 }
 
 func TestInstallPreservesMCPRemoteOptions(t *testing.T) {
-	for _, target := range []Target{TargetClaude, TargetAntigravity, TargetWindsurf, TargetZed} {
+	for target, port := range map[Target]string{
+		TargetClaude: "46093", TargetAntigravity: "46094", TargetWindsurf: "46095", TargetZed: "46097",
+	} {
 		t.Run(string(target), func(t *testing.T) {
 			testHome(t)
 			path, err := GetConfigPath(target)
@@ -657,14 +660,14 @@ func TestInstallPreservesMCPRemoteOptions(t *testing.T) {
 			}
 			config := readTestConfig(t, path)
 			args := config[spec.section].(map[string]any)["kernel"].(map[string]any)["args"].([]any)
-			if args[1] != "mcp-remote@latest" || args[2] != KernelMCPURL || args[3] != "--header-file" || args[4] != "/private/headers.txt" {
+			if len(args) != 8 || args[1] != "mcp-remote@latest" || args[2] != KernelMCPURL || args[3] != port || args[4] != "--header-file" || args[5] != "/private/headers.txt" {
 				t.Fatalf("custom args lost: %#v", args)
 			}
-			if len(args) != 7 || args[5] != "--static-oauth-client-metadata" {
+			if args[6] != "--static-oauth-client-metadata" {
 				t.Fatalf("client metadata missing: %#v", args)
 			}
 			var metadata map[string]any
-			if err := json.Unmarshal([]byte(args[6].(string)), &metadata); err != nil {
+			if err := json.Unmarshal([]byte(args[7].(string)), &metadata); err != nil {
 				t.Fatal(err)
 			}
 			if metadata["client_name"] != spec.clientName || metadata["scope"] != "read" || metadata["token_endpoint_auth_method"] != "none" {
@@ -673,6 +676,40 @@ func TestInstallPreservesMCPRemoteOptions(t *testing.T) {
 			env := config[spec.section].(map[string]any)["kernel"].(map[string]any)["env"].(map[string]any)
 			if env["CUSTOM"] != "keep" || env["MCP_REMOTE_CONFIG_DIR"] == nil {
 				t.Fatalf("stdio environment changed: %#v", env)
+			}
+		})
+	}
+}
+
+func TestInstallPreservesExplicitCallbackPort(t *testing.T) {
+	for _, target := range []Target{TargetClaude, TargetAntigravity, TargetWindsurf, TargetZed} {
+		t.Run(string(target), func(t *testing.T) {
+			testHome(t)
+			path, err := GetConfigPath(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := Install(target); err != nil {
+				t.Fatal(err)
+			}
+			config := readTestConfig(t, path)
+			spec, _ := specFor(target)
+			kernel := config[spec.section].(map[string]any)["kernel"].(map[string]any)
+			args := []any{"-y", "mcp-remote@latest", KernelMCPURL, "54321", "--host", "127.0.0.1", "--static-oauth-client-metadata", clientMetadata(spec.clientName)}
+			kernel["args"] = args
+			data, err := json.Marshal(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := Install(target); err != nil {
+				t.Fatal(err)
+			}
+			got := readTestConfig(t, path)[spec.section].(map[string]any)["kernel"].(map[string]any)["args"]
+			if !reflect.DeepEqual(got, args) {
+				t.Fatalf("custom callback args = %#v, want %#v", got, args)
 			}
 		})
 	}
