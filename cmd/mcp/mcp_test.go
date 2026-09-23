@@ -5,8 +5,22 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
+
+func TestGooseConfigNamesOAuthClient(t *testing.T) {
+	config := gooseConfig("Goose", "/home/example/.mcp-auth/kernel-goose")
+	if !strings.Contains(config, "      - --static-oauth-client-metadata\n      - '{\"client_name\":\"Goose\"}'") {
+		t.Fatalf("Goose config missing client metadata: %s", config)
+	}
+	if !strings.Contains(config, "MCP_REMOTE_CONFIG_DIR: \"/home/example/.mcp-auth/kernel-goose\"") {
+		t.Fatalf("Goose config missing separate auth cache: %s", config)
+	}
+	if !strings.Contains(config, "    enabled: true") {
+		t.Fatalf("Goose config missing enabled flag: %s", config)
+	}
+}
 
 func TestInstallForFx(t *testing.T) {
 	home := t.TempDir()
