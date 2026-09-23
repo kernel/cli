@@ -3231,7 +3231,7 @@ followed automatically by Chromium.`,
 	telemetryEvents.Flags().String("since", "", "Window start: RFC-3339 timestamp or a duration like 5m (default 5m). Ignored when --offset is set")
 	telemetryEvents.Flags().String("until", "", "Window end (exclusive): RFC-3339 timestamp or a duration like 5m")
 	telemetryEvents.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,connection,system,screenshot,captcha,monitor)")
-	telemetryEvents.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error); walks every page in the window")
+	telemetryEvents.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. page_crashed,captcha_challenge_result); combines with --categories, an event must match both")
 	telemetryEvents.Flags().Bool("all", false, "Walk every page in the window instead of just the first (ignores --offset)")
 	addJSONOutputFlag(telemetryEvents)
 	telemetryRoot.AddCommand(telemetryEvents)
