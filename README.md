@@ -138,6 +138,42 @@ Commands with JSON output support:
 - **Browser Sub-commands**: `replays list/start`, `process exec/spawn`, `fs file-info/list-files`, `webmcp list` (`webmcp invoke` always prints JSON output)
 - **Browser NDJSON streaming**: `telemetry stream`
 
+### Search
+
+Search commands always return the full API response as JSON, including results,
+warnings, provider attempts, usage, and expiry. They use the normal API key or
+OAuth authentication and global `--project` scope. Your organization must have
+Search API access enabled.
+
+```bash
+# Discover currently configured providers and capabilities
+kernel search providers
+
+# Automatic routing
+kernel search "Playwright browser automation" --max-results 5
+
+# Retrieve a retained result without another provider call or search charge
+kernel search get srch_01jsearchresult
+
+# Use portable filters or other advanced request fields
+kernel search --request '{"query":"browser automation","include_domains":["example.com"],"strict_params":true}'
+```
+
+- `--max-results` accepts 1–100; the API may clamp it to the provider cap.
+- `--request` accepts the complete Search API JSON object, including `max_results`,
+  typed strategies (`auto`, `pinned`, or `fallback`), portable filters, `content`,
+  `include_raw`, date/locale filters, and provider-specific options. It cannot be
+  combined with a positional query, `--provider`, or `--max-results`. Provider-specific
+  and advanced request validation is performed by the API.
+- Create requests are not automatically retried, to avoid duplicate billable
+  searches after an ambiguous failure. If a request fails ambiguously, use
+  `search get` only when the API returned a retained search ID.
+- Retained searches return 404 when missing, expired, or inaccessible. Deferred
+  content retrieval is not exposed because it is reserved but unavailable in the
+  current API contract.
+- To search for a literal query equal to a subcommand name (`get` or `providers`),
+  use `--request '{"query":"providers"}'`.
+
 ### Authentication
 
 - `kernel login [--force]` - Login via OAuth 2.0
