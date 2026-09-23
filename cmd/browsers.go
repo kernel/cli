@@ -3271,15 +3271,19 @@ func runBrowsersList(cmd *cobra.Command, args []string) error {
 // this set so they correctly surface that warning rather than being silently ignored.
 func poolLeaseAllowedFlags() map[string]bool {
 	return map[string]bool{
-		"pool-id":   true,
-		"pool-name": true,
-		"timeout":   true,
-		"name":      true,
-		"start-url": true,
-		"tag":       true,
-		"telemetry": true,
-		"output":    true,
-		"yes":       true,
+		"pool-id":               true,
+		"pool-name":             true,
+		"timeout":               true,
+		"name":                  true,
+		"start-url":             true,
+		"tag":                   true,
+		"telemetry":             true,
+		"telemetry-cdp-exclude": true,
+		"profile-id":            true,
+		"profile-name":          true,
+		"save-changes":          true,
+		"output":                true,
+		"yes":                   true,
 		// Global persistent flags that don't configure browsers
 		"no-color":  true,
 		"log-level": true,
@@ -3338,7 +3342,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 
 	if poolID != "" || poolName != "" {
 		// When using a pool, configuration comes from the pool itself, but
-		// name, start URL, tags, and telemetry apply per-lease to the acquired
+		// name, start URL, tags, telemetry, and profile apply per-lease to the acquired
 		// session — they mirror the fields BrowserPoolAcquireParams accepts.
 		allowedFlags := poolLeaseAllowedFlags()
 
@@ -3389,7 +3393,11 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("timeout") && timeout > 0 {
 			acquireTimeout = int64(timeout)
 		}
-		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry, telemetryCdpExclude, startURL)
+		acquireProfile, err := buildAcquireProfileParam(profileID, profileName, saveChanges)
+		if err != nil {
+			return err
+		}
+		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry, telemetryCdpExclude, startURL, acquireProfile)
 		if err != nil {
 			return err
 		}

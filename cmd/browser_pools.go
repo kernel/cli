@@ -551,16 +551,42 @@ type BrowserPoolsAcquireInput struct {
 	Tags                map[string]string
 	Telemetry           string
 	TelemetryCdpExclude string
+	ProfileID           string
+	ProfileName         string
+	ProfileSaveChanges  bool
 	Output              string
+}
+
+// buildAcquireProfileParam validates the --profile-id/--profile-name/--save-changes
+// flags for a pool acquire and converts them to the per-lease profile param.
+// Browsers loaded with an acquire-time profile are destroyed on release rather
+// than returned to the pool.
+func buildAcquireProfileParam(profileID, profileName string, saveChanges bool) (kernel.BrowserProfileParam, error) {
+	if profileID != "" && profileName != "" {
+		return kernel.BrowserProfileParam{}, fmt.Errorf("must specify at most one of --profile-id or --profile-name")
+	}
+	if profileID == "" && profileName == "" {
+		if saveChanges {
+			return kernel.BrowserProfileParam{}, fmt.Errorf("--save-changes requires --profile-id or --profile-name")
+		}
+		return kernel.BrowserProfileParam{}, nil
+	}
+	profile := kernel.BrowserProfileParam{SaveChanges: kernel.Opt(saveChanges)}
+	if profileID != "" {
+		profile.ID = kernel.Opt(profileID)
+	} else {
+		profile.Name = kernel.Opt(profileName)
+	}
+	return profile, nil
 }
 
 // buildAcquireParams builds the SDK params for acquiring a browser from a pool.
 // Shared by `browser-pools acquire` and the `browsers create --pool-id/--pool-name`
-// path so the per-lease name/tags/start-url/telemetry forwarding cannot silently
+// path so the per-lease name/tags/start-url/telemetry/profile forwarding cannot silently
 // diverge between them. The telemetry override merges onto the pool's config for
 // this lease.
-func buildAcquireParams(name string, tags map[string]string, timeoutSeconds int64, telemetry, telemetryCdpExclude, startURL string) (kernel.BrowserPoolAcquireParams, error) {
-	params := kernel.BrowserPoolAcquireParams{}
+func buildAcquireParams(name string, tags map[string]string, timeoutSeconds int64, telemetry, telemetryCdpExclude, startURL string, profile kernel.BrowserProfileParam) (kernel.BrowserPoolAcquireParams, error) {
+	params := kernel.BrowserPoolAcquireParams{Profile: profile}
 	if timeoutSeconds > 0 {
 		params.AcquireTimeoutSeconds = kernel.Int(timeoutSeconds)
 	}
@@ -588,7 +614,11 @@ func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInpu
 		return err
 	}
 
-	params, err := buildAcquireParams(in.Name, in.Tags, in.TimeoutSeconds, in.Telemetry, in.TelemetryCdpExclude, in.StartURL)
+	profile, err := buildAcquireProfileParam(in.ProfileID, in.ProfileName, in.ProfileSaveChanges)
+	if err != nil {
+		return err
+	}
+	params, err := buildAcquireParams(in.Name, in.Tags, in.TimeoutSeconds, in.Telemetry, in.TelemetryCdpExclude, in.StartURL, profile)
 	if err != nil {
 		return err
 	}
@@ -622,6 +652,16 @@ func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInpu
 	)
 	if resp.StartURL != "" {
 		tableData = append(tableData, []string{"Start URL", resp.StartURL})
+	}
+	if resp.Profile.ID != "" || resp.Profile.Name != "" {
+		profVal := resp.Profile.Name
+		if profVal == "" {
+			profVal = resp.Profile.ID
+		}
+		tableData = append(tableData,
+			[]string{"Profile", profVal},
+			[]string{"Profile Save Changes", fmt.Sprintf("%t", resp.ProfileSaveChanges)},
+		)
 	}
 	if len(resp.Tags) > 0 {
 		tableData = append(tableData, []string{"Tags", formatTags(resp.Tags)})
@@ -801,6 +841,9 @@ func init() {
 	browserPoolsAcquireCmd.Flags().String("start-url", "", "URL to navigate the acquired browser to, overriding the pool's start URL for this acquire only (best-effort)")
 	browserPoolsAcquireCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the acquired session (repeatable; applies to this lease)")
 	browserPoolsAcquireCmd.Flags().String("telemetry", "", "Telemetry override for this lease only, merged onto the pool's config: --telemetry=all, --telemetry=off, or --telemetry=console,network")
+	browserPoolsAcquireCmd.Flags().String("profile-id", "", "Profile ID to load into the acquired browser for this lease (mutually exclusive with --profile-name; the browser is destroyed and replaced on release)")
+	browserPoolsAcquireCmd.Flags().String("profile-name", "", "Profile name to load into the acquired browser for this lease (mutually exclusive with --profile-id; the browser is destroyed and replaced on release)")
+	browserPoolsAcquireCmd.Flags().Bool("save-changes", false, "If set, save changes back to the acquire-time profile when the session ends")
 	browserPoolsAcquireCmd.Flags().String("telemetry-cdp-exclude", "", "Leave the named CDP methods out of control telemetry's cdp_command events, comma-separated (e.g. Input.dispatchMouseEvent,Page.captureScreenshot); --telemetry-cdp-exclude=none clears the list. Excluded commands are still relayed to the browser, they just produce no event")
 	addJSONOutputFlag(browserPoolsAcquireCmd)
 
@@ -977,6 +1020,9 @@ func runBrowserPoolsAcquire(cmd *cobra.Command, args []string) error {
 	tags, _ := tagsFromFlag(cmd, "tag")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 	telemetryCdpExclude, _ := cmd.Flags().GetString("telemetry-cdp-exclude")
+	profileID, _ := cmd.Flags().GetString("profile-id")
+	profileName, _ := cmd.Flags().GetString("profile-name")
+	saveChanges, _ := cmd.Flags().GetBool("save-changes")
 	output, _ := cmd.Flags().GetString("output")
 	c := BrowserPoolsCmd{client: &client.BrowserPools}
 	return c.Acquire(cmd.Context(), BrowserPoolsAcquireInput{
@@ -987,6 +1033,9 @@ func runBrowserPoolsAcquire(cmd *cobra.Command, args []string) error {
 		Tags:                tags,
 		Telemetry:           telemetry,
 		TelemetryCdpExclude: telemetryCdpExclude,
+		ProfileID:           profileID,
+		ProfileName:         profileName,
+		ProfileSaveChanges:  saveChanges,
 		Output:              output,
 	})
 }

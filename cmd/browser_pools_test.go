@@ -239,7 +239,7 @@ func TestBrowserPoolsCreate_PrivateHostNormalization(t *testing.T) {
 // forwarding used by both `browser-pools acquire` and the `browsers create
 // --pool-id` lease path.
 func TestBuildAcquireParams(t *testing.T) {
-	p, err := buildAcquireParams("lease", map[string]string{"env": "prod"}, 30, "console,network", "", "https://example.com")
+	p, err := buildAcquireParams("lease", map[string]string{"env": "prod"}, 30, "console,network", "", "https://example.com", kernel.BrowserProfileParam{Name: kernel.Opt("my-profile")})
 	assert.NoError(t, err)
 	assert.True(t, p.Name.Valid())
 	assert.Equal(t, "lease", p.Name.Value)
@@ -250,18 +250,76 @@ func TestBuildAcquireParams(t *testing.T) {
 	assert.Equal(t, "https://example.com", p.StartURL.Value)
 	assert.True(t, p.Telemetry.Browser.Console.Enabled.Value)
 	assert.True(t, p.Telemetry.Browser.Network.Enabled.Value)
+	assert.Equal(t, "my-profile", p.Profile.Name.Value)
 
 	// Unset inputs produce an empty params struct (nothing forwarded).
-	empty, err := buildAcquireParams("", nil, 0, "", "", "")
+	empty, err := buildAcquireParams("", nil, 0, "", "", "", kernel.BrowserProfileParam{})
 	assert.NoError(t, err)
 	assert.False(t, empty.Name.Valid())
 	assert.Len(t, empty.Tags, 0)
 	assert.False(t, empty.AcquireTimeoutSeconds.Valid())
 	assert.False(t, empty.StartURL.Valid())
+	assert.False(t, empty.Profile.ID.Valid())
+	assert.False(t, empty.Profile.Name.Valid())
 
 	// An invalid category surfaces an error rather than a partial param.
-	_, err = buildAcquireParams("", nil, 0, "bogus", "", "")
+	_, err = buildAcquireParams("", nil, 0, "bogus", "", "", kernel.BrowserProfileParam{})
 	assert.Error(t, err)
+}
+
+func TestBuildAcquireProfileParam(t *testing.T) {
+	p, err := buildAcquireProfileParam("prof-1", "", true)
+	assert.NoError(t, err)
+	assert.Equal(t, "prof-1", p.ID.Value)
+	assert.False(t, p.Name.Valid())
+	assert.True(t, p.SaveChanges.Value)
+
+	p, err = buildAcquireProfileParam("", "my-profile", false)
+	assert.NoError(t, err)
+	assert.Equal(t, "my-profile", p.Name.Value)
+	assert.True(t, p.SaveChanges.Valid())
+	assert.False(t, p.SaveChanges.Value)
+
+	empty, err := buildAcquireProfileParam("", "", false)
+	assert.NoError(t, err)
+	assert.False(t, empty.ID.Valid())
+	assert.False(t, empty.Name.Valid())
+	assert.False(t, empty.SaveChanges.Valid())
+
+	_, err = buildAcquireProfileParam("prof-1", "my-profile", false)
+	assert.Error(t, err)
+	_, err = buildAcquireProfileParam("", "", true)
+	assert.Error(t, err)
+}
+
+func TestBrowserPoolsAcquire_WithProfile(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolAcquireParams
+	fake := &FakeBrowserPoolsService{
+		AcquireFunc: func(ctx context.Context, id string, body kernel.BrowserPoolAcquireParams, opts ...option.RequestOption) (*kernel.BrowserPoolAcquireResponse, error) {
+			captured = body
+			return &kernel.BrowserPoolAcquireResponse{
+				SessionID:          "sess-1",
+				Profile:            kernel.Profile{ID: "prof-1", Name: "my-profile"},
+				ProfileSaveChanges: true,
+			}, nil
+		},
+	}
+
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Acquire(context.Background(), BrowserPoolsAcquireInput{
+		IDOrName:           "pool-1",
+		ProfileName:        "my-profile",
+		ProfileSaveChanges: true,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, "my-profile", captured.Profile.Name.Value)
+	assert.True(t, captured.Profile.SaveChanges.Value)
+
+	out := outBuf.String()
+	assert.Contains(t, out, "Profile")
+	assert.Contains(t, out, "my-profile")
 }
 
 func TestBrowserPoolsCreate_WithRefreshOnProfileUpdate(t *testing.T) {
