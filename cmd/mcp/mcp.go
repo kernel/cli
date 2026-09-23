@@ -354,8 +354,11 @@ func installForAntigravity(configPath string) error {
 	if !ok {
 		kernel = make(map[string]interface{})
 	}
+	// Without static client metadata, mcp-remote registers itself as "MCP CLI
+	// Proxy" and the consent screen asks the user to trust that rather than the
+	// application they are connecting.
 	kernel["command"] = "npx"
-	kernel["args"] = []string{"-y", "mcp-remote", KernelMCPURL}
+	kernel["args"] = []string{"-y", "mcp-remote", KernelMCPURL, "--static-oauth-client-metadata", `{"client_name":"Antigravity"}`}
 	delete(kernel, "serverUrl")
 	delete(kernel, "url")
 	delete(kernel, "httpUrl")

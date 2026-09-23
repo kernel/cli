@@ -130,7 +130,7 @@ func assertMCPRemoteShape(t *testing.T, kernel map[string]interface{}) {
 	if !ok {
 		t.Fatalf("args = %#v, want array", kernel["args"])
 	}
-	want := []string{"-y", "mcp-remote", KernelMCPURL}
+	want := []string{"-y", "mcp-remote", KernelMCPURL, "--static-oauth-client-metadata", `{"client_name":"Antigravity"}`}
 	if len(args) != len(want) {
 		t.Fatalf("args = %v, want %v", args, want)
 	}
@@ -294,11 +294,13 @@ func TestInstallForAntigravityPreservesExistingKernelFields(t *testing.T) {
 
 	// The preserved headers block can hold an API key, so the file must not stay
 	// world-readable after a reinstall.
-	info, err := os.Stat(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := info.Mode().Perm(); got != 0600 {
-		t.Fatalf("config permissions = %o, want 600", got)
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0600 {
+			t.Fatalf("config permissions = %o, want 600", got)
+		}
 	}
 }
