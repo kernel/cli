@@ -54,13 +54,13 @@ func installForGoose(configPath string, spec targetSpec) error {
 	// and we don't want to add a YAML dependency
 	pterm.Info.Println("Goose uses YAML configuration. Add the following to your Goose config:")
 	pterm.Println()
-	fmt.Println(gooseConfig(spec.clientName, cacheDir))
+	fmt.Println(gooseConfig(spec, cacheDir))
 	pterm.Println()
 	pterm.Info.Printf("Config file location: %s\n", configPath)
 	return nil
 }
 
-func gooseConfig(clientName, cacheDir string) string {
+func gooseConfig(spec targetSpec, cacheDir string) string {
 	return `extensions:
   kernel:
     name: Kernel
@@ -71,8 +71,9 @@ func gooseConfig(clientName, cacheDir string) string {
       - -y
       - mcp-remote
       - ` + KernelMCPURL + `
+      - "` + fmt.Sprint(spec.callbackPort) + `"
       - --static-oauth-client-metadata
-      - '` + clientMetadata(clientName) + `'
+      - '` + clientMetadata(spec.clientName) + `'
     envs:
       MCP_REMOTE_CONFIG_DIR: ` + fmt.Sprintf("%q", cacheDir)
 }

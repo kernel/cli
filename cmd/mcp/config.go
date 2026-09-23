@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,17 +30,18 @@ type configField struct {
 }
 
 type targetSpec struct {
-	target      Target
-	description string
-	path        func(string) string
-	section     string
-	transport   transport
-	fields      []configField
-	clientName  string
-	remove      []string
-	legacyName  string
-	legacyKey   string
-	printOnly   bool
+	target       Target
+	description  string
+	path         func(string) string
+	section      string
+	transport    transport
+	fields       []configField
+	clientName   string
+	callbackPort int
+	remove       []string
+	legacyName   string
+	legacyKey    string
+	printOnly    bool
 }
 
 func homePath(parts ...string) func(string) string {
@@ -80,17 +82,17 @@ func appDataPath(home string) string {
 var targetSpecs = []targetSpec{
 	{target: TargetCursor, description: "Cursor editor", path: homePath(".cursor", "mcp.json"), section: "mcpServers", transport: http,
 		fields: []configField{{name: "url", value: KernelMCPURL}}, remove: []string{"type"}},
-	{target: TargetClaude, description: "Claude Desktop app", path: claudePath, section: "mcpServers", transport: stdio, clientName: "Claude Desktop"},
+	{target: TargetClaude, description: "Claude Desktop app", path: claudePath, section: "mcpServers", transport: stdio, clientName: "Claude Desktop", callbackPort: 46093},
 	{target: TargetClaudeCode, description: "Claude Code CLI", path: homePath(".claude.json"), section: "mcpServers", transport: http,
 		fields: []configField{{name: "type", value: "http"}, {name: "url", value: KernelMCPURL}}},
-	{target: TargetAntigravity, description: "Google Antigravity", path: homePath(".gemini", "config", "mcp_config.json"), section: "mcpServers", transport: stdio, clientName: "Antigravity"},
-	{target: TargetWindsurf, description: "Windsurf editor", path: homePath(".codeium", "windsurf", "mcp_config.json"), section: "mcpServers", transport: stdio, clientName: "Windsurf"},
+	{target: TargetAntigravity, description: "Google Antigravity", path: homePath(".gemini", "config", "mcp_config.json"), section: "mcpServers", transport: stdio, clientName: "Antigravity", callbackPort: 46094},
+	{target: TargetWindsurf, description: "Windsurf editor", path: homePath(".codeium", "windsurf", "mcp_config.json"), section: "mcpServers", transport: stdio, clientName: "Windsurf", callbackPort: 46095},
 	{target: TargetVSCode, description: "Visual Studio Code", path: vsCodePath, section: "servers", transport: http,
 		legacyName: "settings.json", legacyKey: "mcp.servers",
 		fields: []configField{{name: "url", value: KernelMCPURL}, {name: "type", value: "http"}}},
-	{target: TargetGoose, description: "Goose AI", path: homePath(".config", "goose", "config.yaml"), transport: stdio, clientName: "Goose", printOnly: true},
+	{target: TargetGoose, description: "Goose AI", path: homePath(".config", "goose", "config.yaml"), transport: stdio, clientName: "Goose", callbackPort: 46096, printOnly: true},
 	// Current Zed settings omit source; its settings migrator removes that old field.
-	{target: TargetZed, description: "Zed editor", path: homePath(".config", "zed", "settings.json"), section: "context_servers", transport: stdio, clientName: "Zed",
+	{target: TargetZed, description: "Zed editor", path: homePath(".config", "zed", "settings.json"), section: "context_servers", transport: stdio, clientName: "Zed", callbackPort: 46097,
 		remove: []string{"source"}},
 	{target: TargetFx, description: "fx coding agent", path: homePath(".fx", "mcp.json"), section: "mcp", transport: http,
 		fields: []configField{{name: "type", value: "http"}, {name: "url", value: KernelMCPURL}, {name: "oauth", value: map[string]any{}, ifMissing: true, skipWhen: "bearer_token_env"}}},
@@ -326,7 +328,7 @@ func mergeConfig(data []byte, spec targetSpec, legacy map[string]json.RawMessage
 	}
 	fields := spec.fields
 	if spec.transport == stdio {
-		args, err := mergeStdioArgs(kernel, spec.clientName)
+		args, err := mergeStdioArgs(kernel, spec)
 		if err != nil {
 			return nil, err
 		}
@@ -411,16 +413,16 @@ func addClientCacheDir(root *hujson.Value, kernelPath string, target Target) err
 	return patch(root, "add", kernelPath+"/env/MCP_REMOTE_CONFIG_DIR", cacheDir)
 }
 
-func stdioArgs(clientName string) []string {
-	return []string{"-y", "mcp-remote", KernelMCPURL, "--static-oauth-client-metadata", clientMetadata(clientName)}
+func stdioArgs(spec targetSpec) []string {
+	return []string{"-y", "mcp-remote", KernelMCPURL, strconv.Itoa(spec.callbackPort), "--static-oauth-client-metadata", clientMetadata(spec.clientName)}
 }
 
 func clientMetadata(clientName string) string {
 	return fmt.Sprintf(`{"client_name":%q}`, clientName)
 }
 
-func mergeStdioArgs(kernel *hujson.Object, clientName string) ([]string, error) {
-	defaults := stdioArgs(clientName)
+func mergeStdioArgs(kernel *hujson.Object, spec targetSpec) ([]string, error) {
+	defaults := stdioArgs(spec)
 	value, exists := member(kernel, "args")
 	if !exists {
 		return defaults, nil
@@ -435,20 +437,25 @@ func mergeStdioArgs(kernel *hujson.Object, clientName string) ([]string, error) 
 		return defaults, nil
 	}
 	args[2] = KernelMCPURL
+	if len(args) == 3 {
+		args = append(args, defaults[3])
+	} else if _, err := strconv.Atoi(args[3]); err != nil {
+		args = slices.Insert(args, 3, defaults[3])
+	}
 	flagIndex := -1
-	for i := 3; i < len(args); i++ {
-		if args[i] != defaults[3] {
+	for i := 4; i < len(args); i++ {
+		if args[i] != defaults[4] {
 			continue
 		}
 		if flagIndex != -1 || i+1 >= len(args) {
-			return nil, fmt.Errorf("invalid kernel args for %s", defaults[3])
+			return nil, fmt.Errorf("invalid kernel args for %s", defaults[4])
 		}
 		flagIndex = i
 	}
 	if flagIndex == -1 {
-		return append(args, defaults[3:]...), nil
+		return append(args, defaults[4:]...), nil
 	}
-	metadata, err := mergeClientMetadata(args[flagIndex+1], clientName)
+	metadata, err := mergeClientMetadata(args[flagIndex+1], spec.clientName)
 	if err != nil {
 		return nil, err
 	}
