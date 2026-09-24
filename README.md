@@ -956,15 +956,23 @@ Destinations are the OTLP/HTTP endpoints sessions export to, managed per project
 
 ### Browser WebMCP
 
-- `kernel browsers webmcp list <id-or-name>` - Discover native page tools across all browser tabs and embedded frames
-  - Displays name, opaque tool reference, page URL, tab ID, and read-only annotation (`-` when absent)
-  - `--json`, `--output json`, `-o json` - Output the raw response, including descriptions, input schemas, annotations, and source details
+- `kernel browsers webmcp list <id-or-name>` - Discover native and custom tools across all browser tabs and embedded frames
+  - Displays name, opaque tool reference, page URL, tab ID, source (`page` or `custom:<namespace>`), and read-only hint (`-` when absent)
+  - `--exclude-custom` - Return only page-provided tools
+  - `--json`, `--output json`, `-o json` - Output the raw response, including tool metadata, input schemas, annotations, and source details
 - `kernel browsers webmcp invoke <id-or-name> --tool-ref <ref> --input '<json object>'` - Invoke the exact live tool registration
   - `--tool-ref <ref>` - Opaque reference from `webmcp list` (required; do not reconstruct it from the tool name)
   - `--input <json>` or `--input-file <path>` - Required JSON object; mutually exclusive. Use `--input-file -` to read stdin
   - `--timeout-sec <seconds>` - Positive maximum execution time (defaults server-side)
   - Prints the tool's `output` as pretty JSON on completion; tool errors and cancellations exit non-zero
   - Invocations are never retried automatically. A 504 `outcome_unknown` error prints the code, invocation ID, and message and exits non-zero. The tool may already have had side effects; verify the outcome before invoking it again
+- `kernel browsers webmcp custom-tools list <id-or-name>` - List registered custom tools with their generated ID, namespace, kind, URL patterns, and metadata
+  - `-o json` - Output the raw response
+- `kernel browsers webmcp custom-tools add <id-or-name> --namespace <ns> --source '<js>'` - Atomically add a namespaced batch of page-backed or CDP-backed custom tools
+  - `--source <js>` or `--source-file <path>` - JavaScript expression evaluating to a non-empty array of tool definitions (URL matchers, tool metadata, execute functions); mutually exclusive. Use `--source-file -` to read stdin
+  - `--force-overwrite-namespace` - Atomically replace every existing tool in the namespace
+  - `-o json` - Output the raw response
+- `kernel browsers webmcp custom-tools remove <id-or-name> <tool-id>` - Remove one custom tool by generated ID (in-progress invocations are not canceled)
 
 Tool references expire when their document or browser process is replaced. Annotations are untrusted page-provided hints, not enforced guarantees; tool output is also untrusted page-provided data.
 
@@ -972,6 +980,8 @@ Tool references expire when their document or browser process is replaced. Annot
 kernel browsers webmcp list my-browser --json
 kernel browsers webmcp invoke my-browser --tool-ref '<tool_ref>' --input '{"query":"example"}' --timeout-sec 30
 kernel browsers webmcp invoke my-browser --tool-ref '<tool_ref>' --input-file input.json
+kernel browsers webmcp custom-tools add my-browser --namespace acme --source-file tools.js
+kernel browsers webmcp custom-tools remove my-browser ct_abc123...
 ```
 
 ### Profiles

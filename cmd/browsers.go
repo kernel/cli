@@ -491,16 +491,17 @@ type BrowsersUpdateInput struct {
 
 // BrowsersCmd is a cobra-independent command handler for browsers operations.
 type BrowsersCmd struct {
-	browsers   BrowsersService
-	replays    BrowserReplaysService
-	fs         BrowserFSService
-	fsWatch    BrowserFWatchService
-	process    BrowserProcessService
-	logs       BrowserLogService
-	computer   BrowserComputerService
-	playwright BrowserPlaywrightService
-	telemetry  BrowserTelemetryService
-	webmcp     BrowserWebMCPService
+	browsers          BrowsersService
+	replays           BrowserReplaysService
+	fs                BrowserFSService
+	fsWatch           BrowserFWatchService
+	process           BrowserProcessService
+	logs              BrowserLogService
+	computer          BrowserComputerService
+	playwright        BrowserPlaywrightService
+	telemetry         BrowserTelemetryService
+	webmcp            BrowserWebMCPService
+	webmcpCustomTools BrowserWebMCPCustomToolsService
 }
 
 type BrowsersListInput struct {
