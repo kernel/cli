@@ -788,6 +788,36 @@ func TestInstallRejectsExternalClientMetadata(t *testing.T) {
 	}
 }
 
+func TestInstallRejectsDuplicateClientMetadata(t *testing.T) {
+	testHome(t)
+	path, err := GetConfigPath(TargetClaude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	seed, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"kernel": map[string]any{
+		"args": []string{"-y", "mcp-remote", KernelMCPURL, "--static-oauth-client-metadata", `{"client_name":"Claude Desktop","client_name":"Other"}`},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, seed, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Install(TargetClaude); err == nil || !strings.Contains(err.Error(), `duplicate config key "client_name"`) {
+		t.Fatalf("install error = %v, want duplicate client name", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, seed) {
+		t.Fatal("duplicate client metadata changed config")
+	}
+}
+
 func TestInstallRejectsNonObjectEnvironment(t *testing.T) {
 	testHome(t)
 	path, err := GetConfigPath(TargetClaude)
