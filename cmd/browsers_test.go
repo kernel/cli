@@ -682,8 +682,12 @@ func TestBrowsersCreate_WithProxyRoutes(t *testing.T) {
 	})
 	assert.Contains(t, jsonOutput, `"proxy_routes"`)
 	assert.Contains(t, jsonOutput, `"resolved-proxy"`)
-	assert.Empty(t, captured.Network.PrivateHosts)
+	assert.Nil(t, captured.Network.PrivateHosts)
 	assert.Len(t, captured.Network.ProxyRoutes, 1)
+	raw, err = captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"proxy_routes"`)
+	assert.NotContains(t, string(raw), `"private_hosts"`)
 	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{ProxyRoutes: []string{"host="}}))
 }
 

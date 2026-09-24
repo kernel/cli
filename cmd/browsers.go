@@ -230,7 +230,9 @@ func buildNetworkParam(privateHosts []string) (kernel.BrowserNetworkConfigParam,
 	if len(hosts) > maxPrivateHosts {
 		return network, fmt.Errorf("too many --private-host entries: %d (maximum %d)", len(hosts), maxPrivateHosts)
 	}
-	network.PrivateHosts = hosts
+	if len(hosts) > 0 {
+		network.PrivateHosts = hosts
+	}
 	return network, nil
 }
 
