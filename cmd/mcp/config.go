@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,17 +30,18 @@ type configField struct {
 }
 
 type targetSpec struct {
-	target      Target
-	description string
-	path        func(string) string
-	section     string
-	transport   transport
-	fields      []configField
-	stdioArgs   []string
-	remove      []string
-	legacyName  string
-	legacyKey   string
-	printOnly   bool
+	target       Target
+	description  string
+	path         func(string) string
+	section      string
+	transport    transport
+	fields       []configField
+	clientName   string
+	callbackPort int
+	remove       []string
+	legacyName   string
+	legacyKey    string
+	printOnly    bool
 }
 
 func homePath(parts ...string) func(string) string {
@@ -80,18 +82,17 @@ func appDataPath(home string) string {
 var targetSpecs = []targetSpec{
 	{target: TargetCursor, description: "Cursor editor", path: homePath(".cursor", "mcp.json"), section: "mcpServers", transport: http,
 		fields: []configField{{name: "url", value: KernelMCPURL}}, remove: []string{"type"}},
-	{target: TargetClaude, description: "Claude Desktop app", path: claudePath, section: "mcpServers", transport: stdio},
+	{target: TargetClaude, description: "Claude Desktop app", path: claudePath, section: "mcpServers", transport: stdio, clientName: "Claude Desktop", callbackPort: 46093},
 	{target: TargetClaudeCode, description: "Claude Code CLI", path: homePath(".claude.json"), section: "mcpServers", transport: http,
 		fields: []configField{{name: "type", value: "http"}, {name: "url", value: KernelMCPURL}}},
-	{target: TargetAntigravity, description: "Google Antigravity", path: homePath(".gemini", "config", "mcp_config.json"), section: "mcpServers", transport: stdio,
-		stdioArgs: []string{"-y", "mcp-remote", KernelMCPURL, "--static-oauth-client-metadata", "{\"client_name\":\"Antigravity\"}"}},
-	{target: TargetWindsurf, description: "Windsurf editor", path: homePath(".codeium", "windsurf", "mcp_config.json"), section: "mcpServers", transport: stdio},
+	{target: TargetAntigravity, description: "Google Antigravity", path: homePath(".gemini", "config", "mcp_config.json"), section: "mcpServers", transport: stdio, clientName: "Antigravity", callbackPort: 46094},
+	{target: TargetWindsurf, description: "Windsurf editor", path: homePath(".codeium", "windsurf", "mcp_config.json"), section: "mcpServers", transport: stdio, clientName: "Windsurf", callbackPort: 46095},
 	{target: TargetVSCode, description: "Visual Studio Code", path: vsCodePath, section: "servers", transport: http,
 		legacyName: "settings.json", legacyKey: "mcp.servers",
 		fields: []configField{{name: "url", value: KernelMCPURL}, {name: "type", value: "http"}}},
-	{target: TargetGoose, description: "Goose AI", path: homePath(".config", "goose", "config.yaml"), transport: stdio, printOnly: true},
+	{target: TargetGoose, description: "Goose AI", path: homePath(".config", "goose", "config.yaml"), transport: stdio, clientName: "Goose", callbackPort: 46096, printOnly: true},
 	// Current Zed settings omit source; its settings migrator removes that old field.
-	{target: TargetZed, description: "Zed editor", path: homePath(".config", "zed", "settings.json"), section: "context_servers", transport: stdio,
+	{target: TargetZed, description: "Zed editor", path: homePath(".config", "zed", "settings.json"), section: "context_servers", transport: stdio, clientName: "Zed", callbackPort: 46097,
 		remove: []string{"source"}},
 	{target: TargetFx, description: "fx coding agent", path: homePath(".fx", "mcp.json"), section: "mcp", transport: http,
 		fields: []configField{{name: "type", value: "http"}, {name: "url", value: KernelMCPURL}, {name: "oauth", value: map[string]any{}, ifMissing: true, skipWhen: "bearer_token_env"}}},
@@ -126,6 +127,14 @@ func getConfigPath(target Target) (string, error) {
 	return spec.path(home), nil
 }
 
+func clientCacheDir(target Target) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+	return filepath.Join(home, ".mcp-auth", "kernel-"+string(target)), nil
+}
+
 func GetConfigPath(target Target) (string, error) {
 	return getConfigPath(target)
 }
@@ -140,7 +149,7 @@ func Install(target Target) error {
 		return err
 	}
 	if spec.printOnly {
-		return installForGoose(path)
+		return installForGoose(path, spec)
 	}
 	return installConfig(path, spec)
 }
@@ -319,11 +328,7 @@ func mergeConfig(data []byte, spec targetSpec, legacy map[string]json.RawMessage
 	}
 	fields := spec.fields
 	if spec.transport == stdio {
-		args := spec.stdioArgs
-		if args == nil {
-			args = []string{"-y", "mcp-remote", KernelMCPURL}
-		}
-		args, err = mergeStdioArgs(kernel, args)
+		args, err := mergeStdioArgs(kernel, spec)
 		if err != nil {
 			return nil, err
 		}
@@ -367,10 +372,57 @@ func mergeConfig(data []byte, spec targetSpec, legacy map[string]json.RawMessage
 			return nil, err
 		}
 	}
+	if spec.transport == stdio {
+		if err := addClientCacheDir(&root, kernelPath, spec.target); err != nil {
+			return nil, err
+		}
+	}
 	return root.Pack(), nil
 }
 
-func mergeStdioArgs(kernel *hujson.Object, defaults []string) ([]string, error) {
+func addClientCacheDir(root *hujson.Value, kernelPath string, target Target) error {
+	kernel, err := objectAt(root, kernelPath)
+	if err != nil {
+		return err
+	}
+	if _, exists := member(kernel, "env"); !exists {
+		if err := patch(root, "add", kernelPath+"/env", map[string]any{}); err != nil {
+			return err
+		}
+	}
+	env, err := objectAt(root, kernelPath+"/env")
+	if err != nil {
+		return err
+	}
+	current, exists := member(env, "MCP_REMOTE_CONFIG_DIR")
+	if exists {
+		normalized := current.Clone()
+		normalized.Standardize()
+		var path string
+		if err := json.Unmarshal(normalized.Pack(), &path); err != nil {
+			return fmt.Errorf("invalid MCP_REMOTE_CONFIG_DIR: %w", err)
+		}
+		if path != "" {
+			return nil
+		}
+	}
+	cacheDir, err := clientCacheDir(target)
+	if err != nil {
+		return err
+	}
+	return patch(root, "add", kernelPath+"/env/MCP_REMOTE_CONFIG_DIR", cacheDir)
+}
+
+func stdioArgs(spec targetSpec) []string {
+	return []string{"-y", "mcp-remote", KernelMCPURL, strconv.Itoa(spec.callbackPort), "--static-oauth-client-metadata", clientMetadata(spec.clientName)}
+}
+
+func clientMetadata(clientName string) string {
+	return fmt.Sprintf(`{"client_name":%q}`, clientName)
+}
+
+func mergeStdioArgs(kernel *hujson.Object, spec targetSpec) ([]string, error) {
+	defaults := stdioArgs(spec)
 	value, exists := member(kernel, "args")
 	if !exists {
 		return defaults, nil
@@ -385,20 +437,60 @@ func mergeStdioArgs(kernel *hujson.Object, defaults []string) ([]string, error) 
 		return defaults, nil
 	}
 	args[2] = KernelMCPURL
-	if len(defaults) > 3 {
-		flag := defaults[3]
-		for i := 3; i < len(args); i++ {
-			if args[i] == flag {
-				if i+1 >= len(args) {
-					return nil, fmt.Errorf("kernel args missing value for %s", flag)
-				}
-				args[i+1] = defaults[4]
-				return args, nil
-			}
-		}
-		args = append(args, defaults[3:]...)
+	if len(args) == 3 {
+		args = append(args, defaults[3])
+	} else if _, err := strconv.Atoi(args[3]); err != nil {
+		args = slices.Insert(args, 3, defaults[3])
 	}
+	flagIndex := -1
+	for i := 4; i < len(args); i++ {
+		if args[i] != defaults[4] {
+			continue
+		}
+		if flagIndex != -1 || i+1 >= len(args) {
+			return nil, fmt.Errorf("invalid kernel args for %s", defaults[4])
+		}
+		flagIndex = i
+	}
+	if flagIndex == -1 {
+		return append(args, defaults[4:]...), nil
+	}
+	metadata, err := mergeClientMetadata(args[flagIndex+1], spec.clientName)
+	if err != nil {
+		return nil, err
+	}
+	args[flagIndex+1] = metadata
 	return args, nil
+}
+
+func mergeClientMetadata(raw, clientName string) (string, error) {
+	if strings.HasPrefix(raw, "@") {
+		return "", fmt.Errorf("kernel OAuth metadata is in a separate file; set client_name to %q there", clientName)
+	}
+	if !json.Valid([]byte(raw)) {
+		return "", fmt.Errorf("invalid kernel OAuth metadata: expected JSON object")
+	}
+	metadata, err := hujson.Parse([]byte(raw))
+	if err != nil {
+		return "", fmt.Errorf("invalid kernel OAuth metadata: %w", err)
+	}
+	if err := validateConfigKeys(&metadata, ""); err != nil {
+		return "", err
+	}
+	obj, err := objectAt(&metadata, "")
+	if err != nil {
+		return "", err
+	}
+	if current, exists := member(obj, "client_name"); exists {
+		var name string
+		if err := json.Unmarshal(current.Pack(), &name); err == nil && name == clientName {
+			return raw, nil
+		}
+	}
+	if err := patch(&metadata, "add", "/client_name", clientName); err != nil {
+		return "", err
+	}
+	return string(metadata.Pack()), nil
 }
 
 func pointerName(name string) string {
