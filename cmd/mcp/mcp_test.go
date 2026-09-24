@@ -4,25 +4,38 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
-	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
-func TestGooseConfigNamesOAuthClient(t *testing.T) {
+func TestGooseConfigMatchesStdioArgs(t *testing.T) {
 	spec, _ := specFor(TargetGoose)
-	config := gooseConfig(spec, "/home/example/.mcp-auth/kernel-goose")
-	if !strings.Contains(config, "      - https://mcp.onkernel.com/mcp\n      - \"46096\"\n") {
-		t.Fatalf("Goose config missing separate callback port: %s", config)
+	cacheDir := "/home/example/.mcp-auth/kernel-goose"
+	var config struct {
+		Extensions map[string]struct {
+			Name    string            `yaml:"name"`
+			Type    string            `yaml:"type"`
+			Enabled bool              `yaml:"enabled"`
+			Cmd     string            `yaml:"cmd"`
+			Args    []string          `yaml:"args"`
+			Envs    map[string]string `yaml:"envs"`
+		} `yaml:"extensions"`
 	}
-	if !strings.Contains(config, "      - --static-oauth-client-metadata\n      - '{\"client_name\":\"Goose\"}'") {
-		t.Fatalf("Goose config missing client metadata: %s", config)
+	if err := yaml.Unmarshal([]byte(gooseConfig(spec, cacheDir)), &config); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(config, "MCP_REMOTE_CONFIG_DIR: \"/home/example/.mcp-auth/kernel-goose\"") {
-		t.Fatalf("Goose config missing separate auth cache: %s", config)
+	goose := config.Extensions["kernel"]
+	if !reflect.DeepEqual(goose.Args, stdioArgs(spec)) {
+		t.Fatalf("Goose args = %q, want %q", goose.Args, stdioArgs(spec))
 	}
-	if !strings.Contains(config, "    enabled: true") {
-		t.Fatalf("Goose config missing enabled flag: %s", config)
+	if goose.Name != "Kernel" || goose.Type != "stdio" || !goose.Enabled || goose.Cmd != "npx" {
+		t.Fatalf("Goose extension = %+v", goose)
+	}
+	if goose.Envs["MCP_REMOTE_CONFIG_DIR"] != cacheDir {
+		t.Fatalf("Goose cache = %q, want %q", goose.Envs["MCP_REMOTE_CONFIG_DIR"], cacheDir)
 	}
 }
 
