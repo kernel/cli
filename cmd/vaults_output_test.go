@@ -18,13 +18,20 @@ import (
 const readyCardFixture = `{
   "id":"card-id","key":"order-1","type":"card",
   "spec":{"provider":"link","wallet":"wallet-1","browser_id":"browser-1","page_url":"https://shop.example/checkout","payment_method_id":"pm-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","provider_secret":"SECRET_SPEC"},
-  "state":{"provider":"link","status":"ready","domains":["shop.example"],"aliases":{"number":"9999999999999999","cvc":"999","exp_month":"01","exp_year":"2099","secret":"SECRET_ALIAS"},"card_number":"SECRET_CARD","secret_enc":"SECRET_CIPHERTEXT"},
+  "state":{"provider":"link","status":"ready","domains":["shop.example"],"card_number":"SECRET_CARD","secret_enc":"SECRET_CIPHERTEXT"},
+  "available_operations":[],"available_expansions":[],"oauth_tokens":"SECRET_OAUTH"
+}`
+
+const readyAgentCardFixture = `{
+  "id":"card-id","key":"order-1","type":"card",
+  "spec":{"provider":"agentcard","wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop"},
+  "state":{"provider":"agentcard","status":"ready","domains":["shop.example"],"aliases":{"number":"9999999999999999","cvc":"999","exp_month":"01","exp_year":"2099","secret":"SECRET_ALIAS"},"card_number":"SECRET_CARD","secret_enc":"SECRET_CIPHERTEXT"},
   "available_operations":[],"available_expansions":[],"oauth_tokens":"SECRET_OAUTH"
 }`
 
 func TestVaultOutputAliasesPresenceAndRedaction(t *testing.T) {
 	var item kernel.VaultItemUnion
-	require.NoError(t, json.Unmarshal([]byte(readyCardFixture), &item))
+	require.NoError(t, json.Unmarshal([]byte(readyAgentCardFixture), &item))
 	buf := capturePtermOutput(t)
 	require.NoError(t, printVaultItem(&item, ""))
 	human := buf.String()
@@ -57,7 +64,21 @@ func TestVaultOutputAliasesPresenceAndRedaction(t *testing.T) {
 	require.NoError(t, printVaultItem(&item, ""))
 	assert.NotContains(t, buf.String(), "Checkout alias")
 	out = captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
-	assert.Contains(t, out, `"aliases": null`)
+	assert.NotContains(t, out, `"aliases"`)
+}
+
+func TestVaultOutputLinkHasNoAliases(t *testing.T) {
+	fixture := strings.Replace(readyCardFixture, `"status":"ready"`, `"status":"ready","aliases":{"number":"9999999999999999","cvc":"999","exp_month":"01","exp_year":"2099"}`, 1)
+	var item kernel.VaultItemUnion
+	require.NoError(t, json.Unmarshal([]byte(fixture), &item))
+	buf := capturePtermOutput(t)
+	require.NoError(t, printVaultItem(&item, ""))
+	assert.NotContains(t, buf.String(), "9999999999999999")
+	assert.NotContains(t, buf.String(), "Checkout alias")
+	assert.NotContains(t, buf.String(), "Aliases are non-secret")
+	out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
+	assert.NotContains(t, out, "aliases")
+	assert.NotContains(t, out, "9999999999999999")
 }
 
 func TestVaultLinkCardHumanOutput(t *testing.T) {

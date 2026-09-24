@@ -125,9 +125,28 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 		}
 	}
 	var itemType string
-	if result["spec"] != nil && result["state"] != nil && json.Unmarshal(result["type"], &itemType) == nil && itemType == "credential" {
-		if err := preservePublicCredentialValues(object, result); err != nil {
-			return nil, err
+	if result["spec"] != nil && result["state"] != nil && json.Unmarshal(result["type"], &itemType) == nil {
+		if itemType == "credential" {
+			if err := preservePublicCredentialValues(object, result); err != nil {
+				return nil, err
+			}
+		}
+		if itemType == "card" {
+			var spec struct {
+				Provider string `json:"provider"`
+			}
+			if json.Unmarshal(result["spec"], &spec) == nil && spec.Provider == "link" {
+				var state vaultJSON
+				if json.Unmarshal(result["state"], &state) != nil {
+					return nil, fmt.Errorf("invalid vault response shape")
+				}
+				delete(state, "aliases")
+				filteredState, err := json.Marshal(state)
+				if err != nil {
+					return nil, err
+				}
+				result["state"] = filteredState
+			}
 		}
 	}
 	return json.Marshal(result)
@@ -355,7 +374,7 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	if !item.ExpiresAt.IsZero() {
 		rows = append(rows, []string{"Expires At", util.FormatLocal(item.ExpiresAt)})
 	}
-	if item.State.JSON.Aliases.Valid() {
+	if item.Spec.Provider == "agentcard" && item.State.JSON.Aliases.Valid() {
 		a := item.State.Aliases
 		rows = append(rows, []string{"Checkout alias: number", a.Number}, []string{"Checkout alias: cvc", a.Cvc}, []string{"Checkout alias: exp_month", a.ExpMonth}, []string{"Checkout alias: exp_year", a.ExpYear})
 	}
@@ -428,7 +447,7 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		for _, expansion := range card.AvailableExpansions {
 			pterm.Printf("Available expansion: %s — %s\n", expansion.Type, expansion.Description)
 		}
-		if item.State.JSON.Aliases.Valid() {
+		if item.Spec.Provider == "agentcard" && item.State.JSON.Aliases.Valid() {
 			pterm.Info.Println("Aliases are non-secret checkout values. Use only in a browser created with this vault attached; ready does not mean paid.")
 		}
 		pterm.Info.Println("Inspect items events for payment outcomes. Fill supplies credentials but does not submit payment. Never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")

@@ -58,7 +58,7 @@ type LinkCardSpec = {
   browser_id: string;         // active vault-linked browser session ID
   page_url: string;           // exact final checkout page URL
   payment_method_id: string;  // from wallets payment-methods
-  amount: number;             // integer minor units; 1..50000
+  amount: number;             // integer minor units; 1..500000 (virtual-card fallback: 1..50000)
   currency: string;           // three letters
   merchant_name: string;      // approval-screen name; 1..255 characters
   context: string;            // at least 100 characters
