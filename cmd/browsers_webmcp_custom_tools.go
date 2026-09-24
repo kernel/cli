@@ -88,7 +88,7 @@ func (b BrowsersWebMCPCustomToolsCmd) Remove(ctx context.Context, identifier, id
 	if !webMCPCustomIDPattern.MatchString(id) {
 		return fmt.Errorf("invalid custom tool ID: expected ct_ followed by a lowercase letter and 23 lowercase letters or digits")
 	}
-	if err := b.tools.Remove(ctx, id, kernel.BrowserWebmcpCustomToolRemoveParams{IDOrName: identifier}); err != nil {
+	if err := b.tools.Remove(ctx, id, kernel.BrowserWebmcpCustomToolRemoveParams{IDOrName: identifier}, option.WithMaxRetries(0)); err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 	pterm.Success.Printf("Removed custom WebMCP tool: %s\n", id)
