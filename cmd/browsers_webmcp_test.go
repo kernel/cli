@@ -36,11 +36,12 @@ func executeWebMCPCommand(t *testing.T, handler http.HandlerFunc, stdin string, 
 	return stdout, buf.String(), err
 }
 
-const webMCPToolsFixture = `{"tools":[{"tool":{"name":"search","description":"Search the page","inputSchema":{"type":"object"},"annotations":{"readOnlyHint":true,"autosubmit":false}},"tool_ref":"opaque/ref+==","source":{"window_id":1,"tab_id":42,"page_url":"https://example.com","page_title":"Example","frame":null}}],"future_field":true}`
+const webMCPToolsFixture = `{"tools":[{"tool_ref":"opaque/ref+==","tool":{"name":"search","title":"Search","description":"Search the page","inputSchema":{"type":"object"},"outputSchema":{"type":"object"},"annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false,"autosubmit":false,"consequentialHint":false,"untrustedContentHint":true}},"source":{"window_id":1,"tab_id":42,"page_url":"https://example.com","page_title":"Example","frame":null,"target_id":"target-1","custom":{"id":"ct_abcdefghijklmnopqrstuvwx","namespace":"helpers"}}}],"future_field":true}`
 
 func TestWebMCPCommandWiring(t *testing.T) {
-	for _, name := range []string{"list", "invoke"} {
-		cmd, remaining, err := rootCmd.Find([]string{"browsers", "webmcp", name})
+	for _, path := range [][]string{{"list"}, {"invoke"}, {"custom-tools", "list"}, {"custom-tools", "add"}, {"custom-tools", "remove"}} {
+		name := path[len(path)-1]
+		cmd, remaining, err := rootCmd.Find(append([]string{"browsers", "webmcp"}, path...))
 		require.NoError(t, err)
 		require.Empty(t, remaining)
 		assert.Equal(t, name, cmd.Name())
@@ -101,7 +102,7 @@ func TestWebMCPListAnnotations(t *testing.T) {
 		t.Run(tc.annotation, func(t *testing.T) {
 			_, table, err := executeWebMCPCommand(t, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				fmt.Fprintf(w, `{"tools":[{"tool":{"name":"search","annotations":%s}}]}`, tc.annotation)
+				_, _ = fmt.Fprintf(w, `{"tools":[{"tool":{"name":"search","annotations":%s}}]}`, tc.annotation)
 			}, "", "list", "my-browser")
 			require.NoError(t, err)
 			rows := strings.Split(strings.TrimSpace(table), "\n")
@@ -192,7 +193,7 @@ func TestWebMCPInvalidInput(t *testing.T) {
 			want string
 		}{[]string{"invoke", "browser", "--tool-ref", "ref", "--input", input}, "invalid input"})
 	}
-	for _, timeout := range []string{"0", "-1"} {
+	for _, timeout := range []string{"0", "-1", "121"} {
 		tests = append(tests, struct {
 			args []string
 			want string
@@ -252,6 +253,7 @@ func TestWebMCPInvokeAwaitingSubmission(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"filled":["email"]}`, stdout)
 	assert.Contains(t, warning, "inv-1")
+	assert.Contains(t, warning, "awaiting_submission")
 	assert.Contains(t, warning, "without submitting it")
 }
 
