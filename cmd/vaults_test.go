@@ -314,7 +314,7 @@ func TestVaultInvokeRequiresAdvertisedFill(t *testing.T) {
 				postCalls++
 				payload, _ := io.ReadAll(r.Body)
 				assert.JSONEq(t, `{"type":"fill","browser_id":"browser","page_url":"https://shop.example","fields":[{"field":"number","selector":"#number"}]}`, string(payload))
-				_, _ = io.WriteString(w, `{"type":"fill","status":"completed","instruction":"Payment credentials are filled. Submit the checkout form when ready.","fields":[{"index":0,"status":"filled"}]}`)
+				_, _ = io.WriteString(w, `{"type":"fill","status":"completed","fields":[{"index":0,"status":"filled"}]}`)
 			})
 			spec := `{"browser_id":"browser","page_url":"https://shop.example","fields":[{"field":"number","selector":"#number"}]}`
 			out, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "fill", "--params", spec, "-o", "json")
@@ -322,7 +322,7 @@ func TestVaultInvokeRequiresAdvertisedFill(t *testing.T) {
 			if advertised {
 				require.NoError(t, err)
 				assert.Equal(t, 1, postCalls)
-				assert.Contains(t, out, `"instruction"`)
+				assert.JSONEq(t, `{"type":"fill","status":"completed","fields":[{"index":0,"status":"filled"}]}`, out)
 			} else {
 				require.ErrorContains(t, err, "not advertised in available_operations")
 				assert.Zero(t, postCalls)

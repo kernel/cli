@@ -364,15 +364,15 @@ func TestVaultLinkWebMCPCardFillOmitsFieldBindings(t *testing.T) {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
 		assert.JSONEq(t, `{"type":"fill","browser_id":"browser-1","page_url":"https://shop.example/checkout","fields":[]}`, string(body))
-		_, _ = io.WriteString(w, `{"type":"fill","status":"completed","instruction":"Payment credentials are filled. Submit the checkout form when ready.","fields":[]}`)
+		_, _ = io.WriteString(w, `{"type":"fill","status":"completed","fields":[]}`)
 	})
 	params := `{"browser_id":"browser-1","page_url":"https://shop.example/checkout"}`
 	out, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-card", "fill", "--params", params, "-o", "json")
 	require.NoError(t, err)
-	assert.Contains(t, out, `"instruction": "Payment credentials are filled. Submit the checkout form when ready."`)
+	assert.JSONEq(t, `{"type":"fill","status":"completed","fields":[]}`, out)
 	_, human, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-card", "fill", "--params", params)
 	require.NoError(t, err)
-	assert.Contains(t, human, "Submit the checkout form when ready")
+	assert.Contains(t, human, "Fields filled; this does not confirm website acceptance or form submission.")
 	assert.NotContains(t, human, "Field index")
 }
 

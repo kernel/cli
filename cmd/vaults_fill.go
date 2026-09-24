@@ -13,10 +13,9 @@ import (
 )
 
 type vaultFillResult struct {
-	Type        string                 `json:"type"`
-	Status      string                 `json:"status"`
-	Instruction string                 `json:"instruction,omitempty"`
-	Fields      []vaultFillFieldResult `json:"fields"`
+	Type   string                 `json:"type"`
+	Status string                 `json:"status"`
+	Fields []vaultFillFieldResult `json:"fields"`
 }
 
 type vaultFillFieldResult struct {
@@ -26,7 +25,7 @@ type vaultFillFieldResult struct {
 }
 
 var vaultFillResultFields = vaultOutputFields{
-	"type": nil, "status": nil, "instruction": nil,
+	"type": nil, "status": nil,
 	"fields": vaultFieldsOf("index status error_code"),
 }
 
@@ -118,11 +117,7 @@ func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFil
 			PrintTableNoPad(rows, true)
 		}
 		if result.Status == "completed" {
-			if result.Instruction != "" {
-				pterm.Println(result.Instruction)
-			} else {
-				pterm.Println("Fields filled; this does not confirm website acceptance or form submission.")
-			}
+			pterm.Println("Fields filled; this does not confirm website acceptance or form submission.")
 		} else {
 			pterm.Println(vaultFillUncertain)
 		}
