@@ -27,14 +27,15 @@ var MCPCmd = &cobra.Command{
 type Target string
 
 const (
-	TargetCursor     Target = "cursor"
-	TargetClaude     Target = "claude"
-	TargetClaudeCode Target = "claude-code"
-	TargetWindsurf   Target = "windsurf"
-	TargetVSCode     Target = "vscode"
-	TargetGoose      Target = "goose"
-	TargetZed        Target = "zed"
-	TargetFx         Target = "fx"
+	TargetCursor      Target = "cursor"
+	TargetClaude      Target = "claude"
+	TargetClaudeCode  Target = "claude-code"
+	TargetAntigravity Target = "antigravity"
+	TargetWindsurf    Target = "windsurf"
+	TargetVSCode      Target = "vscode"
+	TargetGoose       Target = "goose"
+	TargetZed         Target = "zed"
+	TargetFx          Target = "fx"
 )
 
 // KernelMCPURL is the URL for the Kernel MCP server
@@ -46,6 +47,7 @@ func AllTargets() []Target {
 		TargetCursor,
 		TargetClaude,
 		TargetClaudeCode,
+		TargetAntigravity,
 		TargetWindsurf,
 		TargetVSCode,
 		TargetGoose,
@@ -86,6 +88,8 @@ func getConfigPath(target Target) (string, error) {
 	case TargetClaudeCode:
 		// Claude Code uses the ~/.claude.json file
 		return filepath.Join(homeDir, ".claude.json"), nil
+	case TargetAntigravity:
+		return filepath.Join(homeDir, ".gemini", "config", "mcp_config.json"), nil
 	case TargetWindsurf:
 		return filepath.Join(homeDir, ".codeium", "windsurf", "mcp_config.json"), nil
 	case TargetVSCode:
@@ -327,6 +331,46 @@ func installForClaudeCode(configPath string) error {
 	return writeJSONFile(configPath, config)
 }
 
+// installForAntigravity installs MCP config for Google Antigravity
+func installForAntigravity(configPath string) error {
+	config, err := readJSONFile(configPath)
+	if err != nil {
+		return err
+	}
+
+	// Get or create mcpServers section
+	mcpServers, ok := config["mcpServers"].(map[string]interface{})
+	if !ok {
+		mcpServers = make(map[string]interface{})
+	}
+
+	// Antigravity's remote-server client can finish OAuth and still send
+	// initialize without the bearer token, so Kernel goes over stdio via
+	// mcp-remote like Claude Desktop, Windsurf and Zed.
+	//
+	// Merge into any existing entry so hand-added fields survive a reinstall;
+	// the remote-transport keys are dropped now that nothing reads them.
+	kernel, ok := mcpServers["kernel"].(map[string]interface{})
+	if !ok {
+		kernel = make(map[string]interface{})
+	}
+	// Without static client metadata, mcp-remote registers itself as "MCP CLI
+	// Proxy" and the consent screen asks the user to trust that rather than the
+	// application they are connecting.
+	kernel["command"] = "npx"
+	kernel["args"] = []string{"-y", "mcp-remote", KernelMCPURL, "--static-oauth-client-metadata", `{"client_name":"Antigravity"}`}
+	delete(kernel, "serverUrl")
+	delete(kernel, "url")
+	delete(kernel, "httpUrl")
+
+	mcpServers["kernel"] = kernel
+	config["mcpServers"] = mcpServers
+
+	// Preserving headers means this file can now hold an API key, so it is
+	// written 0600 rather than world-readable.
+	return writePrivateJSONFile(configPath, config)
+}
+
 // installForWindsurf installs MCP config for Windsurf
 func installForWindsurf(configPath string) error {
 	config, err := readJSONFile(configPath)
@@ -453,6 +497,8 @@ func Install(target Target) error {
 		return installForClaude(configPath)
 	case TargetClaudeCode:
 		return installForClaudeCode(configPath)
+	case TargetAntigravity:
+		return installForAntigravity(configPath)
 	case TargetWindsurf:
 		return installForWindsurf(configPath)
 	case TargetVSCode:
