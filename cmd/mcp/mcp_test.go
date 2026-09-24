@@ -4,9 +4,40 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
+
+func TestGooseConfigMatchesStdioArgs(t *testing.T) {
+	spec, _ := specFor(TargetGoose)
+	cacheDir := "/home/example/.mcp-auth/kernel-goose"
+	var config struct {
+		Extensions map[string]struct {
+			Name    string            `yaml:"name"`
+			Type    string            `yaml:"type"`
+			Enabled bool              `yaml:"enabled"`
+			Cmd     string            `yaml:"cmd"`
+			Args    []string          `yaml:"args"`
+			Envs    map[string]string `yaml:"envs"`
+		} `yaml:"extensions"`
+	}
+	if err := yaml.Unmarshal([]byte(gooseConfig(spec, cacheDir)), &config); err != nil {
+		t.Fatal(err)
+	}
+	goose := config.Extensions["kernel"]
+	if !reflect.DeepEqual(goose.Args, stdioArgs(spec)) {
+		t.Fatalf("Goose args = %q, want %q", goose.Args, stdioArgs(spec))
+	}
+	if goose.Name != "Kernel" || goose.Type != "stdio" || !goose.Enabled || goose.Cmd != "npx" {
+		t.Fatalf("Goose extension = %+v", goose)
+	}
+	if goose.Envs["MCP_REMOTE_CONFIG_DIR"] != cacheDir {
+		t.Fatalf("Goose cache = %q, want %q", goose.Envs["MCP_REMOTE_CONFIG_DIR"], cacheDir)
+	}
+}
 
 func TestInstallForFx(t *testing.T) {
 	home := t.TempDir()
@@ -130,7 +161,7 @@ func assertMCPRemoteShape(t *testing.T, kernel map[string]interface{}) {
 	if !ok {
 		t.Fatalf("args = %#v, want array", kernel["args"])
 	}
-	want := []string{"-y", "mcp-remote", KernelMCPURL, "--static-oauth-client-metadata", `{"client_name":"Antigravity"}`}
+	want := []string{"-y", "mcp-remote", KernelMCPURL, "46094", "--static-oauth-client-metadata", `{"client_name":"Antigravity"}`}
 	if len(args) != len(want) {
 		t.Fatalf("args = %v, want %v", args, want)
 	}
