@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/tailscale/hujson"
@@ -163,16 +164,18 @@ func installConfig(path string, spec targetSpec) error {
 	if err != nil {
 		return err
 	}
+	privateMode := mode & 0600
+	if !bytes.Equal(data, updated) || mode != privateMode {
+		if err := writeConfigAtomic(path, updated, privateMode); err != nil {
+			return err
+		}
+	}
 	if legacy != nil && legacyMode != legacyMode&0600 {
 		if err := os.Chmod(legacyPath, legacyMode&0600); err != nil {
 			return fmt.Errorf("failed to secure legacy config: %w", err)
 		}
 	}
-	privateMode := mode & 0600
-	if bytes.Equal(data, updated) && mode == privateMode {
-		return nil
-	}
-	return writeConfigAtomic(path, updated, privateMode)
+	return nil
 }
 
 func readLegacyKernel(path, sectionKey string) (map[string]json.RawMessage, os.FileMode, error) {
@@ -196,6 +199,9 @@ func readLegacyKernel(path, sectionKey string) (map[string]json.RawMessage, os.F
 	root, err := hujson.Parse(data)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to parse legacy config: %w", err)
+	}
+	if err := validateConfigKeys(&root, ""); err != nil {
+		return nil, 0, err
 	}
 	obj, err := objectAt(&root, "")
 	if err != nil {
@@ -252,6 +258,9 @@ func mergeConfig(data []byte, spec targetSpec, legacy map[string]json.RawMessage
 	root, err := hujson.Parse(data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
+	}
+	if err := validateConfigKeys(&root, ""); err != nil {
+		return nil, err
 	}
 	section, err := objectAt(&root, "")
 	if err != nil {
@@ -408,15 +417,32 @@ func objectAt(root *hujson.Value, path string) (*hujson.Object, error) {
 	if !ok {
 		return nil, fmt.Errorf("expected config object at %s", path)
 	}
-	seen := make(map[string]bool, len(obj.Members))
-	for _, item := range obj.Members {
-		name := item.Name.Value.(hujson.Literal).String()
-		if seen[name] {
-			return nil, fmt.Errorf("duplicate config key %q at %s", name, path)
-		}
-		seen[name] = true
-	}
 	return obj, nil
+}
+
+func validateConfigKeys(value *hujson.Value, path string) error {
+	switch node := value.Value.(type) {
+	case *hujson.Object:
+		seen := make(map[string]bool, len(node.Members))
+		for i := range node.Members {
+			item := &node.Members[i]
+			name := item.Name.Value.(hujson.Literal).String()
+			if seen[name] {
+				return fmt.Errorf("duplicate config key %q at %s", name, path)
+			}
+			seen[name] = true
+			if err := validateConfigKeys(&item.Value, path+"/"+pointerName(name)); err != nil {
+				return err
+			}
+		}
+	case *hujson.Array:
+		for i := range node.Elements {
+			if err := validateConfigKeys(&node.Elements[i], path+"/"+strconv.Itoa(i)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func member(obj *hujson.Object, name string) (*hujson.Value, bool) {
