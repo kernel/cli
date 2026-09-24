@@ -315,6 +315,37 @@ func TestInstallRejectsBadConfigWithoutChangingIt(t *testing.T) {
 	}
 }
 
+func TestInstallRejectsNestedDuplicateKeys(t *testing.T) {
+	for _, tc := range []struct{ name, config string }{
+		{"kernel headers", `{"mcpServers":{"kernel":{"headers":{"Authorization":"first","Authorization":"second"}}}}`},
+		{"object in array", `{"other":[{"Authorization":"first","Authorization":"second"}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testHome(t)
+			path, err := GetConfigPath(TargetCursor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(tc.config), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := Install(TargetCursor); err == nil || !strings.Contains(err.Error(), `duplicate config key "Authorization"`) {
+				t.Fatalf("install error = %v, want nested duplicate key", err)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.config {
+				t.Fatal("duplicate-key config changed")
+			}
+		})
+	}
+}
+
 func TestInstallWriteFailureLeavesExistingConfig(t *testing.T) {
 	testHome(t)
 	path, err := GetConfigPath(TargetCursor)
@@ -498,6 +529,92 @@ func TestInstallVSCodeRejectsMalformedLegacyConfig(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("new config changed after failure: %v", err)
+	}
+}
+
+func TestInstallVSCodeRejectsNestedDuplicateLegacyKeys(t *testing.T) {
+	testHome(t)
+	path, err := GetConfigPath(TargetVSCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := filepath.Join(filepath.Dir(path), "settings.json")
+	legacy := []byte(`{"mcp.servers":{"kernel":{"headers":{"Authorization":"first","Authorization":"second"}}}}`)
+	if err := os.WriteFile(legacyPath, legacy, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Install(TargetVSCode); err == nil || !strings.Contains(err.Error(), `duplicate config key "Authorization"`) {
+		t.Fatalf("install error = %v, want nested duplicate key", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("destination changed after failure: %v", err)
+	}
+	got, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, legacy) {
+		t.Fatal("legacy config changed after failure")
+	}
+}
+
+func TestInstallVSCodeWriteFailureDoesNotChmodLegacy(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permissions vary on Windows")
+	}
+	testHome(t)
+	path, err := GetConfigPath(TargetVSCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := filepath.Join(dir, "settings.json")
+	legacy := []byte(`{"mcp.servers":{"kernel":{"headers":{"Authorization":"placeholder"}}}}`)
+	if err := os.WriteFile(legacyPath, legacy, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0700); err != nil {
+			t.Error(err)
+		}
+	})
+	probe, err := os.CreateTemp(dir, "probe-*")
+	if err == nil {
+		probe.Close()
+		os.Remove(probe.Name())
+		t.Skip("directory permissions do not prevent writes")
+	}
+	if !os.IsPermission(err) {
+		t.Fatalf("permission probe failed: %v", err)
+	}
+	if err := Install(TargetVSCode); err == nil {
+		t.Fatal("expected destination write failure")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("destination changed after failure: %v", err)
+	}
+	got, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, legacy) {
+		t.Fatal("legacy config content changed")
+	}
+	info, err := os.Stat(legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0644 {
+		t.Fatalf("legacy config mode = %o, want 644", info.Mode().Perm())
 	}
 }
 
