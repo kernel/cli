@@ -14,35 +14,18 @@ var installCmd = &cobra.Command{
 	Long: `Install Kernel MCP server configuration for a supported AI development tool.
 
 This command modifies the configuration file for the specified target to add
-the Kernel MCP server, enabling browser automation capabilities in your AI tool.
-
-Supported targets:
-  cursor      - Cursor editor
-  claude      - Claude Desktop app
-  claude-code - Claude Code CLI
-  antigravity - Google Antigravity
-  windsurf    - Windsurf editor
-  vscode      - Visual Studio Code
-  goose       - Goose AI
-  zed         - Zed editor
-  fx          - fx coding agent
-
-Examples:
-  # Install for Cursor
-  kernel mcp install --target cursor
-
-  # Install for Claude Desktop
-  kernel mcp install --target claude
-
-  # Install for VS Code
-  kernel mcp install --target vscode`,
+the Kernel MCP server, enabling browser automation capabilities in your AI tool.`,
 	RunE: runInstall,
 }
 
 func init() {
 	MCPCmd.AddCommand(installCmd)
+	installCmd.Long += "\n\nSupported targets:\n"
+	for _, spec := range targetSpecs {
+		installCmd.Long += fmt.Sprintf("  %-12s - %s\n", spec.target, spec.description)
+	}
+	installCmd.Long += "\nExamples:\n  kernel mcp install --target cursor\n  kernel mcp install --target vscode"
 
-	// Build target list for help text
 	targets := AllTargets()
 	targetStrs := make([]string, len(targets))
 	for i, t := range targets {
@@ -57,16 +40,8 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	targetStr, _ := cmd.Flags().GetString("target")
 	target := Target(strings.ToLower(targetStr))
 
-	// Validate target
-	validTarget := false
-	for _, t := range AllTargets() {
-		if target == t {
-			validTarget = true
-			break
-		}
-	}
-
-	if !validTarget {
+	spec, ok := specFor(target)
+	if !ok {
 		targets := AllTargets()
 		targetStrs := make([]string, len(targets))
 		for i, t := range targets {
@@ -87,7 +62,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// For Goose, the install function already printed instructions
-	if target == TargetGoose {
+	if spec.printOnly {
 		return nil
 	}
 
