@@ -12,10 +12,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const publicCredentialFixture = `{"id":"credential-1","key":"login","type":"credential","version":2,"spec":{"description":"Example","fields":{"username":{"type":"text","sensitive":false},"email":{"type":"email","sensitive":false},"password":{"type":"password"},"otp":{"type":"totp","sensitive":true}}},"state":{"status":"ready","fields":{"username":{"has_value":true,"value":"user-123"},"email":{"has_value":true,"value":"user@example.com"},"password":{"has_value":true,"value":"private-password"},"otp":{"has_value":true,"value":"private-seed"}}},"action":{"name":"collect","url":"https://vault.example/collect#token=user-123.token"},"available_operations":[{"type":"collect","description":"Open form"}],"available_expansions":[]}`
+const publicCredentialFixture = `{"id":"credential-1","key":"login","type":"credential","version":2,"spec":{"description":"Example","fields":[{"name":"username","label":"Membership Number or Username","type":"text","sensitive":false},{"name":"email","type":"email","sensitive":false},{"name":"password","type":"password"},{"name":"otp","type":"totp","sensitive":true}]},"state":{"status":"ready","fields":{"username":{"has_value":true,"value":"user-123"},"email":{"has_value":true,"value":"user@example.com"},"password":{"has_value":true,"value":"private-password"},"otp":{"has_value":true,"value":"private-seed"}}},"action":{"name":"collect","url":"https://vault.example/collect#token=user-123.token"},"available_operations":[{"type":"collect","description":"Open form"}],"available_expansions":[]}`
 
 func TestVaultPublicValuesAcrossCommands(t *testing.T) {
-	spec := credentialSpecFile(t, `{"fields":{"username":{"type":"text","sensitive":false,"value":"user-123"}}}`)
+	spec := credentialSpecFile(t, `{"fields":[{"name":"username","type":"text","sensitive":false,"value":"user-123"}]}`)
 	update := credentialSpecFile(t, `{"fields":{"username":{"value":"user-123"}}}`)
 	for _, args := range [][]string{
 		{"vaults", "credentials", "create", "user-123", "login", "--spec-file", spec},
@@ -44,6 +44,27 @@ func TestVaultPublicValuesAcrossCommands(t *testing.T) {
 	}
 }
 
+func TestVaultCredentialDefinitionOrderIsPreserved(t *testing.T) {
+	out, err := filterVaultJSON(json.RawMessage(publicCredentialFixture), vaultItemFields)
+	require.NoError(t, err)
+	var item struct {
+		Spec struct {
+			Fields []struct {
+				Name  string `json:"name"`
+				Label string `json:"label"`
+			} `json:"fields"`
+		} `json:"spec"`
+	}
+	require.NoError(t, json.Unmarshal(out, &item))
+	names := make([]string, 0, len(item.Spec.Fields))
+	for _, field := range item.Spec.Fields {
+		names = append(names, field.Name)
+	}
+	assert.Equal(t, []string{"username", "email", "password", "otp"}, names)
+	assert.Equal(t, "Membership Number or Username", item.Spec.Fields[0].Label)
+	assert.Empty(t, item.Spec.Fields[1].Label)
+}
+
 func TestVaultPublicValueBoundary(t *testing.T) {
 	for _, tc := range []struct {
 		kind, sensitive   string
@@ -55,7 +76,7 @@ func TestVaultPublicValueBoundary(t *testing.T) {
 		{"text", "false", false, false},
 	} {
 		t.Run(fmt.Sprint(tc), func(t *testing.T) {
-			raw := fmt.Sprintf(`{"type":"credential","spec":{"fields":{"field":{"type":%q,"sensitive":%s}}},"state":{"fields":{"field":{"has_value":%t,"value":"test-value"}}}}`, tc.kind, tc.sensitive, tc.hasValue)
+			raw := fmt.Sprintf(`{"type":"credential","spec":{"fields":[{"name":"field","type":%q,"sensitive":%s}]},"state":{"fields":{"field":{"has_value":%t,"value":"test-value"}}}}`, tc.kind, tc.sensitive, tc.hasValue)
 			out, err := filterVaultJSON(json.RawMessage(raw), vaultItemFields)
 			require.NoError(t, err)
 			assert.Equal(t, tc.visible, strings.Contains(string(out), "test-value"))

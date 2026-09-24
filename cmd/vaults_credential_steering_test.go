@@ -30,7 +30,13 @@ func TestCredentialHelpSteering(t *testing.T) {
 	assert.Contains(t, strings.Join(strings.Fields(cmd.Long), " "), "Use wallet and card item types for credit cards and payment checkout instead")
 	assert.Contains(t, newVaultsCommand().Long, "Use wallet and card item types")
 	assert.Contains(t, cmd.Long, "recognizable site name only")
+	assert.Contains(t, cmd.Long, "natural top-to-bottom order")
+	assert.Contains(t, cmd.Long, "collection form renders that order unchanged")
+	assert.Contains(t, cmd.Long, "optional non-secret human-readable label")
+	assert.Contains(t, cmd.Long, "browser fills always use name")
 	assert.Contains(t, cmd.Long, "sensitive:false explicitly for ordinary usernames and email addresses")
 	assert.Contains(t, cmd.Example, `"description":"Hacker News"`)
+	assert.Contains(t, cmd.Example, `"fields":[{"name":"username"`)
+	assert.Contains(t, cmd.Example, `"label":"Username"`)
 	assert.Contains(t, cmd.Example, `"sensitive":false`)
 }

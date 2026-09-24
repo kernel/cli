@@ -281,3 +281,65 @@ func TestFormatOtlpDestinationHeaders(t *testing.T) {
 	assert.Equal(t, "", formatOtlpDestinationHeaders(nil))
 	assert.Equal(t, "Authorization, X-Api-Key", formatOtlpDestinationHeaders(map[string]string{"X-Api-Key": "", "Authorization": ""}))
 }
+
+func TestFormatOtlpDestinationDelivery(t *testing.T) {
+	exported := time.Unix(1_700_000_000, 0)
+	failed := time.Unix(1_600_000_000, 0)
+
+	assert.Equal(t, "no deliveries yet", formatOtlpDestinationDelivery(kernel.OtlpDestination{}))
+	assert.Equal(t, "ok", formatOtlpDestinationDelivery(kernel.OtlpDestination{LastExportAt: exported}))
+	assert.Equal(t, "failing (3 consecutive)", formatOtlpDestinationDelivery(kernel.OtlpDestination{
+		ConsecutiveFailures: 3,
+		LastExportAt:        exported,
+		LastErrorAt:         exported,
+	}))
+	// A retained error from before the last success must not read as failing.
+	assert.Equal(t, "ok", formatOtlpDestinationDelivery(kernel.OtlpDestination{
+		LastExportAt: exported,
+		LastError:    "http_401",
+		LastErrorAt:  failed,
+	}))
+}
+
+func TestTelemetryDestinationsGet_ShowsDeliveryHealth(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fake := &FakeTelemetryDestinationsService{GetFunc: func(ctx context.Context, idOrName string, opts ...option.RequestOption) (*kernel.OtlpDestination, error) {
+		return &kernel.OtlpDestination{
+			ID:                  "d1",
+			Name:                "honeycomb",
+			Endpoint:            "https://api.honeycomb.io",
+			ConsecutiveFailures: 2,
+			LastError:           "http_401",
+			LastErrorAt:         time.Unix(1_700_000_000, 0),
+			LastExportAt:        time.Unix(1_600_000_000, 0),
+			CreatedAt:           time.Unix(0, 0),
+			UpdatedAt:           time.Unix(0, 0),
+		}, nil
+	}}
+	c := TelemetryDestinationsCmd{destinations: fake}
+	require.NoError(t, c.Get(context.Background(), TelemetryDestinationsGetInput{Identifier: "d1"}))
+	out := buf.String()
+	assert.Contains(t, out, "failing (2 consecutive)")
+	assert.Contains(t, out, "http_401")
+	assert.Contains(t, out, "Last Export At")
+}
+
+func TestTelemetryDestinationsList_ShowsDeliveryColumn(t *testing.T) {
+	buf := capturePtermOutput(t)
+	items := []kernel.OtlpDestination{{
+		ID:                  "d1",
+		Name:                "honeycomb",
+		Endpoint:            "https://api.honeycomb.io",
+		ConsecutiveFailures: 5,
+		CreatedAt:           time.Unix(0, 0),
+		UpdatedAt:           time.Unix(0, 0),
+	}}
+	fake := &FakeTelemetryDestinationsService{ListFunc: func(ctx context.Context, query kernel.TelemetryDestinationListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.OtlpDestination], error) {
+		return &pagination.OffsetPagination[kernel.OtlpDestination]{Items: items}, nil
+	}}
+	c := TelemetryDestinationsCmd{destinations: fake}
+	require.NoError(t, c.List(context.Background(), TelemetryDestinationsListInput{Page: 1, PerPage: 20}))
+	out := buf.String()
+	assert.Contains(t, out, "Delivery")
+	assert.Contains(t, out, "failing (5 consecutive)")
+}

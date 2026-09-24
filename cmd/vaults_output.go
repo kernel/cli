@@ -41,7 +41,7 @@ var vaultItemFields = vaultOutputFields{
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil,
 		"browser_id": nil, "page_url": nil, "amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
 		"context": nil, "expires_at": nil, "description": nil,
-		"fields":          {"*": vaultFieldsOf("type required sensitive")},
+		"fields":          vaultFieldsOf("name label type required sensitive"),
 		"provider_config": vaultFieldsOf("id name"),
 		"authorization":   {"method": nil, "client": {"type": nil, "provider_config": vaultFieldsOf("id name")}},
 		"totals":          vaultTotalFields,
@@ -55,7 +55,7 @@ var vaultItemFields = vaultOutputFields{
 		"fields":        {"*": vaultFieldsOf("has_value")},
 		"masks":         vaultFieldsOf("brand last4"),
 		"aliases":       vaultFieldsOf("number cvc exp_month exp_year"),
-		"preparation":   vaultFieldsOf("id status browser_id merchant_origin environment created_at expires_at approval_url"),
+		"preparation":   vaultFieldsOf("id status browser_id merchant_origin environment psp created_at expires_at approval_url"),
 		"authorization": vaultFieldsOf("id status psp merchant amount amount_cents currency created_at expires_at approval_url browser_id reason psp_error_code expected_cents actual_cents amount_authority amount_verified charged_amount_cents charged_currency charged_kind replay_attempted replay_status replay_delivered"),
 	},
 }
@@ -134,11 +134,13 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 }
 
 func preservePublicCredentialValues(source, result vaultJSON) error {
+	type definition struct {
+		Name      string `json:"name"`
+		Type      string `json:"type"`
+		Sensitive *bool  `json:"sensitive"`
+	}
 	var spec struct {
-		Fields map[string]struct {
-			Type      string `json:"type"`
-			Sensitive *bool  `json:"sensitive"`
-		} `json:"fields"`
+		Fields []definition `json:"fields"`
 	}
 	var values struct {
 		Fields map[string]struct {
@@ -149,8 +151,12 @@ func preservePublicCredentialValues(source, result vaultJSON) error {
 	if json.Unmarshal(source["spec"], &spec) != nil || json.Unmarshal(source["state"], &values) != nil || values.Fields == nil {
 		return nil
 	}
+	definitions := make(map[string]definition, len(spec.Fields))
+	for _, field := range spec.Fields {
+		definitions[field.Name] = field
+	}
 	for name, field := range values.Fields {
-		definition := spec.Fields[name]
+		definition := definitions[name]
 		if definition.Sensitive == nil || *definition.Sensitive || (definition.Type != "text" && definition.Type != "email") || !field.HasValue {
 			field.Value = nil
 		}
@@ -363,6 +369,9 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		rows = append(rows, []string{"Preparation ID", p.ID}, []string{"Preparation status", string(p.Status)},
 			[]string{"Preparation browser", p.BrowserID}, []string{"Merchant origin", p.MerchantOrigin},
 			[]string{"Environment", string(p.Environment)})
+		if p.Psp != "" {
+			rows = append(rows, []string{"Processor", string(p.Psp)})
+		}
 		if !p.ExpiresAt.IsZero() {
 			rows = append(rows, []string{"Submit before", util.FormatLocal(p.ExpiresAt)})
 		}

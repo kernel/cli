@@ -88,7 +88,13 @@ func (b BrowsersCmd) WebMCPInvoke(ctx context.Context, in BrowsersWebMCPInvokeIn
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
-	if res.Status != kernel.InvocationResultStatusCompleted {
+	switch res.Status {
+	case kernel.InvocationResultStatusCompleted:
+	case kernel.InvocationResultStatusAwaitingSubmission:
+		// A populated form is a result, not a failure. Re-invoking would refill the
+		// same fields, so point the caller at submitting the form they already have.
+		pterm.Warning.Printfln("WebMCP invocation %s populated a form without submitting it. Inspect the form and obtain any required confirmation, then submit it with 'kernel browsers playwright execute' or 'kernel browsers computer' rather than invoking the tool again.", res.InvocationID)
+	default:
 		return fmt.Errorf("WebMCP invocation %s: %s: %s", res.InvocationID, res.Status, res.ErrorText)
 	}
 	// Preserve page-provided JSON numbers rather than re-encoding SDK float64 values.
@@ -111,7 +117,18 @@ func newBrowsersWebMCPCommand() *cobra.Command {
 	list := &cobra.Command{Use: "list <id-or-name>", Short: "List WebMCP tools across browser tabs and frames", Args: cobra.ExactArgs(1), RunE: runBrowsersWebMCPList}
 	addJSONOutputFlag(list)
 	list.Flags().Bool("json", false, "Output the raw API response as JSON (alias for --output json)")
-	invoke := &cobra.Command{Use: "invoke <id-or-name>", Short: "Invoke a WebMCP tool without automatic retries", Args: cobra.ExactArgs(1), RunE: runBrowsersWebMCPInvoke}
+	invoke := &cobra.Command{
+		Use:   "invoke <id-or-name>",
+		Short: "Invoke a WebMCP tool without automatic retries",
+		Long: "Invoke a WebMCP tool without automatic retries.\n\n" +
+			"Most tools wait for a terminal result, including across navigation. A tool " +
+			"backed by a declarative form that does not autosubmit instead returns once " +
+			"its fields are populated: inspect the form, obtain any required confirmation, " +
+			"then submit it through Playwright or computer interaction without invoking " +
+			"the tool again.",
+		Args: cobra.ExactArgs(1),
+		RunE: runBrowsersWebMCPInvoke,
+	}
 	invoke.Flags().String("tool-ref", "", "Opaque tool reference from webmcp list")
 	_ = invoke.MarkFlagRequired("tool-ref")
 	invoke.Flags().String("input", "", "Tool input as a JSON object")
