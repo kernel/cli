@@ -158,6 +158,7 @@ func init() {
 	}
 
 	// Register subcommands
+	searchCmd := newSearchCommand()
 	rootCmd.AddCommand(deployCmd)
 	rootCmd.AddCommand(invokeCmd)
 	rootCmd.AddCommand(browsersCmd)
@@ -174,6 +175,7 @@ func init() {
 	rootCmd.AddCommand(mcp.MCPCmd)
 	rootCmd.AddCommand(upgradeCmd)
 	rootCmd.AddCommand(statusCmd)
+	rootCmd.AddCommand(searchCmd)
 
 	rootCmd.PersistentPostRunE = func(cmd *cobra.Command, args []string) error {
 		// running synchronously so we never slow the command
