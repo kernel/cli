@@ -230,8 +230,49 @@ func buildNetworkParam(privateHosts []string) (kernel.BrowserNetworkConfigParam,
 	if len(hosts) > maxPrivateHosts {
 		return network, fmt.Errorf("too many --private-host entries: %d (maximum %d)", len(hosts), maxPrivateHosts)
 	}
-	network.PrivateHosts = hosts
+	if len(hosts) > 0 {
+		network.PrivateHosts = hosts
+	}
 	return network, nil
+}
+
+// parseProxyRoutes turns --proxy-route PROXY=HOST[,HOST...] values into the API's
+// per-destination proxy routes. PROXY is a proxy ID or name; hosts are exact
+// hostnames or leading *. wildcard patterns.
+func parseProxyRoutes(values []string) ([]kernel.BrowserNetworkConfigProxyRouteParam, error) {
+	var routes []kernel.BrowserNetworkConfigProxyRouteParam
+	for _, value := range values {
+		proxy, hostList, ok := strings.Cut(value, "=")
+		proxy = strings.TrimSpace(proxy)
+		if !ok || proxy == "" {
+			return nil, fmt.Errorf("invalid --proxy-route %q: expected PROXY=HOST[,HOST...]", value)
+		}
+		hosts := normalizePrivateHosts(strings.Split(hostList, ","))
+		if len(hosts) == 0 {
+			return nil, fmt.Errorf("invalid --proxy-route %q: at least one host is required", value)
+		}
+		route := kernel.BrowserNetworkConfigProxyRouteParam{Hosts: hosts}
+		if cuidRegex.MatchString(proxy) {
+			route.Proxy.ID = kernel.Opt(proxy)
+		} else {
+			route.Proxy.Name = kernel.Opt(proxy)
+		}
+		routes = append(routes, route)
+	}
+	return routes, nil
+}
+
+// formatProxyRoutes renders per-destination proxy routes for table output.
+func formatProxyRoutes(routes []kernel.BrowserNetworkConfigProxyRoute) string {
+	parts := make([]string, 0, len(routes))
+	for _, route := range routes {
+		proxy := route.Proxy.ID
+		if proxy == "" {
+			proxy = route.Proxy.Name
+		}
+		parts = append(parts, fmt.Sprintf("%s -> %s", strings.Join(route.Hosts, ", "), proxy))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // formatPrivateHosts renders a network configuration for table output. A missing
@@ -394,6 +435,7 @@ type BrowsersCreateInput struct {
 	ProxyMode           string
 	Region              string
 	PrivateHosts        []string
+	ProxyRoutes         []string
 	StartURL            string
 	Extensions          []string
 	Vaults              []string
@@ -660,7 +702,11 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	if err != nil {
 		return err
 	}
-	if len(network.PrivateHosts) > 0 {
+	network.ProxyRoutes, err = parseProxyRoutes(in.ProxyRoutes)
+	if err != nil {
+		return err
+	}
+	if len(network.PrivateHosts) > 0 || len(network.ProxyRoutes) > 0 {
 		params.Network = network
 	}
 
@@ -874,6 +920,9 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		tableData = append(tableData, []string{"Proxy", proxy})
 	}
 	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)})
+	if len(browser.Network.ProxyRoutes) > 0 {
+		tableData = append(tableData, []string{"Proxy Routes", formatProxyRoutes(browser.Network.ProxyRoutes)})
+	}
 	if vaults := formatVaultReferences(browser.Vaults); vaults != "" {
 		tableData = append(tableData, []string{"Vaults", vaults})
 	}
@@ -3176,6 +3225,7 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
 	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersCreateCmd.Flags().Bool("viewport-interactive", false, "Interactively select viewport size from list")
+	browsersCreateCmd.Flags().StringArray("proxy-route", nil, "Route matching destinations through a specific proxy, as PROXY=HOST[,HOST...] where PROXY is an active non-direct proxy ID or name (repeatable). Hosts are exact hostnames or leading '*.' wildcards (subdomains only, no ports); exact beats wildcard and longer suffixes win. Unmatched traffic uses the top-level proxy; matched requests fail closed if the route proxy is unavailable. Takes effect after session setup; requires proxy v3; not supported with pools")
 	browsersCreateCmd.Flags().StringArray("vault", nil, "Vault ID or name to attach for credential/card fill at creation (repeatable, max 20; incompatible with pools; see vaults --help)")
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
@@ -3309,6 +3359,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	proxyMode, _ := cmd.Flags().GetString("proxy-mode")
 	region, _ := cmd.Flags().GetString("region")
 	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
+	proxyRoutes, _ := cmd.Flags().GetStringArray("proxy-route")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	vaults, _ := cmd.Flags().GetStringArray("vault")
@@ -3454,6 +3505,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		ProxyMode:           proxyMode,
 		Region:              region,
 		PrivateHosts:        privateHosts,
+		ProxyRoutes:         proxyRoutes,
 		StartURL:            startURL,
 		Extensions:          extensions,
 		Vaults:              vaults,

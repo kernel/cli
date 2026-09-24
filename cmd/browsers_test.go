@@ -610,6 +610,38 @@ func TestBrowsersCreate_WithPrivateHosts(t *testing.T) {
 	}))
 }
 
+func TestBrowsersCreate_WithProxyRoutes(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-routes"}, nil
+		},
+	}
+
+	err := (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
+		ProxyRoutes: []string{"my-proxy=*.example.com, api.example.com", "abcdefghijklmnopqrstuvwx=internal.test"},
+	})
+	require.NoError(t, err)
+	require.Len(t, captured.Network.ProxyRoutes, 2)
+	assert.Equal(t, []string{"*.example.com", "api.example.com"}, captured.Network.ProxyRoutes[0].Hosts)
+	assert.Equal(t, "my-proxy", captured.Network.ProxyRoutes[0].Proxy.Name.Value)
+	assert.Equal(t, "abcdefghijklmnopqrstuvwx", captured.Network.ProxyRoutes[1].Proxy.ID.Value)
+
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"proxy_routes":[{"hosts":["*.example.com","api.example.com"],"proxy":{"name":"my-proxy"}}`)
+	assert.NotContains(t, string(raw), "private_hosts")
+
+	for _, bad := range []string{"no-equals", "=host.test", "proxy=", "proxy= , "} {
+		assert.Error(t, (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
+			ProxyRoutes: []string{bad},
+		}), bad)
+	}
+}
+
 func TestBrowsersCreate_WithRegion(t *testing.T) {
 	setupStdoutCapture(t)
 
