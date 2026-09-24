@@ -474,6 +474,9 @@ func mergeClientMetadata(raw, clientName string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("invalid kernel OAuth metadata: %w", err)
 	}
+	if err := validateConfigKeys(&metadata, ""); err != nil {
+		return "", err
+	}
 	obj, err := objectAt(&metadata, "")
 	if err != nil {
 		return "", err
