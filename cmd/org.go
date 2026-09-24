@@ -231,6 +231,7 @@ func orgEntitlementRows(entitlements *kernel.OrgEntitlements) pterm.TableData {
 		{"Feature", "Managed proxies", fmt.Sprintf("%t", features.ManagedProxies.Enabled)},
 		{"Feature", "Custom proxies", fmt.Sprintf("%t", features.CustomProxies.Enabled)},
 		{"Feature", "Proxy bypass hosts", fmt.Sprintf("%t", features.ProxyBypassHosts.Enabled)},
+		{"Feature", "Search", fmt.Sprintf("%t", features.Search.Enabled)},
 		{"Feature", "GPU", fmt.Sprintf("%t", features.GPU.Enabled)},
 		{"Limit", "Max concurrent browsers", fmt.Sprintf("%d", limits.MaxConcurrentBrowsers)},
 		{"Limit", "Max concurrent invocations", fmt.Sprintf("%d", limits.MaxConcurrentInvocations)},

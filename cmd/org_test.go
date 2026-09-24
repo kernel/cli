@@ -50,6 +50,7 @@ func testOrgEntitlementsWithUnlimitedValues(t *testing.T) *kernel.OrgEntitlement
 			"managed_proxies":{"enabled":true},
 			"custom_proxies":{"enabled":true},
 			"proxy_bypass_hosts":{"enabled":true},
+			"search":{"enabled":true},
 			"gpu":{"enabled":false}
 		},
 		"limits":{"max_concurrent_browsers":150,"max_concurrent_invocations":150,"default_max_concurrent_invocations_per_app":20,"max_vaults":null}
@@ -75,6 +76,7 @@ func TestOrgEntitlementRows_CompleteProjection(t *testing.T) {
 			"managed_proxies":{"enabled":true},
 			"custom_proxies":{"enabled":false},
 			"proxy_bypass_hosts":{"enabled":true},
+			"search":{"enabled":true},
 			"gpu":{"enabled":false}
 		},
 		"limits":{"max_concurrent_browsers":43,"max_concurrent_invocations":47,"default_max_concurrent_invocations_per_app":53,"max_vaults":59}
@@ -106,6 +108,7 @@ func TestOrgEntitlementRows_CompleteProjection(t *testing.T) {
 		{"Feature", "Managed proxies", "true"},
 		{"Feature", "Custom proxies", "false"},
 		{"Feature", "Proxy bypass hosts", "true"},
+		{"Feature", "Search", "true"},
 		{"Feature", "GPU", "false"},
 		{"Limit", "Max concurrent browsers", "43"},
 		{"Limit", "Max concurrent invocations", "47"},
@@ -132,6 +135,7 @@ func TestOrgEntitlementRows_BooleanFieldProvenance(t *testing.T) {
 		{"Managed proxies", func(e *kernel.OrgEntitlements) { e.Features.ManagedProxies.Enabled = true }},
 		{"Custom proxies", func(e *kernel.OrgEntitlements) { e.Features.CustomProxies.Enabled = true }},
 		{"Proxy bypass hosts", func(e *kernel.OrgEntitlements) { e.Features.ProxyBypassHosts.Enabled = true }},
+		{"Search", func(e *kernel.OrgEntitlements) { e.Features.Search.Enabled = true }},
 		{"GPU", func(e *kernel.OrgEntitlements) { e.Features.GPU.Enabled = true }},
 	}
 
