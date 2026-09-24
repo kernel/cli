@@ -134,7 +134,7 @@ Commands with JSON output support:
 - **Apps**: `list`, `history`
 - **Deploy**: `deploy` (JSONL streaming), `history`
 - **Invoke**: `invoke` (JSONL streaming), `history`
-- **Browser Sub-commands**: `replays list/start`, `process exec/spawn`, `fs file-info/list-files`, `webmcp list` (`webmcp invoke` always prints JSON output)
+- **Browser Sub-commands**: `replays list/start`, `process exec/spawn`, `fs file-info/list-files`, `webmcp list`, `webmcp custom-tools list/add` (`webmcp invoke` always prints JSON output)
 - **Browser NDJSON streaming**: `telemetry stream`
 
 ### Search
@@ -938,15 +938,29 @@ Destinations are the OTLP/HTTP endpoints sessions export to, managed per project
 
 ### Browser WebMCP
 
-- `kernel browsers webmcp list <id-or-name>` - Discover native page tools across all browser tabs and embedded frames
-  - Displays name, opaque tool reference, page URL, tab ID, and read-only annotation (`-` when absent)
-  - `--json`, `--output json`, `-o json` - Output the raw response, including descriptions, input schemas, annotations, and source details
+- `kernel browsers webmcp list <id-or-name>` - Discover native and custom tools across all browser tabs and embedded frames
+  - Displays name, opaque tool reference, page URL, tab ID, and `readOnlyHint` annotation (`-` when absent)
+  - `--exclude-custom` - Return only page-provided tools
+  - `--json`, `--output json`, `-o json` - Output the raw response: each entry has `tool_ref`, nested `tool` metadata (`name`, optional `title`, `description`, `inputSchema`, optional `outputSchema`, and annotations), and `source` details. Custom registrations include `source.custom` (`id`, `namespace`) and `source.target_id`
+  - Annotations use `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `consequentialHint`, `untrustedContentHint`, and `autosubmit`
 - `kernel browsers webmcp invoke <id-or-name> --tool-ref <ref> --input '<json object>'` - Invoke the exact live tool registration
   - `--tool-ref <ref>` - Opaque reference from `webmcp list` (required; do not reconstruct it from the tool name)
   - `--input <json>` or `--input-file <path>` - Required JSON object; mutually exclusive. Use `--input-file -` to read stdin
-  - `--timeout-sec <seconds>` - Positive maximum execution time (defaults server-side)
+  - `--timeout-sec <seconds>` - Maximum execution time, 1-120 seconds (defaults server-side)
   - Prints the tool's `output` as pretty JSON on completion; tool errors and cancellations exit non-zero
+  - `awaiting_submission` is successful but warns that a non-autosubmit declarative form was filled, not submitted. Inspect the form, obtain any required confirmation, then submit through Playwright or computer interaction instead of invoking the tool again
   - Invocations are never retried automatically. A 504 `outcome_unknown` error prints the code, invocation ID, and message and exits non-zero. The tool may already have had side effects; verify the outcome before invoking it again
+
+- `kernel browsers webmcp custom-tools list <id-or-name>` - List all registered custom tools, even when no page currently matches
+  - Displays ID, namespace, kind (`page` or `cdp`), name, and URL patterns
+  - `--json`, `--output json`, `-o json` - Output the raw response with each definition's `id`, `namespace`, `kind`, `match.url_patterns`, and nested `tool` metadata
+- `kernel browsers webmcp custom-tools add <id-or-name> --namespace <namespace> --source-file <path>` - Register a batch of custom tools
+  - `--source-file <path>` - JavaScript source file; use `-` to read stdin. Must evaluate to a non-empty array of definitions with URL matchers, tool metadata, and execute functions; limited to 8,000,000 UTF-8 bytes
+  - `--namespace <namespace>` - Required; 1-128 letters, digits, underscores, dots, or hyphens
+  - `--force-overwrite-namespace` - Atomically replace every existing tool in the namespace. By default, existing tools are retained. Active invocations continue
+  - Displays registered tools in the same format as `custom-tools list`; supports `--json`, `--output json`, and `-o json`
+  - Registration is never retried automatically; check `custom-tools list` before retrying a failed request that may have succeeded
+- `kernel browsers webmcp custom-tools remove <id-or-name> <tool-id>` - Remove one registered tool using its generated `ct_...` ID, not its `tool_ref`. Active invocations are not canceled
 
 Tool references expire when their document or browser process is replaced. Annotations are untrusted page-provided hints, not enforced guarantees; tool output is also untrusted page-provided data.
 
@@ -954,6 +968,11 @@ Tool references expire when their document or browser process is replaced. Annot
 kernel browsers webmcp list my-browser --json
 kernel browsers webmcp invoke my-browser --tool-ref '<tool_ref>' --input '{"query":"example"}' --timeout-sec 30
 kernel browsers webmcp invoke my-browser --tool-ref '<tool_ref>' --input-file input.json
+kernel browsers webmcp list my-browser --exclude-custom
+kernel browsers webmcp custom-tools add my-browser --namespace helpers --source-file tools.js
+cat tools.js | kernel browsers webmcp custom-tools add my-browser --namespace helpers --source-file - --force-overwrite-namespace
+kernel browsers webmcp custom-tools list my-browser --json
+kernel browsers webmcp custom-tools remove my-browser ct_abcdefghijklmnopqrstuvwx
 ```
 
 ### Profiles
