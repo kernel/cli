@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -61,19 +62,18 @@ func installForGoose(configPath string, spec targetSpec) error {
 }
 
 func gooseConfig(spec targetSpec, cacheDir string) string {
-	return `extensions:
+	var config strings.Builder
+	config.WriteString(`extensions:
   kernel:
     name: Kernel
     type: stdio
     enabled: true
     cmd: npx
     args:
-      - -y
-      - mcp-remote
-      - ` + KernelMCPURL + `
-      - "` + fmt.Sprint(spec.callbackPort) + `"
-      - --static-oauth-client-metadata
-      - '` + clientMetadata(spec.clientName) + `'
-    envs:
-      MCP_REMOTE_CONFIG_DIR: ` + fmt.Sprintf("%q", cacheDir)
+`)
+	for _, arg := range stdioArgs(spec) {
+		fmt.Fprintf(&config, "      - %q\n", arg)
+	}
+	fmt.Fprintf(&config, "    envs:\n      MCP_REMOTE_CONFIG_DIR: %q", cacheDir)
+	return config.String()
 }
