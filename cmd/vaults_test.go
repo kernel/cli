@@ -22,10 +22,9 @@ import (
 const linkWalletSpecFixture = `{"authorization":{"method":"oauth","client":{"type":"kernel_managed"}}}`
 
 const vaultFixture = `{"id":"vault-1","name":"checkout","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}`
-const requestedCardFixture = `{"id":"item-1","key":"order-1","type":"card","spec":{"provider":"link","wallet":"wallet-1","payment_method_id":"pm-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://shop.example","context":"Purchase description"},"state":{"provider":"link","status":"pending_authorization"},"action":{"name":"spend_approval","url":"https://example.com/approve"},"available_operations":[],"available_expansions":[]}`
+const requestedCardFixture = `{"id":"item-1","key":"order-1","type":"card","spec":{"provider":"link","wallet":"wallet-1","browser_id":"browser-1","page_url":"https://shop.example/checkout","payment_method_id":"pm-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","context":"Purchase description"},"state":{"provider":"link","status":"pending_authorization"},"action":{"name":"spend_approval","url":"https://example.com/approve"},"available_operations":[],"available_expansions":[]}`
 const connectedWalletFixture = `{"id":"wallet-id","key":"wallet-1","type":"wallet","description":"Reach checkout before creating a credential.","spec":{"provider":"link","authorization":{"method":"oauth","client":{"type":"kernel_managed"}}},"state":{"provider":"link","status":"connected"},"available_operations":[],"available_expansions":[{"type":"payment_methods","description":"Select a payment method explicitly."}]}`
-const paymentTokenFixture = `{"id":"token-1","key":"order-token","type":"payment_token","description":"Approve this checkout-bound Link credential.","spec":{"provider":"link","wallet":"wallet-1","browser_id":"browser-1","page_url":"https://shop.example/checkout","payment_method_id":"pm-1","amount":1234,"currency":"usd","context":"Final checkout purchase context."},"state":{"provider":"link","status":"pending_authorization"},"action":{"name":"spend_approval","url":"https://example.com/approve"},"available_operations":[],"available_expansions":[]}`
-const fillCardFixture = `{"id":"item-1","key":"order-1","type":"card","spec":{"provider":"link","wallet":"wallet-1","payment_method_id":"pm-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://shop.example","context":"Purchase description"},"state":{"provider":"link","status":"ready"},"available_operations":[{"type":"fill","description":"Fill this approved credential without submitting payment."}],"available_expansions":[]}`
+const fillCardFixture = `{"id":"item-1","key":"order-1","type":"card","spec":{"provider":"link","wallet":"wallet-1","browser_id":"browser-1","page_url":"https://shop.example/checkout","payment_method_id":"pm-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","context":"Purchase description"},"state":{"provider":"link","status":"ready"},"available_operations":[{"type":"fill","description":"Fill this approved credential without submitting payment."}],"available_expansions":[]}`
 
 func vaultTestClient(t *testing.T, handler http.HandlerFunc) kernel.Client {
 	t.Helper()
@@ -54,7 +53,7 @@ func executeVaultCommand(t *testing.T, client kernel.Client, args ...string) (st
 }
 
 func TestVaultCommandConstruction(t *testing.T) {
-	for _, path := range []string{"create", "list", "get", "delete", "items list", "items get", "items delete", "items events", "wallets create", "wallets payment-methods", "cards create", "payment-tokens create", "items invoke"} {
+	for _, path := range []string{"create", "list", "get", "delete", "items list", "items get", "items delete", "items events", "wallets create", "wallets payment-methods", "cards create", "items invoke"} {
 		t.Run(path, func(t *testing.T) {
 			cmd, remaining, err := newVaultsCommand().Find(strings.Fields(path))
 			require.NoError(t, err)
@@ -73,7 +72,7 @@ func TestVaultCommandConstruction(t *testing.T) {
 	cmd, _, err := rootCmd.Find([]string{"vaults", "items", "invoke"})
 	require.NoError(t, err)
 	assert.False(t, isAuthExempt(cmd))
-	for _, unsupported := range []string{"rename", "update", "items put", "items action", "wallets callback", "cards pay", "cards authorize", "cards update"} {
+	for _, unsupported := range []string{"rename", "update", "items put", "items action", "wallets callback", "cards pay", "cards authorize", "cards update", "payment-tokens create"} {
 		cmd, remaining, _ := newVaultsCommand().Find(strings.Fields(unsupported))
 		assert.True(t, len(remaining) > 0 || cmd.RunE == nil, unsupported)
 	}
@@ -105,7 +104,6 @@ func TestVaultRequiredAndInvalidFlags(t *testing.T) {
 		{"vaults wallets create checkout wallet-1 --provider unknown --spec {}", "--provider"},
 		{"vaults wallets create checkout wallet-1 --provider link", "required flag"},
 		{"vaults cards create checkout order-1 --provider link", "required flag"},
-		{"vaults payment-tokens create checkout order-1", "required flag"},
 		{"vaults wallets create checkout wallet-1 --provider link --user-id usr_123", "--user-id"},
 		{"vaults wallets create checkout wallet-1 --provider agentcard --user-id wrong", "--user-id"},
 		{"vaults cards create checkout order-1", "required flag"},
@@ -141,7 +139,6 @@ func TestVaultCommandsWithoutProject(t *testing.T) {
 		{[]string{"wallets", "create", "checkout", "wallet-1", "--provider", "link", "--spec", linkWalletSpecFixture}, connectedWalletFixture, 1},
 		{[]string{"wallets", "payment-methods", "checkout", "wallet-1"}, connectedWalletFixture, 1},
 		{append([]string{"cards", "create", "checkout", "order-1"}, linkCardArgs()...), requestedCardFixture, 1},
-		{[]string{"payment-tokens", "create", "checkout", "order-token", "--spec", `{"wallet":"wallet-1","browser_id":"browser-1","page_url":"https://shop.example/checkout","payment_method_id":"pm-1","amount":1234,"currency":"usd","context":"Final checkout purchase context."}`}, paymentTokenFixture, 1},
 	}
 	for _, tt := range tests {
 		t.Run(strings.Join(tt.args[:min(2, len(tt.args))], " "), func(t *testing.T) {
@@ -166,7 +163,7 @@ func TestVaultCommandsWithoutProject(t *testing.T) {
 }
 
 func linkCardArgs() []string {
-	return []string{"--provider", "link", "--spec", fmt.Sprintf(`{"wallet":"wallet-1","amount":1234,"currency":"USD","merchant_name":"Example Shop","payment_method_id":"pm-1","merchant_url":"https://shop.example","context":%q}`, strings.Repeat("Purchase purpose. ", 7))}
+	return []string{"--provider", "link", "--spec", fmt.Sprintf(`{"wallet":"wallet-1","browser_id":"browser-1","page_url":"https://shop.example/checkout","amount":1234,"currency":"USD","merchant_name":"Example Shop","payment_method_id":"pm-1","context":%q}`, strings.Repeat("Purchase purpose. ", 7))}
 }
 
 func TestVaultSpecValidation(t *testing.T) {
@@ -277,7 +274,7 @@ func TestVaultCardRequestMapping(t *testing.T) {
 				assert.JSONEq(t, `"card"`, string(body["type"]))
 				assert.Len(t, body, 2)
 				if provider == "link" {
-					assert.JSONEq(t, fmt.Sprintf(`{"provider":"link","wallet":"wallet-1","amount":1234,"currency":"USD","merchant_name":"Example Shop","merchant_url":"https://shop.example","payment_method_id":"pm-1","context":%q}`, strings.Repeat("Purchase purpose. ", 7)), string(body["spec"]))
+					assert.JSONEq(t, fmt.Sprintf(`{"provider":"link","wallet":"wallet-1","browser_id":"browser-1","page_url":"https://shop.example/checkout","amount":1234,"currency":"USD","merchant_name":"Example Shop","payment_method_id":"pm-1","context":%q}`, strings.Repeat("Purchase purpose. ", 7)), string(body["spec"]))
 				} else {
 					assert.JSONEq(t, `{"provider":"agentcard","wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop","card_id":"vc_chosen"}`, string(body["spec"]))
 				}
@@ -368,7 +365,6 @@ func TestVaultInvalidProjectErrors(t *testing.T) {
 		{"wallets", "create", "checkout", "wallet-1", "--provider", "link", "--spec", linkWalletSpecFixture},
 		{"wallets", "payment-methods", "checkout", "wallet-1"},
 		append([]string{"cards", "create", "checkout", "order-1"}, linkCardArgs()...),
-		{"payment-tokens", "create", "checkout", "order-token", "--spec", `{"wallet":"wallet-1","browser_id":"browser","page_url":"https://shop.example","payment_method_id":"pm-1","amount":100,"currency":"usd","context":"Final checkout purchase context long enough for the payment request."}`},
 		{"items", "invoke", "checkout", "order-1", "fill", "--params", `{"browser_id":"browser","page_url":"https://shop.example"}`},
 	}
 	for _, project := range []string{"doesntexist", "abcdefghijklmnopqrstuvwx"} {
@@ -384,7 +380,7 @@ func TestVaultInvalidProjectErrors(t *testing.T) {
 				})
 				out, human, err := executeVaultCommand(t, client, append([]string{"--project", project, "vaults"}, args...)...)
 				require.Error(t, err)
-				if (args[0] == "wallets" || args[0] == "payment-tokens") && args[1] == "create" {
+				if (args[0] == "wallets" || args[0] == "cards") && args[1] == "create" {
 					assert.Equal(t, "vault resource not found (HTTP 404)", err.Error())
 				} else if args[0] == "items" && args[1] == "invoke" {
 					assert.Equal(t, "could not retrieve vault item; fill was not invoked", err.Error())

@@ -342,7 +342,7 @@ func TestVaultFillCLIValidationDoesNotReachAPI(t *testing.T) {
 	assert.Zero(t, calls.Load())
 }
 
-func TestVaultPaymentTokenFillOutcomesHaveNoFieldBindings(t *testing.T) {
+func TestVaultLinkWebMCPFillOutcomesHaveNoFieldBindings(t *testing.T) {
 	for _, status := range []string{"completed", "failed", "unknown"} {
 		t.Run(status, func(t *testing.T) {
 			result, err := parseVaultFillResult(json.RawMessage(`{"type":"fill","status":"`+status+`","fields":[]}`), 0)
@@ -353,12 +353,12 @@ func TestVaultPaymentTokenFillOutcomesHaveNoFieldBindings(t *testing.T) {
 	}
 }
 
-func TestVaultPaymentTokenFillOmitsFieldBindings(t *testing.T) {
-	const token = `{"id":"token-1","key":"order-token","type":"payment_token","spec":{"provider":"link","wallet":"wallet-1","browser_id":"browser-1","page_url":"https://shop.example/checkout","payment_method_id":"pm-1","amount":1234,"currency":"usd","context":"Final checkout purchase context."},"state":{"provider":"link","status":"ready"},"available_operations":[{"type":"fill","description":"Authenticate this checkout without submitting payment."}],"available_expansions":[]}`
+func TestVaultLinkWebMCPCardFillOmitsFieldBindings(t *testing.T) {
+	const card = `{"id":"card-1","key":"order-card","type":"card","spec":{"provider":"link","wallet":"wallet-1","browser_id":"browser-1","page_url":"https://shop.example/checkout","payment_method_id":"pm-1","amount":1234,"currency":"usd","context":"Final checkout purchase context."},"state":{"provider":"link","status":"ready"},"available_operations":[{"type":"fill","description":"Authenticate this checkout through WebMCP without submitting payment; omit fields."}],"available_expansions":[]}`
 	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, token)
+			_, _ = io.WriteString(w, card)
 			return
 		}
 		body, err := io.ReadAll(r.Body)
@@ -367,10 +367,10 @@ func TestVaultPaymentTokenFillOmitsFieldBindings(t *testing.T) {
 		_, _ = io.WriteString(w, `{"type":"fill","status":"completed","instruction":"Payment credentials are filled. Submit the checkout form when ready.","fields":[]}`)
 	})
 	params := `{"browser_id":"browser-1","page_url":"https://shop.example/checkout"}`
-	out, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-token", "fill", "--params", params, "-o", "json")
+	out, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-card", "fill", "--params", params, "-o", "json")
 	require.NoError(t, err)
 	assert.Contains(t, out, `"instruction": "Payment credentials are filled. Submit the checkout form when ready."`)
-	_, human, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-token", "fill", "--params", params)
+	_, human, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-card", "fill", "--params", params)
 	require.NoError(t, err)
 	assert.Contains(t, human, "Submit the checkout form when ready")
 	assert.NotContains(t, human, "Field index")

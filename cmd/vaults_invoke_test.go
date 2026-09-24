@@ -87,7 +87,7 @@ func TestVaultInvokeArgumentsAndHelp(t *testing.T) {
 	assert.NotNil(t, cmd.Flags().Lookup("params"))
 	assert.Contains(t, cmd.Long, "failed/unknown exit nonzero")
 	assert.Contains(t, cmd.Long, "there is no separate authorize operation")
-	assert.Contains(t, cmd.Long, "Payment tokens require")
+	assert.Contains(t, cmd.Long, "Link cards require")
 }
 
 func TestVaultInvokeOpensOnlyReturnedActionExplicitly(t *testing.T) {

@@ -14,19 +14,16 @@ import (
 
 // Do not wrap SDK errors here: response bodies and transport errors can echo
 // write-only credentials, and the root command unwraps SDK errors for display.
-func vaultPaymentTokenError(err error) error {
+func vaultCardError(err error) error {
 	var apiErr *kernel.Error
 	if errors.As(err, &apiErr) {
 		var body struct {
 			Code string `json:"code"`
 		}
 		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
-			if apiErr.StatusCode == 400 && body.Code == "lpt_not_supported" {
-				return fmt.Errorf("lpt_not_supported: this checkout does not support a Link payment token; create a card instead")
-			}
 			discoveryFailure := false
 			switch body.Code {
-			case "page_not_found", "ambiguous_page", "timeout":
+			case "ambiguous_page", "timeout":
 				discoveryFailure = apiErr.StatusCode == 400
 			case "destination_denied":
 				discoveryFailure = apiErr.StatusCode == 403
@@ -38,7 +35,7 @@ func vaultPaymentTokenError(err error) error {
 				discoveryFailure = apiErr.StatusCode == 500
 			}
 			if discoveryFailure {
-				return fmt.Errorf("%s: payment-token checkout discovery failed before a spend was created; correct the browser or page and retry", body.Code)
+				return fmt.Errorf("%s: Link checkout inspection failed before a card was created; correct the browser or page and retry", body.Code)
 			}
 			if apiErr.StatusCode == 409 && body.Code == "conflict" {
 				return fmt.Errorf("vault conflict (HTTP 409); inspect current state and immutable bindings")

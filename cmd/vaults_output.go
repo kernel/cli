@@ -265,7 +265,7 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 	return nil
 }
 
-type vaultPaymentTokenDisplay struct {
+type vaultLinkCardDisplay struct {
 	Spec struct {
 		BrowserID       string `json:"browser_id"`
 		PageURL         string `json:"page_url"`
@@ -328,27 +328,22 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	if item.State.StatusReason != "" {
 		rows = append(rows, []string{"Status reason", item.State.StatusReason})
 	}
-	if item.Type == "payment_token" {
-		var token vaultPaymentTokenDisplay
-		if json.Unmarshal([]byte(item.RawJSON()), &token) != nil {
-			return fmt.Errorf("invalid payment token response")
-		}
-		rows = append(rows,
-			[]string{"Wallet key", token.Spec.Wallet},
-			[]string{"Amount (minor units)", fmt.Sprintf("%d %s", token.Spec.Amount, token.Spec.Currency)},
-			[]string{"Payment method ID", token.Spec.PaymentMethodID},
-			[]string{"Browser session ID", token.Spec.BrowserID},
-			[]string{"Checkout page", token.Spec.PageURL},
-		)
-	}
 	if item.Type == "card" {
-		merchant := item.Spec.MerchantName
+		rows = append(rows, []string{"Wallet key", item.Spec.Wallet}, []string{"Amount (minor units)", fmt.Sprintf("%d %s", item.Spec.Amount, item.Spec.Currency)})
 		if item.Spec.Provider == "agentcard" {
-			merchant = item.Spec.Merchant
+			rows = append(rows, []string{"Merchant", item.Spec.Merchant})
 		}
-		rows = append(rows, []string{"Wallet key", item.Spec.Wallet}, []string{"Merchant", merchant}, []string{"Amount (minor units)", fmt.Sprintf("%d %s", item.Spec.Amount, item.Spec.Currency)})
 		if item.Spec.Provider == "link" {
-			rows = append(rows, []string{"Payment method ID", item.Spec.PaymentMethodID})
+			rows = append(rows, []string{"Merchant", item.Spec.MerchantName})
+			var card vaultLinkCardDisplay
+			if json.Unmarshal([]byte(item.RawJSON()), &card) != nil {
+				return fmt.Errorf("invalid Link card response")
+			}
+			rows = append(rows,
+				[]string{"Payment method ID", card.Spec.PaymentMethodID},
+				[]string{"Browser session ID", card.Spec.BrowserID},
+				[]string{"Checkout page", card.Spec.PageURL},
+			)
 		}
 	}
 	if item.State.JSON.Domains.Valid() {
@@ -436,9 +431,7 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		if item.State.JSON.Aliases.Valid() {
 			pterm.Info.Println("Aliases are non-secret checkout values. Use only in a browser created with this vault attached; ready does not mean paid.")
 		}
-		pterm.Info.Println("Inspect items events for payment outcomes. Never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")
-	} else if item.Type == "payment_token" {
-		pterm.Info.Println("Inspect items events for payment outcomes. Fill authenticates checkout but does not submit payment. Do not retry failed or indeterminate payments.")
+		pterm.Info.Println("Inspect items events for payment outcomes. Fill supplies credentials but does not submit payment. Never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")
 	} else {
 		wallet := item.AsWallet()
 		for _, expansion := range wallet.AvailableExpansions {
@@ -468,7 +461,7 @@ func printVaultPaymentMethods(methods []kernel.VaultPaymentMethod) {
 		rows = append(rows, []string{m.ID, m.Provider, m.Type, m.Display.Label, m.Display.Brand, m.Display.Last4, fmt.Sprint(m.IsDefault), eligible, strings.Join(capability.Reasons, ", ")})
 	}
 	PrintTableNoPad(rows, true)
-	pterm.Info.Println("Select an ID explicitly: try a Link payment token with payment_method_id first, then create a Link card only when the API returns lpt_not_supported. AgentCard uses card_id (or omit it for cardholder selection). Capabilities are advisory; missing means unknown, not ineligible.")
+	pterm.Info.Println("Select an ID explicitly. Link cards require payment_method_id; Kernel inspects checkout and selects the execution method. AgentCard uses card_id (or omit it for cardholder selection). Capabilities are advisory; missing means unknown, not ineligible.")
 }
 
 func printVaultEvents(events []kernel.VaultItemEvent, data []vaultJSON) {

@@ -30,7 +30,7 @@ var vaultFillResultFields = vaultOutputFields{
 	"fields": vaultFieldsOf("index status error_code"),
 }
 
-const vaultFillUncertain = "browser fields may have been written; inspect the browser and do not retry or fall back to aliases"
+const vaultFillUncertain = "browser fields may have been written or a payment credential may have been supplied; inspect the browser and do not retry or fall back to aliases"
 
 var vaultFillErrorMessages = map[string]string{
 	"invalid_request":      "check field names, formats, and browser parameters",

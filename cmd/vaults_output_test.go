@@ -17,7 +17,7 @@ import (
 
 const readyCardFixture = `{
   "id":"card-id","key":"order-1","type":"card",
-  "spec":{"provider":"link","wallet":"wallet-1","payment_method_id":"pm-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://shop.example","provider_secret":"SECRET_SPEC"},
+  "spec":{"provider":"link","wallet":"wallet-1","browser_id":"browser-1","page_url":"https://shop.example/checkout","payment_method_id":"pm-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","provider_secret":"SECRET_SPEC"},
   "state":{"provider":"link","status":"ready","domains":["shop.example"],"aliases":{"number":"9999999999999999","cvc":"999","exp_month":"01","exp_year":"2099","secret":"SECRET_ALIAS"},"card_number":"SECRET_CARD","secret_enc":"SECRET_CIPHERTEXT"},
   "available_operations":[],"available_expansions":[],"oauth_tokens":"SECRET_OAUTH"
 }`
@@ -60,9 +60,9 @@ func TestVaultOutputAliasesPresenceAndRedaction(t *testing.T) {
 	assert.Contains(t, out, `"aliases": null`)
 }
 
-func TestVaultPaymentTokenHumanOutput(t *testing.T) {
+func TestVaultLinkCardHumanOutput(t *testing.T) {
 	var item kernel.VaultItemUnion
-	require.NoError(t, json.Unmarshal([]byte(paymentTokenFixture), &item))
+	require.NoError(t, json.Unmarshal([]byte(requestedCardFixture), &item))
 	buf := capturePtermOutput(t)
 	require.NoError(t, printVaultItem(&item, ""))
 	for _, text := range []string{"Wallet key", "wallet-1", "Amount (minor units)", "1234 usd", "Payment method ID", "pm-1", "Browser session ID", "browser-1", "Checkout page", "https://shop.example/checkout", "does not submit payment"} {
@@ -115,7 +115,7 @@ func TestVaultOutputPaymentMethodsAdvisoryUnknownVsFalse(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &item))
 	buf := capturePtermOutput(t)
 	require.NoError(t, printVaultItem(&item, ""))
-	for _, text := range []string{"Payment method ID", "pm-unknown", "unknown", "pm-ineligible", "false", "not_supported", "payment_method_id", "payment token", "advisory"} {
+	for _, text := range []string{"Payment method ID", "pm-unknown", "unknown", "pm-ineligible", "false", "not_supported", "payment_method_id", "execution method", "advisory"} {
 		assert.Contains(t, buf.String(), text)
 	}
 	out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })

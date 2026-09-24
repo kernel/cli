@@ -191,22 +191,9 @@ func (c VaultsCmd) CreateWallet(ctx context.Context, vault, key string, spec ker
 func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.CardVaultItemSpecUnionParam, output string) error {
 	item, err := c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCard: &kernel.VaultItemUpsertParamsBodyCard{Spec: spec}}, option.WithMaxRetries(0))
 	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
+		return vaultCardError(err)
 	}
 	return c.showItem(item, output, false)
-}
-
-func (c VaultsCmd) CreatePaymentToken(ctx context.Context, vault, key string, spec map[string]json.RawMessage, output string) error {
-	body, err := json.Marshal(map[string]any{"type": "payment_token", "spec": spec})
-	if err != nil {
-		return err
-	}
-	var item kernel.VaultItemUnion
-	_, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault}, option.WithRequestBody("application/json", body), option.WithResponseBodyInto(&item), option.WithMaxRetries(0))
-	if err != nil {
-		return vaultPaymentTokenError(err)
-	}
-	return c.showItem(&item, output, false)
 }
 
 func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, params *vaultOperationParams, output string, open bool) error {
@@ -250,13 +237,10 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
 	if operation == "fill" {
-		if item.Type == "payment_token" {
-			if params.Fill.PageURL == "" || len(params.Fill.Fields) != 0 {
-				return fmt.Errorf("payment-token fill requires page_url and must omit fields")
-			}
-		} else if len(params.Fill.Fields) == 0 {
-			return fmt.Errorf("credential and card fill requires 1-32 field bindings")
-		} else if item.Type == "card" && params.Fill.PageURL == "" {
+		if item.Type == "credential" && len(params.Fill.Fields) == 0 {
+			return fmt.Errorf("credential fill requires 1-32 field bindings")
+		}
+		if item.Type == "card" && params.Fill.PageURL == "" {
 			return fmt.Errorf("card fill requires page_url")
 		}
 		return c.fill(ctx, vault, key, params.Fill, output)
