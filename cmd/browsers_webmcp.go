@@ -19,7 +19,7 @@ import (
 
 // BrowserWebMCPService defines the subset we use for native page tools.
 type BrowserWebMCPService interface {
-	ListTools(ctx context.Context, idOrName string, opts ...option.RequestOption) (*kernel.ToolsResponse, error)
+	ListTools(ctx context.Context, idOrName string, query kernel.BrowserWebmcpListToolsParams, opts ...option.RequestOption) (*kernel.ToolsResponse, error)
 	InvokeTool(ctx context.Context, idOrName string, body kernel.BrowserWebmcpInvokeToolParams, opts ...option.RequestOption) (*kernel.InvocationResult, error)
 }
 
@@ -39,7 +39,7 @@ func (b BrowsersCmd) WebMCPList(ctx context.Context, in BrowsersWebMCPListInput)
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
 	}
-	res, err := b.webmcp.ListTools(ctx, in.Identifier)
+	res, err := b.webmcp.ListTools(ctx, in.Identifier, kernel.BrowserWebmcpListToolsParams{})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -53,10 +53,10 @@ func (b BrowsersCmd) WebMCPList(ctx context.Context, in BrowsersWebMCPListInput)
 	rows := pterm.TableData{{"Name", "Tool Ref", "Page URL", "Tab ID", "Read Only"}}
 	for _, tool := range res.Tools {
 		readOnly := "-"
-		if tool.Annotations.JSON.ReadOnly.Valid() {
-			readOnly = strconv.FormatBool(tool.Annotations.ReadOnly)
+		if tool.Tool.Annotations.JSON.ReadOnlyHint.Valid() {
+			readOnly = strconv.FormatBool(tool.Tool.Annotations.ReadOnlyHint)
 		}
-		rows = append(rows, []string{tool.Name, tool.ToolRef, tool.Source.PageURL, strconv.FormatInt(tool.Source.TabID, 10), readOnly})
+		rows = append(rows, []string{tool.Tool.Name, tool.ToolRef, tool.Source.PageURL, strconv.FormatInt(tool.Source.TabID, 10), readOnly})
 	}
 	PrintTableNoPad(rows, true)
 	return nil
