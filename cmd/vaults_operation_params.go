@@ -184,10 +184,9 @@ func parseVaultFillParams(raw string) (*vaultFillParams, error) {
 
 func parseOnePasswordOperationParams(operation, raw string) (*kernel.VaultItemPerformOperationParams, error) {
 	allowed := map[string]string{
-		"1pw_request_access":   "browser_id goal reason keywords",
-		"1pw_poll_access":      "browser_id timeout_seconds",
-		"1pw_reconcile_access": "acknowledge_unconfirmed",
-		"1pw_fill":             "browser_id page_url timeout_ms",
+		"1pw_create_access_request": "browser_id goal reason keywords",
+		"1pw_access_request_status": "browser_id timeout_seconds",
+		"1pw_fill":                  "browser_id page_url timeout_ms",
 	}[operation]
 	if allowed == "" {
 		return nil, fmt.Errorf("unsupported 1Password operation %q", operation)
@@ -197,14 +196,12 @@ func parseOnePasswordOperationParams(operation, raw string) (*kernel.VaultItemPe
 		return nil, err
 	}
 	var browserID string
-	if strings.Contains(allowed, "browser_id") {
-		if json.Unmarshal(object["browser_id"], &browserID) != nil || strings.TrimSpace(browserID) == "" {
-			return nil, fmt.Errorf("browser_id must be a non-empty browser session ID, not a name")
-		}
+	if json.Unmarshal(object["browser_id"], &browserID) != nil || strings.TrimSpace(browserID) == "" {
+		return nil, fmt.Errorf("browser_id must be a non-empty browser session ID, not a name")
 	}
 	switch operation {
-	case "1pw_request_access":
-		request := kernel.OnePasswordRequestAccessVaultItemOperationRequestParam{BrowserID: browserID, Type: kernel.OnePasswordRequestAccessVaultItemOperationRequestType1pwRequestAccess}
+	case "1pw_create_access_request":
+		request := kernel.OnePasswordRequestAccessVaultItemOperationRequestParam{BrowserID: browserID, Type: kernel.OnePasswordRequestAccessVaultItemOperationRequestType1pwCreateAccessRequest}
 		for _, name := range []string{"goal", "reason"} {
 			if value, ok := object[name]; ok {
 				var text string
@@ -221,9 +218,9 @@ func parseOnePasswordOperationParams(operation, raw string) (*kernel.VaultItemPe
 		if value, ok := object["keywords"]; ok && json.Unmarshal(value, &request.Keywords) != nil {
 			return nil, fmt.Errorf("keywords must be an array of strings")
 		}
-		return &kernel.VaultItemPerformOperationParams{Of1pwRequestAccess: &request}, nil
-	case "1pw_poll_access":
-		request := kernel.VaultItemPerformOperationParamsBody1pwPollAccess{BrowserID: browserID}
+		return &kernel.VaultItemPerformOperationParams{Of1pwCreateAccessRequest: &request}, nil
+	case "1pw_access_request_status":
+		request := kernel.VaultItemPerformOperationParamsBody1pwAccessRequestStatus{BrowserID: browserID}
 		if value, ok := object["timeout_seconds"]; ok {
 			var timeout *int64
 			if json.Unmarshal(value, &timeout) != nil || timeout == nil || *timeout < 0 || *timeout > 120 {
@@ -231,13 +228,7 @@ func parseOnePasswordOperationParams(operation, raw string) (*kernel.VaultItemPe
 			}
 			request.TimeoutSeconds = kernel.Opt(*timeout)
 		}
-		return &kernel.VaultItemPerformOperationParams{Of1pwPollAccess: &request}, nil
-	case "1pw_reconcile_access":
-		var acknowledged bool
-		if json.Unmarshal(object["acknowledge_unconfirmed"], &acknowledged) != nil || !acknowledged {
-			return nil, fmt.Errorf("acknowledge_unconfirmed must be true; first check 1Password for an existing request")
-		}
-		return &kernel.VaultItemPerformOperationParams{Of1pwReconcileAccess: &kernel.VaultItemPerformOperationParamsBody1pwReconcileAccess{AcknowledgeUnconfirmed: true}}, nil
+		return &kernel.VaultItemPerformOperationParams{Of1pwAccessRequestStatus: &request}, nil
 	default:
 		request := kernel.OnePasswordFillVaultItemOperationRequestParam{BrowserID: browserID, Type: kernel.OnePasswordFillVaultItemOperationRequestType1pwFill}
 		if json.Unmarshal(object["page_url"], &request.PageURL) != nil {

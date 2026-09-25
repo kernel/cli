@@ -194,25 +194,26 @@ collect/authorize/prepare_checkout/1pw_recover may use --open. Fill returns valu
 completed exits 0, failed/unknown exit nonzero with valid JSON retained on stdout in -o json.
 
 1Password credentials (see credentials --help) use --params without type:
-1pw_request_access: browser_id (vault-bound session ID); optional goal (<=140), reason
-  (<=100), keywords (1-5 strings). Present the returned onepassword:// approval link and
-  instructions to the account owner unchanged; do not issue a second request while pending.
-1pw_poll_access: browser_id; optional timeout_seconds 0-120 (default 10).
+1pw_create_access_request: browser_id (vault-bound session ID); optional goal (<=140),
+  reason (<=100), keywords (1-5 strings). Present the returned onepassword:// approval
+  link and instructions to the account owner unchanged; do not create a second request.
+1pw_access_request_status: browser_id; optional timeout_seconds 0-120 (default 10).
+  Check status after the account owner has the approval link.
 1pw_fill: browser_id and the exact page_url of one open login page on the requested
   origin; optional timeout_ms 1-30000. The extension selects fields and submits.
   fill_submitted exits 0 and does not confirm login; fill_failed and fill_unknown exit
   nonzero. After fill_unknown, do not retry in the same browser.
-1pw_reconcile_access: {"acknowledge_unconfirmed":true}, only after checking 1Password for
-  an existing request; it does not cancel anything upstream.
-1pw_recover (credential accounts, no parameters): starts human-consented OAuth recovery
-  of a lost integration key; it can revoke the connection. Never delete the item to recover.
-Never automatically retry 1Password operations after failures or uncertain outcomes.`,
+1pw_recover (credential accounts, no parameters): returns a new 1Password link that
+  recovers a failed account connection. Share it with the account owner; never delete
+  the item to recover.
+Never retry 1Password operations after failures or uncertain outcomes; stop and tell the
+user instead.`,
 		Example: `  kernel vaults items invoke user-vault login collect
   kernel vaults items invoke user-vault login fill --spec-file - <<'JSON'
 {"browser_id":"<browser-id>","fields":[{"field":"username","selector":"#username"},{"field":"password","selector":"#password"}]}
 JSON
-  kernel vaults items invoke user-vault github 1pw_request_access --params '{"browser_id":"<browser-id>","reason":"Sign in to GitHub"}'
-  kernel vaults items invoke user-vault github 1pw_poll_access --params '{"browser_id":"<browser-id>","timeout_seconds":60}'
+  kernel vaults items invoke user-vault github 1pw_create_access_request --params '{"browser_id":"<browser-id>","reason":"Sign in to GitHub"}'
+  kernel vaults items invoke user-vault github 1pw_access_request_status --params '{"browser_id":"<browser-id>","timeout_seconds":60}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login"}'
   kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browser-session-id","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#card-number"}]}' -o json`,
 		RunE: func(cmd *cobra.Command, args []string) error {

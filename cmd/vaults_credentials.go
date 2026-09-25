@@ -36,15 +36,15 @@ const vaultOnePasswordCredentialHelp = `1Password flow:
 2. credentials create <vault> <key> --spec-file with provider "1password",
    account_id, and a version 2 requests object with exactly one login entry for the
    site's HTTPS URL. No field definitions, selectors, or values are accepted.
-3. Invoke 1pw_request_access with a vault-bound browser_id. Present the returned
-   onepassword:// approval link and instructions to the account owner unchanged.
-4. Invoke 1pw_poll_access (timeout_seconds 0-120) until the credential is ready,
-   declined, or failed. Ready means approved, not logged in.
+3. Invoke 1pw_create_access_request with a vault-bound browser_id. Present the
+   returned onepassword:// approval link and instructions to the account owner unchanged.
+4. Invoke 1pw_access_request_status (timeout_seconds 0-120) until the credential is
+   ready, declined, or failed. Ready means approved, not logged in.
 5. Open the login page and invoke 1pw_fill with browser_id and the exact page_url.
    fill_submitted means the form was submitted, not that login succeeded.
-Invoke only advertised operations. Never automatically retry request, fill, or
-recovery failures or uncertain outcomes; 1pw_reconcile_access requires checking
-1Password for an existing request first.`
+Invoke only advertised operations. Never retry access request, fill, or recovery
+failures or uncertain outcomes, and never create a second access request for the same
+credential; stop and tell the user instead.`
 
 const vaultCredentialHelp = `Create credentials for a website.
 
@@ -131,7 +131,8 @@ Share the returned 1Password authorization URL with the account owner; they sign
 consent at 1Password, and Kernel receives the grant. No tokens or keys are displayed.
 Poll items get --wait 60 until the account state is connected, then reference its
 item ID as account_id in credentials create. Repeating the request returns the
-existing account. Invoke 1pw_recover only when the account advertises it.
+existing account. If linking fails and the account advertises 1pw_recover, invoke it
+and share the new link with the account owner.
 
 ` + vaultOnePasswordCredentialHelp,
 		Example: "  kernel vaults credentials connect user-vault onepassword --provider 1password",

@@ -13,10 +13,10 @@ import (
 
 const onePasswordAccountFixture = `{"id":"account-1","key":"onepassword","type":"credential_account","spec":{"provider":"1password","authorization":{"method":"oauth","client":{"type":"kernel_managed"}}},"state":{"provider":"1password","status":"pending_authorization"},"action":{"name":"1password_oauth","url":"https://my.1password.example/oauth/authorize?client_id=kernel&state=opaque"},"available_operations":[],"available_expansions":[],"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}`
 
-const onePasswordCredentialFixture = `{"id":"credential-2","key":"github","type":"credential","version":1,"spec":{"provider":"1password","account_id":"account-1","requests":{"version":2,"entries":[{"type":"login","parameters":{"website":"https://github.com"}}]}},"state":{"provider":"1password","status":"pending_authorization","access_request_id":"req-1","access_request":{"id":"req-1","state":"pending","identity":"never-print-identity","path":"never-print-path","has_autofill_token":false,"granted_count":0}},"action":{"name":"1password_access_approval","url":"onepassword://grant-brokered-access?access_request_reference=ref-1","instructions":"Present this link to the account owner."},"available_operations":[{"type":"1pw_poll_access","description":"Check the request."}],"available_expansions":[],"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}`
+const onePasswordCredentialFixture = `{"id":"credential-2","key":"github","type":"credential","version":1,"spec":{"provider":"1password","account_id":"account-1","requests":{"version":2,"entries":[{"type":"login","parameters":{"website":"https://github.com"}}]}},"state":{"provider":"1password","status":"pending_authorization","access_request_id":"req-1","access_request":{"id":"req-1","state":"pending","identity":"never-print-identity","path":"never-print-path","has_autofill_token":false,"granted_count":0}},"action":{"name":"1password_access_approval","url":"onepassword://grant-brokered-access?access_request_reference=ref-1","instructions":"Present this link to the account owner."},"available_operations":[{"type":"1pw_access_request_status","description":"Check the request."}],"available_expansions":[],"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}`
 
 func onePasswordCredentialWithOperation(operation string) string {
-	return strings.Replace(onePasswordCredentialFixture, `"1pw_poll_access"`, `"`+operation+`"`, 1)
+	return strings.Replace(onePasswordCredentialFixture, `"1pw_access_request_status"`, `"`+operation+`"`, 1)
 }
 
 func TestCredentialConnectOnePassword(t *testing.T) {
@@ -94,7 +94,7 @@ func TestOnePasswordCredentialOutput(t *testing.T) {
 	assert.Contains(t, output, "onepassword://grant-brokered-access?access_request_reference=ref-1")
 	assert.Contains(t, output, "Present this link to the account owner.")
 	assert.Contains(t, output, "account-1")
-	assert.Contains(t, output, "Invoke: kernel vaults items invoke --params '<json>' -- user github 1pw_poll_access")
+	assert.Contains(t, output, "Invoke: kernel vaults items invoke --params '<json>' -- user github 1pw_access_request_status")
 	assert.NotContains(t, output, "field definitions")
 	assert.NotContains(t, output, "never-print")
 
@@ -118,14 +118,13 @@ func TestOnePasswordOperationRequests(t *testing.T) {
 	for _, tc := range []struct {
 		operation, params, body, item string
 	}{
-		{"1pw_request_access", `{"browser_id":"browser-1","goal":"Manage billing","reason":"Sign in","keywords":["personal"]}`, `{"type":"1pw_request_access","browser_id":"browser-1","goal":"Manage billing","reason":"Sign in","keywords":["personal"]}`, onePasswordCredentialFixture},
-		{"1pw_poll_access", `{"browser_id":"browser-1","timeout_seconds":60}`, `{"type":"1pw_poll_access","browser_id":"browser-1","timeout_seconds":60}`, onePasswordCredentialFixture},
-		{"1pw_reconcile_access", `{"acknowledge_unconfirmed":true}`, `{"type":"1pw_reconcile_access","acknowledge_unconfirmed":true}`, onePasswordCredentialFixture},
+		{"1pw_create_access_request", `{"browser_id":"browser-1","goal":"Manage billing","reason":"Sign in","keywords":["personal"]}`, `{"type":"1pw_create_access_request","browser_id":"browser-1","goal":"Manage billing","reason":"Sign in","keywords":["personal"]}`, onePasswordCredentialFixture},
+		{"1pw_access_request_status", `{"browser_id":"browser-1","timeout_seconds":60}`, `{"type":"1pw_access_request_status","browser_id":"browser-1","timeout_seconds":60}`, onePasswordCredentialFixture},
 		{"1pw_recover", "", `{"type":"1pw_recover"}`, onePasswordAccountFixture},
 	} {
 		t.Run(tc.operation, func(t *testing.T) {
-			item := strings.Replace(tc.item, `"available_operations":[]`, `"available_operations":[{"type":"1pw_poll_access","description":"x"}]`, 1)
-			item = strings.Replace(item, `"1pw_poll_access"`, `"`+tc.operation+`"`, 1)
+			item := strings.Replace(tc.item, `"available_operations":[]`, `"available_operations":[{"type":"1pw_access_request_status","description":"x"}]`, 1)
+			item = strings.Replace(item, `"1pw_access_request_status"`, `"`+tc.operation+`"`, 1)
 			posts := 0
 			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -151,12 +150,12 @@ func TestOnePasswordOperationRequests(t *testing.T) {
 func TestOnePasswordOperationValidation(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
 	for _, tc := range []struct{ operation, params, err string }{
-		{"1pw_request_access", "", "requires --params"},
-		{"1pw_request_access", `{"browser_id":""}`, "browser_id"},
-		{"1pw_request_access", `{"browser_id":"b","password":"x"}`, "only supported"},
-		{"1pw_request_access", `{"type":"1pw_request_access","browser_id":"b"}`, "must not contain type"},
-		{"1pw_poll_access", `{"browser_id":"b","timeout_seconds":121}`, "timeout_seconds"},
-		{"1pw_reconcile_access", `{"acknowledge_unconfirmed":false}`, "acknowledge_unconfirmed must be true"},
+		{"1pw_create_access_request", "", "requires --params"},
+		{"1pw_create_access_request", `{"browser_id":""}`, "browser_id"},
+		{"1pw_create_access_request", `{"browser_id":"b","password":"x"}`, "only supported"},
+		{"1pw_create_access_request", `{"type":"1pw_create_access_request","browser_id":"b"}`, "must not contain type"},
+		{"1pw_access_request_status", `{"browser_id":"b","timeout_seconds":121}`, "timeout_seconds"},
+		{"1pw_reconcile_access", `{"acknowledge_unconfirmed":true}`, "unsupported 1Password operation"},
 		{"1pw_fill", `{"browser_id":"b"}`, "page_url"},
 		{"1pw_fill", `{"browser_id":"b","page_url":"https://github.com/login","timeout_ms":0}`, "timeout_ms"},
 		{"1pw_recover", `{}`, "takes no parameters"},
@@ -248,8 +247,13 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 	}
 	assert.Contains(t, connect.Long, "credential_account")
 	assert.Contains(t, credentials.Example, `"provider":"1password"`)
-	for _, operation := range []string{"1pw_request_access", "1pw_poll_access", "1pw_fill", "1pw_reconcile_access", "1pw_recover"} {
+	for _, operation := range []string{"1pw_create_access_request", "1pw_access_request_status", "1pw_fill", "1pw_recover"} {
 		assert.Contains(t, invoke.Long, operation)
+	}
+	for _, help := range []string{invoke.Long, invoke.Example, credentials.Long, connect.Long} {
+		for _, removed := range []string{"1pw_request_access", "1pw_poll_access", "reconcile", "integration key", "Family"} {
+			assert.NotContains(t, help, removed)
+		}
 	}
 }
 

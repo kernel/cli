@@ -65,4 +65,4 @@ require (
 // TODO: Temporary private stlc preview of kernel/kernel#4256 (1Password credential
 // vaults). Before merge, delete this replace, bump github.com/kernel/kernel-go-sdk to
 // the official release that includes that API, and run go mod tidy.
-replace github.com/kernel/kernel-go-sdk => github.com/kernel/kernel-go-sdk-staging v0.86.1-0.20260925021738-7ed365222d7b
+replace github.com/kernel/kernel-go-sdk => github.com/kernel/kernel-go-sdk-staging v0.86.1-0.20260925200915-a98c8419227e
