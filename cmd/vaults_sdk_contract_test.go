@@ -73,7 +73,7 @@ func TestCredentialInitialValuesWithGeneratedSDK(t *testing.T) {
 		assert.Equal(t, "PUT", r.Method)
 		var body map[string]json.RawMessage
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-		assert.JSONEq(t, spec, string(body["spec"]))
+		assert.JSONEq(t, `{"provider":"kernel",`+spec[1:], string(body["spec"]))
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"id":"credential-1","key":"login","type":"credential","version":1,"spec":%s,"state":{"status":"ready","fields":{"otp":{"has_value":true,"value":"JBSWY3DPEHPK3PXP"}}},"available_operations":[],"available_expansions":[]}`, spec)
 	})

@@ -61,3 +61,8 @@ require (
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 )
+
+// TODO: Temporary private stlc preview of kernel/kernel#4256 (1Password credential
+// vaults). Before merge, delete this replace, bump github.com/kernel/kernel-go-sdk to
+// the official release that includes that API, and run go mod tidy.
+replace github.com/kernel/kernel-go-sdk => github.com/kernel/kernel-go-sdk-staging v0.86.1-0.20260925200915-a98c8419227e

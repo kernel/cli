@@ -26,6 +26,11 @@ func vaultFieldsOf(names string) vaultOutputFields {
 var vaultFields = vaultFieldsOf("id name created_at updated_at")
 var vaultOperationFields = vaultFieldsOf("type description")
 var vaultTotalFields = vaultFieldsOf("type display_text amount")
+var onePasswordRequestEntryFields = vaultOutputFields{
+	"id": nil, "type": nil, "reason": nil, "keywords": nil,
+	"parameters": vaultFieldsOf("website"),
+}
+var onePasswordRequestFields = vaultOutputFields{"version": nil, "goal": nil, "entries": onePasswordRequestEntryFields}
 var vaultMethodFields = vaultOutputFields{
 	"id": nil, "provider": nil, "type": nil, "is_default": nil,
 	"display":      vaultFieldsOf("label brand last4"),
@@ -35,12 +40,13 @@ var vaultItemFields = vaultOutputFields{
 	"id": nil, "key": nil, "type": nil, "version": nil, "created_at": nil, "updated_at": nil, "expires_at": nil,
 	"available_operations": vaultOperationFields,
 	"available_expansions": vaultOperationFields,
-	"action":               vaultFieldsOf("name url expires_at"),
+	"action":               vaultFieldsOf("name url expires_at instructions"),
 	"expanded":             {"payment_methods": vaultMethodFields},
 	"spec": {
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil,
 		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
-		"context": nil, "expires_at": nil, "description": nil,
+		"context": nil, "expires_at": nil, "description": nil, "account_id": nil,
+		"requests":        onePasswordRequestFields,
 		"fields":          vaultFieldsOf("name label type required sensitive"),
 		"provider_config": vaultFieldsOf("id name"),
 		"authorization":   {"method": nil, "client": {"type": nil, "provider_config": vaultFieldsOf("id name")}},
@@ -51,7 +57,11 @@ var vaultItemFields = vaultOutputFields{
 		},
 	},
 	"state": {
-		"provider": nil, "status": nil, "status_reason": nil, "user_id": nil, "domains": nil,
+		"provider": nil, "status": nil, "status_reason": nil, "user_id": nil, "domains": nil, "access_request_id": nil,
+		"access_request": {
+			"id": nil, "state": nil, "goal": nil, "createdAt": nil, "has_autofill_token": nil, "granted_count": nil,
+			"request": onePasswordRequestFields, "entries": onePasswordRequestEntryFields,
+		},
 		"fields":        {"*": vaultFieldsOf("has_value")},
 		"masks":         vaultFieldsOf("brand last4"),
 		"aliases":       vaultFieldsOf("number cvc exp_month exp_year"),
@@ -111,9 +121,14 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 			continue
 		}
 		if value, ok := object[key]; ok {
-			if key == "url" || key == "approval_url" || key == "merchant_url" || key == "merchant_origin" || key == "image_url" || key == "product_url" {
+			if key == "url" || key == "approval_url" || key == "merchant_url" || key == "merchant_origin" || key == "image_url" || key == "product_url" || key == "website" {
 				var address string
-				if json.Unmarshal(value, &address) != nil || !vaultDisplayURL(address) {
+				if json.Unmarshal(value, &address) != nil {
+					continue
+				}
+				var name string
+				approval := key == "url" && json.Unmarshal(object["name"], &name) == nil && name == "1password_access_approval"
+				if !vaultDisplayURL(address) && !(approval && onePasswordApprovalURL(address)) {
 					continue
 				}
 			}
@@ -239,6 +254,17 @@ func vaultDisplayURL(address string) bool {
 	return true
 }
 
+// The native 1Password approval link is handed to the account owner unchanged; it
+// grants nothing until they approve in their own 1Password app.
+func onePasswordApprovalURL(address string) bool {
+	u, err := url.Parse(address)
+	if err != nil || u.Scheme != "onepassword" || u.Host != "grant-brokered-access" || u.User != nil || u.Fragment != "" {
+		return false
+	}
+	query, err := url.ParseQuery(u.RawQuery)
+	return err == nil && len(query) == 1 && len(query["access_request_reference"]) == 1 && query.Get("access_request_reference") != ""
+}
+
 func vaultShellArgument(value string) string {
 	if vaultNamePattern.MatchString(value) {
 		return value
@@ -257,7 +283,7 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 	}
 	for _, op := range actions.Operations {
 		command := prefix
-		if op.Type == "fill" || op.Type == "prepare_checkout" {
+		if vaultOperationTakesParams(op.Type) {
 			command += " --params '<json>'"
 		}
 		pterm.Printf("Invoke: %s -- %s %s %s\n", command, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
@@ -288,7 +314,17 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	}
 	if item.Type == "credential" {
 		rows = append(rows, []string{"Version", fmt.Sprint(item.Version)})
-		pterm.Info.Println("Use -o json for field definitions, presence, and non-sensitive values; sensitive values are omitted")
+		if item.Spec.Provider == "1password" {
+			rows = append(rows, []string{"1Password account ID (immutable)", item.Spec.AccountID})
+			for _, entry := range item.Spec.Requests.Entries {
+				rows = append(rows, []string{"Requested login", entry.Parameters.Website})
+			}
+			if item.State.JSON.AccessRequest.Valid() {
+				rows = append(rows, []string{"Access request state", item.State.AccessRequest.State})
+			}
+		} else {
+			pterm.Info.Println("Use -o json for field definitions, presence, and non-sensitive values; sensitive values are omitted")
+		}
 	}
 	if item.Type == "wallet" {
 		configID, configName := item.Spec.ProviderConfig.ID, item.Spec.ProviderConfig.Name
@@ -375,6 +411,19 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	}
 	for _, op := range actions.Operations {
 		pterm.Printf("Available operation: %s — %s\n", op.Type, op.Description)
+	}
+	if item.Type == "credential_account" {
+		if actions.RequiredAction != "" {
+			pterm.Info.Println("Share the 1Password authorization URL with the account owner. Observe the connection with items get --wait 60; never ask for 1Password passwords or codes.")
+		}
+		return
+	}
+	if item.Type == "credential" && item.Spec.Provider == "1password" {
+		if item.Action.Instructions != "" {
+			pterm.Printf("Approval instructions:\n%s\n", item.Action.Instructions)
+		}
+		pterm.Info.Println("Ready means the account owner approved access, not that login succeeded. 1pw_fill submits the form; never retry request or fill automatically.")
+		return
 	}
 	if item.Type == "credential" {
 		if actions.RequiredAction != "" {
