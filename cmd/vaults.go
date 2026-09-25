@@ -212,10 +212,13 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	if operation == "prepare_checkout" && (params == nil || params.Checkout == nil) {
 		return fmt.Errorf("prepare_checkout requires checkout parameters")
 	}
+	if isOnePasswordOperation(operation) && (params == nil || params.OnePassword == nil) {
+		return fmt.Errorf("%s requires its documented parameters", operation)
+	}
 	item, err := c.vaults.Items.Get(ctx, key, kernel.VaultItemGetParams{IDOrName: vault}, option.WithMaxRetries(0))
 	if err != nil {
-		if operation == "fill" {
-			return fmt.Errorf("could not retrieve vault item; fill was not invoked")
+		if operation == "fill" || operation == "1pw_fill" {
+			return fmt.Errorf("could not retrieve vault item; %s was not invoked", operation)
 		}
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -245,8 +248,14 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	if operation == "fill" {
 		return c.fill(ctx, vault, key, params.Fill, output)
 	}
+	if operation == "1pw_fill" {
+		return c.onePasswordFill(ctx, vault, key, params.OnePassword, output)
+	}
 	request := kernel.VaultItemPerformOperationParams{IDOrName: vault}
-	if operation == "prepare_checkout" {
+	if params != nil && params.OnePassword != nil {
+		request = *params.OnePassword
+		request.IDOrName = vault
+	} else if operation == "prepare_checkout" {
 		if item.Type != "card" || item.Spec.Provider != "agentcard" {
 			return fmt.Errorf("prepare_checkout requires an AgentCard card")
 		}
@@ -259,12 +268,12 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	}
 	response, err := c.vaults.Items.PerformOperation(ctx, key, request, option.WithMaxRetries(0))
 	if err != nil {
-		if item.Type == "credential" {
+		if item.Type == "credential" || item.Type == "credential_account" {
 			return vaultCredentialError(err)
 		}
 		return util.CleanedUpSdkError{Err: err}
 	}
-	if response == nil || (response.Type != "card" && response.Type != "wallet" && response.Type != "credential") {
+	if response == nil || (response.Type != "card" && response.Type != "wallet" && response.Type != "credential" && response.Type != "credential_account") {
 		return fmt.Errorf("unexpected vault operation response; inspect the item and do not retry")
 	}
 	var updated kernel.VaultItemUnion

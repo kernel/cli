@@ -52,12 +52,14 @@ func vaultPreRun(cmd *cobra.Command, args []string) error {
 func newVaultsCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "vaults", Aliases: []string{"vault"}, Short: "Collect user credentials and manage payment credentials",
-		Long: `Collect user credentials and manage payment credentials; fill never submits website forms.
+		Long: `Collect user credentials and manage payment credentials.
 
 Do not use credential items to store, collect, or fill credit card data.
 Use wallet and card item types for credit cards and payment checkout instead.
 
-User credential flow:
+` + vaultCredentialPathsHelp + `
+
+Kernel-hosted credential flow (fill never submits website forms):
 1. Create a vault per end user and create a browser with --vault <id-or-name>.
 2. Navigate to a sensitive form and define its fields in natural top-to-bottom order with credentials create --spec-file; that array order controls the user-facing collection form.
 3. Present the returned collection URL to the user. Poll items get --wait 60 for ready.
@@ -65,6 +67,9 @@ User credential flow:
 Use credentials update --version for edits, or items invoke collect to reopen the form.
 Credential values belong in protected files/stdin, never command-line arguments.
 See credentials --help and items invoke --help for examples.
+
+1Password credential flow: connect the account with credentials connect, create a
+1password credential, then invoke the advertised 1pw_* operations. See credentials --help.
 
 Payment credential flow:
 
@@ -122,7 +127,7 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 	addVaultJSONOutputFlag(get)
 	cmd.AddCommand(create, list, get, newVaultDeleteCommand(false))
 
-	items := &cobra.Command{Use: "items", Short: "Inspect readiness and collection URLs, or invoke collect/fill", Long: "Use get --wait 60 to observe readiness and get -o json for schema/version/presence.\nUse invoke collect to obtain a collection URL, or invoke fill --spec-file to fill a browser.\nCreate and edit credentials with vaults credentials; payment items use wallets/cards."}
+	items := &cobra.Command{Use: "items", Short: "Inspect readiness and collection URLs, or invoke collect/fill", Long: "Use get --wait 60 to observe readiness and get -o json for schema/version/presence.\nUse invoke collect to obtain a collection URL, or invoke fill --spec-file to fill a browser.\n1Password credentials use the advertised 1pw_* operations instead of collect/fill.\nCreate and edit credentials with vaults credentials; payment items use wallets/cards."}
 	itemList := &cobra.Command{Use: "list <vault>", Short: "List items by vault ID or name", Args: cobra.ExactArgs(1), PreRunE: vaultPreRun,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return getVaultsHandler(cmd).ListItems(cmd.Context(), args[0], vaultOutput(cmd))
@@ -185,20 +190,38 @@ establish test mode; merchant credentials determine it.
 Use only when advertised for an AgentCard card. Keep the returned approval page open,
 poll until ready_to_submit, then submit native Pay before preparation.expires_at.
 Preparations are single-use, including after failure or expiry; never retry automatically.
-collect/authorize/prepare_checkout may use --open. Fill returns value-free per-field outcomes;
-completed exits 0, failed/unknown exit nonzero with valid JSON retained on stdout in -o json.`,
+collect/authorize/prepare_checkout/1pw_recover may use --open. Fill returns value-free per-field outcomes;
+completed exits 0, failed/unknown exit nonzero with valid JSON retained on stdout in -o json.
+
+1Password credentials (see credentials --help) use --params without type:
+1pw_request_access: browser_id (vault-bound session ID); optional goal (<=140), reason
+  (<=100), keywords (1-5 strings). Present the returned onepassword:// approval link and
+  instructions to the account owner unchanged; do not issue a second request while pending.
+1pw_poll_access: browser_id; optional timeout_seconds 0-120 (default 10).
+1pw_fill: browser_id and the exact page_url of one open login page on the requested
+  origin; optional timeout_ms 1-30000. The extension selects fields and submits.
+  fill_submitted exits 0 and does not confirm login; fill_failed and fill_unknown exit
+  nonzero. After fill_unknown, do not retry in the same browser.
+1pw_reconcile_access: {"acknowledge_unconfirmed":true}, only after checking 1Password for
+  an existing request; it does not cancel anything upstream.
+1pw_recover (credential accounts, no parameters): starts human-consented OAuth recovery
+  of a lost integration key; it can revoke the connection. Never delete the item to recover.
+Never automatically retry 1Password operations after failures or uncertain outcomes.`,
 		Example: `  kernel vaults items invoke user-vault login collect
   kernel vaults items invoke user-vault login fill --spec-file - <<'JSON'
 {"browser_id":"<browser-id>","fields":[{"field":"username","selector":"#username"},{"field":"password","selector":"#password"}]}
 JSON
+  kernel vaults items invoke user-vault github 1pw_request_access --params '{"browser_id":"<browser-id>","reason":"Sign in to GitHub"}'
+  kernel vaults items invoke user-vault github 1pw_poll_access --params '{"browser_id":"<browser-id>","timeout_seconds":60}'
+  kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login"}'
   kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browser-session-id","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#card-number"}]}' -o json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			open, _ := cmd.Flags().GetBool("open")
 			raw, _ := cmd.Flags().GetString("params")
 			paramsSet := cmd.Flags().Changed("params")
 			if cmd.Flags().Changed("spec-file") {
-				if args[2] != "fill" && args[2] != "prepare_checkout" {
-					return fmt.Errorf("--spec-file is only supported for fill and prepare_checkout")
+				if !vaultOperationTakesParams(args[2]) {
+					return fmt.Errorf("--spec-file is only supported for fill, prepare_checkout, and 1Password operations with parameters")
 				}
 				data, err := readVaultSpecFile(cmd)
 				if err != nil {
@@ -212,8 +235,8 @@ JSON
 			}
 			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], params, vaultOutput(cmd), open)
 		}}
-	invoke.Flags().String("params", "", "Fill or prepare_checkout parameters JSON (maximum 128 KiB); omit type and credential values")
-	invoke.Flags().String("spec-file", "", "Fill or prepare_checkout parameters JSON file (use '-' for stdin; maximum 128 KiB)")
+	invoke.Flags().String("params", "", "Operation parameters JSON for fill, prepare_checkout, or 1pw_* (maximum 128 KiB); omit type and credential values")
+	invoke.Flags().String("spec-file", "", "Operation parameters JSON file (use '-' for stdin; maximum 128 KiB)")
 	invoke.MarkFlagsMutuallyExclusive("params", "spec-file")
 	invoke.Flags().Bool("open", false, "Open a returned HTTPS action URL in your browser")
 	addVaultJSONOutputFlag(invoke)

@@ -177,3 +177,74 @@ func parseVaultFillResult(raw json.RawMessage, count int) (*vaultFillResult, err
 	}
 	return &result, nil
 }
+
+const onePasswordFillUncertain = "the form may have been submitted; inspect the browser and do not retry in the same browser"
+
+var onePasswordFillResultFields = vaultFieldsOf("type status error_code")
+
+func (c VaultsCmd) onePasswordFill(ctx context.Context, vault, key string, request *kernel.VaultItemPerformOperationParams, output string) error {
+	params := *request
+	params.IDOrName = vault
+	response, err := c.vaults.Items.PerformOperation(ctx, key, params, option.WithMaxRetries(0))
+	if err != nil {
+		var apiErr *kernel.Error
+		if errors.As(err, &apiErr) && apiErr.StatusCode >= 400 && apiErr.StatusCode < 500 {
+			var body struct {
+				Code string `json:"code"`
+			}
+			guidance := "nothing was filled by this request; inspect the item, browser, and page_url before deciding on a new fill"
+			if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
+				if message, ok := vaultFillErrorMessages[body.Code]; ok {
+					return fmt.Errorf("1pw_fill failed: %s (HTTP %d): %s; %s", body.Code, apiErr.StatusCode, message, guidance)
+				}
+			}
+			return fmt.Errorf("1pw_fill rejected (HTTP %d); %s", apiErr.StatusCode, guidance)
+		}
+		if errors.As(err, &apiErr) && apiErr.StatusCode == 503 {
+			return fmt.Errorf("1pw_fill unavailable (HTTP 503): the 1Password browser integration is not available in this deployment")
+		}
+		return fmt.Errorf("1pw_fill result unavailable; %s", onePasswordFillUncertain)
+	}
+	if response == nil {
+		return fmt.Errorf("empty 1pw_fill result; %s", onePasswordFillUncertain)
+	}
+	safe, err := filterVaultJSON(json.RawMessage(response.RawJSON()), onePasswordFillResultFields)
+	if err != nil {
+		return fmt.Errorf("invalid 1pw_fill result; %s", onePasswordFillUncertain)
+	}
+	var result struct {
+		Type      string `json:"type"`
+		Status    string `json:"status"`
+		ErrorCode string `json:"error_code,omitempty"`
+	}
+	if json.Unmarshal(safe, &result) != nil || result.Type != "1pw_fill" {
+		return fmt.Errorf("invalid 1pw_fill result; %s", onePasswordFillUncertain)
+	}
+	switch result.Status {
+	case "fill_submitted", "fill_failed", "fill_unknown":
+	default:
+		return fmt.Errorf("invalid 1pw_fill result; %s", onePasswordFillUncertain)
+	}
+	if output == "json" {
+		if err := printVaultJSON(result); err != nil {
+			return err
+		}
+	} else {
+		pterm.Printf("1Password fill: %s\n", result.Status)
+		if result.ErrorCode != "" {
+			pterm.Printf("Error code: %s\n", result.ErrorCode)
+		}
+		switch result.Status {
+		case "fill_submitted":
+			pterm.Println("The extension filled and submitted the form; this does not confirm the website accepted the login.")
+		case "fill_failed":
+			pterm.Println("The extension reported a failure. Inspect the page before deciding on a new fill; do not retry automatically.")
+		default:
+			pterm.Println(onePasswordFillUncertain)
+		}
+	}
+	if result.Status != "fill_submitted" {
+		return vaultFillOutcomeError{status: result.Status}
+	}
+	return nil
+}
