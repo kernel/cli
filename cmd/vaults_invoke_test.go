@@ -86,7 +86,8 @@ func TestVaultInvokeArgumentsAndHelp(t *testing.T) {
 	assert.NotNil(t, cmd.Flags().Lookup("open"))
 	assert.NotNil(t, cmd.Flags().Lookup("params"))
 	assert.Contains(t, cmd.Long, "failed/unknown exit nonzero")
-	assert.Contains(t, cmd.Long, "there is no separate authorize operation")
+	assert.NotContains(t, cmd.Long, "authorize")
+	assert.Contains(t, cmd.Long, "available_operations")
 	assert.Contains(t, cmd.Long, "Link cards require")
 }
 

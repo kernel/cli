@@ -155,12 +155,11 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 	invoke := &cobra.Command{Use: "invoke <vault> <key> <operation>", Short: "Invoke an operation advertised by an item", Args: cobra.ExactArgs(3), PreRunE: vaultPreRun,
 		Long: `Retrieve the item and invoke only an operation listed in available_operations.
 collect returns a time-scoped URL for the full credential form without clearing values.
-Payment credential creation starts approval; there is no separate authorize operation.
-Read the operation description and follow any approval requirements before invoking.
+Each operation's description lists the inputs that item needs; read it before invoking.
 fill requires --params JSON or --spec-file <path|-> with browser_id (session ID, not name).
 Credentials require 1-32 ordered fields (field, selector). Link cards require an exact
-page_url; include fields for a virtual-card fill and omit fields when the advertised operation
-says Kernel will use WebMCP. Do not include type, values, or frame IDs.
+page_url; include fields only when the item's advertised fill description asks for them.
+Do not include type, values, or frame IDs.
 The vault must already be attached to the browser. page_url selects an existing page;
 fill never navigates. Credentials use declared field names, must omit format, and may
 omit page_url only when the API can resolve a unique page. TOTP codes stay server-generated.

@@ -39,7 +39,7 @@ var vaultItemFields = vaultOutputFields{
 	"expanded":             {"payment_methods": vaultMethodFields},
 	"spec": {
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil,
-		"browser_id": nil, "page_url": nil, "amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
+		"browser_id": nil, "page_url": nil, "amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil,
 		"context": nil, "expires_at": nil, "description": nil,
 		"fields":          vaultFieldsOf("name label type required sensitive"),
 		"provider_config": vaultFieldsOf("id name"),
@@ -111,7 +111,7 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 			continue
 		}
 		if value, ok := object[key]; ok {
-			if key == "url" || key == "approval_url" || key == "merchant_url" || key == "merchant_origin" || key == "image_url" || key == "product_url" {
+			if key == "url" || key == "approval_url" || key == "merchant_origin" || key == "image_url" || key == "product_url" {
 				var address string
 				if json.Unmarshal(value, &address) != nil || !vaultDisplayURL(address) {
 					continue

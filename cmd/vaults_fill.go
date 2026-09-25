@@ -46,6 +46,7 @@ var vaultFillErrorMessages = map[string]string{
 	"field_unavailable":    "a field has no usable stored value; inspect definitions and presence, and collect missing values",
 	"conflict":             "the item or browser is not ready; inspect readiness, binding, and unresolved prior operations",
 	"destination_denied":   "destination or browser vault binding is not authorized; check the bound browser and destination",
+	"browser_unavailable":  "the browser session is not available; check that it is still running",
 	"not_found":            "check the vault, item, browser identifiers, and project",
 	"execution_failed":     "fill execution failed",
 }
@@ -77,7 +78,6 @@ func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFil
 	request := kernel.FillVaultItemOperationRequestParam{
 		BrowserID: params.BrowserID,
 		Type:      kernel.FillVaultItemOperationRequestTypeFill,
-		Fields:    make([]kernel.VaultFillFieldParam, 0, len(params.Fields)),
 	}
 	if params.PageURL != "" {
 		request.PageURL = kernel.Opt(params.PageURL)

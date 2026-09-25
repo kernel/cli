@@ -363,7 +363,7 @@ func TestVaultLinkWebMCPCardFillOmitsFieldBindings(t *testing.T) {
 		}
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
-		assert.JSONEq(t, `{"type":"fill","browser_id":"browser-1","page_url":"https://shop.example/checkout","fields":[]}`, string(body))
+		assert.JSONEq(t, `{"type":"fill","browser_id":"browser-1","page_url":"https://shop.example/checkout"}`, string(body))
 		_, _ = io.WriteString(w, `{"type":"fill","status":"completed","fields":[]}`)
 	})
 	params := `{"browser_id":"browser-1","page_url":"https://shop.example/checkout"}`
