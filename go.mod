@@ -61,5 +61,3 @@ require (
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 )
-
-replace github.com/kernel/kernel-go-sdk => github.com/kernel/kernel-go-sdk-staging v0.86.1-0.20260924200253-a235f00476bf
