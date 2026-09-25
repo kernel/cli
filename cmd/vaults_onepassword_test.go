@@ -200,6 +200,8 @@ func TestOnePasswordFillOutcomes(t *testing.T) {
 		{200, `{"type":"1pw_fill","status":"fill_unknown"}`, "fill fill_unknown", "do not retry in the same browser"},
 		{200, `{"type":"fill","status":"completed","fields":[]}`, "invalid 1pw_fill result", ""},
 		{403, `{"code":"destination_denied","message":"page is outside the approved login origin"}`, "destination_denied (HTTP 403)", ""},
+		{409, `{"code":"conflict","message":"not ready"}`, "nothing was submitted", ""},
+		{429, `{"code":"rate_limited","message":"slow down"}`, "may have been submitted", ""},
 		{503, `{"code":"provider_unavailable","message":"unavailable"}`, "not available in this deployment", ""},
 		{500, `{"code":"internal_error","message":"secret-echo"}`, "may have been submitted", ""},
 	} {
@@ -248,5 +250,33 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 	assert.Contains(t, credentials.Example, `"provider":"1password"`)
 	for _, operation := range []string{"1pw_request_access", "1pw_poll_access", "1pw_fill", "1pw_reconcile_access", "1pw_recover"} {
 		assert.Contains(t, invoke.Long, operation)
+	}
+}
+
+func TestOnePasswordFillLookupErrorKeepsStatus(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	for _, tc := range []struct {
+		status int
+		body   string
+		want   string
+	}{
+		{404, `{"code":"not_found","message":"item not found"}`, "not_found (HTTP 404); 1pw_fill was not invoked"},
+		{403, `{"code":"other","message":"secret-echo"}`, "(HTTP 403); 1pw_fill was not invoked"},
+	} {
+		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
+			posts := 0
+			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					posts++
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				io.WriteString(w, tc.body)
+			})
+			_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "user", "github", "1pw_fill", "--params", `{"browser_id":"b","page_url":"https://github.com/login"}`)
+			require.ErrorContains(t, err, tc.want)
+			assert.NotContains(t, err.Error(), "secret-echo")
+			assert.Zero(t, posts)
+		})
 	}
 }

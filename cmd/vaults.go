@@ -218,7 +218,7 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	item, err := c.vaults.Items.Get(ctx, key, kernel.VaultItemGetParams{IDOrName: vault}, option.WithMaxRetries(0))
 	if err != nil {
 		if operation == "fill" || operation == "1pw_fill" {
-			return fmt.Errorf("could not retrieve vault item; %s was not invoked", operation)
+			return vaultFillLookupError(err, operation)
 		}
 		return util.CleanedUpSdkError{Err: err}
 	}

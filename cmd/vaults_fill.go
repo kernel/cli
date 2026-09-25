@@ -50,6 +50,23 @@ var vaultFillErrorMessages = map[string]string{
 	"execution_failed":     "fill execution failed",
 }
 
+// vaultFillLookupError reports the item lookup status without response details; the fill was never sent.
+func vaultFillLookupError(err error, operation string) error {
+	var apiErr *kernel.Error
+	if errors.As(err, &apiErr) {
+		var body struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
+			if _, ok := vaultFillErrorMessages[body.Code]; ok {
+				return fmt.Errorf("could not retrieve vault item: %s (HTTP %d); %s was not invoked", body.Code, apiErr.StatusCode, operation)
+			}
+		}
+		return fmt.Errorf("could not retrieve vault item (HTTP %d); %s was not invoked", apiErr.StatusCode, operation)
+	}
+	return fmt.Errorf("could not retrieve vault item; %s was not invoked", operation)
+}
+
 func vaultFillRequestError(err error) error {
 	var apiErr *kernel.Error
 	if errors.As(err, &apiErr) {
@@ -188,22 +205,26 @@ func (c VaultsCmd) onePasswordFill(ctx context.Context, vault, key string, reque
 	response, err := c.vaults.Items.PerformOperation(ctx, key, params, option.WithMaxRetries(0))
 	if err != nil {
 		var apiErr *kernel.Error
-		if errors.As(err, &apiErr) && apiErr.StatusCode >= 400 && apiErr.StatusCode < 500 {
-			var body struct {
-				Code string `json:"code"`
-			}
-			guidance := "nothing was filled by this request; inspect the item, browser, and page_url before deciding on a new fill"
-			if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
-				if message, ok := vaultFillErrorMessages[body.Code]; ok {
-					return fmt.Errorf("1pw_fill failed: %s (HTTP %d): %s; %s", body.Code, apiErr.StatusCode, message, guidance)
-				}
-			}
-			return fmt.Errorf("1pw_fill rejected (HTTP %d); %s", apiErr.StatusCode, guidance)
+		if !errors.As(err, &apiErr) {
+			return fmt.Errorf("1pw_fill result unavailable; %s", onePasswordFillUncertain)
 		}
-		if errors.As(err, &apiErr) && apiErr.StatusCode == 503 {
+		// Only these statuses are returned before the extension is invoked.
+		guidance := onePasswordFillUncertain
+		switch apiErr.StatusCode {
+		case 400, 403, 404, 409:
+			guidance = "nothing was submitted by this request; inspect the item, browser, and page_url before deciding on a new fill; do not automatically retry"
+		case 503:
 			return fmt.Errorf("1pw_fill unavailable (HTTP 503): the 1Password browser integration is not available in this deployment")
 		}
-		return fmt.Errorf("1pw_fill result unavailable; %s", onePasswordFillUncertain)
+		var body struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
+			if message, ok := vaultFillErrorMessages[body.Code]; ok {
+				return fmt.Errorf("1pw_fill failed: %s (HTTP %d): %s; %s", body.Code, apiErr.StatusCode, message, guidance)
+			}
+		}
+		return fmt.Errorf("1pw_fill request failed (HTTP %d); %s", apiErr.StatusCode, guidance)
 	}
 	if response == nil {
 		return fmt.Errorf("empty 1pw_fill result; %s", onePasswordFillUncertain)
