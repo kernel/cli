@@ -111,7 +111,7 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 			continue
 		}
 		if value, ok := object[key]; ok {
-			if key == "url" || key == "approval_url" || key == "merchant_origin" || key == "image_url" || key == "product_url" {
+			if key == "url" || key == "approval_url" || key == "page_url" || key == "merchant_origin" || key == "image_url" || key == "product_url" {
 				var address string
 				if json.Unmarshal(value, &address) != nil || !vaultDisplayURL(address) {
 					continue

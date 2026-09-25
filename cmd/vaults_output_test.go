@@ -214,6 +214,19 @@ func TestVaultURLsWithSecretsAreWithheld(t *testing.T) {
 	}
 }
 
+func TestVaultCheckoutPageURLsWithSecretsAreWithheld(t *testing.T) {
+	for _, address := range []string{"https://user:SECRET@shop.example/checkout", "https://shop.example/checkout?password=SECRET"} {
+		var item kernel.VaultItemUnion
+		require.NoError(t, json.Unmarshal([]byte(strings.Replace(readyCardFixture, "https://shop.example/checkout", address, 1)), &item))
+		buf := capturePtermOutput(t)
+		require.NoError(t, printVaultItem(&item, ""))
+		assert.NotContains(t, buf.String(), "SECRET")
+		out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
+		assert.NotContains(t, out, "SECRET")
+		assert.NotContains(t, out, "page_url")
+	}
+}
+
 func TestVaultGetCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
