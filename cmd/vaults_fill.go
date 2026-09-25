@@ -29,7 +29,7 @@ var vaultFillResultFields = vaultOutputFields{
 	"fields": vaultFieldsOf("index status error_code"),
 }
 
-const vaultFillUncertain = "browser fields may have been written; inspect the browser and do not retry or fall back to aliases"
+const vaultFillUncertain = "browser fields may have been written or a payment credential may have been supplied; inspect the browser and do not retry or fall back to aliases"
 
 var vaultFillErrorMessages = map[string]string{
 	"invalid_request":      "check field names, formats, and browser parameters",
@@ -46,6 +46,7 @@ var vaultFillErrorMessages = map[string]string{
 	"field_unavailable":    "a field has no usable stored value; inspect definitions and presence, and collect missing values",
 	"conflict":             "the item or browser is not ready; inspect readiness, binding, and unresolved prior operations",
 	"destination_denied":   "destination or browser vault binding is not authorized; check the bound browser and destination",
+	"browser_unavailable":  "the browser session is not available; check that it is still running",
 	"not_found":            "check the vault, item, browser identifiers, and project",
 	"execution_failed":     "fill execution failed",
 }
@@ -77,7 +78,6 @@ func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFil
 	request := kernel.FillVaultItemOperationRequestParam{
 		BrowserID: params.BrowserID,
 		Type:      kernel.FillVaultItemOperationRequestTypeFill,
-		Fields:    make([]kernel.VaultFillFieldParam, 0, len(params.Fields)),
 	}
 	if params.PageURL != "" {
 		request.PageURL = kernel.Opt(params.PageURL)
@@ -109,11 +109,13 @@ func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFil
 		}
 	} else {
 		pterm.Printf("Fill: %s\n", result.Status)
-		rows := pterm.TableData{{"Field index", "Status", "Error code"}}
-		for _, field := range result.Fields {
-			rows = append(rows, []string{strconv.Itoa(*field.Index), field.Status, field.ErrorCode})
+		if len(result.Fields) > 0 {
+			rows := pterm.TableData{{"Field index", "Status", "Error code"}}
+			for _, field := range result.Fields {
+				rows = append(rows, []string{strconv.Itoa(*field.Index), field.Status, field.ErrorCode})
+			}
+			PrintTableNoPad(rows, true)
 		}
-		PrintTableNoPad(rows, true)
 		if result.Status == "completed" {
 			pterm.Println("Fields filled; this does not confirm website acceptance or form submission.")
 		} else {
@@ -141,6 +143,14 @@ func parseVaultFillResult(raw json.RawMessage, count int) (*vaultFillResult, err
 	var result vaultFillResult
 	if json.Unmarshal(safe, &result) != nil || result.Type != "fill" || len(result.Fields) != count {
 		return nil, invalid
+	}
+	if count == 0 {
+		switch result.Status {
+		case "completed", "failed", "unknown":
+			return &result, nil
+		default:
+			return nil, invalid
+		}
 	}
 	status := "completed"
 	stopped := false

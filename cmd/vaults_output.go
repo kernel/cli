@@ -32,14 +32,14 @@ var vaultMethodFields = vaultOutputFields{
 	"capabilities": {"single_use_card": vaultFieldsOf("eligible reasons")},
 }
 var vaultItemFields = vaultOutputFields{
-	"id": nil, "key": nil, "type": nil, "version": nil, "created_at": nil, "updated_at": nil, "expires_at": nil,
+	"id": nil, "key": nil, "type": nil, "description": nil, "version": nil, "created_at": nil, "updated_at": nil, "expires_at": nil,
 	"available_operations": vaultOperationFields,
 	"available_expansions": vaultOperationFields,
 	"action":               vaultFieldsOf("name url expires_at"),
 	"expanded":             {"payment_methods": vaultMethodFields},
 	"spec": {
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil,
-		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
+		"browser_id": nil, "page_url": nil, "amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil,
 		"context": nil, "expires_at": nil, "description": nil,
 		"fields":          vaultFieldsOf("name label type required sensitive"),
 		"provider_config": vaultFieldsOf("id name"),
@@ -111,7 +111,7 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 			continue
 		}
 		if value, ok := object[key]; ok {
-			if key == "url" || key == "approval_url" || key == "merchant_url" || key == "merchant_origin" || key == "image_url" || key == "product_url" {
+			if key == "url" || key == "approval_url" || key == "page_url" || key == "merchant_origin" || key == "image_url" || key == "product_url" {
 				var address string
 				if json.Unmarshal(value, &address) != nil || !vaultDisplayURL(address) {
 					continue
@@ -125,9 +125,28 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 		}
 	}
 	var itemType string
-	if result["spec"] != nil && result["state"] != nil && json.Unmarshal(result["type"], &itemType) == nil && itemType == "credential" {
-		if err := preservePublicCredentialValues(object, result); err != nil {
-			return nil, err
+	if result["spec"] != nil && result["state"] != nil && json.Unmarshal(result["type"], &itemType) == nil {
+		if itemType == "credential" {
+			if err := preservePublicCredentialValues(object, result); err != nil {
+				return nil, err
+			}
+		}
+		if itemType == "card" {
+			var spec struct {
+				Provider string `json:"provider"`
+			}
+			if json.Unmarshal(result["spec"], &spec) == nil && spec.Provider == "link" {
+				var state vaultJSON
+				if json.Unmarshal(result["state"], &state) != nil {
+					return nil, fmt.Errorf("invalid vault response shape")
+				}
+				delete(state, "aliases")
+				filteredState, err := json.Marshal(state)
+				if err != nil {
+					return nil, err
+				}
+				result["state"] = filteredState
+			}
 		}
 	}
 	return json.Marshal(result)
@@ -265,6 +284,25 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 	return nil
 }
 
+type vaultLinkCardDisplay struct {
+	Spec struct {
+		BrowserID       string `json:"browser_id"`
+		PageURL         string `json:"page_url"`
+		Wallet          string `json:"wallet"`
+		PaymentMethodID string `json:"payment_method_id"`
+		Amount          int64  `json:"amount"`
+		Currency        string `json:"currency"`
+	} `json:"spec"`
+}
+
+func vaultItemDescription(item *kernel.VaultItemUnion) string {
+	var value struct {
+		Description string `json:"description"`
+	}
+	_ = json.Unmarshal([]byte(item.RawJSON()), &value)
+	return value.Description
+}
+
 func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	raw, err := filterVaultJSON(json.RawMessage(item.RawJSON()), vaultItemFields)
 	if err != nil {
@@ -285,6 +323,9 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	rows := pterm.TableData{
 		{"Property", "Value"}, {"Key (immutable)", item.Key}, {"ID", item.ID},
 		{"Type", item.Type}, {"Provider", item.Spec.Provider}, {"Status", item.State.Status},
+	}
+	if description := vaultItemDescription(item); description != "" {
+		rows = append(rows, []string{"Description", description})
 	}
 	if item.Type == "credential" {
 		rows = append(rows, []string{"Version", fmt.Sprint(item.Version)})
@@ -307,13 +348,21 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		rows = append(rows, []string{"Status reason", item.State.StatusReason})
 	}
 	if item.Type == "card" {
-		merchant := item.Spec.MerchantName
+		rows = append(rows, []string{"Wallet key", item.Spec.Wallet}, []string{"Amount (minor units)", fmt.Sprintf("%d %s", item.Spec.Amount, item.Spec.Currency)})
 		if item.Spec.Provider == "agentcard" {
-			merchant = item.Spec.Merchant
+			rows = append(rows, []string{"Merchant", item.Spec.Merchant})
 		}
-		rows = append(rows, []string{"Wallet key", item.Spec.Wallet}, []string{"Merchant", merchant}, []string{"Amount (minor units)", fmt.Sprintf("%d %s", item.Spec.Amount, item.Spec.Currency)})
 		if item.Spec.Provider == "link" {
-			rows = append(rows, []string{"Payment method ID", item.Spec.PaymentMethodID})
+			rows = append(rows, []string{"Merchant", item.Spec.MerchantName})
+			var card vaultLinkCardDisplay
+			if json.Unmarshal([]byte(item.RawJSON()), &card) != nil {
+				return fmt.Errorf("invalid Link card response")
+			}
+			rows = append(rows,
+				[]string{"Payment method ID", card.Spec.PaymentMethodID},
+				[]string{"Browser session ID", card.Spec.BrowserID},
+				[]string{"Checkout page", card.Spec.PageURL},
+			)
 		}
 	}
 	if item.State.JSON.Domains.Valid() {
@@ -325,7 +374,7 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	if !item.ExpiresAt.IsZero() {
 		rows = append(rows, []string{"Expires At", util.FormatLocal(item.ExpiresAt)})
 	}
-	if item.State.JSON.Aliases.Valid() {
+	if item.Spec.Provider == "agentcard" && item.State.JSON.Aliases.Valid() {
 		a := item.State.Aliases
 		rows = append(rows, []string{"Checkout alias: number", a.Number}, []string{"Checkout alias: cvc", a.Cvc}, []string{"Checkout alias: exp_month", a.ExpMonth}, []string{"Checkout alias: exp_year", a.ExpYear})
 	}
@@ -398,10 +447,10 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		for _, expansion := range card.AvailableExpansions {
 			pterm.Printf("Available expansion: %s — %s\n", expansion.Type, expansion.Description)
 		}
-		if item.State.JSON.Aliases.Valid() {
+		if item.Spec.Provider == "agentcard" && item.State.JSON.Aliases.Valid() {
 			pterm.Info.Println("Aliases are non-secret checkout values. Use only in a browser created with this vault attached; ready does not mean paid.")
 		}
-		pterm.Info.Println("Inspect items events for payment outcomes. Never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")
+		pterm.Info.Println("Inspect items events for payment outcomes. Fill supplies credentials but does not submit payment. Never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")
 	} else {
 		wallet := item.AsWallet()
 		for _, expansion := range wallet.AvailableExpansions {
@@ -431,7 +480,7 @@ func printVaultPaymentMethods(methods []kernel.VaultPaymentMethod) {
 		rows = append(rows, []string{m.ID, m.Provider, m.Type, m.Display.Label, m.Display.Brand, m.Display.Last4, fmt.Sprint(m.IsDefault), eligible, strings.Join(capability.Reasons, ", ")})
 	}
 	PrintTableNoPad(rows, true)
-	pterm.Info.Println("Select an ID explicitly in the card --spec JSON: Link uses payment_method_id; AgentCard uses card_id (or omit it for cardholder selection). Capabilities are advisory; missing means unknown, not ineligible.")
+	pterm.Info.Println("Select an ID explicitly. Link cards require payment_method_id; Kernel inspects checkout and selects the execution method. AgentCard uses card_id (or omit it for cardholder selection). Capabilities are advisory; missing means unknown, not ineligible.")
 }
 
 func printVaultEvents(events []kernel.VaultItemEvent, data []vaultJSON) {

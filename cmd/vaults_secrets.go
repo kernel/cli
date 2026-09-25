@@ -14,6 +14,37 @@ import (
 
 // Do not wrap SDK errors here: response bodies and transport errors can echo
 // write-only credentials, and the root command unwraps SDK errors for display.
+func vaultCardError(err error) error {
+	var apiErr *kernel.Error
+	if errors.As(err, &apiErr) {
+		var body struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
+			discoveryFailure := false
+			switch body.Code {
+			case "ambiguous_page", "timeout":
+				discoveryFailure = apiErr.StatusCode == 400
+			case "destination_denied":
+				discoveryFailure = apiErr.StatusCode == 403
+			case "browser_not_found":
+				discoveryFailure = apiErr.StatusCode == 404
+			case "browser_unavailable":
+				discoveryFailure = apiErr.StatusCode == 409
+			case "browser_error":
+				discoveryFailure = apiErr.StatusCode == 500
+			}
+			if discoveryFailure {
+				return fmt.Errorf("%s: Link checkout inspection failed before a card was created; correct the browser or page and retry", body.Code)
+			}
+			if apiErr.StatusCode == 409 && body.Code == "conflict" {
+				return fmt.Errorf("vault conflict (HTTP 409); inspect current state and immutable bindings")
+			}
+		}
+	}
+	return vaultCredentialError(err)
+}
+
 func vaultCredentialError(err error) error {
 	var apiErr *kernel.Error
 	if errors.As(err, &apiErr) {
@@ -71,7 +102,7 @@ func vaultSpecHasSecrets(value json.RawMessage) bool {
 	}
 	for key, child := range object {
 		switch strings.ToLower(key) {
-		case "tokens", "access_token", "refresh_token", "client_secret", "credentials":
+		case "tokens", "access_token", "refresh_token", "link_pay_token", "client_secret", "credentials":
 			return true
 		case "authorization", "client", "provider_config":
 			if vaultSpecHasSecrets(child) {

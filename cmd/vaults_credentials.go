@@ -115,15 +115,18 @@ func (c VaultsCmd) saveCredential(ctx context.Context, vault, key string, data [
 		if version < 1 {
 			return fmt.Errorf("--version must be positive")
 		}
-		var spec kernel.CredentialVaultItemSpecUpdateParam
-		if json.Unmarshal(data, &spec) != nil {
+		// The preview SDK for payment tokens omits the item update method; send the
+		// credential PATCH through the generic client until it is regenerated.
+		request := map[string]any{"type": "credential", "version": version, "spec": json.RawMessage(data)}
+		if expectedID != "" {
+			request["expected_item_id"] = expectedID
+		}
+		body, marshalErr := json.Marshal(request)
+		if marshalErr != nil {
 			return fmt.Errorf("invalid credential update spec")
 		}
-		request := kernel.CredentialVaultItemUpdateRequestParam{Type: "credential", Version: version, Spec: spec}
-		if expectedID != "" {
-			request.ExpectedItemID = kernel.String(expectedID)
-		}
-		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCredentialVaultItemUpdateRequest: &request}, option.WithMaxRetries(0))
+		client := kernel.Client{Options: c.vaults.Items.Options}
+		err = client.Patch(ctx, fmt.Sprintf("vaults/%s/items/%s", vault, key), nil, &item, option.WithRequestBody("application/json", body), option.WithMaxRetries(0))
 	} else {
 		var spec kernel.CredentialVaultItemSpecInputParam
 		if json.Unmarshal(data, &spec) != nil || len(spec.Fields) == 0 {

@@ -134,7 +134,7 @@ func TestVaultWalletConfigInvalidInput(t *testing.T) {
 		require.Error(t, err)
 		assert.False(t, strings.Contains(out+human+err.Error(), secret))
 	}
-	for _, path := range []string{"wallets create", "cards create", "cards update"} {
+	for _, path := range []string{"wallets create", "cards create"} {
 		for _, raw := range []string{
 			fmt.Sprintf(`{"authorization":{"tokens":{"access_token":%q}}}`, secret),
 			fmt.Sprintf(`{"credentials":{"client_secret":%q}}`, secret),
@@ -171,7 +171,7 @@ func TestVaultImportedWalletErrorSafety(t *testing.T) {
 
 func TestVaultRecoveryRequired(t *testing.T) {
 	for _, provider := range []string{"link", "agentcard"} {
-		body := strings.ReplaceAll(requestedCardFixture, `"status":"requested"`, `"status":"recovery_required"`)
+		body := strings.ReplaceAll(requestedCardFixture, `"status":"pending_authorization"`, `"status":"recovery_required"`)
 		body = strings.ReplaceAll(body, `"provider":"link"`, `"provider":"`+provider+`"`)
 		for _, operation := range []string{"get", "invoke"} {
 			t.Run(provider+"/"+operation, func(t *testing.T) {
@@ -184,7 +184,7 @@ func TestVaultRecoveryRequired(t *testing.T) {
 				})
 				args := []string{"vaults", "items", operation, "checkout", "order-1"}
 				if operation == "invoke" {
-					args = append(args, "authorize")
+					args = append(args, "fill", "--params", `{"browser_id":"browser","page_url":"https://shop.example"}`)
 				} else {
 					args = append(args, "--wait", "60")
 				}
@@ -204,7 +204,7 @@ func TestVaultRecoveryRequired(t *testing.T) {
 }
 
 func TestVaultRecoveryDoesNotOpenStaleAction(t *testing.T) {
-	body := strings.ReplaceAll(requestedCardFixture, `"status":"requested"`, `"status":"recovery_required"`)
+	body := strings.ReplaceAll(requestedCardFixture, `"status":"pending_authorization"`, `"status":"recovery_required"`)
 	body = strings.TrimSuffix(body, "}") + `,"action":{"name":"spend_approval","url":"https://example.test/approve"}}`
 	var item kernel.VaultItemUnion
 	require.NoError(t, json.Unmarshal([]byte(body), &item))
@@ -256,20 +256,5 @@ func TestVaultRecoveryEventProjection(t *testing.T) {
 		require.False(t, strings.Contains(out+human, secret))
 		assert.Contains(t, out+human, "card_update")
 		assert.Contains(t, out+human, "outcome_unknown")
-	}
-}
-
-func TestVaultPendingUpdatePreservesOmissionsAndEmptyLists(t *testing.T) {
-	for _, fields := range []string{"", `,"line_items":[],"totals":[]`} {
-		client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-			assert.Equal(t, http.MethodPatch, r.Method)
-			body, _ := io.ReadAll(r.Body)
-			assert.JSONEq(t, `{"type":"card","spec":{"provider":"link","wallet":"wallet-1","amount":2000`+fields+`}}`, string(body))
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, strings.ReplaceAll(requestedCardFixture, "requested", "recovery_required"))
-		})
-		out, _, err := executeVaultInputCommand(t, client, "", "vaults", "cards", "update", "checkout", "order-1", "--provider", "link", "--spec", `{"wallet":"wallet-1","amount":2000`+fields+`}`, "-o", "json")
-		require.NoError(t, err)
-		assert.Contains(t, out, "recovery_required")
 	}
 }

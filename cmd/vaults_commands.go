@@ -59,7 +59,7 @@ Use wallet and card item types for credit cards and payment checkout instead.
 
 User credential flow:
 1. Create a vault per end user and create a browser with --vault <id-or-name>.
-2. Navigate to a sensitive form and define its fields in natural top-to-bottom order with credentials create --spec-file; that array order controls the user-facing collection form.
+2. Navigate to a sensitive form and define its fields with credentials create --spec-file.
 3. Present the returned collection URL to the user. Poll items get --wait 60 for ready.
 4. Use items invoke <vault> <key> fill --spec-file with browser_id and field selectors.
 Use credentials update --version for edits, or items invoke collect to reopen the form.
@@ -73,16 +73,18 @@ Otherwise, the API resolves the project from your credentials and its defaults.
 Vault names, item keys, and project ownership are immutable.
 
 1. Create/select a vault, then create a provider wallet and follow its returned action.
-2. For Link, list wallet payment methods and select an ID explicitly.
-3. Create a card request with --provider and --spec JSON.
-4. Inspect items get, then use items invoke <vault> <key> <operation> only when advertised.
-   Follow the operation description and any returned provider action.
-5. Attach the vault with browsers create --vault <id-or-name>; attachment is required for fill.
-   Ready Link cards use only advertised fill with --params for browser checkout.
-   Link cards do not expose aliases or support egress substitution.
-   AgentCard-only checkout aliases support egress substitution with checkout hold,
-   approval, and replay; they are not a fallback after fill.
-   Inspect items get/events for payment outcomes.
+2. For Link, list wallet payment methods and select an ID explicitly. Create a browser
+   with --vault <id-or-name>, navigate to final checkout, and gather final spend details.
+3. Create one Link card with that browser ID and exact page URL. Kernel inspects the
+   checkout and internally selects a Link payment token or virtual card. Creation starts approval.
+4. Share the returned approval URL and retrieve the item until fill is advertised.
+5. Invoke fill with the parameters described by the advertised operation; browser-vault
+   attachment is required for fill. Ready Link cards use only advertised fill. Link cards
+   do not expose aliases or support egress substitution. AgentCard-only checkout aliases
+   support egress substitution with checkout hold, approval, and replay.
+6. Fill never submits payment; inspect the checkout and submit separately when ready.
+   Virtual-card selection is creation-time fallback, not a fallback after fill. Inspect
+   items get/events for the outcome.
 
 Permitted checkout domains are provider-assigned and displayed when returned;
 there is no domain-setting API.
@@ -153,10 +155,11 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 	invoke := &cobra.Command{Use: "invoke <vault> <key> <operation>", Short: "Invoke an operation advertised by an item", Args: cobra.ExactArgs(3), PreRunE: vaultPreRun,
 		Long: `Retrieve the item and invoke only an operation listed in available_operations.
 collect returns a time-scoped URL for the full credential form without clearing values.
-authorize sends {"type":"authorize"} for payment authorization.
-Read the operation description and follow any approval requirements before invoking.
-fill requires --params JSON or --spec-file <path|-> with browser_id (session ID, not name)
-and 1-32 ordered fields (field, selector). Do not include type, values, or frame IDs.
+Each operation's description lists the inputs that item needs; read it before invoking.
+fill requires --params JSON or --spec-file <path|-> with browser_id (session ID, not name).
+Credentials require 1-32 ordered fields (field, selector). Link cards require an exact
+page_url; include fields only when the item's advertised fill description asks for them.
+Do not include type, values, or frame IDs.
 The vault must already be attached to the browser. page_url selects an existing page;
 fill never navigates. Credentials use declared field names, must omit format, and may
 omit page_url only when the API can resolve a unique page. TOTP codes stay server-generated.
@@ -169,23 +172,18 @@ Fill is available for credential items and ready Link cards when advertised, not
 Link cards do not expose aliases or support egress substitution.
 Fill writes real values into the browser; unrestricted browser/CDP access can read them.
 Fill never explicitly submits forms or clicks buttons, but input/change events may trigger site behavior.
-completed means fields were filled, not website acceptance, login, or payment success.
+completed means credentials were supplied, not website acceptance, login, or payment success.
 failed may leave partial writes; unknown quarantines the browser. Never automatically
 retry or fall back to aliases. Requests are not automatically retried.
 API validation errors (400/403/404/409) include HTTP status, recognized error codes,
 and corrective guidance; no fields were written by that request. Inspect and correct
 the cause before deciding on a new fill. Transport loss remains an uncertain outcome.
 prepare_checkout requires checkout.browser_id, checkout.merchant_origin (canonical HTTPS
-origin of the top-level merchant page, not a processor iframe), and checkout.environment
-(production, sandbox, or shared). Optional checkout.psp selects the tokenization processor:
-square, braintree, worldpay, bambora, or mercado_pago. Omit psp for Square; non-Square
-processors require multi-processor preparation enablement. Use production or sandbox for
-square, braintree and worldpay; shared for bambora and mercado_pago. Shared endpoints do not
-establish test mode; merchant credentials determine it.
+origin of the top-level merchant page), and checkout.environment (production or sandbox).
 Use only when advertised for an AgentCard card. Keep the returned approval page open,
 poll until ready_to_submit, then submit native Pay before preparation.expires_at.
 Preparations are single-use, including after failure or expiry; never retry automatically.
-collect/authorize/prepare_checkout may use --open. Fill returns value-free per-field outcomes;
+collect/prepare_checkout may use --open. Fill returns value-free per-field outcomes;
 completed exits 0, failed/unknown exit nonzero with valid JSON retained on stdout in -o json.`,
 		Example: `  kernel vaults items invoke user-vault login collect
   kernel vaults items invoke user-vault login fill --spec-file - <<'JSON'
@@ -256,8 +254,8 @@ JSON
 	addVaultJSONOutputFlag(methods)
 	wallets.AddCommand(walletCreate, methods)
 
-	cards := &cobra.Command{Use: "cards", Short: "Configure card requests"}
-	cards.AddCommand(newVaultCardCommand(false), newVaultCardCommand(true))
+	cards := &cobra.Command{Use: "cards", Short: "Create immutable card requests at final checkout"}
+	cards.AddCommand(newVaultCardCommand())
 	cmd.AddCommand(items, wallets, cards, newVaultCredentialsCommand())
 	return cmd
 }
@@ -280,34 +278,26 @@ func newVaultDeleteCommand(item bool) *cobra.Command {
 	return cmd
 }
 
-func newVaultCardCommand(update bool) *cobra.Command {
-	use, short := "create", "Create a card request without authorizing it"
-	if update {
-		use, short = "update", "Update a card spec when the API permits configuration"
-	}
-	cmd := &cobra.Command{Use: use + " <vault> <key> --provider <link|agentcard> --spec '<json>'", Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: short + `. Neither create nor update authorizes a Link card.
-Requested cards accept a replacement spec. Pending issuance updates preserve omitted
-optional fields; explicit empty lists clear them. The API restricts fields after
-authorization starts; wallet/provider bindings cannot change. An uncertain update
-enters recovery_required and must not be retried. Checkout cards can be edited
-between authorizations. Identical creates return existing state without resetting it.
-Never reconfigure the same item to retry a failed, timed-out, rejected, or indeterminate payment.
-A recovery item that permits abandonment must be deleted after explicit user confirmation before creating a replacement.
-` + vaultSpecHelp + vaultCardSpecHelp,
-		Example: "  kernel vaults cards " + use + ` checkout order-1 \
-    --provider agentcard --spec '{
+func newVaultCardCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "create <vault> <key> --provider <link|agentcard> --spec '<json>'", Short: "Create an immutable card request and start approval", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+		Long: "Create a card after reaching final checkout. For Link, Kernel inspects the checkout and internally selects a Link payment token or virtual card. Creation starts human approval; share the returned URL and retrieve the item until fill appears.\n" + vaultSpecHelp + vaultCardSpecHelp + vaultLinkPurchaseTypesHelp,
+		Example: "  kernel vaults cards create" + ` checkout order-1 \
+    --provider link --spec '{
       "wallet": "wallet-1",
-      "merchant": "Example Shop",
+      "browser_id": "browser-session-id",
+      "page_url": "https://shop.example/checkout",
+      "payment_method_id": "pm-1",
       "amount": 1234,
-      "currency": "usd"
+      "currency": "usd",
+      "merchant_name": "Example Shop",
+      "context": "Final checkout for one item totaling USD 12.34. This is a new purchase and not a retry of an uncertain payment."
     }'`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			spec, err := vaultSpecFromFlags(cmd)
 			if err != nil {
 				return err
 			}
-			return getVaultsHandler(cmd).SaveCard(cmd.Context(), args[0], args[1], param.Override[kernel.CardVaultItemSpecUnionParam](spec), update, vaultOutput(cmd))
+			return getVaultsHandler(cmd).SaveCard(cmd.Context(), args[0], args[1], param.Override[kernel.CardVaultItemSpecUnionParam](spec), vaultOutput(cmd))
 		}}
 	addVaultSpecFlags(cmd)
 	addVaultJSONOutputFlag(cmd)
@@ -330,6 +320,11 @@ func vaultSpecFromFlags(cmd *cobra.Command) (map[string]json.RawMessage, error) 
 	var spec map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(raw), &spec); err != nil || spec == nil {
 		return nil, fmt.Errorf("--spec must be a JSON object")
+	}
+	if provider == "link" {
+		if _, exists := spec["merchant_account_id"]; exists {
+			return nil, fmt.Errorf("omit merchant_account_id; Kernel discovers it from the checkout")
+		}
 	}
 	if value, ok := spec["provider"]; ok {
 		var embedded string

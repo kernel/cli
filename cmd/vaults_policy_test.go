@@ -12,11 +12,11 @@ import (
 )
 
 func TestVaultRecoveryActionDisplayPolicy(t *testing.T) {
-	for _, status := range []string{"requested", "recovery_required"} {
+	for _, status := range []string{"pending_authorization", "recovery_required"} {
 		for _, command := range []string{"get", "list"} {
 			for _, output := range []string{"", "json"} {
 				t.Run(status+"/"+command+"/"+output, func(t *testing.T) {
-					body := strings.ReplaceAll(requestedCardFixture, `"status":"requested"`, `"status":"`+status+`"`)
+					body := strings.ReplaceAll(requestedCardFixture, `"status":"pending_authorization"`, `"status":"`+status+`"`)
 					var fields map[string]json.RawMessage
 					require.NoError(t, json.Unmarshal([]byte(body), &fields))
 					fields["action"] = json.RawMessage(`{"name":"spend_approval","url":"https://example.test/approve"}`)
@@ -42,7 +42,7 @@ func TestVaultRecoveryActionDisplayPolicy(t *testing.T) {
 					if output == "json" {
 						assert.Contains(t, out, `"spend_approval"`)
 						assert.Contains(t, out, `"available_operations"`)
-						assert.Contains(t, out, `"authorize"`)
+						assert.NotContains(t, out, `"authorize"`)
 						assert.Empty(t, human)
 					} else if status == "recovery_required" {
 						assert.NotContains(t, human, "spend_approval")

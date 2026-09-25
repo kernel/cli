@@ -48,14 +48,19 @@ type AgentCardWalletSpec = {
 `
 
 const vaultCardSpecHelp = `
+Create the card only after reaching final checkout and gathering the final spend details.
+Creation starts human approval. Card requests are immutable; changed purchase details
+require cancellation and a new item. Never replace an uncertain payment.
+
 type LinkCardSpec = {
   provider: "link";
   wallet: string;             // wallet item key
+  browser_id: string;         // active vault-linked browser session ID
+  page_url: string;           // exact final checkout page URL
   payment_method_id: string;  // from wallets payment-methods
-  amount: number;             // integer minor units; 1..500000
+  amount: number;             // integer minor units; 1..500000 (virtual-card fallback: 1..50000)
   currency: string;           // three letters
-  merchant_name: string;      // 1..255 characters
-  merchant_url: string;       // URI
+  merchant_name: string;      // approval-screen name; 1..255 characters
   context: string;            // at least 100 characters
   line_items?: LinkLineItem[];
   totals?: LinkTotal[];
@@ -72,6 +77,13 @@ type AgentCardCardSpec = {
   card_id?: string;           // vc_...; otherwise chosen at approval
 };
 
+For Link, Kernel inspects WebMCP in the active checkout and internally selects a
+Link payment token when definitely supported or a virtual card otherwise. Agents do
+not provide merchant_account_id or choose the execution mode. The browser and page
+bindings are immutable. Permitted domains are provider-assigned, not configurable.
+`
+
+const vaultLinkPurchaseTypesHelp = `
 type LinkLineItem = {
   name: string;
   quantity?: number;          // integer >= 1
@@ -89,6 +101,4 @@ type LinkTotal = {
   display_text: string;
   amount: number;             // integer minor units
 };
-
-Permitted domains are provider-assigned, not configurable in the spec.
 `
