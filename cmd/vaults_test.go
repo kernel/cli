@@ -303,6 +303,32 @@ func TestVaultCardRequestMapping(t *testing.T) {
 	}
 }
 
+func TestVaultCardAgentcardCardIDIsOpaque(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "project-test")
+	// AgentCard card IDs are opaque: the CLI must forward whatever the caller
+	// supplies without assuming a prefix or format.
+	for _, cardID := range []string{"vc_chosen", "chosen", "card-123", "AGC/9f2e::7"} {
+		t.Run(cardID, func(t *testing.T) {
+			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]json.RawMessage
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				var spec struct {
+					CardID string `json:"card_id"`
+				}
+				require.NoError(t, json.Unmarshal(body["spec"], &spec))
+				assert.Equal(t, cardID, spec.CardID)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, requestedCardFixture)
+			})
+			spec := fmt.Sprintf(`{"wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop","card_id":%q}`, cardID)
+			_, _, err := executeVaultCommand(t, client,
+				"vaults", "cards", "create", "checkout", "order-1", "-o", "json",
+				"--provider", "agentcard", "--spec", spec)
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestVaultInvokeRequiresAdvertisedOperation(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "project-test")
 	for _, state := range []string{"requested", "pending_authorization", "ready", "consumed", "expired", "declined"} {

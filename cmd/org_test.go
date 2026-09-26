@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,6 +50,7 @@ func testOrgEntitlementsWithUnlimitedValues(t *testing.T) *kernel.OrgEntitlement
 			"managed_proxies":{"enabled":true},
 			"custom_proxies":{"enabled":true},
 			"proxy_bypass_hosts":{"enabled":true},
+			"search":{"enabled":true},
 			"gpu":{"enabled":false}
 		},
 		"limits":{"max_concurrent_browsers":150,"max_concurrent_invocations":150,"default_max_concurrent_invocations_per_app":20,"max_vaults":null}
@@ -74,6 +76,7 @@ func TestOrgEntitlementRows_CompleteProjection(t *testing.T) {
 			"managed_proxies":{"enabled":true},
 			"custom_proxies":{"enabled":false},
 			"proxy_bypass_hosts":{"enabled":true},
+			"search":{"enabled":true},
 			"gpu":{"enabled":false}
 		},
 		"limits":{"max_concurrent_browsers":43,"max_concurrent_invocations":47,"default_max_concurrent_invocations_per_app":53,"max_vaults":59}
@@ -105,6 +108,7 @@ func TestOrgEntitlementRows_CompleteProjection(t *testing.T) {
 		{"Feature", "Managed proxies", "true"},
 		{"Feature", "Custom proxies", "false"},
 		{"Feature", "Proxy bypass hosts", "true"},
+		{"Feature", "Search", "true"},
 		{"Feature", "GPU", "false"},
 		{"Limit", "Max concurrent browsers", "43"},
 		{"Limit", "Max concurrent invocations", "47"},
@@ -131,6 +135,7 @@ func TestOrgEntitlementRows_BooleanFieldProvenance(t *testing.T) {
 		{"Managed proxies", func(e *kernel.OrgEntitlements) { e.Features.ManagedProxies.Enabled = true }},
 		{"Custom proxies", func(e *kernel.OrgEntitlements) { e.Features.CustomProxies.Enabled = true }},
 		{"Proxy bypass hosts", func(e *kernel.OrgEntitlements) { e.Features.ProxyBypassHosts.Enabled = true }},
+		{"Search", func(e *kernel.OrgEntitlements) { e.Features.Search.Enabled = true }},
 		{"GPU", func(e *kernel.OrgEntitlements) { e.Features.GPU.Enabled = true }},
 	}
 
@@ -294,6 +299,63 @@ func TestOrgLimitsGet_NullDefaultShownAsUnlimited(t *testing.T) {
 	c := OrgCmd{limits: &FakeOrgLimitsService{}}
 	assert.NoError(t, c.LimitsGet(context.Background(), OrgLimitsGetInput{}))
 	assert.Contains(t, buf.String(), "unlimited")
+}
+
+func TestOrgLimitsGet_RendersConcurrencyUsage(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fake := &FakeOrgLimitsService{
+		GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgLimits, error) {
+			limits := &kernel.OrgLimits{
+				MaxConcurrentSessions:       100,
+				ConcurrentSessionsUsed:      12,
+				ConcurrentSessionsAvailable: 88,
+			}
+			limits.JSON.ConcurrentSessionsUsed = respjson.NewField("12")
+			limits.JSON.ConcurrentSessionsAvailable = respjson.NewField("88")
+			return limits, nil
+		},
+	}
+	c := OrgCmd{limits: fake}
+	assert.NoError(t, c.LimitsGet(context.Background(), OrgLimitsGetInput{}))
+
+	out := buf.String()
+	assert.Contains(t, out, "Concurrent Sessions Used")
+	assert.Contains(t, out, "12")
+	assert.Contains(t, out, "Concurrent Sessions Available")
+	assert.Contains(t, out, "88")
+}
+
+func TestOrgLimitsGet_NullConcurrencyUsageShownAsUnknown(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fake := &FakeOrgLimitsService{
+		GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.OrgLimits, error) {
+			limits := &kernel.OrgLimits{MaxConcurrentSessions: 100}
+			// Null (not omitted) means usage could not be read, which is not
+			// the same as unlimited.
+			limits.JSON.ConcurrentSessionsUsed = respjson.NewField(respjson.Null)
+			limits.JSON.ConcurrentSessionsAvailable = respjson.NewField(respjson.Null)
+			return limits, nil
+		},
+	}
+	c := OrgCmd{limits: fake}
+	assert.NoError(t, c.LimitsGet(context.Background(), OrgLimitsGetInput{}))
+
+	out := buf.String()
+	// Both usage rows render as unknown rather than borrowing the "unlimited"
+	// meaning a null limit would have.
+	assert.Contains(t, out, "Concurrent Sessions Used")
+	assert.Contains(t, out, "Concurrent Sessions Available")
+	assert.Equal(t, 2, strings.Count(out, "unknown"))
+}
+
+func TestOrgLimitsGet_OmitsConcurrencyUsageRowsWhenAbsent(t *testing.T) {
+	buf := capturePtermOutput(t)
+	c := OrgCmd{limits: &FakeOrgLimitsService{}}
+	assert.NoError(t, c.LimitsGet(context.Background(), OrgLimitsGetInput{}))
+
+	out := buf.String()
+	assert.NotContains(t, out, "Concurrent Sessions Used")
+	assert.NotContains(t, out, "Concurrent Sessions Available")
 }
 
 func TestOrgLimitsGet_RendersManagedAuthLimits(t *testing.T) {

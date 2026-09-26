@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
@@ -1223,7 +1224,8 @@ func TestTimeline_RendersEventsAndPagination(t *testing.T) {
 		"type": "login",
 		"status": "SUCCESS",
 		"browser_session_id": "browser_1",
-		"telemetry_captured": true
+		"telemetry_captured": true,
+		"completed_at": "2026-09-21T12:00:00Z"
 	}`), &loginEvent))
 	fake := &FakeAuthConnectionService{
 		TimelineFunc: func(ctx context.Context, id string, query kernel.AuthConnectionTimelineParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.ManagedAuthTimelineEvent], error) {
@@ -1252,6 +1254,9 @@ func TestTimeline_RendersEventsAndPagination(t *testing.T) {
 	// Telemetry capture is reported for events that have a browser session.
 	assert.Contains(t, out, "Telemetry")
 	assert.Regexp(t, `browser_1.*yes`, out)
+	// completed_at is shown for terminal attempts and dashed out otherwise.
+	assert.Contains(t, out, "Completed")
+	assert.Contains(t, out, util.FormatLocal(time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)))
 	// The third event is truncated off the page.
 	assert.NotContains(t, out, "health_check")
 	assert.Contains(t, out, "Has more: yes")
@@ -1389,4 +1394,44 @@ func TestAuthConnectionsGet_TelemetryRowOmittedWhenOff(t *testing.T) {
 
 	require.NoError(t, c.Get(context.Background(), AuthConnectionGetInput{ID: "conn-1"}))
 	assert.NotContains(t, outBuf.String(), "Browser Telemetry")
+}
+
+func TestLogin_SkillMode(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.AuthConnectionLoginParams
+	fake := &FakeAuthConnectionService{
+		LoginFunc: func(ctx context.Context, id string, body kernel.AuthConnectionLoginParams, opts ...option.RequestOption) (*kernel.LoginResponse, error) {
+			captured = body
+			return &kernel.LoginResponse{ID: id}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+	require.NoError(t, c.Login(context.Background(), AuthConnectionLoginInput{ID: "auth_1", SkillMode: "disabled"}))
+	assert.Equal(t, kernel.AuthConnectionLoginParamsSkillModeDisabled, captured.SkillMode)
+}
+
+// Omitting --skill-mode leaves the field unset, so the API keeps its default of
+// enabled rather than the CLI pinning a mode the user never asked for.
+func TestLogin_SkillModeOmitted(t *testing.T) {
+	capturePtermOutput(t)
+	var captured kernel.AuthConnectionLoginParams
+	fake := &FakeAuthConnectionService{
+		LoginFunc: func(ctx context.Context, id string, body kernel.AuthConnectionLoginParams, opts ...option.RequestOption) (*kernel.LoginResponse, error) {
+			captured = body
+			return &kernel.LoginResponse{ID: id}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+	require.NoError(t, c.Login(context.Background(), AuthConnectionLoginInput{ID: "auth_1"}))
+	assert.Empty(t, string(captured.SkillMode))
+}
+
+func TestLogin_InvalidSkillModeErrors(t *testing.T) {
+	capturePtermOutput(t)
+	c := AuthConnectionCmd{svc: &FakeAuthConnectionService{}}
+
+	err := c.Login(context.Background(), AuthConnectionLoginInput{ID: "auth_1", SkillMode: "mars"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid --skill-mode value")
 }

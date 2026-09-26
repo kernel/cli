@@ -587,11 +587,9 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 		return util.CleanedUpSdkError{Err: gerr}
 	}
 
-	// A --types filter is client-side (the archive endpoint filters only by
-	// category), so it must see every page to be complete. Walk the whole window
-	// whenever --all or a --types filter is set; otherwise read a single page and
+	// Walk the whole window when --all is set; otherwise read a single page and
 	// surface the X-Next-Offset cursor for manual --offset paging.
-	fullScan := in.All || len(in.Types) > 0
+	fullScan := in.All
 
 	params := kernel.BrowserTelemetryEventsParams{}
 	if in.Limit > 0 {
@@ -612,12 +610,15 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 	if in.Until != "" {
 		params.Until = kernel.Opt(in.Until)
 	}
-	// Send each category as a repeated query param. The SDK serializes a []string
-	// field as a single comma-joined value, but the endpoint expects the parameter
-	// repeated, so a comma-joined value matches no category.
-	opts := make([]option.RequestOption, 0, len(in.Categories)+1)
+	// Send each category and type as a repeated query param. The SDK serializes a
+	// []string field as a single comma-joined value, but the endpoint expects the
+	// parameter repeated, so a comma-joined value matches nothing.
+	opts := make([]option.RequestOption, 0, len(in.Categories)+len(in.Types)+1)
 	for _, c := range in.Categories {
 		opts = append(opts, option.WithQueryAdd("category", c))
+	}
+	for _, t := range in.Types {
+		opts = append(opts, option.WithQueryAdd("type", t))
 	}
 
 	var items []kernel.BrowserTelemetryEventsResponse
@@ -626,10 +627,7 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 	if fullScan {
 		pager := b.telemetry.EventsAutoPaging(ctx, sessionID, params, opts...)
 		for pager.Next() {
-			it := pager.Current()
-			if shouldEmit(it.Event.Category, it.Event.Type, nil, in.Types) {
-				items = append(items, it)
-			}
+			items = append(items, pager.Current())
 		}
 		if err := pager.Err(); err != nil {
 			return util.CleanedUpSdkError{Err: err}
@@ -674,6 +672,11 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 
 	if len(items) == 0 {
 		pterm.Info.Println("No telemetry events found")
+		// Filters apply within each page, so an empty filtered page can still be
+		// followed by pages with matches.
+		if nextOffset != "" {
+			pterm.Info.Printf("More events available — re-run with --offset %s\n", nextOffset)
+		}
 		return nil
 	}
 

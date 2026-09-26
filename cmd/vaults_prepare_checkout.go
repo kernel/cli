@@ -10,9 +10,9 @@ import (
 	kernel "github.com/kernel/kernel-go-sdk"
 )
 
-// Environments and tokenization processors accepted by prepare_checkout. Square,
-// Braintree and Worldpay use production or sandbox; Bambora and Mercado Pago use
-// shared. Pairing is enforced by the API, which owns processor enablement.
+// Environments and checkout processors accepted by prepare_checkout. Square,
+// Braintree, Worldpay and Adyen use production or sandbox; Bambora and Mercado Pago
+// use shared. Pairing is enforced by the API, which owns processor enablement.
 var vaultCheckoutEnvironments = []kernel.VaultCheckoutContextEnvironment{
 	kernel.VaultCheckoutContextEnvironmentProduction,
 	kernel.VaultCheckoutContextEnvironmentSandbox,
@@ -25,6 +25,7 @@ var vaultCheckoutProcessors = []kernel.AgentcardPreparedProcessor{
 	kernel.AgentcardPreparedProcessorWorldpay,
 	kernel.AgentcardPreparedProcessorBambora,
 	kernel.AgentcardPreparedProcessorMercadoPago,
+	kernel.AgentcardPreparedProcessorAdyen,
 }
 
 func vaultCheckoutProcessorNames() []string {

@@ -26,6 +26,7 @@ Kernel provides sandboxed, ready-to-use Chrome browsers for browser automations 
 - Invoke app actions (sync or async) and stream logs
 - Create, list, view, and delete managed browser sessions
 - Get a live view URL for visual monitoring and remote control
+- Search the web across providers and retrieve page content for results
 
 ## Installation
 
@@ -335,8 +336,17 @@ populated, not that login succeeded. `fill` requires an already-open page and ne
 navigates or submits it. Optional `page_url` selects the exact page; cards require it.
 Do not automatically retry failed/unknown fills or fall back to aliases.
 
+Create specs list `fields` as an ordered array. Each entry carries a stable `name`
+(letters, digits, and underscores, starting with a letter) that keys values, updates,
+and fills. Order is preserved: list fields in the same top-to-bottom order as the
+website, because the collection form renders that order unchanged. An optional `label`
+supplies non-secret display text for that field on the collection form; it never
+affects value keys, updates, or fills. Use a single trimmed line of at most 128 UTF-8
+bytes, and it is returned as metadata in `get`/`list` output.
+
 Use `credentials update <vault> <key> --version <version> --spec-file changes.json`
-with a spec such as `{"fields":{"password":{"value":"replacement"}}}`. Keep actual
+with a spec such as `{"fields":{"password":{"value":"replacement"}}}`; update specs key
+`fields` by name rather than using the ordered array. Keep actual
 secrets in protected files or stdin, never shell arguments. Omission preserves values;
 null or an empty string clears supported fields, including required text/email/password fields (returning them to pending collection). The form still requires nonempty required inputs. Field definitions cannot change. Stale versions fail,
 without retries. `items invoke <vault> <key> collect` reopens the full form without
@@ -597,13 +607,20 @@ kernel vaults items get user-123 order-1 --wait 60 -o json
 this vault attached. `merchant_origin` is the canonical HTTPS origin of the top-level
 merchant document, not a processor iframe; HTTP localhost is allowed for tests.
 
-Optional `psp` selects the tokenization processor: `square`, `braintree`, `worldpay`,
-`bambora`, or `mercado_pago`. Omit it for Square; non-Square processors require
+Optional `psp` selects the checkout processor: `square`, `braintree`, `worldpay`,
+`bambora`, `mercado_pago`, or `adyen`. Omit it for Square; non-Square processors require
 multi-processor preparation enablement. `environment` is `production`, `sandbox`, or
-`shared`: use `production` or `sandbox` for Square, Braintree and Worldpay, and `shared`
-for Bambora and Mercado Pago. Shared endpoints do not establish test mode; merchant
+`shared`: use `production` or `sandbox` for Square, Braintree, Worldpay and Adyen, and
+`shared` for Bambora and Mercado Pago. Shared endpoints do not establish test mode; merchant
 credentials and configuration determine processor test mode, independently of the
 AgentCard credential mode.
+
+`adyen` supports fresh-card Sessions requests on Adyen hosts only. Fill the public dummy
+card fields rather than vault aliases, and keep the approval page open through device
+handoff, including Adyen encryption. The unique armed preparation is associated with the
+next eligible request from the declared browser and merchant origin; competing preparations
+are rejected. Adyen device approval and browser `Authorised` responses are not capture or
+fulfillment evidence.
 
 Keep the approval page open. Poll until the item's status is `ready_to_submit`, then
 submit native Pay before `state.preparation.expires_at`. Readiness lasts at most 30
@@ -951,6 +968,13 @@ Destinations are the OTLP/HTTP endpoints sessions export to. They belong to the 
   - Prints the tool's `output` as pretty JSON on completion; tool errors and cancellations exit non-zero
   - `awaiting_submission` is successful but warns that a non-autosubmit declarative form was filled, not submitted. Inspect the form, obtain any required confirmation, then submit through Playwright or computer interaction instead of invoking the tool again
   - Invocations are never retried automatically. A 504 `outcome_unknown` error prints the code, invocation ID, and message and exits non-zero. The tool may already have had side effects; verify the outcome before invoking it again
+- `kernel browsers webmcp custom-tools list <id-or-name>` - List registered custom tools with their generated ID, namespace, kind, URL patterns, and metadata
+  - `-o json` - Output the raw response
+- `kernel browsers webmcp custom-tools add <id-or-name> --namespace <ns> --source '<js>'` - Atomically add a namespaced batch of page-backed or CDP-backed custom tools
+  - `--source <js>` or `--source-file <path>` - JavaScript expression evaluating to a non-empty array of tool definitions (URL matchers, tool metadata, execute functions); mutually exclusive. Use `--source-file -` to read stdin
+  - `--force-overwrite-namespace` - Atomically replace every existing tool in the namespace
+  - `-o json` - Output the raw response
+- `kernel browsers webmcp custom-tools remove <id-or-name> <tool-id>` - Remove one custom tool by generated ID (in-progress invocations are not canceled)
 
 - `kernel browsers webmcp custom-tools list <id-or-name>` - List all registered custom tools, even when no page currently matches
   - Displays ID, namespace, kind (`page` or `cdp`), name, and URL patterns
@@ -1208,6 +1232,50 @@ Automated authentication for web services. The `run` command orchestrates the fu
 - `kernel org limits set` - Set the default per-project concurrency cap applied to projects without an explicit override
   - `--default-project-max-concurrent-sessions <n>` - Default maximum concurrent browsers for projects without an explicit override (`0` to remove the default)
   - `--output json`, `-o json` - Output raw JSON object
+
+### Search
+
+- `kernel search <query>` - Search the web through Kernel's search providers
+  - `--country <code>` - ISO 3166-1 alpha-2 search locale preference
+  - `--language <tag>` - BCP 47 search language preference
+  - `--max-results <n>` - Requested result count, 1-100 (clamped to the serving provider's cap)
+  - `--recency <window>` - Relative search window: `hour`, `day`, `week`, `month`, or `year`
+  - `--safe-search <level>` - Safety preference: `off`, `moderate`, or `strict`
+  - `--start-date <YYYY-MM-DD>` / `--end-date <YYYY-MM-DD>` - Inclusive publication-date bounds (`--recency` takes precedence)
+  - `--include-domains <hosts>` / `--exclude-domains <hosts>` - Hostname preferences, matching a hostname and its subdomains
+  - `--strict-params` - Require every supplied portable parameter to be honored exactly instead of approximated
+  - `--include-raw` - Include untouched provider payloads in the response's raw fields
+  - `--timeout-ms <ms>` - Overall deadline across search attempts and inline retrieval
+  - `--content` - Retrieve page content for each result using portable defaults
+  - `--show-content` - Print the extracted content text for each result (implies `--content`)
+  - `--content-source <source>` - Retrieval source: `auto`, `provider`, or `browser`
+  - `--content-format <format>` - Extracted content format: `markdown` or `text`
+  - `--content-max-chars <n>` - Per-result Unicode character limit after extraction
+  - `--content-max-age-hours <n>` - Maximum acceptable age of cached page content; `0` forces a live fetch
+  - `--content-timeout-ms <ms>` - Per-result retrieval deadline
+  - `--content-browser-id <id>` - Retrieve through an existing browser session (requires `--content-source browser`)
+  - `--content-browser-mode <mode>` - Browser retrieval mode: `curl` or `render`
+  - `--provider <slug>` - Pin a single provider (`brave`, `exa`, `perplexity`, `context`, `parallel`, `valyu`, `octen`, `you`, `tavily`, `serpapi`)
+  - `--fallback-providers <slugs>` - Ordered provider chain to try in turn
+  - `--fallback-on <outcomes>` - Outcomes that advance to the next provider: `error`, `timeout`, `empty`
+  - `--provider-options <json>` - Provider-native options as a JSON object keyed by provider slug
+  - `--output json`, `-o json` - Output raw JSON object
+- `kernel search get <id>` - Re-read a retained search without calling a provider or incurring cost
+  - `--show-content` - Print the extracted content text for each result
+  - `--output json`, `-o json` - Output raw JSON object
+- `kernel search providers` - List providers, result caps, and content capabilities
+  - `--slug <slug>` - Filter to a single provider; also prints its portable-parameter support matrix and notes
+  - `--output json`, `-o json` - Output raw JSON array
+- `kernel search contents <id>` - Deferred content retrieval for a retained search
+  - `--result-ids <ids>` - Result IDs from the retained search, in the desired response order
+  - `--limit <n>` - Number of results to fetch starting from rank 1 (mutually exclusive with `--result-ids`)
+  - `--timeout-ms <ms>` - Overall deadline across all selected results
+  - Accepts the same `--content-*` flags as `kernel search`
+  - This endpoint is reserved and returns 404 until deferred retrieval ships; use `kernel search --content` for inline retrieval
+
+Searches are retained for 24 hours. Omitting the strategy flags lets Kernel pick an
+eligible provider; portable filters a provider cannot honor are approximated or
+dropped and reported as warnings unless `--strict-params` is set.
 
 ## Examples
 

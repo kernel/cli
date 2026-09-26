@@ -3292,7 +3292,7 @@ followed automatically by Chromium.`,
 
 	telemetryRoot := &cobra.Command{Use: "telemetry", Short: "Browser telemetry operations"}
 	telemetryStream := &cobra.Command{Use: "stream <id>", Short: "Stream live telemetry events", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStream}
-	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,connection,system,screenshot,captcha,monitor)")
+	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,platform,connection,system,screenshot,captcha,monitor)")
 	telemetryStream.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error)")
 	telemetryStream.Flags().Int64("seq", -1, "Resume after sequence number N (Last-Event-ID); replays events with seq > N. Default -1 streams from now")
 	telemetryStream.Flags().StringP("output", "o", "", "Output format: json for newline-delimited JSON envelopes")
@@ -3306,8 +3306,8 @@ followed automatically by Chromium.`,
 	telemetryEvents.Flags().String("order", "", "Read direction: asc (default) reads oldest first, desc reads newest first (cannot be combined with --since)")
 	telemetryEvents.Flags().String("since", "", "Window start: RFC-3339 timestamp or a duration like 5m (default 5m). Ignored when --offset is set")
 	telemetryEvents.Flags().String("until", "", "Window end (exclusive): RFC-3339 timestamp or a duration like 5m")
-	telemetryEvents.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,connection,system,screenshot,captcha,monitor)")
-	telemetryEvents.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error); walks every page in the window")
+	telemetryEvents.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,platform,connection,system,screenshot,captcha,monitor)")
+	telemetryEvents.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. page_crashed,captcha_challenge_result); combines with --categories, an event must match both")
 	telemetryEvents.Flags().Bool("all", false, "Walk every page in the window instead of just the first (ignores --offset)")
 	addJSONOutputFlag(telemetryEvents)
 	telemetryRoot.AddCommand(telemetryEvents)
@@ -3347,15 +3347,19 @@ func runBrowsersList(cmd *cobra.Command, args []string) error {
 // this set so they correctly surface that warning rather than being silently ignored.
 func poolLeaseAllowedFlags() map[string]bool {
 	return map[string]bool{
-		"pool-id":   true,
-		"pool-name": true,
-		"timeout":   true,
-		"name":      true,
-		"start-url": true,
-		"tag":       true,
-		"telemetry": true,
-		"output":    true,
-		"yes":       true,
+		"pool-id":               true,
+		"pool-name":             true,
+		"timeout":               true,
+		"name":                  true,
+		"start-url":             true,
+		"tag":                   true,
+		"telemetry":             true,
+		"telemetry-cdp-exclude": true,
+		"profile-id":            true,
+		"profile-name":          true,
+		"save-changes":          true,
+		"output":                true,
+		"yes":                   true,
 		// Global persistent flags that don't configure browsers
 		"no-color":  true,
 		"log-level": true,
@@ -3419,7 +3423,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 
 	if poolID != "" || poolName != "" {
 		// When using a pool, configuration comes from the pool itself, but
-		// name, start URL, tags, and telemetry apply per-lease to the acquired
+		// name, start URL, tags, telemetry, and profile apply per-lease to the acquired
 		// session — they mirror the fields BrowserPoolAcquireParams accepts.
 		allowedFlags := poolLeaseAllowedFlags()
 
@@ -3470,7 +3474,11 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("timeout") && timeout > 0 {
 			acquireTimeout = int64(timeout)
 		}
-		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry, telemetryCdpExclude, startURL)
+		acquireProfile, err := buildAcquireProfileParam(profileID, profileName, saveChanges)
+		if err != nil {
+			return err
+		}
+		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry, telemetryCdpExclude, startURL, acquireProfile)
 		if err != nil {
 			return err
 		}

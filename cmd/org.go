@@ -135,6 +135,16 @@ func renderOrgLimits(limits *kernel.OrgLimits) {
 		{"Default Project Max Concurrent Sessions", formatProjectLimitValue(limits.DefaultProjectMaxConcurrentSessions, limits.JSON.DefaultProjectMaxConcurrentSessions)},
 	}
 
+	// Concurrency usage is measured live and only returned by newer API
+	// versions. Unlike the limit rows, a null here means usage could not be
+	// read rather than "unlimited", so render it as unknown.
+	if orgLimitFieldPresent(limits.JSON.ConcurrentSessionsUsed) {
+		rows = append(rows, []string{"Concurrent Sessions Used", formatOrgUsageValue(limits.ConcurrentSessionsUsed, limits.JSON.ConcurrentSessionsUsed)})
+	}
+	if orgLimitFieldPresent(limits.JSON.ConcurrentSessionsAvailable) {
+		rows = append(rows, []string{"Concurrent Sessions Available", formatOrgUsageValue(limits.ConcurrentSessionsAvailable, limits.JSON.ConcurrentSessionsAvailable)})
+	}
+
 	// Managed auth limits are plan-derived and only returned by newer API
 	// versions, so render each row only when the field is present. A null
 	// max_auth_connections means unlimited, so presence — not validity — is the
@@ -165,6 +175,15 @@ func renderOrgLimits(limits *kernel.OrgLimits) {
 // treating an explicit JSON null as present so nullable limits still render.
 func orgLimitFieldPresent(field respjson.Field) bool {
 	return field.Raw() != respjson.Omitted
+}
+
+// formatOrgUsageValue renders a live usage counter, where a null means the API
+// could not read current usage rather than "unlimited".
+func formatOrgUsageValue(value int64, field respjson.Field) string {
+	if !field.Valid() {
+		return "unknown"
+	}
+	return fmt.Sprintf("%d", value)
 }
 
 func renderOrgEntitlements(entitlements *kernel.OrgEntitlements) {
@@ -212,6 +231,7 @@ func orgEntitlementRows(entitlements *kernel.OrgEntitlements) pterm.TableData {
 		{"Feature", "Managed proxies", fmt.Sprintf("%t", features.ManagedProxies.Enabled)},
 		{"Feature", "Custom proxies", fmt.Sprintf("%t", features.CustomProxies.Enabled)},
 		{"Feature", "Proxy bypass hosts", fmt.Sprintf("%t", features.ProxyBypassHosts.Enabled)},
+		{"Feature", "Search", fmt.Sprintf("%t", features.Search.Enabled)},
 		{"Feature", "GPU", fmt.Sprintf("%t", features.GPU.Enabled)},
 		{"Limit", "Max concurrent browsers", fmt.Sprintf("%d", limits.MaxConcurrentBrowsers)},
 		{"Limit", "Max concurrent invocations", fmt.Sprintf("%d", limits.MaxConcurrentInvocations)},
@@ -266,7 +286,7 @@ var orgLimitsCmd = &cobra.Command{
 var orgLimitsGetCmd = &cobra.Command{
 	Use:   "get",
 	Short: "Get organization limits",
-	Long:  "Show the organization's effective limits: the concurrency limit, the default per-project cap applied to projects without an explicit override, and the plan-derived managed auth and vault limits along with current auth connection and vault usage.",
+	Long:  "Show the organization's effective limits: the concurrency limit, current organization-wide concurrent browser usage and remaining capacity, the default per-project cap applied to projects without an explicit override, and the plan-derived managed auth and vault limits along with current auth connection and vault usage.",
 	Args:  cobra.NoArgs,
 	RunE:  runOrgLimitsGet,
 }
