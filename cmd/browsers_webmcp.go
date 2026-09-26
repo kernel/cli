@@ -23,30 +23,10 @@ type BrowserWebMCPService interface {
 	InvokeTool(ctx context.Context, idOrName string, body kernel.BrowserWebmcpInvokeToolParams, opts ...option.RequestOption) (*kernel.InvocationResult, error)
 }
 
-// BrowserWebMCPCustomToolsService defines the subset we use for custom WebMCP tools.
-type BrowserWebMCPCustomToolsService interface {
-	List(ctx context.Context, idOrName string, opts ...option.RequestOption) (*kernel.CustomToolsResponse, error)
-	Add(ctx context.Context, idOrName string, body kernel.BrowserWebmcpCustomToolAddParams, opts ...option.RequestOption) (*kernel.CustomToolsResponse, error)
-	Remove(ctx context.Context, id string, body kernel.BrowserWebmcpCustomToolRemoveParams, opts ...option.RequestOption) error
-}
-
 type BrowsersWebMCPListInput struct {
 	Identifier    string
 	Output        string
 	ExcludeCustom param.Opt[bool]
-}
-
-type BrowsersWebMCPCustomToolsAddInput struct {
-	Identifier              string
-	Namespace               string
-	Source                  string
-	ForceOverwriteNamespace bool
-	Output                  string
-}
-
-type BrowsersWebMCPCustomToolsRemoveInput struct {
-	Identifier string
-	ToolID     string
 }
 
 type BrowsersWebMCPInvokeInput struct {
@@ -71,7 +51,7 @@ func (b BrowsersCmd) WebMCPList(ctx context.Context, in BrowsersWebMCPListInput)
 		pterm.Info.Println("No WebMCP tools found")
 		return nil
 	}
-	rows := pterm.TableData{{"Name", "Tool Ref", "Page URL", "Tab ID", "Source", "Read Only"}}
+	rows := pterm.TableData{{"Name", "Tool Ref", "Page URL", "Tab ID", "Read Only"}}
 	for _, tool := range res.Tools {
 		readOnly := "-"
 		if tool.Tool.Annotations.JSON.ReadOnlyHint.Valid() {
@@ -139,7 +119,6 @@ func newBrowsersWebMCPCommand() *cobra.Command {
 	addJSONOutputFlag(list)
 	list.Flags().Bool("exclude-custom", false, "List only page-provided tools, excluding custom tools")
 	list.Flags().Bool("json", false, "Output the raw API response as JSON (alias for --output json)")
-	list.Flags().Bool("exclude-custom", false, "Exclude custom tools and return only page-provided tools")
 	invoke := &cobra.Command{
 		Use:   "invoke <id-or-name>",
 		Short: "Invoke a WebMCP tool without automatic retries",

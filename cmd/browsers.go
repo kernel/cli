@@ -516,17 +516,16 @@ type BrowsersUpdateInput struct {
 
 // BrowsersCmd is a cobra-independent command handler for browsers operations.
 type BrowsersCmd struct {
-	browsers          BrowsersService
-	replays           BrowserReplaysService
-	fs                BrowserFSService
-	fsWatch           BrowserFWatchService
-	process           BrowserProcessService
-	logs              BrowserLogService
-	computer          BrowserComputerService
-	playwright        BrowserPlaywrightService
-	telemetry         BrowserTelemetryService
-	webmcp            BrowserWebMCPService
-	webmcpCustomTools BrowserWebMCPCustomToolsService
+	browsers   BrowsersService
+	replays    BrowserReplaysService
+	fs         BrowserFSService
+	fsWatch    BrowserFWatchService
+	process    BrowserProcessService
+	logs       BrowserLogService
+	computer   BrowserComputerService
+	playwright BrowserPlaywrightService
+	telemetry  BrowserTelemetryService
+	webmcp     BrowserWebMCPService
 }
 
 type BrowsersListInput struct {
@@ -3253,7 +3252,6 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
 	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersCreateCmd.Flags().Bool("viewport-interactive", false, "Interactively select viewport size from list")
-	browsersCreateCmd.Flags().StringArray("proxy-route", nil, "Route matching destinations through a specific proxy, as PROXY=HOST[,HOST...] where PROXY is an active non-direct proxy ID or name (repeatable). Hosts are exact hostnames or leading '*.' wildcards (subdomains only, no ports); exact beats wildcard and longer suffixes win. Unmatched traffic uses the top-level proxy; matched requests fail closed if the route proxy is unavailable. Takes effect after session setup; requires proxy v3; not supported with pools")
 	browsersCreateCmd.Flags().StringArray("vault", nil, "Vault ID or name to attach for credential/card fill at creation (repeatable, max 20; incompatible with pools; see vaults --help)")
 	browsersCreateCmd.Flags().String("pool-id", "", "Browser pool ID to acquire from (mutually exclusive with --pool-name)")
 	browsersCreateCmd.Flags().String("pool-name", "", "Browser pool name to acquire from (mutually exclusive with --pool-id)")
@@ -3294,7 +3292,7 @@ followed automatically by Chromium.`,
 
 	telemetryRoot := &cobra.Command{Use: "telemetry", Short: "Browser telemetry operations"}
 	telemetryStream := &cobra.Command{Use: "stream <id>", Short: "Stream live telemetry events", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStream}
-	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,connection,system,screenshot,captcha,monitor)")
+	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,platform,connection,system,screenshot,captcha,monitor)")
 	telemetryStream.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error)")
 	telemetryStream.Flags().Int64("seq", -1, "Resume after sequence number N (Last-Event-ID); replays events with seq > N. Default -1 streams from now")
 	telemetryStream.Flags().StringP("output", "o", "", "Output format: json for newline-delimited JSON envelopes")
@@ -3308,7 +3306,7 @@ followed automatically by Chromium.`,
 	telemetryEvents.Flags().String("order", "", "Read direction: asc (default) reads oldest first, desc reads newest first (cannot be combined with --since)")
 	telemetryEvents.Flags().String("since", "", "Window start: RFC-3339 timestamp or a duration like 5m (default 5m). Ignored when --offset is set")
 	telemetryEvents.Flags().String("until", "", "Window end (exclusive): RFC-3339 timestamp or a duration like 5m")
-	telemetryEvents.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,connection,system,screenshot,captcha,monitor)")
+	telemetryEvents.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,platform,connection,system,screenshot,captcha,monitor)")
 	telemetryEvents.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. page_crashed,captcha_challenge_result); combines with --categories, an event must match both")
 	telemetryEvents.Flags().Bool("all", false, "Walk every page in the window instead of just the first (ignores --offset)")
 	addJSONOutputFlag(telemetryEvents)

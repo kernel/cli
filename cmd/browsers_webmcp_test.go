@@ -59,7 +59,6 @@ func TestWebMCPList(t *testing.T) {
 					calls++
 					assert.Equal(t, http.MethodGet, r.Method)
 					assert.Equal(t, "/browsers/"+identifier+"/webmcp/tools", r.URL.Path)
-					assert.Empty(t, r.URL.Query().Get("exclude_custom"))
 					w.Header().Set("Content-Type", "application/json")
 					fmt.Fprint(w, webMCPToolsFixture)
 				}, "", append([]string{"list", identifier}, flags...)...)
@@ -69,7 +68,7 @@ func TestWebMCPList(t *testing.T) {
 					assert.JSONEq(t, webMCPToolsFixture, stdout)
 					assert.Empty(t, table)
 				} else {
-					for _, value := range []string{"Name", "Tool Ref", "Page URL", "Tab ID", "Source", "Read Only", "search", "opaque/ref+==", "https://example.com", "42", "true", "page", "lookup", "custom:acme"} {
+					for _, value := range []string{"Name", "Tool Ref", "Page URL", "Tab ID", "Read Only", "search", "opaque/ref+==", "https://example.com", "42", "true"} {
 						assert.Contains(t, table, value)
 					}
 				}
@@ -265,106 +264,4 @@ func TestWebMCPListAPIError(t *testing.T) {
 		fmt.Fprint(w, `{"code":"not_found","message":"Browser not found"}`)
 	}, "", "list", "missing")
 	require.EqualError(t, err, "not_found: Browser not found")
-}
-
-func TestWebMCPListExcludeCustom(t *testing.T) {
-	_, _, err := executeWebMCPCommand(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "true", r.URL.Query().Get("exclude_custom"))
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"tools":[]}`)
-	}, "", "list", "my-browser", "--exclude-custom")
-	require.NoError(t, err)
-}
-
-func TestWebMCPCustomToolsList(t *testing.T) {
-	for _, flags := range [][]string{nil, {"-o", "json"}} {
-		stdout, table, err := executeWebMCPCommand(t, func(w http.ResponseWriter, r *http.Request) {
-			assert.Equal(t, http.MethodGet, r.Method)
-			assert.Equal(t, "/browsers/my-browser/webmcp/custom-tools", r.URL.Path)
-			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, webMCPCustomToolsFixture)
-		}, "", append([]string{"custom-tools", "list", "my-browser"}, flags...)...)
-		require.NoError(t, err)
-		if len(flags) > 0 {
-			assert.JSONEq(t, webMCPCustomToolsFixture, stdout)
-		} else {
-			for _, value := range []string{"ID", "Namespace", "Kind", "URL Patterns", "ct_aaaaaaaaaaaaaaaaaaaaaaaa", "acme", "lookup", "page", "https://example.com/*", "true"} {
-				assert.Contains(t, table, value)
-			}
-		}
-	}
-}
-
-func TestWebMCPCustomToolsAdd(t *testing.T) {
-	source := "[{match: {url_patterns: ['https://example.com/*']}, tool: {name: 'lookup'}, execute: async () => ({})}]"
-	file := filepath.Join(t.TempDir(), "tools.js")
-	require.NoError(t, os.WriteFile(file, []byte(source), 0600))
-	for _, tc := range []struct {
-		name, stdin string
-		flags       []string
-		force       bool
-	}{
-		{"inline", "", []string{"--source", source}, false},
-		{"file", "", []string{"--source-file", file, "--force-overwrite-namespace"}, true},
-		{"stdin", source, []string{"--source-file", "-"}, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, table, err := executeWebMCPCommand(t, func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, http.MethodPost, r.Method)
-				assert.Equal(t, "/browsers/my-browser/webmcp/custom-tools", r.URL.Path)
-				var body map[string]any
-				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-				assert.Equal(t, "acme", body["namespace"])
-				assert.Equal(t, source, body["source"])
-				if tc.force {
-					assert.Equal(t, true, body["force_overwrite_namespace"])
-				} else {
-					assert.NotContains(t, body, "force_overwrite_namespace")
-				}
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusCreated)
-				fmt.Fprint(w, webMCPCustomToolsFixture)
-			}, tc.stdin, append([]string{"custom-tools", "add", "my-browser", "--namespace", "acme"}, tc.flags...)...)
-			require.NoError(t, err)
-			assert.Contains(t, table, "Added 1 custom WebMCP tool(s) to namespace acme")
-			assert.Contains(t, table, "ct_aaaaaaaaaaaaaaaaaaaaaaaa")
-		})
-	}
-}
-
-func TestWebMCPCustomToolsRemove(t *testing.T) {
-	calls := 0
-	_, out, err := executeWebMCPCommand(t, func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		assert.Equal(t, http.MethodDelete, r.Method)
-		assert.Equal(t, "/browsers/my-browser/webmcp/custom-tools/ct_aaaaaaaaaaaaaaaaaaaaaaaa", r.URL.Path)
-		w.WriteHeader(http.StatusNoContent)
-	}, "", "custom-tools", "remove", "my-browser", "ct_aaaaaaaaaaaaaaaaaaaaaaaa")
-	require.NoError(t, err)
-	assert.Equal(t, 1, calls)
-	assert.Contains(t, out, "Removed custom WebMCP tool ct_aaaaaaaaaaaaaaaaaaaaaaaa")
-}
-
-func TestWebMCPCustomToolsInvalidInput(t *testing.T) {
-	for _, tc := range []struct {
-		args []string
-		want string
-	}{
-		{[]string{"custom-tools", "list"}, "accepts 1 arg"},
-		{[]string{"custom-tools", "add", "browser", "--source", "[]"}, "required flag"},
-		{[]string{"custom-tools", "add", "browser", "--namespace", "acme"}, "at least one"},
-		{[]string{"custom-tools", "add", "browser", "--namespace", "acme", "--source", "[]", "--source-file", "-"}, "none of the others can be"},
-		{[]string{"custom-tools", "add", "browser", "--namespace=", "--source", "[]"}, "missing --namespace"},
-		{[]string{"custom-tools", "add", "browser", "--namespace", "acme", "--source", " "}, "missing custom tool source"},
-		{[]string{"custom-tools", "add", "browser", "--namespace", "acme", "--source", "[]", "-o", "yaml"}, "unsupported --output"},
-		{[]string{"custom-tools", "remove", "browser"}, "accepts 2 arg"},
-		{[]string{"custom-tools", "remove", "browser", " "}, "must not be empty"},
-	} {
-		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
-			_, _, err := executeWebMCPCommand(t, func(w http.ResponseWriter, r *http.Request) {
-				t.Error("invalid input reached API")
-			}, "", tc.args...)
-			require.ErrorContains(t, err, tc.want)
-		})
-	}
 }
