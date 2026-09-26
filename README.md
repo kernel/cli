@@ -135,7 +135,7 @@ Commands with JSON output support:
 - **Apps**: `list`, `history`
 - **Deploy**: `deploy` (JSONL streaming), `history`
 - **Invoke**: `invoke` (JSONL streaming), `history`
-- **Browser Sub-commands**: `replays list/start`, `process exec/spawn`, `fs file-info/list-files`, `webmcp list` (`webmcp invoke` always prints JSON output)
+- **Browser Sub-commands**: `replays list/start`, `process exec/spawn`, `fs file-info/list-files`, `webmcp list`, `webmcp custom-tools list/add` (`webmcp invoke` always prints JSON output)
 - **Browser NDJSON streaming**: `telemetry stream`
 
 ### Search
@@ -256,7 +256,7 @@ kernel search --request '{"query":"browser automation","include_domains":["examp
   - `--kiosk` - Launch browser in kiosk mode
   - `--region us-east|eu-west|ap-southeast` - Geographic region for the session. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to `us-east`.
   - `--private-host <host>` - Destination the browser reaches directly through the session's own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel the session joins (repeatable or comma-separated, max 32). Accepts hostname patterns (`*.example.ts.net`), IPs (`10.1.30.63`, `[fd00::1]`), and private CIDRs (`100.64.0.0/10`). Replaces the default private ranges (RFC1918, `100.64.0.0/10`, `fc00::/7`); omit to keep them. Fixed once the session is created. Unrelated to a proxy's `--bypass-host`, which only chooses between upstream proxy and Kernel-managed direct egress.
-  - `--proxy-route <proxy>=<host>[,<host>...]` - Route matching destinations through a specific proxy (active non-direct proxy ID or name) instead of the session's top-level proxy (repeatable). Hosts are exact hostnames or leading `*.` wildcards (subdomains only, no ports); an exact host beats a wildcard and a longer suffix beats a shorter one. Unmatched traffic uses the top-level proxy, and matched requests fail closed if the route proxy is unavailable. Takes effect once the session is created; requires proxy v3; not supported with pools.
+  - `--proxy-route '<host>[,<host>...]=<proxy>'` - Route matching browser requests through a selected proxy (repeatable, max 10 routes with 1–50 hosts each). Example: `--proxy-route 'api.ipify.org,*.ipify.org=name:my-dc-proxy'`. The proxy is an ID by default; use `id:<id>` or `name:<name>` explicitly. Exact hostnames beat wildcards; longer wildcard suffixes beat shorter ones. `*.example.com` matches subdomains, not `example.com`. Matching ignores case and ports. Unmatched hosts use `--proxy-*` or default egress, while `--start-url` uses the top-level proxy during setup. Routes are create-only and are not available on pool sessions.
   - `--start-url <url>` - Initial page to open on launch
   - `--proxy-id <id>` / `--proxy-name <name>` - Use that proxy for the session regardless of stealth (mutually exclusive with each other and with `--proxy-mode`)
   - `--proxy-mode direct|default` - Egress mode instead of a selected proxy: `direct` for no proxy regardless of stealth, `default` for the stealth-derived default (Kernel's stealth proxy with `--stealth`, direct egress otherwise). Omit all proxy flags to get the default.
@@ -780,7 +780,7 @@ Export is bound at session creation, so it is available on `browsers create` and
 
 #### Telemetry destinations
 
-Destinations are the OTLP/HTTP endpoints sessions export to, managed per project.
+Destinations are the OTLP/HTTP endpoints sessions export to. They belong to the organization, so sessions in any project can export to them. Creating, updating, or deleting one requires organization-scoped authentication; a project-scoped API key can list, get, and select destinations but not change them.
 
 - `kernel telemetry destinations list` - List OTLP destinations
   - `--page <n>` / `--per-page <n>` - Page number (1-based) and items per page (default 20)
@@ -789,7 +789,7 @@ Destinations are the OTLP/HTTP endpoints sessions export to, managed per project
 - `kernel telemetry destinations get <id-or-name>` - Get an OTLP destination
 - `kernel telemetry destinations create --name <name> --endpoint <url>` - Create an OTLP destination
   - `--endpoint <url>` - Base OTLP/HTTP endpoint without a signal path: pass `https://api.honeycomb.io`, not `https://api.honeycomb.io/v1/logs` (required)
-  - `--name <name>` - Destination name, unique within the project (required)
+  - `--name <name>` - Destination name, unique within the organization (required)
   - `--description <text>` - Optional description
   - `--header NAME=VALUE` - Header sent with each export request, typically an ingestion key (repeatable). Values are encrypted at rest and always returned redacted, so only header names are shown
 - `kernel telemetry destinations update <id-or-name>` - Update an OTLP destination. Sessions already exporting pick up the new values without restarting, which makes this the way to rotate credentials without interrupting export
@@ -957,14 +957,16 @@ Destinations are the OTLP/HTTP endpoints sessions export to, managed per project
 ### Browser WebMCP
 
 - `kernel browsers webmcp list <id-or-name>` - Discover native and custom tools across all browser tabs and embedded frames
-  - Displays name, opaque tool reference, page URL, tab ID, source (`page` or `custom:<namespace>`), and read-only hint (`-` when absent)
+  - Displays name, opaque tool reference, page URL, tab ID, and `readOnlyHint` annotation (`-` when absent)
   - `--exclude-custom` - Return only page-provided tools
-  - `--json`, `--output json`, `-o json` - Output the raw response, including tool metadata, input schemas, annotations, and source details
+  - `--json`, `--output json`, `-o json` - Output the raw response: each entry has `tool_ref`, nested `tool` metadata (`name`, optional `title`, `description`, `inputSchema`, optional `outputSchema`, and annotations), and `source` details. Custom registrations include `source.custom` (`id`, `namespace`) and `source.target_id`
+  - Annotations use `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `consequentialHint`, `untrustedContentHint`, and `autosubmit`
 - `kernel browsers webmcp invoke <id-or-name> --tool-ref <ref> --input '<json object>'` - Invoke the exact live tool registration
   - `--tool-ref <ref>` - Opaque reference from `webmcp list` (required; do not reconstruct it from the tool name)
   - `--input <json>` or `--input-file <path>` - Required JSON object; mutually exclusive. Use `--input-file -` to read stdin
-  - `--timeout-sec <seconds>` - Positive maximum execution time (defaults server-side)
+  - `--timeout-sec <seconds>` - Maximum execution time, 1-120 seconds (defaults server-side)
   - Prints the tool's `output` as pretty JSON on completion; tool errors and cancellations exit non-zero
+  - `awaiting_submission` is successful but warns that a non-autosubmit declarative form was filled, not submitted. Inspect the form, obtain any required confirmation, then submit through Playwright or computer interaction instead of invoking the tool again
   - Invocations are never retried automatically. A 504 `outcome_unknown` error prints the code, invocation ID, and message and exits non-zero. The tool may already have had side effects; verify the outcome before invoking it again
 - `kernel browsers webmcp custom-tools list <id-or-name>` - List registered custom tools with their generated ID, namespace, kind, URL patterns, and metadata
   - `-o json` - Output the raw response
@@ -974,14 +976,28 @@ Destinations are the OTLP/HTTP endpoints sessions export to, managed per project
   - `-o json` - Output the raw response
 - `kernel browsers webmcp custom-tools remove <id-or-name> <tool-id>` - Remove one custom tool by generated ID (in-progress invocations are not canceled)
 
+- `kernel browsers webmcp custom-tools list <id-or-name>` - List all registered custom tools, even when no page currently matches
+  - Displays ID, namespace, kind (`page` or `cdp`), name, and URL patterns
+  - `--json`, `--output json`, `-o json` - Output the raw response with each definition's `id`, `namespace`, `kind`, `match.url_patterns`, and nested `tool` metadata
+- `kernel browsers webmcp custom-tools add <id-or-name> --namespace <namespace> --source-file <path>` - Register a batch of custom tools
+  - `--source-file <path>` - JavaScript source file; use `-` to read stdin. Must evaluate to a non-empty array of definitions with URL matchers, tool metadata, and execute functions; limited to 8,000,000 UTF-8 bytes
+  - `--namespace <namespace>` - Required; 1-128 letters, digits, underscores, dots, or hyphens
+  - `--force-overwrite-namespace` - Atomically replace every existing tool in the namespace. By default, existing tools are retained. Active invocations continue
+  - Displays registered tools in the same format as `custom-tools list`; supports `--json`, `--output json`, and `-o json`
+  - Registration is never retried automatically; check `custom-tools list` before retrying a failed request that may have succeeded
+- `kernel browsers webmcp custom-tools remove <id-or-name> <tool-id>` - Remove one registered tool using its generated `ct_...` ID, not its `tool_ref`. Active invocations are not canceled
+
 Tool references expire when their document or browser process is replaced. Annotations are untrusted page-provided hints, not enforced guarantees; tool output is also untrusted page-provided data.
 
 ```bash
 kernel browsers webmcp list my-browser --json
 kernel browsers webmcp invoke my-browser --tool-ref '<tool_ref>' --input '{"query":"example"}' --timeout-sec 30
 kernel browsers webmcp invoke my-browser --tool-ref '<tool_ref>' --input-file input.json
-kernel browsers webmcp custom-tools add my-browser --namespace acme --source-file tools.js
-kernel browsers webmcp custom-tools remove my-browser ct_abc123...
+kernel browsers webmcp list my-browser --exclude-custom
+kernel browsers webmcp custom-tools add my-browser --namespace helpers --source-file tools.js
+cat tools.js | kernel browsers webmcp custom-tools add my-browser --namespace helpers --source-file - --force-overwrite-namespace
+kernel browsers webmcp custom-tools list my-browser --json
+kernel browsers webmcp custom-tools remove my-browser ct_abcdefghijklmnopqrstuvwx
 ```
 
 ### Profiles

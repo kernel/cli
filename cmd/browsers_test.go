@@ -610,36 +610,119 @@ func TestBrowsersCreate_WithPrivateHosts(t *testing.T) {
 	}))
 }
 
+func TestParseProxyRoutes(t *testing.T) {
+	routes, err := parseProxyRoutes([]string{" api.ipify.org , *.ipify.org =name:my-dc-proxy", "other.example=id:proxy-123", "fallback.example=proxy-456"})
+	require.NoError(t, err)
+	require.Len(t, routes, 3)
+	assert.Equal(t, []string{"api.ipify.org", "*.ipify.org"}, routes[0].Hosts)
+	assert.Equal(t, "my-dc-proxy", routes[0].Proxy.Name.Value)
+	assert.False(t, routes[0].Proxy.ID.Valid())
+	assert.Equal(t, "proxy-123", routes[1].Proxy.ID.Value)
+	assert.Equal(t, "proxy-456", routes[2].Proxy.ID.Value)
+	assert.False(t, routes[2].Proxy.Name.Valid())
+
+	for _, value := range []string{"", "host", "=id:proxy", "host=", "host= id: ", "host=name: ", "host=proxy=other", "host,,other=proxy", "host,=proxy", ",host=proxy"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := parseProxyRoutes([]string{value})
+			assert.Error(t, err)
+		})
+	}
+	_, err = parseProxyRoutes(make([]string, maxProxyRoutes+1))
+	assert.ErrorContains(t, err, "maximum 10")
+	atLimit := make([]string, maxProxyRoutes)
+	for i := range atLimit {
+		atLimit[i] = fmt.Sprintf("host-%d=proxy", i)
+	}
+	_, err = parseProxyRoutes(atLimit)
+	require.NoError(t, err)
+	_, err = parseProxyRoutes([]string{strings.Repeat("host,", maxProxyRouteHosts) + "host=proxy"})
+	assert.ErrorContains(t, err, "maximum 50")
+	_, err = parseProxyRoutes([]string{strings.Repeat("host,", maxProxyRouteHosts-1) + "host=proxy"})
+	require.NoError(t, err)
+	// Hostname and wildcard validity, duplicates, and overlaps belong to the API.
+	_, err = parseProxyRoutes([]string{"*.com=proxy", "*.com=proxy"})
+	assert.NoError(t, err)
+}
+
 func TestBrowsersCreate_WithProxyRoutes(t *testing.T) {
 	setupStdoutCapture(t)
-
 	var captured kernel.BrowserNewParams
 	fake := &FakeBrowsersService{
-		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+		NewFunc: func(_ context.Context, body kernel.BrowserNewParams, _ ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
 			captured = body
-			return &kernel.BrowserNewResponse{SessionID: "sess-routes"}, nil
+			var resp kernel.BrowserNewResponse
+			err := json.Unmarshal([]byte(`{"session_id":"sess-routes","network":{"private_hosts":["internal.example"],"proxy_routes":[{"hosts":["api.ipify.org","*.ipify.org"],"proxy":{"id":"resolved-proxy"}}]}}`), &resp)
+			require.NoError(t, err)
+			return &resp, nil
 		},
 	}
-
-	err := (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
-		ProxyRoutes: []string{"my-proxy=*.example.com, api.example.com", "abcdefghijklmnopqrstuvwx=internal.test"},
+	b := BrowsersCmd{browsers: fake}
+	err := b.Create(context.Background(), BrowsersCreateInput{
+		PrivateHosts: []string{"internal.example"},
+		ProxyRoutes:  []string{"api.ipify.org,*.ipify.org=name:my-dc-proxy", "other.example=proxy-456"},
+		ProxyMode:    "direct",
 	})
 	require.NoError(t, err)
 	require.Len(t, captured.Network.ProxyRoutes, 2)
-	assert.Equal(t, []string{"*.example.com", "api.example.com"}, captured.Network.ProxyRoutes[0].Hosts)
-	assert.Equal(t, "my-proxy", captured.Network.ProxyRoutes[0].Proxy.Name.Value)
-	assert.Equal(t, "abcdefghijklmnopqrstuvwx", captured.Network.ProxyRoutes[1].Proxy.ID.Value)
-
+	assert.Equal(t, []string{"api.ipify.org", "*.ipify.org"}, captured.Network.ProxyRoutes[0].Hosts)
+	assert.Equal(t, "my-dc-proxy", captured.Network.ProxyRoutes[0].Proxy.Name.Value)
+	assert.False(t, captured.Network.ProxyRoutes[0].Proxy.ID.Valid())
+	assert.Equal(t, "proxy-456", captured.Network.ProxyRoutes[1].Proxy.ID.Value)
+	assert.Equal(t, []string{"internal.example"}, captured.Network.PrivateHosts)
+	assert.Equal(t, kernel.BrowserProxyModeDirect, captured.Proxy.Mode)
 	raw, err := captured.MarshalJSON()
 	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"proxy_routes":[{"hosts":["*.example.com","api.example.com"],"proxy":{"name":"my-proxy"}}`)
-	assert.NotContains(t, string(raw), "private_hosts")
+	assert.Contains(t, string(raw), `"proxy_routes":[{"hosts":["api.ipify.org","*.ipify.org"],"proxy":{"name":"my-dc-proxy"}}`)
+	assert.Contains(t, outBuf.String(), "Private Hosts")
+	assert.Contains(t, outBuf.String(), "Proxy Routes")
+	assert.Contains(t, outBuf.String(), "api.ipify.org, *.ipify.org = resolved-proxy")
 
-	for _, bad := range []string{"no-equals", "=host.test", "proxy=", "proxy= , "} {
-		assert.Error(t, (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
-			ProxyRoutes: []string{bad},
-		}), bad)
+	jsonOutput := captureStdout(t, func() {
+		require.NoError(t, b.Create(context.Background(), BrowsersCreateInput{ProxyRoutes: []string{"host=proxy"}, Output: "json"}))
+	})
+	assert.Contains(t, jsonOutput, `"proxy_routes"`)
+	assert.Contains(t, jsonOutput, `"resolved-proxy"`)
+	assert.Nil(t, captured.Network.PrivateHosts)
+	assert.Len(t, captured.Network.ProxyRoutes, 1)
+	raw, err = captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"proxy_routes"`)
+	assert.NotContains(t, string(raw), `"private_hosts"`)
+	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{ProxyRoutes: []string{"host="}}))
+}
+
+func TestBrowsersGet_ProxyRoutes(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{
+		GetFunc: func(_ context.Context, _ string, _ kernel.BrowserGetParams, _ ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			var resp kernel.BrowserGetResponse
+			err := json.Unmarshal([]byte(`{"session_id":"sess-routes","network":{"private_hosts":["internal.example"],"proxy_routes":[{"hosts":["api.ipify.org"],"proxy":{"id":"resolved-proxy"}}]}}`), &resp)
+			require.NoError(t, err)
+			return &resp, nil
+		},
 	}
+	b := BrowsersCmd{browsers: fake}
+	require.NoError(t, b.Get(context.Background(), BrowsersGetInput{Identifier: "sess-routes"}))
+	assert.Contains(t, outBuf.String(), "Private Hosts")
+	assert.Contains(t, outBuf.String(), "Proxy Routes")
+	assert.Contains(t, outBuf.String(), "api.ipify.org = resolved-proxy")
+	jsonOutput := captureStdout(t, func() {
+		require.NoError(t, b.Get(context.Background(), BrowsersGetInput{Identifier: "sess-routes", Output: "json"}))
+	})
+	assert.Contains(t, jsonOutput, `"proxy_routes"`)
+	assert.Contains(t, jsonOutput, `"resolved-proxy"`)
+}
+
+func TestProxyRouteFlagIsCreateOnly(t *testing.T) {
+	create, _, err := rootCmd.Find([]string{"browsers", "create"})
+	require.NoError(t, err)
+	assert.NotNil(t, create.Flags().Lookup("proxy-route"))
+	for _, path := range [][]string{{"browsers", "update"}, {"browser-pools", "create"}, {"browser-pools", "update"}} {
+		cmd, _, err := rootCmd.Find(path)
+		require.NoError(t, err)
+		assert.Nil(t, cmd.Flags().Lookup("proxy-route"))
+	}
+	assert.False(t, poolLeaseAllowedFlags()["proxy-route"])
 }
 
 func TestBrowsersCreate_WithRegion(t *testing.T) {

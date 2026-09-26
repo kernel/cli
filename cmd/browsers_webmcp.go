@@ -17,7 +17,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// BrowserWebMCPService defines the subset we use for native page tools.
+// BrowserWebMCPService defines the subset we use for WebMCP tools.
 type BrowserWebMCPService interface {
 	ListTools(ctx context.Context, idOrName string, query kernel.BrowserWebmcpListToolsParams, opts ...option.RequestOption) (*kernel.ToolsResponse, error)
 	InvokeTool(ctx context.Context, idOrName string, body kernel.BrowserWebmcpInvokeToolParams, opts ...option.RequestOption) (*kernel.InvocationResult, error)
@@ -33,12 +33,7 @@ type BrowserWebMCPCustomToolsService interface {
 type BrowsersWebMCPListInput struct {
 	Identifier    string
 	Output        string
-	ExcludeCustom bool
-}
-
-type BrowsersWebMCPCustomToolsListInput struct {
-	Identifier string
-	Output     string
+	ExcludeCustom param.Opt[bool]
 }
 
 type BrowsersWebMCPCustomToolsAddInput struct {
@@ -65,11 +60,7 @@ func (b BrowsersCmd) WebMCPList(ctx context.Context, in BrowsersWebMCPListInput)
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
 	}
-	params := kernel.BrowserWebmcpListToolsParams{}
-	if in.ExcludeCustom {
-		params.ExcludeCustom = kernel.Opt(true)
-	}
-	res, err := b.webmcp.ListTools(ctx, in.Identifier, params)
+	res, err := b.webmcp.ListTools(ctx, in.Identifier, kernel.BrowserWebmcpListToolsParams{ExcludeCustom: in.ExcludeCustom})
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -82,80 +73,11 @@ func (b BrowsersCmd) WebMCPList(ctx context.Context, in BrowsersWebMCPListInput)
 	}
 	rows := pterm.TableData{{"Name", "Tool Ref", "Page URL", "Tab ID", "Source", "Read Only"}}
 	for _, tool := range res.Tools {
-		source := "page"
-		if tool.Source.JSON.Custom.Valid() {
-			source = "custom:" + tool.Source.Custom.Namespace
+		readOnly := "-"
+		if tool.Tool.Annotations.JSON.ReadOnlyHint.Valid() {
+			readOnly = strconv.FormatBool(tool.Tool.Annotations.ReadOnlyHint)
 		}
-		rows = append(rows, []string{tool.Tool.Name, tool.ToolRef, tool.Source.PageURL, strconv.FormatInt(tool.Source.TabID, 10), source, webMCPReadOnly(tool.Tool.Annotations)})
-	}
-	PrintTableNoPad(rows, true)
-	return nil
-}
-
-func webMCPReadOnly(annotations kernel.ToolAnnotations) string {
-	if annotations.JSON.ReadOnlyHint.Valid() {
-		return strconv.FormatBool(annotations.ReadOnlyHint)
-	}
-	return "-"
-}
-
-func (b BrowsersCmd) WebMCPCustomToolsList(ctx context.Context, in BrowsersWebMCPCustomToolsListInput) error {
-	if err := validateJSONOutput(in.Output); err != nil {
-		return err
-	}
-	res, err := b.webmcpCustomTools.List(ctx, in.Identifier)
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-	return printWebMCPCustomTools(res, in.Output)
-}
-
-func (b BrowsersCmd) WebMCPCustomToolsAdd(ctx context.Context, in BrowsersWebMCPCustomToolsAddInput) error {
-	if err := validateJSONOutput(in.Output); err != nil {
-		return err
-	}
-	if strings.TrimSpace(in.Namespace) == "" {
-		return fmt.Errorf("missing --namespace value")
-	}
-	if strings.TrimSpace(in.Source) == "" {
-		return fmt.Errorf("missing custom tool source")
-	}
-	req := kernel.AddRequestParam{Namespace: in.Namespace, Source: in.Source}
-	if in.ForceOverwriteNamespace {
-		req.ForceOverwriteNamespace = kernel.Opt(true)
-	}
-	res, err := b.webmcpCustomTools.Add(ctx, in.Identifier, kernel.BrowserWebmcpCustomToolAddParams{AddRequest: req})
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-	if in.Output != "json" {
-		pterm.Success.Printfln("Added %d custom WebMCP tool(s) to namespace %s", len(res.Tools), in.Namespace)
-	}
-	return printWebMCPCustomTools(res, in.Output)
-}
-
-func (b BrowsersCmd) WebMCPCustomToolsRemove(ctx context.Context, in BrowsersWebMCPCustomToolsRemoveInput) error {
-	if strings.TrimSpace(in.ToolID) == "" {
-		return fmt.Errorf("custom tool ID must not be empty")
-	}
-	if err := b.webmcpCustomTools.Remove(ctx, in.ToolID, kernel.BrowserWebmcpCustomToolRemoveParams{IDOrName: in.Identifier}); err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-	pterm.Success.Printfln("Removed custom WebMCP tool %s", in.ToolID)
-	return nil
-}
-
-func printWebMCPCustomTools(res *kernel.CustomToolsResponse, output string) error {
-	if output == "json" {
-		return util.PrintPrettyJSON(res)
-	}
-	if len(res.Tools) == 0 {
-		pterm.Info.Println("No custom WebMCP tools found")
-		return nil
-	}
-	rows := pterm.TableData{{"ID", "Namespace", "Name", "Kind", "URL Patterns", "Read Only"}}
-	for _, tool := range res.Tools {
-		rows = append(rows, []string{tool.ID, tool.Namespace, tool.Tool.Name, tool.Kind, strings.Join(tool.Match.URLPatterns, ", "), webMCPReadOnly(tool.Tool.Annotations)})
+		rows = append(rows, []string{tool.Tool.Name, tool.ToolRef, tool.Source.PageURL, strconv.FormatInt(tool.Source.TabID, 10), readOnly})
 	}
 	PrintTableNoPad(rows, true)
 	return nil
@@ -165,8 +87,8 @@ func (b BrowsersCmd) WebMCPInvoke(ctx context.Context, in BrowsersWebMCPInvokeIn
 	if strings.TrimSpace(in.ToolRef) == "" {
 		return fmt.Errorf("missing --tool-ref value")
 	}
-	if in.TimeoutSec.Valid() && in.TimeoutSec.Value <= 0 {
-		return fmt.Errorf("invalid --timeout-sec value: must be greater than zero")
+	if in.TimeoutSec.Valid() && (in.TimeoutSec.Value < 1 || in.TimeoutSec.Value > 120) {
+		return fmt.Errorf("invalid --timeout-sec value: must be between 1 and 120")
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(in.Input), &fields); err != nil {
@@ -192,7 +114,7 @@ func (b BrowsersCmd) WebMCPInvoke(ctx context.Context, in BrowsersWebMCPInvokeIn
 	case kernel.InvocationResultStatusAwaitingSubmission:
 		// A populated form is a result, not a failure. Re-invoking would refill the
 		// same fields, so point the caller at submitting the form they already have.
-		pterm.Warning.Printfln("WebMCP invocation %s populated a form without submitting it. Inspect the form and obtain any required confirmation, then submit it with 'kernel browsers playwright execute' or 'kernel browsers computer' rather than invoking the tool again.", res.InvocationID)
+		pterm.Warning.Printfln("WebMCP invocation %s: awaiting_submission — populated a form without submitting it. Inspect the form and obtain any required confirmation, then submit it with 'kernel browsers playwright execute' or 'kernel browsers computer' rather than invoking the tool again.", res.InvocationID)
 	default:
 		return fmt.Errorf("WebMCP invocation %s: %s: %s", res.InvocationID, res.Status, res.ErrorText)
 	}
@@ -212,18 +134,10 @@ func (b BrowsersCmd) WebMCPInvoke(ctx context.Context, in BrowsersWebMCPInvokeIn
 }
 
 func newBrowsersWebMCPCommand() *cobra.Command {
-	root := &cobra.Command{Use: "webmcp", Short: "Discover and invoke native page tools"}
-	list := &cobra.Command{
-		Use:   "list <id-or-name>",
-		Short: "List WebMCP tools across browser tabs and frames",
-		Long: "List native and custom WebMCP tools available across every open tab and embedded frame.\n\n" +
-			"Each tool includes an opaque tool_ref for invoking that exact live registration. " +
-			"Custom tools include their generated ID and namespace in source. Use --exclude-custom " +
-			"to return only page-provided tools.",
-		Args: cobra.ExactArgs(1),
-		RunE: runBrowsersWebMCPList,
-	}
+	root := &cobra.Command{Use: "webmcp", Short: "Discover, invoke, and manage native and custom WebMCP tools"}
+	list := &cobra.Command{Use: "list <id-or-name>", Short: "List native and custom WebMCP tools across browser tabs and frames", Args: cobra.ExactArgs(1), RunE: runBrowsersWebMCPList}
 	addJSONOutputFlag(list)
+	list.Flags().Bool("exclude-custom", false, "List only page-provided tools, excluding custom tools")
 	list.Flags().Bool("json", false, "Output the raw API response as JSON (alias for --output json)")
 	list.Flags().Bool("exclude-custom", false, "Exclude custom tools and return only page-provided tools")
 	invoke := &cobra.Command{
@@ -232,7 +146,7 @@ func newBrowsersWebMCPCommand() *cobra.Command {
 		Long: "Invoke a WebMCP tool without automatic retries.\n\n" +
 			"Most tools wait for a terminal result, including across navigation. A tool " +
 			"backed by a declarative form that does not autosubmit instead returns once " +
-			"its fields are populated: inspect the form, obtain any required confirmation, " +
+			"its fields are populated (awaiting_submission): inspect the form, obtain any required confirmation, " +
 			"then submit it through Playwright or computer interaction without invoking " +
 			"the tool again.",
 		Args: cobra.ExactArgs(1),
@@ -244,50 +158,8 @@ func newBrowsersWebMCPCommand() *cobra.Command {
 	invoke.Flags().String("input-file", "", "Path to a JSON object file (use '-' for stdin)")
 	invoke.MarkFlagsOneRequired("input", "input-file")
 	invoke.MarkFlagsMutuallyExclusive("input", "input-file")
-	invoke.Flags().Int64("timeout-sec", 0, "Maximum execution time in seconds (default per server)")
+	invoke.Flags().Int64("timeout-sec", 0, "Maximum execution time in seconds, 1-120 (default per server)")
 	root.AddCommand(list, invoke, newBrowsersWebMCPCustomToolsCommand())
-	return root
-}
-
-func newBrowsersWebMCPCustomToolsCommand() *cobra.Command {
-	root := &cobra.Command{Use: "custom-tools", Short: "Manage custom WebMCP tools"}
-	list := &cobra.Command{
-		Use:   "list <id-or-name>",
-		Short: "List custom WebMCP tools",
-		Long:  "Returns every registered custom tool with its generated ID, namespace, matcher, and MCP tool metadata.",
-		Args:  cobra.ExactArgs(1),
-		RunE:  runBrowsersWebMCPCustomToolsList,
-	}
-	addJSONOutputFlag(list)
-	add := &cobra.Command{
-		Use:   "add <id-or-name>",
-		Short: "Add a namespaced batch of custom WebMCP tools",
-		Long: "Add a namespaced batch of custom tools. A custom tool can be page-backed or CDP-backed.\n\n" +
-			"Page-backed tools execute in the page via JavaScript. CDP-backed tools execute via CDP and " +
-			"can use all browser REPL tools. The source must be a JavaScript expression that evaluates to a " +
-			"non-empty array of definitions with URL matchers, tool metadata (including an optional output " +
-			"schema), and execute functions. The batch is added atomically.\n\n" +
-			"To update one tool, list the tools, remove its ID, and add its replacement. Use " +
-			"--force-overwrite-namespace to atomically replace every existing tool in the namespace.",
-		Args: cobra.ExactArgs(1),
-		RunE: runBrowsersWebMCPCustomToolsAdd,
-	}
-	add.Flags().String("namespace", "", "Namespace for the batch of custom tools")
-	_ = add.MarkFlagRequired("namespace")
-	add.Flags().String("source", "", "JavaScript expression that evaluates to an array of custom tool definitions")
-	add.Flags().String("source-file", "", "Path to a JavaScript source file (use '-' for stdin)")
-	add.MarkFlagsOneRequired("source", "source-file")
-	add.MarkFlagsMutuallyExclusive("source", "source-file")
-	add.Flags().Bool("force-overwrite-namespace", false, "Atomically replace all existing tools in this namespace with this batch")
-	addJSONOutputFlag(add)
-	remove := &cobra.Command{
-		Use:   "remove <id-or-name> <tool-id>",
-		Short: "Remove a custom WebMCP tool by ID",
-		Long:  "Removes one custom tool by generated ID. An invocation already in progress is not canceled.",
-		Args:  cobra.ExactArgs(2),
-		RunE:  runBrowsersWebMCPCustomToolsRemove,
-	}
-	root.AddCommand(list, add, remove)
 	return root
 }
 
@@ -302,50 +174,12 @@ func runBrowsersWebMCPList(cmd *cobra.Command, args []string) error {
 	}
 	client := getKernelClient(cmd)
 	b := BrowsersCmd{webmcp: &client.Browsers.Webmcp}
-	excludeCustom, _ := cmd.Flags().GetBool("exclude-custom")
+	var excludeCustom param.Opt[bool]
+	if cmd.Flags().Changed("exclude-custom") {
+		value, _ := cmd.Flags().GetBool("exclude-custom")
+		excludeCustom = kernel.Opt(value)
+	}
 	return b.WebMCPList(cmd.Context(), BrowsersWebMCPListInput{Identifier: args[0], Output: output, ExcludeCustom: excludeCustom})
-}
-
-func runBrowsersWebMCPCustomToolsList(cmd *cobra.Command, args []string) error {
-	output, _ := cmd.Flags().GetString("output")
-	client := getKernelClient(cmd)
-	b := BrowsersCmd{webmcpCustomTools: &client.Browsers.Webmcp.CustomTools}
-	return b.WebMCPCustomToolsList(cmd.Context(), BrowsersWebMCPCustomToolsListInput{Identifier: args[0], Output: output})
-}
-
-func runBrowsersWebMCPCustomToolsAdd(cmd *cobra.Command, args []string) error {
-	output, _ := cmd.Flags().GetString("output")
-	if err := validateJSONOutput(output); err != nil {
-		return err
-	}
-	namespace, _ := cmd.Flags().GetString("namespace")
-	source, _ := cmd.Flags().GetString("source")
-	if cmd.Flags().Changed("source-file") {
-		path, _ := cmd.Flags().GetString("source-file")
-		var data []byte
-		var err error
-		if path == "-" {
-			data, err = io.ReadAll(cmd.InOrStdin())
-		} else {
-			data, err = os.ReadFile(path)
-		}
-		if err != nil {
-			return fmt.Errorf("failed to read source file: %w", err)
-		}
-		source = string(data)
-	}
-	force, _ := cmd.Flags().GetBool("force-overwrite-namespace")
-	client := getKernelClient(cmd)
-	b := BrowsersCmd{webmcpCustomTools: &client.Browsers.Webmcp.CustomTools}
-	return b.WebMCPCustomToolsAdd(cmd.Context(), BrowsersWebMCPCustomToolsAddInput{
-		Identifier: args[0], Namespace: namespace, Source: source, ForceOverwriteNamespace: force, Output: output,
-	})
-}
-
-func runBrowsersWebMCPCustomToolsRemove(cmd *cobra.Command, args []string) error {
-	client := getKernelClient(cmd)
-	b := BrowsersCmd{webmcpCustomTools: &client.Browsers.Webmcp.CustomTools}
-	return b.WebMCPCustomToolsRemove(cmd.Context(), BrowsersWebMCPCustomToolsRemoveInput{Identifier: args[0], ToolID: args[1]})
 }
 
 func runBrowsersWebMCPInvoke(cmd *cobra.Command, args []string) error {
