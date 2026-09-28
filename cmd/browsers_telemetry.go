@@ -451,6 +451,11 @@ func printTelemetrySummary(cfg kernel.BrowserTelemetryConfig) {
 			pterm.Info.Println("Telemetry exporting over OTLP")
 		}
 	}
+	// Storage defaults on and is omitted for browsers created before the setting
+	// existed, so only call it out when the response reports it off.
+	if cfg.Storage.JSON.Enabled.Valid() && !cfg.Storage.Enabled {
+		pterm.Info.Println("Telemetry storage: off (events are only available on the live stream and through any configured export)")
+	}
 }
 
 // formatCdpExcludedMethods renders the CDP methods left out of control

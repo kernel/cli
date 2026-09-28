@@ -503,6 +503,17 @@ func TestPrintTelemetrySummary_Export(t *testing.T) {
 		printTelemetrySummary(parse(`{"browser":{"control":{"enabled":true}},"export":{"otlp":{"enabled":false}}}`))
 		assert.NotContains(t, outBuf.String(), "OTLP")
 	})
+	t.Run("reports storage when off", func(t *testing.T) {
+		setupStdoutCapture(t)
+		printTelemetrySummary(parse(`{"browser":{"control":{"enabled":true}},"storage":{"enabled":false}}`))
+		assert.Contains(t, outBuf.String(), "Telemetry storage: off")
+	})
+	t.Run("stays quiet when storage is on or omitted", func(t *testing.T) {
+		setupStdoutCapture(t)
+		printTelemetrySummary(parse(`{"browser":{"control":{"enabled":true}},"storage":{"enabled":true}}`))
+		printTelemetrySummary(parse(`{"browser":{"control":{"enabled":true}}}`))
+		assert.NotContains(t, outBuf.String(), "storage")
+	})
 }
 
 func TestTelemetryEnabledCategories(t *testing.T) {
