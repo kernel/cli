@@ -261,6 +261,37 @@ func validateTelemetryExportCombo(telemetry, id, name string, canImply bool) err
 	return nil
 }
 
+// resolveTelemetryStorageFlag interprets a --telemetry-storage flag value: "on"
+// persists captured telemetry to Kernel storage (the server default) and "off"
+// leaves events only on the live stream and the OTLP export. Storage can only be
+// turned off alongside an export destination in the same command, since the API
+// validates the request payload on its own and the setting cannot be changed once
+// a browser exists.
+//
+// canImply mirrors buildManagedAuthTelemetryParam: on update and login a
+// connection stores the browser config as sent, so a storage setting on its own
+// would drop the connection's category selection.
+func resolveTelemetryStorageFlag(storage, telemetry, export string, canImply bool) (param.Opt[bool], error) {
+	var enabled param.Opt[bool]
+	switch strings.TrimSpace(storage) {
+	case "":
+		return enabled, nil
+	case "on":
+		enabled = kernel.Opt(true)
+	case "off":
+		enabled = kernel.Opt(false)
+		if v := strings.TrimSpace(export); v == "" || v == telemetryExportOff {
+			return enabled, fmt.Errorf("turning telemetry storage off requires an export destination in the same command: pass --telemetry-export-otlp=<destination ID or name> so captured events have somewhere to go")
+		}
+	default:
+		return enabled, fmt.Errorf("invalid telemetry storage value %q: must be on or off", storage)
+	}
+	if telemetry == "" && !canImply {
+		return enabled, fmt.Errorf("setting --telemetry-storage also requires --telemetry in the same command: the connection stores its browser config as sent, so a storage setting on its own would drop its category selection")
+	}
+	return enabled, nil
+}
+
 // buildNewTelemetryParam converts --telemetry, --telemetry-cdp-exclude and
 // --telemetry-export-otlp flag values to the create API param.
 func buildNewTelemetryParam(s, cdpExclude, export string) (kernel.BrowserNewParamsTelemetry, error) {

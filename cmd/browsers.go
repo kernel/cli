@@ -468,6 +468,7 @@ type BrowsersCreateInput struct {
 	Telemetry           string
 	TelemetryCdpExclude string
 	TelemetryExport     string
+	TelemetryStorage    string
 	ChromePolicy        string
 	ChromePolicyFile    string
 	Name                string
@@ -769,11 +770,16 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		}
 	}
 
-	if in.Telemetry != "" || in.TelemetryCdpExclude != "" || in.TelemetryExport != "" {
+	if in.Telemetry != "" || in.TelemetryCdpExclude != "" || in.TelemetryExport != "" || in.TelemetryStorage != "" {
 		t, err := buildNewTelemetryParam(in.Telemetry, in.TelemetryCdpExclude, in.TelemetryExport)
 		if err != nil {
 			return err
 		}
+		storage, err := resolveTelemetryStorageFlag(in.TelemetryStorage, in.Telemetry, in.TelemetryExport, true)
+		if err != nil {
+			return err
+		}
+		t.Storage.Enabled = storage
 		params.Telemetry = t
 	}
 
@@ -814,7 +820,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		}
 		PrintTableNoPad(rows, true)
 	}
-	if in.Telemetry != "" || in.TelemetryCdpExclude != "" || in.TelemetryExport != "" {
+	if in.Telemetry != "" || in.TelemetryCdpExclude != "" || in.TelemetryExport != "" || in.TelemetryStorage != "" {
 		printTelemetrySummary(browser.Telemetry)
 	}
 	return nil
@@ -3258,6 +3264,7 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().String("telemetry", "", "Configure telemetry (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
 	browsersCreateCmd.Flags().String("telemetry-cdp-exclude", "", "Leave the named CDP methods out of control telemetry's cdp_command events, comma-separated (e.g. Input.dispatchMouseEvent,Page.captureScreenshot); --telemetry-cdp-exclude=none clears the list. Excluded commands are still relayed to the browser, they just produce no event")
 	browsersCreateCmd.Flags().String("telemetry-export-otlp", "", "Export captured telemetry over OTLP to one of the org's configured destinations, by ID or name; --telemetry-export-otlp=off disables export. Implies --telemetry=all when --telemetry is not set, since export requires capture")
+	browsersCreateCmd.Flags().String("telemetry-storage", "", "Whether to persist captured telemetry to Kernel storage: on (default) or off. Turning storage off requires --telemetry-export-otlp=<destination> in the same command, so events are only available on the live stream and through the export; it cannot be changed after the browser is created")
 	browsersCreateCmd.Flags().String("name", "", "Optional unique name for the browser session (used to find it later; can be changed with 'browsers update --name')")
 	browsersCreateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the session (repeatable; up to 50 pairs)")
 	browsersCreateCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts")
@@ -3396,6 +3403,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 	telemetryCdpExclude, _ := cmd.Flags().GetString("telemetry-cdp-exclude")
 	telemetryExport, _ := cmd.Flags().GetString("telemetry-export-otlp")
+	telemetryStorage, _ := cmd.Flags().GetString("telemetry-storage")
 	name, _ := cmd.Flags().GetString("name")
 	tags, _ := tagsFromFlag(cmd, "tag")
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
@@ -3543,6 +3551,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		Telemetry:           telemetry,
 		TelemetryCdpExclude: telemetryCdpExclude,
 		TelemetryExport:     telemetryExport,
+		TelemetryStorage:    telemetryStorage,
 		ChromePolicy:        chromePolicy,
 		ChromePolicyFile:    chromePolicyFile,
 		Name:                name,

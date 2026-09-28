@@ -812,3 +812,46 @@ func TestBuildManagedAuthTelemetryParam_CdpExcludeNeedsCategories(t *testing.T) 
 	_, err = buildManagedAuthTelemetryParam("control", "Page.navigate", "", false)
 	assert.NoError(t, err)
 }
+
+// TestResolveTelemetryStorageFlag covers the --telemetry-storage values and the
+// rules the API enforces on the request payload: storage can only go off with an
+// export destination in the same request, and update/login must restate the
+// category selection because the connection stores its browser config as sent.
+func TestResolveTelemetryStorageFlag(t *testing.T) {
+	t.Run("unset leaves storage omitted", func(t *testing.T) {
+		v, err := resolveTelemetryStorageFlag("", "", "", true)
+		assert.NoError(t, err)
+		assert.False(t, v.Valid())
+	})
+	t.Run("on sends enabled=true", func(t *testing.T) {
+		v, err := resolveTelemetryStorageFlag("on", "", "", true)
+		assert.NoError(t, err)
+		assert.True(t, v.Valid())
+		assert.True(t, v.Value)
+	})
+	t.Run("off with a destination sends enabled=false", func(t *testing.T) {
+		v, err := resolveTelemetryStorageFlag("off", "", "my-collector", true)
+		assert.NoError(t, err)
+		assert.True(t, v.Valid())
+		assert.False(t, v.Value)
+	})
+	t.Run("off requires a destination", func(t *testing.T) {
+		for _, export := range []string{"", "off"} {
+			_, err := resolveTelemetryStorageFlag("off", "all", export, true)
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "requires an export destination")
+		}
+	})
+	t.Run("invalid value is rejected", func(t *testing.T) {
+		_, err := resolveTelemetryStorageFlag("maybe", "", "", true)
+		assert.Error(t, err)
+	})
+	t.Run("update and login require --telemetry", func(t *testing.T) {
+		_, err := resolveTelemetryStorageFlag("off", "", "my-collector", false)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "also requires --telemetry")
+		v, err := resolveTelemetryStorageFlag("off", "all", "my-collector", false)
+		assert.NoError(t, err)
+		assert.False(t, v.Value)
+	})
+}
