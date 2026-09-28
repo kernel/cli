@@ -138,6 +138,30 @@ func TestAuthConnectionsGet_PrintsSubmissionHints(t *testing.T) {
 	assert.Contains(t, out, "Continue with Google")
 }
 
+func TestAuthConnectionsGet_PrintsHealthCheckUnavailableReason(t *testing.T) {
+	setupStdoutCapture(t)
+
+	fake := &FakeAuthConnectionService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			return &kernel.ManagedAuth{
+				ID:                           id,
+				Domain:                       "example.com",
+				ProfileName:                  "profile-1",
+				Status:                       kernel.ManagedAuthStatusAuthenticated,
+				HealthCheckUnavailableReason: kernel.ManagedAuthHealthCheckUnavailableReasonNoAuthCheckURL,
+			}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+
+	err := c.Get(context.Background(), AuthConnectionGetInput{ID: "conn-1"})
+	require.NoError(t, err)
+
+	out := outBuf.String()
+	assert.Contains(t, out, "Health Check Unavailable")
+	assert.Contains(t, out, "no_auth_check_url")
+}
+
 // TestAuthConnectionsGet_PrintsCanonicalInputMetadata covers the metadata the
 // API preserves on canonical fields and choices: the field hint naming a masked
 // code destination, and the MFA type and masked destination that distinguish

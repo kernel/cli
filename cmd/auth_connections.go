@@ -706,6 +706,9 @@ func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) e
 	if auth.HealthCheckInterval > 0 {
 		tableData = append(tableData, []string{"Health Check Interval", fmt.Sprintf("%d seconds", auth.HealthCheckInterval)})
 	}
+	if auth.HealthCheckUnavailableReason != "" {
+		tableData = append(tableData, []string{"Health Check Unavailable", string(auth.HealthCheckUnavailableReason)})
+	}
 	if auth.BrowserSessionID != "" {
 		tableData = append(tableData, []string{"Browser Session ID", auth.BrowserSessionID})
 	}
