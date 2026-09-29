@@ -41,7 +41,7 @@ type targetSpec struct {
 	remove       []string
 	legacyName   string
 	legacyKey    string
-	printOnly    bool
+	install      func(string, targetSpec) error
 }
 
 func homePath(parts ...string) func(string) string {
@@ -72,6 +72,13 @@ func vsCodePath(home string) string {
 	}
 }
 
+func codexPath(home string) string {
+	if dir := os.Getenv("CODEX_HOME"); dir != "" {
+		return filepath.Join(dir, "config.toml")
+	}
+	return filepath.Join(home, ".codex", "config.toml")
+}
+
 func appDataPath(home string) string {
 	if path := os.Getenv("APPDATA"); path != "" {
 		return path
@@ -90,12 +97,13 @@ var targetSpecs = []targetSpec{
 	{target: TargetVSCode, description: "Visual Studio Code", path: vsCodePath, section: "servers", transport: http,
 		legacyName: "settings.json", legacyKey: "mcp.servers",
 		fields: []configField{{name: "url", value: KernelMCPURL}, {name: "type", value: "http"}}},
-	{target: TargetGoose, description: "Goose AI", path: homePath(".config", "goose", "config.yaml"), transport: stdio, clientName: "Goose", callbackPort: 46096, printOnly: true},
+	{target: TargetGoose, description: "Goose AI", path: homePath(".config", "goose", "config.yaml"), transport: stdio, clientName: "Goose", callbackPort: 46096, install: installForGoose},
 	// Current Zed settings omit source; its settings migrator removes that old field.
 	{target: TargetZed, description: "Zed editor", path: homePath(".config", "zed", "settings.json"), section: "context_servers", transport: stdio, clientName: "Zed", callbackPort: 46097,
 		remove: []string{"source"}},
 	{target: TargetFx, description: "fx coding agent", path: homePath(".fx", "mcp.json"), section: "mcp", transport: http,
 		fields: []configField{{name: "type", value: "http"}, {name: "url", value: KernelMCPURL}, {name: "oauth", value: map[string]any{}, ifMissing: true, skipWhen: "bearer_token_env"}}},
+	{target: TargetCodex, description: "OpenAI Codex", path: codexPath, transport: http, install: installForCodex},
 }
 
 func specFor(target Target) (targetSpec, bool) {
@@ -148,8 +156,8 @@ func Install(target Target) error {
 	if err != nil {
 		return err
 	}
-	if spec.printOnly {
-		return installForGoose(path, spec)
+	if spec.install != nil {
+		return spec.install(path, spec)
 	}
 	return installConfig(path, spec)
 }

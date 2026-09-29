@@ -335,3 +335,65 @@ func TestInstallForAntigravityPreservesExistingKernelFields(t *testing.T) {
 		}
 	}
 }
+
+func TestInstallForCodexRunsCodexMCPAdd(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a shell script stub")
+	}
+	testHome(t)
+	bin := t.TempDir()
+	argsPath := filepath.Join(bin, "args")
+	stub := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\n"
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(stub), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+
+	if err := Install(TargetCodex); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), "mcp\nadd\nkernel\n--url\n"+KernelMCPURL+"\n"; got != want {
+		t.Fatalf("codex args = %q, want %q", got, want)
+	}
+}
+
+func TestInstallForCodexWithoutCLIWritesNothing(t *testing.T) {
+	testHome(t)
+	t.Setenv("PATH", t.TempDir())
+
+	if err := Install(TargetCodex); err != nil {
+		t.Fatal(err)
+	}
+	path, err := GetConfigPath(TargetCodex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("config should not be written without the Codex CLI: %v", err)
+	}
+}
+
+func TestCodexConfigPathHonorsCodexHome(t *testing.T) {
+	testHome(t)
+	t.Setenv("CODEX_HOME", "")
+	path, err := GetConfigPath(TargetCodex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(os.Getenv("HOME"), ".codex", "config.toml"); path != want {
+		t.Fatalf("config path = %q, want %q", path, want)
+	}
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	path, err = GetConfigPath(TargetCodex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(codexHome, "config.toml"); path != want {
+		t.Fatalf("config path = %q, want %q", path, want)
+	}
+}

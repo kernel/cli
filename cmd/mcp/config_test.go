@@ -55,8 +55,8 @@ func TestInstallPreservesTargetConfigs(t *testing.T) {
 		{TargetZed, "context_servers", true, "Zed", "46097"},
 		{TargetFx, "mcp", false, "", ""},
 	}
-	if got := AllTargets(); len(got) != len(targets)+1 {
-		t.Fatalf("registered targets = %d, want %d including Goose", len(got), len(targets)+1)
+	if got := AllTargets(); len(got) != len(targets)+2 {
+		t.Fatalf("registered targets = %d, want %d including Goose and Codex", len(got), len(targets)+2)
 	}
 	for _, tc := range targets {
 		t.Run(string(tc.target), func(t *testing.T) {
@@ -191,7 +191,7 @@ func TestInstallPreservesTargetConfigs(t *testing.T) {
 
 func TestInstallFreshAndStrictModes(t *testing.T) {
 	for _, target := range AllTargets() {
-		if target == TargetGoose {
+		if spec, _ := specFor(target); spec.install != nil {
 			continue
 		}
 		t.Run(string(target), func(t *testing.T) {
@@ -282,7 +282,7 @@ func TestInstallPreservesCommentsAndFormatting(t *testing.T) {
 
 func TestInstallRejectsBadConfigWithoutChangingIt(t *testing.T) {
 	for _, target := range AllTargets() {
-		if target == TargetGoose {
+		if spec, _ := specFor(target); spec.install != nil {
 			continue
 		}
 		t.Run(string(target), func(t *testing.T) {

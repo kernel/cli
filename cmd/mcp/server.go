@@ -45,6 +45,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	pterm.Println("  kernel mcp install --target cursor")
 	pterm.Println("  kernel mcp install --target claude")
 	pterm.Println("  kernel mcp install --target vscode")
+	pterm.Println("  kernel mcp install --target codex")
 
 	pterm.Println()
 	pterm.DefaultSection.Println("Documentation")
