@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/kernel/cli/pkg/util"
 	kernel "github.com/kernel/kernel-go-sdk"
@@ -45,7 +46,7 @@ var vaultItemFields = vaultOutputFields{
 	"spec": {
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil,
 		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
-		"context": nil, "expires_at": nil, "description": nil, "account_id": nil,
+		"context": nil, "expires_at": nil, "description": nil, "account": nil, "access_token_expires_at": nil,
 		"requests":        onePasswordRequestFields,
 		"fields":          vaultFieldsOf("name label type required sensitive"),
 		"provider_config": vaultFieldsOf("id name"),
@@ -315,12 +316,32 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	if item.Type == "credential" {
 		rows = append(rows, []string{"Version", fmt.Sprint(item.Version)})
 		if item.Spec.Provider == "1password" {
-			rows = append(rows, []string{"1Password account ID (immutable)", item.Spec.AccountID})
+			if item.Spec.Account != "" {
+				rows = append(rows, []string{"1Password account (immutable)", item.Spec.Account})
+			} else {
+				rows = append(rows, []string{"1Password account", "stored token (developer-supplied)"})
+			}
+			if !item.Spec.AccessTokenExpiresAt.IsZero() {
+				rows = append(rows, []string{"Access token expires", item.Spec.AccessTokenExpiresAt.Format(time.RFC3339)})
+			}
 			for _, entry := range item.Spec.Requests.Entries {
 				rows = append(rows, []string{"Requested login", entry.Parameters.Website})
 			}
 			if item.State.JSON.AccessRequest.Valid() {
 				rows = append(rows, []string{"Access request state", item.State.AccessRequest.State})
+				entryRow := func(id, website string) {
+					if id != "" {
+						rows = append(rows, []string{"Entry ID", id + " " + website})
+					}
+				}
+				for _, entry := range item.State.AccessRequest.Entries {
+					entryRow(entry.ID, entry.Parameters.Website)
+				}
+				if len(item.State.AccessRequest.Entries) == 0 {
+					for _, entry := range item.State.AccessRequest.Request.Entries {
+						entryRow(entry.ID, entry.Parameters.Website)
+					}
+				}
 			}
 		} else {
 			pterm.Info.Println("Use -o json for field definitions, presence, and non-sensitive values; sensitive values are omitted")
@@ -415,6 +436,8 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	if item.Type == "credential_account" {
 		if actions.RequiredAction != "" {
 			pterm.Info.Println("Share the 1Password authorization URL with the account owner. Observe the connection with items get --wait 60; never ask for 1Password passwords or codes.")
+		} else if item.State.Status == "reconnect_required" || item.State.Status == "declined" {
+			pterm.Info.Println("This 1Password account is not connected. Ask the owner before running credentials connect again with the same key; use 1pw_recover first if it is advertised.")
 		}
 		return
 	}
@@ -422,7 +445,7 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		if item.Action.Instructions != "" {
 			pterm.Printf("Approval instructions:\n%s\n", item.Action.Instructions)
 		}
-		pterm.Info.Println("Ready means the account owner approved access, not that login succeeded. 1pw_fill submits the form; never retry request or fill automatically.")
+		pterm.Info.Println("Ready means the account owner approved access, not that sign-in succeeded. 1pw_fill submits the form; inspect the page afterward. Never retry a request or fill automatically; after an uncertain outcome, do not delete and recreate the item.")
 		return
 	}
 	if item.Type == "credential" {

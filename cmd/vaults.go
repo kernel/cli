@@ -137,16 +137,40 @@ func (c VaultsCmd) ListItems(ctx context.Context, vault, output string) error {
 		pterm.Info.Println("No vault items found")
 		return nil
 	}
-	rows := pterm.TableData{{"Key", "Type", "Provider", "Status", "Action"}}
-	for _, item := range *items {
+	filtered, err := vaultSafeJSONSlice(*items, vaultItemFields)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(filtered)
+	var safe []kernel.VaultItemUnion
+	if err != nil || json.Unmarshal(data, &safe) != nil {
+		return fmt.Errorf("invalid vault item response")
+	}
+	rows := pterm.TableData{{"Key", "Type", "Provider", "Status", "Site", "Action"}}
+	for _, item := range safe {
 		actions, err := effectiveVaultItemActions(&item)
 		if err != nil {
 			return err
 		}
-		rows = append(rows, []string{item.Key, item.Type, item.Spec.Provider, item.State.Status, util.OrDash(actions.RequiredAction)})
+		rows = append(rows, []string{item.Key, item.Type, item.Spec.Provider, item.State.Status, util.OrDash(vaultItemSite(item)), util.OrDash(actions.RequiredAction)})
 	}
 	PrintTableNoPad(rows, true)
 	return nil
+}
+
+// vaultItemSite names the site a credential signs in to so agents can reuse it.
+func vaultItemSite(item kernel.VaultItemUnion) string {
+	if item.Type != "credential" {
+		return ""
+	}
+	if item.Spec.Provider != "1password" {
+		return item.Spec.Description
+	}
+	websites := make([]string, 0, len(item.Spec.Requests.Entries))
+	for _, entry := range item.Spec.Requests.Entries {
+		websites = append(websites, entry.Parameters.Website)
+	}
+	return strings.Join(websites, ", ")
 }
 
 func validateVaultWait(wait int64) error {
@@ -243,6 +267,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		}
 	}
 	if !available {
+		if isOnePasswordOperation(operation) {
+			return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item with items get -o json. For 1Password credentials, check that the linked credential_account is connected and the credential state; do not delete or recreate the item to reset it", operation)
+		}
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
 	if operation == "fill" {
@@ -268,6 +295,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	}
 	response, err := c.vaults.Items.PerformOperation(ctx, key, request, option.WithMaxRetries(0))
 	if err != nil {
+		if isOnePasswordOperation(operation) {
+			return onePasswordOperationError(err, operation)
+		}
 		if item.Type == "credential" || item.Type == "credential_account" {
 			return vaultCredentialError(err)
 		}

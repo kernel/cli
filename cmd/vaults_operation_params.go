@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 
 	kernel "github.com/kernel/kernel-go-sdk"
 )
@@ -186,7 +187,8 @@ func parseOnePasswordOperationParams(operation, raw string) (*kernel.VaultItemPe
 	allowed := map[string]string{
 		"1pw_create_access_request": "browser_id goal reason keywords",
 		"1pw_access_request_status": "browser_id timeout_seconds",
-		"1pw_fill":                  "browser_id page_url timeout_ms",
+		"1pw_fill":                  "browser_id page_url entry_id timeout_ms",
+		"1pw_update_access_token":   "access_token access_token_expires_at",
 	}[operation]
 	if allowed == "" {
 		return nil, fmt.Errorf("unsupported 1Password operation %q", operation)
@@ -194,6 +196,24 @@ func parseOnePasswordOperationParams(operation, raw string) (*kernel.VaultItemPe
 	object, err := vaultParamsObject(raw, allowed)
 	if err != nil {
 		return nil, err
+	}
+	if operation == "1pw_update_access_token" {
+		var request kernel.VaultItemPerformOperationParamsBody1pwUpdateAccessToken
+		if json.Unmarshal(object["access_token"], &request.AccessToken) != nil || strings.TrimSpace(request.AccessToken) == "" || len(request.AccessToken) > 16384 {
+			return nil, fmt.Errorf("access_token must be a non-empty string of at most 16384 bytes")
+		}
+		if value, ok := object["access_token_expires_at"]; ok {
+			var text string
+			if json.Unmarshal(value, &text) != nil {
+				return nil, fmt.Errorf("access_token_expires_at must be an RFC 3339 timestamp")
+			}
+			expiresAt, err := time.Parse(time.RFC3339, text)
+			if err != nil {
+				return nil, fmt.Errorf("access_token_expires_at must be an RFC 3339 timestamp")
+			}
+			request.AccessTokenExpiresAt = kernel.Opt(expiresAt)
+		}
+		return &kernel.VaultItemPerformOperationParams{Of1pwUpdateAccessToken: &request}, nil
 	}
 	var browserID string
 	if json.Unmarshal(object["browser_id"], &browserID) != nil || strings.TrimSpace(browserID) == "" {
@@ -243,6 +263,13 @@ func parseOnePasswordOperationParams(operation, raw string) (*kernel.VaultItemPe
 				return nil, fmt.Errorf("timeout_ms must be an integer between 1 and 30000")
 			}
 			request.TimeoutMs = kernel.Opt(*timeout)
+		}
+		if value, ok := object["entry_id"]; ok {
+			var entryID string
+			if json.Unmarshal(value, &entryID) != nil || strings.TrimSpace(entryID) == "" {
+				return nil, fmt.Errorf("entry_id must be a non-empty approved entry ID from items get -o json")
+			}
+			request.EntryID = kernel.Opt(entryID)
 		}
 		return &kernel.VaultItemPerformOperationParams{Of1pwFill: &request}, nil
 	}

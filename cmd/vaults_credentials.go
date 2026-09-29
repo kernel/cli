@@ -14,37 +14,65 @@ import (
 )
 
 // Shared by vaults and vaults credentials help so both paths are always presented together.
-const vaultCredentialPathsHelp = `Credential vaults have two paths. Ask the user which one they want before creating
-anything; do not choose for them.
-1. Kernel-hosted collection (spec provider "kernel", the default): you define the
-   site's fields, the user types values into a Kernel-hosted form at the returned
-   collection URL, Kernel stores them encrypted, and items invoke fill writes them
-   into a vault-bound browser without submitting.
-2. 1Password brokered approval (spec provider "1password", preview): values stay in
-   the user's 1Password account. Connect the account once with credentials connect,
-   create a credential referencing it, request access from a vault-bound browser, and
-   the account owner approves or denies in the 1Password app. 1pw_fill fills and
-   submits through the 1Password extension. Availability depends on the deployment.
+const vaultCredentialPathsHelp = `Credential vaults have two sign-in paths. Before creating anything:
+1. Look for an existing credential with items list <vault> -o json. Reuse a credential
+   whose description or requested website matches the site, and invoke only its
+   advertised operations. A different spec at an existing key returns 409.
+2. Otherwise ask the user where this login lives and wait for the answer; do not
+   choose for them:
+   - Kernel-hosted collection (spec provider "kernel", the default): you define the
+     site's fields, the user types values into a Kernel-hosted form at the returned
+     collection URL, Kernel stores them encrypted, and items invoke fill writes them
+     into a vault-bound browser without submitting.
+   - 1Password brokered approval (spec provider "1password", preview): the login stays
+     in the user's own, non-shared 1Password vault; shared-vault items and passkeys
+     are not supported. The account owner connects the account once and approves each
+     access request in the 1Password app. 1pw_fill fills and submits through the
+     1Password extension.
+3. If 1Password is unavailable in this deployment, the account cannot be connected,
+   or the owner declines, tell the user and offer Kernel-hosted collection; do not
+   switch paths without asking. If the user wants neither, stop.
 Neither path returns secret values through the API or CLI. Never ask the user to paste
-passwords, OAuth codes, or keys into the terminal or chat; share only returned URLs.
-An agent controlling the browser can still read filled pages.`
+passwords, OAuth codes, tokens, or keys into the terminal or chat; share only returned
+URLs. An agent controlling the browser can still read filled pages. A filled or
+submitted form is not proof of sign-in: inspect the page afterward.`
 
 const vaultOnePasswordCredentialHelp = `1Password flow:
-1. credentials connect <vault> <account-key> --provider 1password. Share the returned
-   1Password authorization URL with the account owner and poll items get --wait 60
-   until the account state is connected. Its item ID is the account_id below.
-2. credentials create <vault> <key> --spec-file with provider "1password",
-   account_id, and a version 2 requests object with exactly one login entry for the
-   site's HTTPS URL. No field definitions, selectors, or values are accepted.
-3. Invoke 1pw_create_access_request with a vault-bound browser_id. Present the
+1. Ask whose 1Password account holds the login. Reuse that owner's connected
+   credential_account from items list. Otherwise run credentials connect <vault>
+   <account-key> --provider 1password, share the returned authorization URL with
+   that owner, and poll items get <vault> <account-key> --wait 60 until connected.
+2. credentials create <vault> <key> --spec-file with provider "1password", account
+   (the credential_account key), and requests: version 2 with 1-5 login entries, each
+   with the HTTPS website of a login page. Use one entry unless the user needs several
+   logins, such as separate accounts or sign-in origins; per-entry reason and
+   keywords go in the spec. No field definitions, selectors, or values are accepted.
+3. Invoke 1pw_create_access_request once with a vault-bound browser_id. Present the
    returned onepassword:// approval link and instructions to the account owner unchanged.
 4. Invoke 1pw_access_request_status (timeout_seconds 0-120) until the credential is
-   ready, declined, or failed. Ready means approved, not logged in.
-5. Open the login page and invoke 1pw_fill with browser_id and the exact page_url.
-   fill_submitted means the form was submitted, not that login succeeded.
-Invoke only advertised operations. Never retry access request, fill, or recovery
-failures or uncertain outcomes, and never create a second access request for the same
-credential; stop and tell the user instead.`
+   ready, declined, or failed. Ready means approved, not signed in.
+5. Open the login page and invoke 1pw_fill with browser_id and the exact page_url. When
+   several approved entries share that page's origin, pass entry_id from the
+   state.access_request entries in items get -o json. fill_submitted means the form
+   was submitted, not that sign-in succeeded.
+Invoke only advertised operations. Never automatically retry an access request, fill,
+or recovery. After an uncertain outcome (timeout, HTTP 5xx, fill_unknown, or a pending
+item with no approval link or advertised operation), stop and tell the user; do not
+delete and recreate the item to reset it. Declined means the owner refused; do
+not ask again unless the user requests it. After a confirmed failed status, ask the
+user before deleting and recreating the credential for at most one new request.
+Account links: if a credential_account advertises 1pw_recover, invoke it and share the
+new link with the owner, then run credentials connect again with the same key. For
+reconnect_required or declined without 1pw_recover, ask the owner before running
+credentials connect again with the same key for a new link.`
+
+const vaultOnePasswordStoredTokenHelp = `Stored-token 1Password credentials (developer integrations only, separate from the
+flow above): a developer who already holds a 1Password broker access token and its
+matching integration key may create the credential with access_token, integration_key,
+optional access_token_expires_at (RFC 3339), and requests instead of account. Supply
+either account or both secrets, never both. Put them only in a protected --spec-file
+or stdin; they are write-only and never displayed. Never ask an end user for them.
+Replace an expired token with items invoke 1pw_update_access_token --spec-file.`
 
 const vaultCredentialHelp = `Create credentials for a website.
 
@@ -77,7 +105,9 @@ Get/list output includes definitions, has_value, and explicitly non-sensitive te
 Sensitive values and TOTP seeds are omitted.
 Collection URLs are bearer credentials: share only with the intended user.
 
-` + vaultOnePasswordCredentialHelp
+` + vaultOnePasswordCredentialHelp + `
+
+` + vaultOnePasswordStoredTokenHelp
 
 func newVaultCredentialsCommand() *cobra.Command {
 	group := &cobra.Command{Use: "credentials", Short: "Collect, update, and fill user credentials", Long: vaultCredentialHelp}
@@ -113,9 +143,9 @@ func newVaultCredentialsCommand() *cobra.Command {
 {"description":"Hacker News","fields":[{"name":"username","label":"Username","type":"text","required":true,"sensitive":false},{"name":"password","label":"Password","type":"password","required":true,"sensitive":true}]}
 JSON
 
-  # 1Password brokered approval (account_id is the connected account's item ID)
+  # 1Password brokered approval (account is the connected credential_account key)
   kernel vaults credentials create user-vault github --spec-file - <<'JSON'
-{"provider":"1password","account_id":"<account-item-id>","requests":{"version":2,"entries":[{"type":"login","parameters":{"website":"https://github.com"}}]}}
+{"provider":"1password","account":"onepassword","requests":{"version":2,"entries":[{"type":"login","parameters":{"website":"https://github.com"}}]}}
 JSON`
 		}
 		cmd.Flags().String("spec-file", "", "Credential spec JSON file (use '-' for stdin; maximum 128 KiB)")
@@ -129,10 +159,9 @@ JSON`
 Only use this after the user chose 1Password brokered approval over Kernel-hosted collection.
 Share the returned 1Password authorization URL with the account owner; they sign in and
 consent at 1Password, and Kernel receives the grant. No tokens or keys are displayed.
-Poll items get --wait 60 until the account state is connected, then reference its
-item ID as account_id in credentials create. Repeating the request returns the
-existing account. If linking fails and the account advertises 1pw_recover, invoke it
-and share the new link with the account owner.
+Poll items get --wait 60 until the account state is connected, then set account to
+this key in credentials create. Repeating the request returns a connected or
+still-pending account unchanged; otherwise it starts a new authorization with a new URL.
 
 ` + vaultOnePasswordCredentialHelp,
 		Example: "  kernel vaults credentials connect user-vault onepassword --provider 1password",
@@ -230,8 +259,16 @@ func credentialSpecInput(data []byte) (kernel.CredentialVaultItemSpecInputUnionP
 		return kernel.CredentialVaultItemSpecInputUnionParam{OfKernel: &spec}, nil
 	case "1password":
 		var spec kernel.OnePasswordCredentialVaultItemSpecInputParam
-		if json.Unmarshal(data, &spec) != nil || strings.TrimSpace(spec.AccountID) == "" || len(spec.Requests.Entries) == 0 {
-			return kernel.CredentialVaultItemSpecInputUnionParam{}, fmt.Errorf("1Password credential spec requires account_id and requests with a login entry")
+		if json.Unmarshal(data, &spec) != nil {
+			return kernel.CredentialVaultItemSpecInputUnionParam{}, fmt.Errorf("invalid 1Password credential spec")
+		}
+		accountBacked := spec.Account.Valid() && strings.TrimSpace(spec.Account.Value) != ""
+		storedToken := spec.AccessToken.Valid() || spec.IntegrationKey.Valid() || spec.AccessTokenExpiresAt.Valid()
+		if accountBacked == storedToken || (storedToken && (!spec.AccessToken.Valid() || !spec.IntegrationKey.Valid())) {
+			return kernel.CredentialVaultItemSpecInputUnionParam{}, fmt.Errorf("1Password credential spec requires either account (a credential_account key) or both access_token and integration_key, never both")
+		}
+		if entries := len(spec.Requests.Entries); entries > 5 || (entries == 0 && (storedToken || !spec.Website.Valid())) {
+			return kernel.CredentialVaultItemSpecInputUnionParam{}, fmt.Errorf("1Password credential spec requires requests with 1-5 login entries")
 		}
 		return kernel.CredentialVaultItemSpecInputUnionParam{Of1password: &spec}, nil
 	default:
@@ -246,13 +283,13 @@ func (c VaultsCmd) connectCredentialAccount(ctx context.Context, vault, key, out
 			Provider: kernel.OnePasswordCredentialAccountSpecProvider1password,
 			Authorization: kernel.OnePasswordCredentialAccountSpecAuthorizationParam{
 				Method: "oauth",
-				Client: kernel.OnePasswordCredentialAccountSpecAuthorizationClientUnionParam{OfKernelManaged: &kernel.OnePasswordCredentialAccountSpecAuthorizationClientKernelManagedParam{}},
+				Client: kernel.OnePasswordCredentialAccountSpecAuthorizationClientParam{Type: "kernel_managed"},
 			},
 		},
 	}
 	item, err := c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCredentialAccount: &request}, option.WithMaxRetries(0))
 	if err != nil {
-		return vaultCredentialError(err)
+		return onePasswordConnectError(err)
 	}
 	return c.showItem(item, output, open)
 }

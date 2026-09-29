@@ -68,8 +68,9 @@ Use credentials update --version for edits, or items invoke collect to reopen th
 Credential values belong in protected files/stdin, never command-line arguments.
 See credentials --help and items invoke --help for examples.
 
-1Password credential flow: connect the account with credentials connect, create a
-1password credential, then invoke the advertised 1pw_* operations. See credentials --help.
+1Password credential flow: reuse or connect the owner's account with credentials connect,
+create a 1password credential for the site's login entries, then invoke only the
+advertised 1pw_* operations. See credentials --help.
 
 Payment credential flow:
 
@@ -193,21 +194,25 @@ Preparations are single-use, including after failure or expiry; never retry auto
 collect/authorize/prepare_checkout/1pw_recover may use --open. Fill returns value-free per-field outcomes;
 completed exits 0, failed/unknown exit nonzero with valid JSON retained on stdout in -o json.
 
-1Password credentials (see credentials --help) use --params without type:
+1Password credentials (see credentials --help) use --params or --spec-file without type:
 1pw_create_access_request: browser_id (vault-bound session ID); optional goal (<=140),
-  reason (<=100), keywords (1-5 strings). Present the returned onepassword:// approval
-  link and instructions to the account owner unchanged; do not create a second request.
+  reason (<=100), keywords (1-5 strings); reason and keywords only for single-entry
+  credentials. Present the returned onepassword:// approval link and instructions to
+  the account owner unchanged; invoke it once per credential.
 1pw_access_request_status: browser_id; optional timeout_seconds 0-120 (default 10).
   Check status after the account owner has the approval link.
-1pw_fill: browser_id and the exact page_url of one open login page on the requested
-  origin; optional timeout_ms 1-30000. The extension selects fields and submits.
-  fill_submitted exits 0 and does not confirm login; fill_failed and fill_unknown exit
+1pw_fill: browser_id and the exact page_url of one open login page on a requested
+  origin; entry_id when several approved entries share that origin; optional
+  timeout_ms 1-30000. The extension selects fields and submits. fill_submitted exits 0
+  and does not confirm sign-in; inspect the page. fill_failed and fill_unknown exit
   nonzero. After fill_unknown, do not retry in the same browser.
+1pw_update_access_token (stored-token credentials only): --spec-file, never --params,
+  with access_token and optional access_token_expires_at (RFC 3339).
 1pw_recover (credential accounts, no parameters): returns a new 1Password link that
-  recovers a failed account connection. Share it with the account owner; never delete
-  the item to recover.
-Never retry 1Password operations after failures or uncertain outcomes; stop and tell the
-user instead.`,
+  recovers a failed account connection. Share it with the account owner, then run
+  credentials connect again with the same key; never delete the item to recover.
+Never retry 1Password operations after failures or uncertain outcomes, and never delete
+and recreate an item to reset an uncertain outcome; stop and tell the user instead.`,
 		Example: `  kernel vaults items invoke user-vault login collect
   kernel vaults items invoke user-vault login fill --spec-file - <<'JSON'
 {"browser_id":"<browser-id>","fields":[{"field":"username","selector":"#username"},{"field":"password","selector":"#password"}]}
@@ -215,11 +220,15 @@ JSON
   kernel vaults items invoke user-vault github 1pw_create_access_request --params '{"browser_id":"<browser-id>","reason":"Sign in to GitHub"}'
   kernel vaults items invoke user-vault github 1pw_access_request_status --params '{"browser_id":"<browser-id>","timeout_seconds":60}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login"}'
+  kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login","entry_id":"<entry-id>"}'
   kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browser-session-id","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#card-number"}]}' -o json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			open, _ := cmd.Flags().GetBool("open")
 			raw, _ := cmd.Flags().GetString("params")
 			paramsSet := cmd.Flags().Changed("params")
+			if args[2] == "1pw_update_access_token" && paramsSet {
+				return fmt.Errorf("1pw_update_access_token accepts the access token only through --spec-file <path|->, never command-line arguments")
+			}
 			if cmd.Flags().Changed("spec-file") {
 				if !vaultOperationTakesParams(args[2]) {
 					return fmt.Errorf("--spec-file is only supported for fill, prepare_checkout, and 1Password operations with parameters")
@@ -236,7 +245,7 @@ JSON
 			}
 			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], params, vaultOutput(cmd), open)
 		}}
-	invoke.Flags().String("params", "", "Operation parameters JSON for fill, prepare_checkout, or 1pw_* (maximum 128 KiB); omit type and credential values")
+	invoke.Flags().String("params", "", "Operation parameters JSON for fill, prepare_checkout, or 1pw_* (maximum 128 KiB); omit type and credential values; 1pw_update_access_token requires --spec-file")
 	invoke.Flags().String("spec-file", "", "Operation parameters JSON file (use '-' for stdin; maximum 128 KiB)")
 	invoke.MarkFlagsMutuallyExclusive("params", "spec-file")
 	invoke.Flags().Bool("open", false, "Open a returned HTTPS action URL in your browser")

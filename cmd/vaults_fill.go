@@ -211,10 +211,12 @@ func (c VaultsCmd) onePasswordFill(ctx context.Context, vault, key string, reque
 		// Only these statuses are returned before the extension is invoked.
 		guidance := onePasswordFillUncertain
 		switch apiErr.StatusCode {
-		case 400, 403, 404, 409:
+		case 400, 403, 404:
 			guidance = "nothing was submitted by this request; inspect the item, browser, and page_url before deciding on a new fill; do not automatically retry"
+		case 409:
+			guidance = "nothing was submitted by this request; if several approved entries match this page, pass entry_id from items get -o json; do not automatically retry"
 		case 503:
-			return fmt.Errorf("1pw_fill unavailable (HTTP 503): the 1Password browser integration is not available in this deployment")
+			return fmt.Errorf("1pw_fill unavailable (HTTP 503): %s", onePasswordUnavailable)
 		}
 		var body struct {
 			Code string `json:"code"`
