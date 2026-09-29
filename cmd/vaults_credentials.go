@@ -126,18 +126,9 @@ func (c VaultsCmd) saveCredential(ctx context.Context, vault, key string, data [
 		}
 		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCredentialVaultItemUpdateRequest: &request}, option.WithMaxRetries(0))
 	} else {
-		var spec kernel.CredentialVaultItemSpecInputParam
-		if json.Unmarshal(data, &spec) != nil || len(spec.Fields) == 0 {
-			if credentialSpecUsesKeyedFields(data) {
-				return fmt.Errorf("credential spec fields must be an ordered array of definitions carrying a name, not an object keyed by name")
-			}
-			return fmt.Errorf("credential spec requires fields")
-		}
-		// Names key values, updates, and fills; reject specs the form cannot address.
-		for _, field := range spec.Fields {
-			if strings.TrimSpace(field.Name) == "" {
-				return fmt.Errorf("every credential spec field requires a name")
-			}
+		spec, specErr := credentialSpecInput(data)
+		if specErr != nil {
+			return specErr
 		}
 		item, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCredential: &kernel.CredentialVaultItemRequestParam{Type: "credential", Spec: spec}}, option.WithMaxRetries(0))
 	}
@@ -145,6 +136,29 @@ func (c VaultsCmd) saveCredential(ctx context.Context, vault, key string, data [
 		return vaultCredentialError(err)
 	}
 	return c.showItem(item, output, open)
+}
+
+// Kernel-hosted specs default the provider; other providers are not supported here.
+func credentialSpecInput(data []byte) (kernel.CredentialVaultItemSpecInputUnionParam, error) {
+	var spec kernel.KernelCredentialVaultItemSpecInputParam
+	invalid := json.Unmarshal(data, &spec) != nil
+	if !invalid && spec.Provider != "" && spec.Provider != kernel.KernelCredentialVaultItemSpecInputProviderKernel {
+		return kernel.CredentialVaultItemSpecInputUnionParam{}, fmt.Errorf("credential spec provider must be kernel")
+	}
+	if invalid || len(spec.Fields) == 0 {
+		if credentialSpecUsesKeyedFields(data) {
+			return kernel.CredentialVaultItemSpecInputUnionParam{}, fmt.Errorf("credential spec fields must be an ordered array of definitions carrying a name, not an object keyed by name")
+		}
+		return kernel.CredentialVaultItemSpecInputUnionParam{}, fmt.Errorf("credential spec requires fields")
+	}
+	spec.Provider = kernel.KernelCredentialVaultItemSpecInputProviderKernel
+	// Names key values, updates, and fills; reject specs the form cannot address.
+	for _, field := range spec.Fields {
+		if strings.TrimSpace(field.Name) == "" {
+			return kernel.CredentialVaultItemSpecInputUnionParam{}, fmt.Errorf("every credential spec field requires a name")
+		}
+	}
+	return kernel.CredentialVaultItemSpecInputUnionParam{OfKernel: &spec}, nil
 }
 
 // The create spec moved from fields keyed by name to an ordered array; point
