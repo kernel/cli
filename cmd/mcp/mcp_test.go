@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -336,28 +337,50 @@ func TestInstallForAntigravityPreservesExistingKernelFields(t *testing.T) {
 	}
 }
 
-func TestInstallForCodexRunsCodexMCPAdd(t *testing.T) {
+func TestInstallForCodex(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a shell script stub")
 	}
-	testHome(t)
-	bin := t.TempDir()
-	argsPath := filepath.Join(bin, "args")
-	stub := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\n"
-	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(stub), 0755); err != nil {
-		t.Fatal(err)
+	add := "mcp add kernel --url " + KernelMCPURL
+	get := "mcp get kernel --json"
+	cases := []struct {
+		name     string
+		existing string
+		want     []string
+	}{
+		{"missing", "", []string{get, add}},
+		{"configured", `{"transport":{"type":"streamable_http","url":"` + KernelMCPURL + `","bearer_token_env_var":"KERNEL_API_KEY"}}`, []string{get}},
+		{"stdio", `{"transport":{"type":"stdio","command":"npx"}}`, []string{get, add}},
+		{"other url", `{"transport":{"type":"streamable_http","url":"https://old.example/mcp"}}`, []string{get, add}},
 	}
-	t.Setenv("PATH", bin)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			testHome(t)
+			bin := t.TempDir()
+			argsPath := filepath.Join(bin, "args")
+			getPath := filepath.Join(bin, "get.json")
+			if tc.existing != "" {
+				if err := os.WriteFile(getPath, []byte(tc.existing), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			stub := "#!/bin/sh\necho \"$*\" >> " + argsPath + "\nif [ \"$2\" = get ]; then cat " + getPath + " 2>/dev/null || exit 1; fi\n"
+			if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(stub), 0755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	if err := Install(TargetCodex); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(argsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(data), "mcp\nadd\nkernel\n--url\n"+KernelMCPURL+"\n"; got != want {
-		t.Fatalf("codex args = %q, want %q", got, want)
+			if err := Install(TargetCodex); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(argsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Split(strings.TrimSpace(string(data)), "\n"); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("codex calls = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -379,7 +402,6 @@ func TestInstallForCodexWithoutCLIWritesNothing(t *testing.T) {
 
 func TestCodexConfigPathHonorsCodexHome(t *testing.T) {
 	testHome(t)
-	t.Setenv("CODEX_HOME", "")
 	path, err := GetConfigPath(TargetCodex)
 	if err != nil {
 		t.Fatal(err)

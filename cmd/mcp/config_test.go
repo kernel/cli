@@ -19,6 +19,7 @@ func testHome(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
+	t.Setenv("CODEX_HOME", "")
 }
 
 func readTestConfig(t *testing.T, path string) map[string]any {
