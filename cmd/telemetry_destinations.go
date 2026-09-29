@@ -413,7 +413,7 @@ var telemetryDestinationsGetCmd = &cobra.Command{
 var telemetryDestinationsCreateCmd = &cobra.Command{
 	Use:   "create --name <name> --endpoint <url>",
 	Short: "Create an OTLP destination",
-	Long: "Create an OTLP export destination. The name must be unique within the project.\n\n" +
+	Long: "Create an OTLP export destination. The name must be unique within the organization.\n\n" +
 		"--endpoint takes the collector's base endpoint without a signal path: pass https://api.honeycomb.io " +
 		"rather than https://api.honeycomb.io/v1/logs, since Kernel appends the signal path itself. " +
 		"Header values are encrypted at rest and always returned redacted.",
@@ -451,7 +451,7 @@ func init() {
 	addJSONOutputFlag(telemetryDestinationsGetCmd)
 
 	addJSONOutputFlag(telemetryDestinationsCreateCmd)
-	telemetryDestinationsCreateCmd.Flags().String("name", "", "Destination name, unique within the project (required)")
+	telemetryDestinationsCreateCmd.Flags().String("name", "", "Destination name, unique within the organization (required)")
 	_ = telemetryDestinationsCreateCmd.MarkFlagRequired("name")
 	telemetryDestinationsCreateCmd.Flags().String("endpoint", "", "Base OTLP/HTTP endpoint of the collector, without a signal path (required)")
 	_ = telemetryDestinationsCreateCmd.MarkFlagRequired("endpoint")
@@ -459,7 +459,7 @@ func init() {
 	telemetryDestinationsCreateCmd.Flags().StringArray("header", nil, "Header sent with each export request as NAME=VALUE, typically an ingestion key (repeatable)")
 
 	addJSONOutputFlag(telemetryDestinationsUpdateCmd)
-	telemetryDestinationsUpdateCmd.Flags().String("name", "", "New destination name, unique within the project")
+	telemetryDestinationsUpdateCmd.Flags().String("name", "", "New destination name, unique within the organization")
 	telemetryDestinationsUpdateCmd.Flags().String("endpoint", "", "New base OTLP/HTTP endpoint, without a signal path")
 	telemetryDestinationsUpdateCmd.Flags().String("description", "", "New description; pass an empty string to clear it")
 	telemetryDestinationsUpdateCmd.Flags().StringArray("header", nil, "Header to add or replace as NAME=VALUE (repeatable). Other stored headers are left as they are")

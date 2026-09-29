@@ -763,7 +763,7 @@ Export is bound at session creation, so it is available on `browsers create` and
 
 #### Telemetry destinations
 
-Destinations are the OTLP/HTTP endpoints sessions export to, managed per project.
+Destinations are the OTLP/HTTP endpoints sessions export to. They belong to the organization, so sessions in any project can export to them. Creating, updating, or deleting one requires organization-scoped authentication; a project-scoped API key can list, get, and select destinations but not change them.
 
 - `kernel telemetry destinations list` - List OTLP destinations
   - `--page <n>` / `--per-page <n>` - Page number (1-based) and items per page (default 20)
@@ -772,7 +772,7 @@ Destinations are the OTLP/HTTP endpoints sessions export to, managed per project
 - `kernel telemetry destinations get <id-or-name>` - Get an OTLP destination
 - `kernel telemetry destinations create --name <name> --endpoint <url>` - Create an OTLP destination
   - `--endpoint <url>` - Base OTLP/HTTP endpoint without a signal path: pass `https://api.honeycomb.io`, not `https://api.honeycomb.io/v1/logs` (required)
-  - `--name <name>` - Destination name, unique within the project (required)
+  - `--name <name>` - Destination name, unique within the organization (required)
   - `--description <text>` - Optional description
   - `--header NAME=VALUE` - Header sent with each export request, typically an ingestion key (repeatable). Values are encrypted at rest and always returned redacted, so only header names are shown
 - `kernel telemetry destinations update <id-or-name>` - Update an OTLP destination. Sessions already exporting pick up the new values without restarting, which makes this the way to rotate credentials without interrupting export
