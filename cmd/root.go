@@ -137,6 +137,11 @@ func init() {
 		clientOpts := []option.RequestOption{
 			option.WithHeader("X-Kernel-Cli-Version", metadata.Version),
 		}
+		// KERNEL_CLIENT_REFERENCE labels requests for analytics, e.g. with the
+		// ID of the agent running the CLI.
+		if reference := strings.TrimSpace(os.Getenv("KERNEL_CLIENT_REFERENCE")); reference != "" {
+			clientOpts = append(clientOpts, option.WithHeader("X-Kernel-Client-Reference", reference))
+		}
 
 		projectVal, _ := cmd.Flags().GetString("project")
 		projectVal = resolveProjectSelection(projectVal)

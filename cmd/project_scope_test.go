@@ -157,3 +157,35 @@ func TestDeployGithubProjectScope(t *testing.T) {
 		})
 	}
 }
+
+func TestClientReferenceHeader(t *testing.T) {
+	for _, tt := range []struct {
+		name, env, want string
+	}{
+		{name: "set", env: "agt_123", want: "agt_123"},
+		{name: "trimmed", env: "  agt_123 ", want: "agt_123"},
+		{name: "unset"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("KERNEL_PROJECT", "")
+			t.Setenv("KERNEL_CLIENT_REFERENCE", tt.env)
+			var got []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.Header.Values("X-Kernel-Client-Reference")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{}`)
+			}))
+			defer server.Close()
+			cmd := projectTestCommand(t, server.URL, "")
+			require.NoError(t, rootCmd.PersistentPreRunE(cmd, nil))
+			client := getKernelClient(cmd)
+			_, err := client.Browsers.Get(cmd.Context(), "browser_123", kernel.BrowserGetParams{})
+			require.NoError(t, err)
+			if tt.want == "" {
+				assert.Empty(t, got)
+				return
+			}
+			assert.Equal(t, []string{tt.want}, got)
+		})
+	}
+}
