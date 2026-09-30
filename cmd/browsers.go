@@ -468,6 +468,7 @@ type BrowsersCreateInput struct {
 	Telemetry           string
 	TelemetryCdpExclude string
 	TelemetryExport     string
+	TelemetryStorage    string
 	ChromePolicy        string
 	ChromePolicyFile    string
 	Name                string
@@ -769,11 +770,16 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		}
 	}
 
-	if in.Telemetry != "" || in.TelemetryCdpExclude != "" || in.TelemetryExport != "" {
+	if in.Telemetry != "" || in.TelemetryCdpExclude != "" || in.TelemetryExport != "" || in.TelemetryStorage != "" {
 		t, err := buildNewTelemetryParam(in.Telemetry, in.TelemetryCdpExclude, in.TelemetryExport)
 		if err != nil {
 			return err
 		}
+		storage, err := resolveTelemetryStorageFlag(in.TelemetryStorage, in.Telemetry, in.TelemetryExport, true)
+		if err != nil {
+			return err
+		}
+		t.Storage.Enabled = storage
 		params.Telemetry = t
 	}
 
@@ -814,7 +820,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		}
 		PrintTableNoPad(rows, true)
 	}
-	if in.Telemetry != "" || in.TelemetryCdpExclude != "" || in.TelemetryExport != "" {
+	if in.Telemetry != "" || in.TelemetryCdpExclude != "" || in.TelemetryExport != "" || in.TelemetryStorage != "" {
 		printTelemetrySummary(browser.Telemetry)
 	}
 	return nil
@@ -3258,6 +3264,7 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().String("telemetry", "", "Configure telemetry (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
 	browsersCreateCmd.Flags().String("telemetry-cdp-exclude", "", "Leave the named CDP methods out of control telemetry's cdp_command events, comma-separated (e.g. Input.dispatchMouseEvent,Page.captureScreenshot); --telemetry-cdp-exclude=none clears the list. Excluded commands are still relayed to the browser, they just produce no event")
 	browsersCreateCmd.Flags().String("telemetry-export-otlp", "", "Export captured telemetry over OTLP to one of the org's configured destinations, by ID or name; --telemetry-export-otlp=off disables export. Implies --telemetry=all when --telemetry is not set, since export requires capture")
+	browsersCreateCmd.Flags().String("telemetry-storage", "", "Whether to persist captured telemetry to Kernel storage: on (default) or off. Turning storage off requires --telemetry-export-otlp=<destination> in the same command, so events are only available on the live stream and through the export; it cannot be changed after the browser is created")
 	browsersCreateCmd.Flags().String("name", "", "Optional unique name for the browser session (used to find it later; can be changed with 'browsers update --name')")
 	browsersCreateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the session (repeatable; up to 50 pairs)")
 	browsersCreateCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts")
@@ -3292,7 +3299,7 @@ followed automatically by Chromium.`,
 
 	telemetryRoot := &cobra.Command{Use: "telemetry", Short: "Browser telemetry operations"}
 	telemetryStream := &cobra.Command{Use: "stream <id>", Short: "Stream live telemetry events", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStream}
-	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,connection,system,screenshot,captcha,monitor)")
+	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,platform,connection,system,screenshot,captcha,monitor)")
 	telemetryStream.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error)")
 	telemetryStream.Flags().Int64("seq", -1, "Resume after sequence number N (Last-Event-ID); replays events with seq > N. Default -1 streams from now")
 	telemetryStream.Flags().StringP("output", "o", "", "Output format: json for newline-delimited JSON envelopes")
@@ -3306,8 +3313,8 @@ followed automatically by Chromium.`,
 	telemetryEvents.Flags().String("order", "", "Read direction: asc (default) reads oldest first, desc reads newest first (cannot be combined with --since)")
 	telemetryEvents.Flags().String("since", "", "Window start: RFC-3339 timestamp or a duration like 5m (default 5m). Ignored when --offset is set")
 	telemetryEvents.Flags().String("until", "", "Window end (exclusive): RFC-3339 timestamp or a duration like 5m")
-	telemetryEvents.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,connection,system,screenshot,captcha,monitor)")
-	telemetryEvents.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error); walks every page in the window")
+	telemetryEvents.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,platform,connection,system,screenshot,captcha,monitor)")
+	telemetryEvents.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. page_crashed,captcha_challenge_result); combines with --categories, an event must match both")
 	telemetryEvents.Flags().Bool("all", false, "Walk every page in the window instead of just the first (ignores --offset)")
 	addJSONOutputFlag(telemetryEvents)
 	telemetryRoot.AddCommand(telemetryEvents)
@@ -3347,15 +3354,19 @@ func runBrowsersList(cmd *cobra.Command, args []string) error {
 // this set so they correctly surface that warning rather than being silently ignored.
 func poolLeaseAllowedFlags() map[string]bool {
 	return map[string]bool{
-		"pool-id":   true,
-		"pool-name": true,
-		"timeout":   true,
-		"name":      true,
-		"start-url": true,
-		"tag":       true,
-		"telemetry": true,
-		"output":    true,
-		"yes":       true,
+		"pool-id":               true,
+		"pool-name":             true,
+		"timeout":               true,
+		"name":                  true,
+		"start-url":             true,
+		"tag":                   true,
+		"telemetry":             true,
+		"telemetry-cdp-exclude": true,
+		"profile-id":            true,
+		"profile-name":          true,
+		"save-changes":          true,
+		"output":                true,
+		"yes":                   true,
 		// Global persistent flags that don't configure browsers
 		"no-color":  true,
 		"log-level": true,
@@ -3392,6 +3403,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 	telemetryCdpExclude, _ := cmd.Flags().GetString("telemetry-cdp-exclude")
 	telemetryExport, _ := cmd.Flags().GetString("telemetry-export-otlp")
+	telemetryStorage, _ := cmd.Flags().GetString("telemetry-storage")
 	name, _ := cmd.Flags().GetString("name")
 	tags, _ := tagsFromFlag(cmd, "tag")
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
@@ -3419,7 +3431,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 
 	if poolID != "" || poolName != "" {
 		// When using a pool, configuration comes from the pool itself, but
-		// name, start URL, tags, and telemetry apply per-lease to the acquired
+		// name, start URL, tags, telemetry, and profile apply per-lease to the acquired
 		// session — they mirror the fields BrowserPoolAcquireParams accepts.
 		allowedFlags := poolLeaseAllowedFlags()
 
@@ -3470,7 +3482,11 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("timeout") && timeout > 0 {
 			acquireTimeout = int64(timeout)
 		}
-		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry, telemetryCdpExclude, startURL)
+		acquireProfile, err := buildAcquireProfileParam(profileID, profileName, saveChanges)
+		if err != nil {
+			return err
+		}
+		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry, telemetryCdpExclude, startURL, acquireProfile)
 		if err != nil {
 			return err
 		}
@@ -3535,6 +3551,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		Telemetry:           telemetry,
 		TelemetryCdpExclude: telemetryCdpExclude,
 		TelemetryExport:     telemetryExport,
+		TelemetryStorage:    telemetryStorage,
 		ChromePolicy:        chromePolicy,
 		ChromePolicyFile:    chromePolicyFile,
 		Name:                name,

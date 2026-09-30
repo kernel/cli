@@ -124,3 +124,51 @@ func TestVaultPreparationEventsAreProjected(t *testing.T) {
 	assert.Contains(t, out, `"preparation_id": "prep-1"`)
 	assert.NotContains(t, out, "never-print")
 }
+
+func TestCredentialFieldOrderIsPreserved(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	spec := `{"description":"Example","fields":[{"name":"email","type":"email","required":true,"sensitive":false},{"name":"password","type":"password","required":true,"sensitive":true},{"name":"otp","type":"totp","required":false,"sensitive":true}]}`
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Spec struct {
+				Fields json.RawMessage `json:"fields"`
+			} `json:"spec"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		// The website's top-to-bottom order must reach the API unchanged.
+		assert.Equal(t, `[{"name":"email","type":"email","required":true,"sensitive":false},{"name":"password","type":"password","required":true,"sensitive":true},{"name":"otp","type":"totp","required":false,"sensitive":true}]`, string(body.Spec.Fields))
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"id":"credential-1","key":"login","type":"credential","version":1,"spec":%s,"state":{"status":"pending_collection","fields":{"email":{"has_value":false},"password":{"has_value":false},"otp":{"has_value":false}}},"available_operations":[],"available_expansions":[]}`, spec)
+	})
+	out, _, err := executeVaultCommand(t, client, "vaults", "credentials", "create", "user-123", "login", "--spec-file", credentialSpecFile(t, spec), "-o", "json")
+	require.NoError(t, err)
+	assert.Less(t, strings.Index(out, `"email"`), strings.Index(out, `"password"`))
+	assert.Less(t, strings.Index(out, `"password"`), strings.Index(out, `"otp"`))
+	for _, name := range []string{"email", "password", "otp"} {
+		assert.Contains(t, out, fmt.Sprintf(`"name": %q`, name))
+	}
+}
+
+func TestCredentialKeyedFieldsAreRejectedWithGuidance(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("a keyed create spec must not reach the API")
+	})
+	_, _, err := executeVaultCommand(t, client, "vaults", "credentials", "create", "user-123", "login",
+		"--spec-file", credentialSpecFile(t, `{"fields":{"password":{"type":"password","value":"secret-echo"}}}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ordered array")
+	assert.NotContains(t, err.Error(), "secret-echo")
+}
+
+func TestCredentialFieldsRequireNames(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("an unnamed field must not reach the API")
+	})
+	_, _, err := executeVaultCommand(t, client, "vaults", "credentials", "create", "user-123", "login",
+		"--spec-file", credentialSpecFile(t, `{"fields":[{"type":"password","value":"secret-echo"}]}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "name")
+	assert.NotContains(t, err.Error(), "secret-echo")
+}

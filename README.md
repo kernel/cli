@@ -26,6 +26,7 @@ Kernel provides sandboxed, ready-to-use Chrome browsers for browser automations 
 - Invoke app actions (sync or async) and stream logs
 - Create, list, view, and delete managed browser sessions
 - Get a live view URL for visual monitoring and remote control
+- Search the web across providers and retrieve page content for results
 
 ## Installation
 
@@ -156,6 +157,9 @@ kernel search get srch_01jsearchresult
 
 # Use portable filters or other advanced request fields
 kernel search --request '{"query":"browser automation","include_domains":["example.com"],"strict_params":true}'
+
+# Fetch content for the top results of a retained search
+kernel search contents srch_01jsearchresult --limit 3 --content-source browser
 ```
 
 - `--max-results` accepts 1–100; the API may clamp it to the provider cap.
@@ -167,9 +171,18 @@ kernel search --request '{"query":"browser automation","include_domains":["examp
 - Create requests are not automatically retried, to avoid duplicate billable
   searches after an ambiguous failure. If a request fails ambiguously, use
   `search get` only when the API returned a retained search ID.
-- Retained searches return 404 when missing, expired, or inaccessible. Deferred
-  content retrieval is not exposed because it is reserved but unavailable in the
-  current API contract.
+- Retained searches return 404 when missing, expired, or inaccessible.
+- `search contents <id>` retrieves content for selected results of a retained
+  search. Provide exactly one of `--result-ids` (in desired response order) or
+  `--limit` (top N results, 1–100). `--timeout-ms` sets the overall deadline
+  (1000–120000). Content options: `--content-source` (`auto`, `provider`, or
+  `browser`; default `auto`), `--content-format` (`markdown` or `text`),
+  `--content-max-chars`, `--content-max-age-hours`, `--content-timeout-ms`,
+  `--content-browser-id` (reuse an existing browser session), and
+  `--content-browser-mode` (`curl` or `render`). When no browser ID is given and a
+  result needs browser retrieval, Kernel creates a temporary browser for the
+  request; it is billed like any other browser. Requests are not automatically
+  retried.
 - To search for a literal query equal to a subcommand name (`get` or `providers`),
   use `--request '{"query":"providers"}'`.
 
@@ -268,6 +281,7 @@ kernel search --request '{"query":"browser automation","include_domains":["examp
   - `--telemetry=off` - Disable telemetry
   - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`
   - `--telemetry-export-otlp <id-or-name>` - Export captured telemetry over OTLP to one of the org's configured destinations. Implies `--telemetry=all` when `--telemetry` is not set, since export requires capture. Use `--telemetry-export-otlp=off` to disable export.
+  - `--telemetry-storage on|off` - Whether to persist captured telemetry to Kernel storage (default on). `off` requires `--telemetry-export-otlp <id-or-name>` in the same command, so events are only available on the live stream and through the export. Cannot be changed after the browser is created.
   - `--chrome-policy <json>` - Custom Chrome enterprise policy as a JSON object. Kernel-managed policies (extensions, proxy, automation) are rejected server-side.
   - `--chrome-policy-file <path>` - Read the Chrome enterprise policy from a file (use `-` for stdin). Mutually exclusive with `--chrome-policy`.
   - `--output json`, `-o json` - Output raw JSON object
@@ -335,8 +349,17 @@ populated, not that login succeeded. `fill` requires an already-open page and ne
 navigates or submits it. Optional `page_url` selects the exact page; cards require it.
 Do not automatically retry failed/unknown fills or fall back to aliases.
 
+Create specs list `fields` as an ordered array. Each entry carries a stable `name`
+(letters, digits, and underscores, starting with a letter) that keys values, updates,
+and fills. Order is preserved: list fields in the same top-to-bottom order as the
+website, because the collection form renders that order unchanged. An optional `label`
+supplies non-secret display text for that field on the collection form; it never
+affects value keys, updates, or fills. Use a single trimmed line of at most 128 UTF-8
+bytes, and it is returned as metadata in `get`/`list` output.
+
 Use `credentials update <vault> <key> --version <version> --spec-file changes.json`
-with a spec such as `{"fields":{"password":{"value":"replacement"}}}`. Keep actual
+with a spec such as `{"fields":{"password":{"value":"replacement"}}}`; update specs key
+`fields` by name rather than using the ordered array. Keep actual
 secrets in protected files or stdin, never shell arguments. Omission preserves values;
 null or an empty string clears supported fields, including required text/email/password fields (returning them to pending collection). The form still requires nonempty required inputs. Field definitions cannot change. Stale versions fail,
 without retries. `items invoke <vault> <key> collect` reopens the full form without
@@ -422,10 +445,10 @@ elevate a project-scoped API key. Existing Kernel-managed wallet commands remain
 
 | Command | Purpose |
 | --- | --- |
-| `kernel vault-provider-configs create --name <name> --provider link\|agentcard --credentials-file <path\|->` | Register client credentials; file JSON contains `client_id` and `client_secret` strings |
+| `kernel vault-provider-configs create --name <name> --provider link\|agentcard --credentials-file <path\|->` | Register client credentials; file JSON contains `client_id` and `client_secret` strings. Link: `--publishable-key` sets the Stripe publishable key Kernel needs to refresh and revoke imported wallet grants |
 | `kernel vault-provider-configs list` | `--limit 1..100`, `--offset`; JSON includes `vault_provider_configs` and optional `next_offset` |
 | `kernel vault-provider-configs get <id-or-name>` | Show public metadata (`show` is an alias); AgentCard `test_mode` is introspected, not selectable |
-| `kernel vault-provider-configs update <id-or-name>` | `--name` renames; `--credentials-file` rotates using a JSON object containing only `client_secret` |
+| `kernel vault-provider-configs update <id-or-name>` | `--name` renames; `--credentials-file` rotates using a JSON object containing only `client_secret`; `--publishable-key` sets the Link publishable key |
 | `kernel vault-provider-configs delete <id-or-name>` | Delete only when no non-deleted items reference it; `--yes` skips confirmation |
 
 Config commands support `-o json` except delete. Secrets never appear in list/get/write output.
@@ -456,7 +479,7 @@ stop refreshing that grant in your backend: Kernel owns subsequent refresh-token
 
 ```bash
 kernel vault-provider-configs create --name link-client --provider link \
-  --credentials-file /secure/link-client.json
+  --credentials-file /secure/link-client.json --publishable-key pk_live_...
 kernel vaults wallets create checkout imported-wallet --provider link --spec '{}' \
   --provider-config-name link-client --tokens-file /secure/link-grant.json
 ```
@@ -597,13 +620,20 @@ kernel vaults items get user-123 order-1 --wait 60 -o json
 this vault attached. `merchant_origin` is the canonical HTTPS origin of the top-level
 merchant document, not a processor iframe; HTTP localhost is allowed for tests.
 
-Optional `psp` selects the tokenization processor: `square`, `braintree`, `worldpay`,
-`bambora`, or `mercado_pago`. Omit it for Square; non-Square processors require
+Optional `psp` selects the checkout processor: `square`, `braintree`, `worldpay`,
+`bambora`, `mercado_pago`, or `adyen`. Omit it for Square; non-Square processors require
 multi-processor preparation enablement. `environment` is `production`, `sandbox`, or
-`shared`: use `production` or `sandbox` for Square, Braintree and Worldpay, and `shared`
-for Bambora and Mercado Pago. Shared endpoints do not establish test mode; merchant
+`shared`: use `production` or `sandbox` for Square, Braintree, Worldpay and Adyen, and
+`shared` for Bambora and Mercado Pago. Shared endpoints do not establish test mode; merchant
 credentials and configuration determine processor test mode, independently of the
 AgentCard credential mode.
+
+`adyen` supports fresh-card Sessions requests on Adyen hosts only. Fill the public dummy
+card fields rather than vault aliases, and keep the approval page open through device
+handoff, including Adyen encryption. The unique armed preparation is associated with the
+next eligible request from the declared browser and merchant origin; competing preparations
+are rejected. Adyen device approval and browser `Authorised` responses are not capture or
+fulfillment evidence.
 
 Keep the approval page open. Poll until the item's status is `ready_to_submit`, then
 submit native Pay before `state.preparation.expires_at`. Readiness lasts at most 30
@@ -698,6 +728,7 @@ exists.
   - `--fill-rate <n>` - Percentage of the pool to fill per minute
   - `--timeout <seconds>` - Idle timeout for browsers acquired from the pool
   - `--stealth`, `--headless`, `--kiosk` - Default pool configuration
+  - `--memory 8GiB|16GiB` - Memory for headful browsers in the pool (default 8GiB)
   - `--refresh-on-profile-update` - Flush idle browsers when the pool's profile is updated (requires a profile)
   - `--profile-id`, `--profile-name`, `--proxy-id`, `--region`, `--start-url`, `--extension`, `--viewport`, `--private-host` - Same semantics as `kernel browsers create`
   - `--chrome-policy <json>` / `--chrome-policy-file <path>` - Custom Chrome enterprise policy applied to every browser in the pool, as a JSON object or from a file (`-` for stdin). Same semantics as `kernel browsers create`.
@@ -706,7 +737,7 @@ exists.
 - `kernel browser-pools get <id-or-name>` - Get pool details
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools update <id-or-name>` - Update pool configuration
-  - Same flags as create (except `--region`, which is fixed at creation and cannot be updated) plus `--clear-profile`, `--clear-proxy`, `--clear-start-url`, `--clear-extensions`, `--clear-chrome-policy`, and `--clear-private-hosts` for removing durable configuration. `--clear-private-hosts` restores the default private IP ranges. `--fill-rate 0` pauses automatic filling. `--discard-all-idle` discards all idle browsers and refills the pool. `--telemetry` and private-host updates only apply to browsers warmed after the update.
+  - Same flags as create (except `--region`, which is fixed at creation and cannot be updated) plus `--clear-profile`, `--clear-proxy`, `--clear-start-url`, `--clear-extensions`, `--clear-chrome-policy`, and `--clear-private-hosts` for removing durable configuration. `--clear-private-hosts` restores the default private IP ranges. `--fill-rate 0` pauses automatic filling. `--discard-all-idle` discards all idle browsers and refills the pool. `--telemetry`, `--memory`, and private-host updates only apply to browsers warmed after the update.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools delete <id-or-name>` - Delete a pool
   - `--force` - Force delete even if browsers are leased
@@ -758,6 +789,7 @@ Captured telemetry can be exported over OTLP to one of the org's configured dest
 - Capture and export: `kernel browsers create --telemetry-export-otlp my-collector`
 - Capture without exporting: `kernel browsers create --telemetry=all`
 - Stop exporting: `--telemetry-export-otlp=off`
+- Export only, without persisting to Kernel storage: `kernel browsers create --telemetry-export-otlp my-collector --telemetry-storage off`
 
 Export is bound at session creation, so it is available on `browsers create` and on the managed-auth commands that create a browser (`auth connections create`, `update`, and `login`). A browser session keeps the destination it was created with — `browsers update` cannot change it — and browser pools do not support export.
 
@@ -951,6 +983,13 @@ Destinations are the OTLP/HTTP endpoints sessions export to. They belong to the 
   - Prints the tool's `output` as pretty JSON on completion; tool errors and cancellations exit non-zero
   - `awaiting_submission` is successful but warns that a non-autosubmit declarative form was filled, not submitted. Inspect the form, obtain any required confirmation, then submit through Playwright or computer interaction instead of invoking the tool again
   - Invocations are never retried automatically. A 504 `outcome_unknown` error prints the code, invocation ID, and message and exits non-zero. The tool may already have had side effects; verify the outcome before invoking it again
+- `kernel browsers webmcp custom-tools list <id-or-name>` - List registered custom tools with their generated ID, namespace, kind, URL patterns, and metadata
+  - `-o json` - Output the raw response
+- `kernel browsers webmcp custom-tools add <id-or-name> --namespace <ns> --source '<js>'` - Atomically add a namespaced batch of page-backed or CDP-backed custom tools
+  - `--source <js>` or `--source-file <path>` - JavaScript expression evaluating to a non-empty array of tool definitions (URL matchers, tool metadata, execute functions); mutually exclusive. Use `--source-file -` to read stdin
+  - `--force-overwrite-namespace` - Atomically replace every existing tool in the namespace
+  - `-o json` - Output the raw response
+- `kernel browsers webmcp custom-tools remove <id-or-name> <tool-id>` - Remove one custom tool by generated ID (in-progress invocations are not canceled)
 
 - `kernel browsers webmcp custom-tools list <id-or-name>` - List all registered custom tools, even when no page currently matches
   - Displays ID, namespace, kind (`page` or `cdp`), name, and URL patterns
@@ -1080,18 +1119,21 @@ Managed auth connections (`kernel auth connections`). The commands below are new
   - `--stealth` - Whether those browser sessions run in stealth mode (default: true); use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Default telemetry for this connection's browser sessions. Same semantics as `kernel browsers create`
   - `--telemetry-export-otlp <id-or-name>` - Export this connection's captured telemetry over OTLP to one of the org's configured destinations. Implies `--telemetry=all` when `--telemetry` is not set. Use `=off` to disable export.
+  - `--telemetry-storage on|off` - Whether this connection's sessions persist captured telemetry to Kernel storage (default on). `off` requires `--telemetry-export-otlp <id-or-name>` in the same command.
 - `kernel auth connections update <id>` - New flags:
   - `--region us-east|eu-west|ap-southeast` - Update the region for browser sessions created after this command. Active sessions don't move.
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy configuration for future browser sessions (mutually exclusive). Use `--proxy-mode=default` to drop a selected proxy rather than passing an empty value.
   - `--stealth` - Set whether future browser sessions run in stealth mode; use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Update telemetry for future browser sessions
   - `--telemetry-export-otlp <id-or-name>` - Update where future sessions export captured telemetry. Naming a destination requires passing `--telemetry` in the same command, since the API validates capture and export together and enabling capture here would replace the connection's current category selection. Use `=off` to disable export.
+  - `--telemetry-storage on|off` - Update whether future sessions persist captured telemetry to Kernel storage. Requires `--telemetry` in the same command; `off` also requires an export destination.
 - `kernel auth connections login <id>` - New flags:
   - `--region us-east|eu-west|ap-southeast` - Region override for this login only. Omit it to inherit the connection region.
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy override for this login's browser session (mutually exclusive); omitted properties inherit the connection defaults
   - `--stealth` - Stealth override for this login's browser session; use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Telemetry override for this login only, merged onto the connection's config
   - `--telemetry-export-otlp <id-or-name>` - Export override for this login only. Naming a destination requires passing `--telemetry` in the same command. Use `=off` to disable export.
+  - `--telemetry-storage on|off` - Storage override for this login only. Requires `--telemetry` in the same command; `off` also requires an export destination.
 - `kernel auth connections submit <id>` - New flags:
   - `--field-value <id=value>` - Canonical field-id=value pair from the connection's `fields` list (repeatable); preferred over the legacy `--field`
   - `--choice-id <id>` - Canonical choice ID from the connection's `choices` list
@@ -1208,6 +1250,55 @@ Automated authentication for web services. The `run` command orchestrates the fu
 - `kernel org limits set` - Set the default per-project concurrency cap applied to projects without an explicit override
   - `--default-project-max-concurrent-sessions <n>` - Default maximum concurrent browsers for projects without an explicit override (`0` to remove the default)
   - `--output json`, `-o json` - Output raw JSON object
+
+### Search
+
+- `kernel search <query>` - Search the web through Kernel's search providers
+  - `--country <code>` - ISO 3166-1 alpha-2 search locale preference
+  - `--language <tag>` - BCP 47 search language preference
+  - `--max-results <n>` - Requested result count, 1-100 (clamped to the serving provider's cap)
+  - `--recency <window>` - Relative search window: `hour`, `day`, `week`, `month`, or `year`
+  - `--safe-search <level>` - Safety preference: `off`, `moderate`, or `strict`
+  - `--start-date <YYYY-MM-DD>` / `--end-date <YYYY-MM-DD>` - Inclusive publication-date bounds (`--recency` takes precedence)
+  - `--include-domains <hosts>` / `--exclude-domains <hosts>` - Hostname preferences, matching a hostname and its subdomains
+  - `--strict-params` - Require every supplied portable parameter to be honored exactly instead of approximated
+  - `--include-raw` - Include untouched provider payloads in the response's raw fields
+  - `--timeout-ms <ms>` - Overall deadline across search attempts and inline retrieval
+  - `--content` - Retrieve page content for each result using portable defaults
+  - `--show-content` - Print the extracted content text for each result (implies `--content`)
+  - `--content-source <source>` - Retrieval source: `auto`, `provider`, or `browser`
+  - `--content-format <format>` - Extracted content format: `markdown` or `text`
+  - `--content-max-chars <n>` - Per-result Unicode character limit after extraction
+  - `--content-max-age-hours <n>` - Maximum acceptable age of cached page content; `0` forces a live fetch
+  - `--content-timeout-ms <ms>` - Per-result retrieval deadline
+  - `--content-browser-id <id>` - Retrieve through an existing browser session (requires `--content-source browser`)
+  - `--content-browser-mode <mode>` - Browser retrieval mode: `curl` or `render`
+  - `--provider <slug>` - Pin a single provider (`brave`, `exa`, `perplexity`, `context`, `parallel`, `valyu`, `octen`, `you`, `tavily`, `serpapi`)
+  - `--fallback-providers <slugs>` - Ordered provider chain to try in turn
+  - `--fallback-on <outcomes>` - Outcomes that advance to the next provider: `error`, `timeout`, `empty`
+  - `--provider-options <json>` - Provider-native options as a JSON object keyed by provider slug
+  - `--output json`, `-o json` - Output raw JSON object
+- `kernel search get <id>` - Re-read a retained search without calling a provider or incurring cost
+  - `--show-content` - Print the extracted content text for each result
+  - `--output json`, `-o json` - Output raw JSON object
+- `kernel search providers` - List providers, result caps, and content capabilities
+  - `--slug <slug>` - Filter to a single provider; also prints its portable-parameter support matrix and notes
+  - `--output json`, `-o json` - Output raw JSON array
+- `kernel search contents <id>` - Fetch content for selected results of a retained search
+  - `--result-ids <ids>` - Result IDs from the retained search, in the desired response order
+  - `--limit <n>` - Number of results to fetch starting from rank 1 (mutually exclusive with `--result-ids`)
+  - `--timeout-ms <ms>` - Overall deadline across all selected results
+  - `--content-source <source>` - `auto` (default), `provider`, or `browser`
+  - `--content-format <format>` - `markdown` or `text`
+  - `--content-max-chars <n>` - Per-result character limit after extraction
+  - `--content-max-age-hours <n>` - For `auto`, maximum age of retained provider content; `0` always uses a browser
+  - `--content-timeout-ms <ms>` - Per-result deadline
+  - `--content-browser-id <id>` - Retrieve through an existing browser session
+  - `--content-browser-mode <mode>` - `curl` or `render`
+
+Searches are retained for 24 hours. Omitting the strategy flags lets Kernel pick an
+eligible provider; portable filters a provider cannot honor are approximated or
+dropped and reported as warnings unless `--strict-params` is set.
 
 ## Examples
 

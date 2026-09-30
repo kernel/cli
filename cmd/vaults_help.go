@@ -69,7 +69,8 @@ type AgentCardCardSpec = {
   merchant: string;           // approval-screen name; 1..120 characters
   amount: number;             // integer minor units; 1..9007199254740991
   currency: string;           // three letters
-  card_id?: string;           // vc_...; otherwise chosen at approval
+  card_id?: string;           // opaque AgentCard ID, pass through unchanged; else chosen at approval
+  checkout_origin?: string;   // top-level checkout page origin (https://host[:port], no path) for autopilot matching; omitted asks for approval; updates that omit it remove it
 };
 
 type LinkLineItem = {
