@@ -217,6 +217,6 @@ func TestCredentialSpecInputProvider(t *testing.T) {
 	require.NotNil(t, spec.OfKernel)
 	assert.EqualValues(t, "kernel", spec.OfKernel.Provider)
 
-	_, err = credentialSpecInput([]byte(`{"provider":"1password","account":"op","requests":{"version":2,"entries":[]}}`))
-	assert.EqualError(t, err, "credential spec provider must be kernel")
+	_, err = credentialSpecInput([]byte(`{"provider":"bitwarden","fields":[{"name":"password","type":"password"}]}`))
+	assert.EqualError(t, err, "credential spec provider must be kernel or 1password")
 }
