@@ -431,7 +431,7 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	}
 	if item.Type == "credential_account" {
 		if actions.RequiredAction != "" {
-			pterm.Info.Println("Share the 1Password authorization URL with the account owner. Observe the connection with items get --wait 60; never ask for 1Password passwords or codes.")
+			pterm.Info.Println("Share the 1Password authorization URL with the account owner as bare text, not in backticks or a code block. Observe the connection with items get --wait 60; never ask for 1Password passwords or codes.")
 		} else if item.State.Status == "reconnect_required" || item.State.Status == "declined" {
 			pterm.Info.Println("This 1Password account is not connected. Ask the owner before running credentials connect again with the same key; use 1pw_recover first if it is advertised.")
 		}
@@ -440,6 +440,9 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	if item.Type == "credential" && item.Spec.Provider == "1password" {
 		if item.Action.Instructions != "" {
 			pterm.Printf("Approval instructions:\n%s\n", item.Action.Instructions)
+		}
+		if actions.ApprovalURL != "" {
+			pterm.Info.Println("Give the account owner the approval URL as bare text on its own line, not in backticks or a code block, so it stays clickable. The login must be in a vault only the owner can access; shared-vault items cannot be approved.")
 		}
 		pterm.Info.Println("Ready means the account owner approved access, not that sign-in succeeded. 1pw_fill submits the form; inspect the page afterward. Never retry a request or fill automatically; after an uncertain outcome, do not delete and recreate the item.")
 		return
