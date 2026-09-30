@@ -283,14 +283,14 @@ func TestVaultCardRequestMapping(t *testing.T) {
 					if provider == "link" {
 						assert.JSONEq(t, fmt.Sprintf(`{"provider":"link","wallet":"wallet-1","amount":1234,"currency":"USD","merchant_name":"Example Shop","merchant_url":"https://shop.example","payment_method_id":"pm-1","context":%q}`, strings.Repeat("Purchase purpose. ", 7)), string(body["spec"]))
 					} else {
-						assert.JSONEq(t, `{"provider":"agentcard","wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop","card_id":"vc_chosen"}`, string(body["spec"]))
+						assert.JSONEq(t, `{"provider":"agentcard","wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop","card_id":"vc_chosen","checkout_origin":"https://shop.example.com"}`, string(body["spec"]))
 					}
 					w.Header().Set("Content-Type", "application/json")
 					_, _ = io.WriteString(w, requestedCardFixture)
 				})
 				flags := linkCardArgs()
 				if provider == "agentcard" {
-					flags = []string{"--provider", provider, "--spec", `{"wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop","card_id":"vc_chosen"}`}
+					flags = []string{"--provider", provider, "--spec", `{"wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop","card_id":"vc_chosen","checkout_origin":"https://shop.example.com"}`}
 				}
 				args := append([]string{"vaults", "cards", operation, "checkout", "order-1", "-o", "json"}, flags...)
 				out, human, err := executeVaultCommand(t, client, args...)
@@ -327,6 +327,19 @@ func TestVaultCardAgentcardCardIDIsOpaque(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestVaultCardAgentcardCheckoutOriginIsPublic(t *testing.T) {
+	raw := `{"id":"item-1","key":"order-1","type":"card","spec":{"provider":"agentcard","wallet":"wallet-1","merchant":"Example Shop","amount":1234,"currency":"usd","checkout_origin":"https://shop.example.com"}}`
+	out, err := filterVaultJSON(json.RawMessage(raw), vaultItemFields)
+	require.NoError(t, err)
+	var item struct {
+		Spec struct {
+			CheckoutOrigin string `json:"checkout_origin"`
+		} `json:"spec"`
+	}
+	require.NoError(t, json.Unmarshal(out, &item))
+	assert.Equal(t, "https://shop.example.com", item.Spec.CheckoutOrigin)
 }
 
 func TestVaultInvokeRequiresAdvertisedOperation(t *testing.T) {

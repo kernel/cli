@@ -43,7 +43,7 @@ var vaultItemFields = vaultOutputFields{
 	"action":               vaultFieldsOf("name url expires_at instructions"),
 	"expanded":             {"payment_methods": vaultMethodFields},
 	"spec": {
-		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil,
+		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil, "checkout_origin": nil,
 		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
 		"context": nil, "expires_at": nil, "description": nil, "account": nil,
 		"requests":        onePasswordRequestFields,
@@ -367,6 +367,9 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		rows = append(rows, []string{"Wallet key", item.Spec.Wallet}, []string{"Merchant", merchant}, []string{"Amount (minor units)", fmt.Sprintf("%d %s", item.Spec.Amount, item.Spec.Currency)})
 		if item.Spec.Provider == "link" {
 			rows = append(rows, []string{"Payment method ID", item.Spec.PaymentMethodID})
+		}
+		if item.Spec.Provider == "agentcard" && item.Spec.CheckoutOrigin != "" {
+			rows = append(rows, []string{"Checkout origin", item.Spec.CheckoutOrigin})
 		}
 	}
 	if item.State.JSON.Domains.Valid() {
