@@ -92,6 +92,22 @@ func TestSearchReadCommands(t *testing.T) {
 	}
 }
 
+func TestSearchContents(t *testing.T) {
+	const request = `{"limit":2,"content":{"source":"auto","format":"markdown"}}`
+	const response = `{"search_id":"srch_test","contents":[{"result_id":"r1","status":"ok","content":"page text"}],"warnings":[],"usage":{"units":0}}`
+	stdout, err := executeSearchCommand(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/search/srch_test/contents", r.URL.Path)
+		data, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.JSONEq(t, request, string(data))
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, response)
+	}, "", "contents", "srch_test", "--request", request)
+	require.NoError(t, err)
+	assert.JSONEq(t, response, stdout)
+}
+
 func TestSearchInvalidInput(t *testing.T) {
 	for _, args := range [][]string{
 		{}, {" "}, {strings.Repeat("x", 2049)}, {"a", "b"}, {"test", "--provider", ""},
@@ -99,7 +115,11 @@ func TestSearchInvalidInput(t *testing.T) {
 		{"--request", "null"}, {"--request", "[]"}, {"--request", "{"}, {"--request", `{}`}, {"--request", `{"query":1}`},
 		{"test", "--request", `{"query":"test"}`}, {"--request", `{}`, "--provider", "exa"},
 		{"--request", `{}`, "--max-results", "5"}, {"--request-file", "request.json"},
-		{"get"}, {"providers", "extra"},
+		{"get"}, {"contents"}, {"contents", "srch_test"},
+		{"contents", "srch_test", "--request", "{"},
+		{"contents", "srch_test", "--request", `{"limit":1,"result_ids":["r1"]}`},
+		{"contents", "srch_test", "--request", `{}`},
+		{"providers", "extra"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			_, err := executeSearchCommand(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unexpected API call") }, "", args...)
@@ -126,7 +146,7 @@ func TestSearchErrorsDoNotRetryCreate(t *testing.T) {
 }
 
 func TestSearchWiring(t *testing.T) {
-	for _, path := range [][]string{{"search"}, {"search", "get"}, {"search", "providers"}} {
+	for _, path := range [][]string{{"search"}, {"search", "get"}, {"search", "contents"}, {"search", "providers"}} {
 		cmd, remaining, err := rootCmd.Find(path)
 		require.NoError(t, err)
 		require.Empty(t, remaining)

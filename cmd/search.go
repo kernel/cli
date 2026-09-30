@@ -35,6 +35,31 @@ func newSearchCommand() *cobra.Command {
 		}
 		return executeSearchRequest(cmd, http.MethodGet, "search/"+url.PathEscape(args[0]), nil)
 	}}
+	contents := &cobra.Command{
+		Use:   "contents <id>",
+		Short: "Fetch content for selected results in a retained search",
+		Long: "Fetches provider content or page content through a Kernel browser. Browser retrieval can consume browser concurrency and incur browser charges.\n\n" +
+			"Use --request with a JSON body containing exactly one of result_ids or limit, plus optional content retrieval settings.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if strings.TrimSpace(args[0]) == "" {
+				return fmt.Errorf("search ID must not be empty")
+			}
+			input, _ := cmd.Flags().GetString("request")
+			if strings.TrimSpace(input) == "" {
+				return fmt.Errorf("contents requires --request with result_ids or limit")
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(input), &fields); err != nil || fields == nil {
+				return fmt.Errorf("contents request must be a JSON object")
+			}
+			if err := validateSearchContentsRequest(fields); err != nil {
+				return err
+			}
+			return executeSearchRequest(cmd, http.MethodPost, "search/"+url.PathEscape(args[0])+"/contents", json.RawMessage(input))
+		},
+	}
+	contents.Flags().String("request", "", "Content fetch request JSON; provide exactly one of result_ids or limit")
 	providers := &cobra.Command{Use: "providers", Short: "List configured providers and their capabilities as JSON", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		path := "search/providers"
 		if cmd.Flags().Changed("slug") {
@@ -44,7 +69,7 @@ func newSearchCommand() *cobra.Command {
 		return executeSearchRequest(cmd, http.MethodGet, path, nil)
 	}}
 	providers.Flags().String("slug", "", "Filter by provider slug")
-	cmd.AddCommand(get, providers)
+	cmd.AddCommand(get, contents, providers)
 	return cmd
 }
 
@@ -99,6 +124,15 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		}
 	}
 	return executeSearchRequest(cmd, http.MethodPost, "search", body)
+}
+
+func validateSearchContentsRequest(fields map[string]json.RawMessage) error {
+	_, hasIDs := fields["result_ids"]
+	_, hasLimit := fields["limit"]
+	if hasIDs == hasLimit {
+		return fmt.Errorf("contents request must provide exactly one of result_ids or limit")
+	}
+	return nil
 }
 
 func validateSearchQuery(query string) error {
