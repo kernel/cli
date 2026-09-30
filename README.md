@@ -157,6 +157,9 @@ kernel search get srch_01jsearchresult
 
 # Use portable filters or other advanced request fields
 kernel search --request '{"query":"browser automation","include_domains":["example.com"],"strict_params":true}'
+
+# Fetch content for the top results of a retained search
+kernel search contents srch_01jsearchresult --limit 3 --content-source browser
 ```
 
 - `--max-results` accepts 1–100; the API may clamp it to the provider cap.
@@ -168,9 +171,18 @@ kernel search --request '{"query":"browser automation","include_domains":["examp
 - Create requests are not automatically retried, to avoid duplicate billable
   searches after an ambiguous failure. If a request fails ambiguously, use
   `search get` only when the API returned a retained search ID.
-- Retained searches return 404 when missing, expired, or inaccessible. Deferred
-  content retrieval is not exposed because it is reserved but unavailable in the
-  current API contract.
+- Retained searches return 404 when missing, expired, or inaccessible.
+- `search contents <id>` retrieves content for selected results of a retained
+  search. Provide exactly one of `--result-ids` (in desired response order) or
+  `--limit` (top N results, 1–100). `--timeout-ms` sets the overall deadline
+  (1000–120000). Content options: `--content-source` (`auto`, `provider`, or
+  `browser`; default `auto`), `--content-format` (`markdown` or `text`),
+  `--content-max-chars`, `--content-max-age-hours`, `--content-timeout-ms`,
+  `--content-browser-id` (reuse an existing browser session), and
+  `--content-browser-mode` (`curl` or `render`). When no browser ID is given and a
+  result needs browser retrieval, Kernel creates a temporary browser for the
+  request; it is billed like any other browser. Requests are not automatically
+  retried.
 - To search for a literal query equal to a subcommand name (`get` or `providers`),
   use `--request '{"query":"providers"}'`.
 
@@ -1272,6 +1284,17 @@ Automated authentication for web services. The `run` command orchestrates the fu
 - `kernel search providers` - List providers, result caps, and content capabilities
   - `--slug <slug>` - Filter to a single provider; also prints its portable-parameter support matrix and notes
   - `--output json`, `-o json` - Output raw JSON array
+- `kernel search contents <id>` - Fetch content for selected results of a retained search
+  - `--result-ids <ids>` - Result IDs from the retained search, in the desired response order
+  - `--limit <n>` - Number of results to fetch starting from rank 1 (mutually exclusive with `--result-ids`)
+  - `--timeout-ms <ms>` - Overall deadline across all selected results
+  - `--content-source <source>` - `auto` (default), `provider`, or `browser`
+  - `--content-format <format>` - `markdown` or `text`
+  - `--content-max-chars <n>` - Per-result character limit after extraction
+  - `--content-max-age-hours <n>` - For `auto`, maximum age of retained provider content; `0` always uses a browser
+  - `--content-timeout-ms <ms>` - Per-result deadline
+  - `--content-browser-id <id>` - Retrieve through an existing browser session
+  - `--content-browser-mode <mode>` - `curl` or `render`
 
 Searches are retained for 24 hours. Omitting the strategy flags lets Kernel pick an
 eligible provider; portable filters a provider cannot honor are approximated or
