@@ -35,8 +35,8 @@ const vaultCredentialPathsHelp = `Credential vaults have two sign-in paths. Befo
 Neither path returns secret values through the API or CLI. Never ask the user to paste
 passwords, OAuth codes, tokens, or keys into the terminal or chat; share only returned
 URLs, as plain text rather than code so they stay clickable. An agent controlling
-the browser can still read filled pages. A filled or submitted form is not proof of
-sign-in: inspect the page afterward.`
+the browser can still read filled pages.
+A filled or submitted form is not proof of sign-in: inspect the page afterward.`
 
 const vaultOnePasswordCredentialHelp = `1Password flow:
 1. Ask whose 1Password account holds the login and confirm it is in a non-shared vault.

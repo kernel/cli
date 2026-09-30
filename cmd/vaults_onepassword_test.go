@@ -266,7 +266,7 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 			"1Password brokered approval",
 			"non-shared 1Password vault",
 			"State this requirement when asking",
-			"as plain text rather than code",
+			"as plain text rather than code so they stay clickable",
 			"passkeys",
 			"offer Kernel-hosted collection",
 			"Never ask the user to paste",
