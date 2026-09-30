@@ -433,10 +433,10 @@ elevate a project-scoped API key. Existing Kernel-managed wallet commands remain
 
 | Command | Purpose |
 | --- | --- |
-| `kernel vault-provider-configs create --name <name> --provider link\|agentcard --credentials-file <path\|->` | Register client credentials; file JSON contains `client_id` and `client_secret` strings |
+| `kernel vault-provider-configs create --name <name> --provider link\|agentcard --credentials-file <path\|->` | Register client credentials; file JSON contains `client_id` and `client_secret` strings. Link: `--publishable-key` sets the Stripe publishable key Kernel needs to refresh and revoke imported wallet grants |
 | `kernel vault-provider-configs list` | `--limit 1..100`, `--offset`; JSON includes `vault_provider_configs` and optional `next_offset` |
 | `kernel vault-provider-configs get <id-or-name>` | Show public metadata (`show` is an alias); AgentCard `test_mode` is introspected, not selectable |
-| `kernel vault-provider-configs update <id-or-name>` | `--name` renames; `--credentials-file` rotates using a JSON object containing only `client_secret` |
+| `kernel vault-provider-configs update <id-or-name>` | `--name` renames; `--credentials-file` rotates using a JSON object containing only `client_secret`; `--publishable-key` sets the Link publishable key |
 | `kernel vault-provider-configs delete <id-or-name>` | Delete only when no non-deleted items reference it; `--yes` skips confirmation |
 
 Config commands support `-o json` except delete. Secrets never appear in list/get/write output.
@@ -467,7 +467,7 @@ stop refreshing that grant in your backend: Kernel owns subsequent refresh-token
 
 ```bash
 kernel vault-provider-configs create --name link-client --provider link \
-  --credentials-file /secure/link-client.json
+  --credentials-file /secure/link-client.json --publishable-key pk_live_...
 kernel vaults wallets create checkout imported-wallet --provider link --spec '{}' \
   --provider-config-name link-client --tokens-file /secure/link-grant.json
 ```

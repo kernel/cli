@@ -299,3 +299,42 @@ func TestVaultProviderConfigEmptyAndInvalidPagination(t *testing.T) {
 		}
 	}
 }
+
+func TestVaultProviderConfigPublishableKey(t *testing.T) {
+	secret := vaultTestSecret(t)
+	t.Run("create link", func(t *testing.T) {
+		client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				Credentials map[string]string `json:"credentials"`
+			}
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.Equal(t, "pk_test_123", body.Credentials["publishable_key"])
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			response := strings.ReplaceAll(providerConfigFixture, `"provider":"agentcard"`, `"provider":"link","publishable_key":"pk_test_123"`)
+			_, _ = io.WriteString(w, strings.ReplaceAll(response, `,"test_mode":false`, ""))
+		})
+		out, _, err := executeVaultInputCommand(t, client, fmt.Sprintf(`{"client_id":"client-1","client_secret":%q}`, secret), "vault-provider-configs", "create", "--name", "checkout-client", "--provider", "link", "--credentials-file", "-", "--publishable-key", "pk_test_123", "-o", "json")
+		require.NoError(t, err)
+		assert.Contains(t, out, `"publishable_key": "pk_test_123"`)
+		assert.False(t, strings.Contains(out, secret))
+	})
+	t.Run("create agentcard rejected", func(t *testing.T) {
+		client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Fatal("unexpected request") })
+		_, _, err := executeVaultInputCommand(t, client, "", "vault-provider-configs", "create", "--name", "checkout-client", "--provider", "agentcard", "--credentials-file", "-", "--publishable-key", "pk_test_123")
+		require.ErrorContains(t, err, "--publishable-key requires --provider link")
+	})
+	t.Run("update", func(t *testing.T) {
+		client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			var body map[string]json.RawMessage
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.JSONEq(t, `{"publishable_key":"pk_test_456"}`, string(body["credentials"]))
+			_, hasName := body["name"]
+			assert.False(t, hasName)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, providerConfigFixture)
+		})
+		_, _, err := executeVaultInputCommand(t, client, "", "vault-provider-configs", "update", "config-1", "--publishable-key", "pk_test_456", "-o", "json")
+		require.NoError(t, err)
+	})
+}
