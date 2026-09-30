@@ -207,7 +207,7 @@ completed exits 0, failed/unknown exit nonzero with valid JSON retained on stdou
   and does not confirm sign-in; inspect the page. fill_failed and fill_unknown exit
   nonzero. After fill_unknown, do not retry in the same browser.
 1pw_update_access_token (stored-token credentials only): --spec-file, never --params,
-  with access_token and optional access_token_expires_at (RFC 3339).
+  with access_token only.
 1pw_recover (credential accounts, no parameters): returns a new 1Password link that
   recovers a failed account connection. Share it with the account owner, then run
   credentials connect again with the same key; never delete the item to recover.

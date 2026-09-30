@@ -9,7 +9,7 @@ require (
 	github.com/charmbracelet/lipgloss/v2 v2.0.0-beta.1
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/joho/godotenv v1.5.1
-	github.com/kernel/kernel-go-sdk v0.112.0
+	github.com/kernel/kernel-go-sdk v0.114.0
 	github.com/klauspost/compress v1.18.5
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/pterm/pterm v0.12.80
@@ -61,8 +61,3 @@ require (
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 )
-
-// TODO: Temporary private stlc preview of kernel/kernel#4256 (1Password credential
-// vaults). Before merge, delete this replace, bump github.com/kernel/kernel-go-sdk to
-// the official release that includes that API, and run go mod tidy.
-replace github.com/kernel/kernel-go-sdk => github.com/kernel/kernel-go-sdk-staging v0.86.1-0.20260929125950-50ebbb05a59a

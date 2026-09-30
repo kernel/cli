@@ -69,10 +69,9 @@ credentials connect again with the same key for a new link.`
 const vaultOnePasswordStoredTokenHelp = `Stored-token 1Password credentials (developer integrations only, separate from the
 flow above): a developer who already holds a 1Password broker access token and its
 matching integration key may create the credential with access_token, integration_key,
-optional access_token_expires_at (RFC 3339), and requests instead of account. Supply
-either account or both secrets, never both. Put them only in a protected --spec-file
+and requests instead of account. Supply either account or both secrets, never both. Put them only in a protected --spec-file
 or stdin; they are write-only and never displayed. Never ask an end user for them.
-Replace an expired token with items invoke 1pw_update_access_token --spec-file.`
+Replace the token with items invoke 1pw_update_access_token --spec-file.`
 
 const vaultCredentialHelp = `Create credentials for a website.
 
@@ -263,7 +262,7 @@ func credentialSpecInput(data []byte) (kernel.CredentialVaultItemSpecInputUnionP
 			return kernel.CredentialVaultItemSpecInputUnionParam{}, fmt.Errorf("invalid 1Password credential spec")
 		}
 		accountBacked := spec.Account.Valid() && strings.TrimSpace(spec.Account.Value) != ""
-		storedToken := spec.AccessToken.Valid() || spec.IntegrationKey.Valid() || spec.AccessTokenExpiresAt.Valid()
+		storedToken := spec.AccessToken.Valid() || spec.IntegrationKey.Valid()
 		if accountBacked == storedToken || (storedToken && (!spec.AccessToken.Valid() || !spec.IntegrationKey.Valid())) {
 			return kernel.CredentialVaultItemSpecInputUnionParam{}, fmt.Errorf("1Password credential spec requires either account (a credential_account key) or both access_token and integration_key, never both")
 		}

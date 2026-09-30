@@ -53,7 +53,7 @@ func TestCredentialCreateOnePassword(t *testing.T) {
 	entry := `{"type":"login","parameters":{"website":"https://github.com"}}`
 	for _, spec := range []string{
 		`{"provider":"1password","account":"onepassword",` + requests + `}`,
-		`{"provider":"1password","access_token":"token-secret","integration_key":"key-secret","access_token_expires_at":"2026-10-01T00:00:00Z",` + requests + `}`,
+		`{"provider":"1password","access_token":"token-secret","integration_key":"key-secret",` + requests + `}`,
 	} {
 		calls := 0
 		client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -297,7 +297,7 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 	assert.Contains(t, invoke.Long, "--spec-file, never --params")
 	assert.Contains(t, invoke.Example, `"entry_id":"<entry-id>"`)
 	for _, help := range []string{invoke.Long, invoke.Example, credentials.Long, credentials.Example, connect.Long} {
-		for _, removed := range []string{"1pw_request_access", "1pw_poll_access", "reconcile", "account_id", "Family", "customer_managed"} {
+		for _, removed := range []string{"1pw_request_access", "1pw_poll_access", "reconcile", "account_id", "Family", "customer_managed", "access_token_expires_at", "RFC 3339"} {
 			assert.NotContains(t, help, removed)
 		}
 	}
@@ -340,7 +340,7 @@ func TestOnePasswordFillEntryAndTokenUpdateRequests(t *testing.T) {
 		operation, params, body, response string
 	}{
 		{"1pw_fill", `{"browser_id":"browser-1","page_url":"https://github.com/login","entry_id":"entry-1"}`, `{"type":"1pw_fill","browser_id":"browser-1","page_url":"https://github.com/login","entry_id":"entry-1"}`, `{"type":"1pw_fill","status":"fill_submitted"}`},
-		{"1pw_update_access_token", `{"access_token":"token-secret","access_token_expires_at":"2026-10-01T00:00:00Z"}`, `{"type":"1pw_update_access_token","access_token":"token-secret","access_token_expires_at":"2026-10-01T00:00:00Z"}`, onePasswordCredentialWithOperation("1pw_update_access_token")},
+		{"1pw_update_access_token", `{"access_token":"token-secret"}`, `{"type":"1pw_update_access_token","access_token":"token-secret"}`, onePasswordCredentialWithOperation("1pw_update_access_token")},
 	} {
 		t.Run(tc.operation, func(t *testing.T) {
 			posts := 0
@@ -365,7 +365,7 @@ func TestOnePasswordFillEntryAndTokenUpdateRequests(t *testing.T) {
 
 	calls := 0
 	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) { calls++ })
-	for _, params := range []string{`{"access_token":""}`, `{"access_token":"token-secret","access_token_expires_at":"tomorrow"}`, `{"access_token":"token-secret","integration_key":"key-secret"}`} {
+	for _, params := range []string{`{"access_token":""}`, `{"access_token":"token-secret","access_token_expires_at":"2026-10-01T00:00:00Z"}`, `{"access_token":"token-secret","integration_key":"key-secret"}`} {
 		_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "user", "github", "1pw_update_access_token", "--spec-file", credentialSpecFile(t, params))
 		require.Error(t, err, params)
 		assert.NotContains(t, err.Error(), "-secret")
@@ -449,5 +449,10 @@ func TestVaultItemsListShowsCredentialSite(t *testing.T) {
 	out, text, err = executeVaultCommand(t, client, "vaults", "items", "get", "user", "github")
 	require.NoError(t, err)
 	assert.Contains(t, out+text, "stored token (developer-supplied)")
-	assert.Contains(t, out+text, "2026-10-01T00:00:00Z")
+	assert.NotContains(t, out+text, "2026-10-01T00:00:00Z")
+	assert.NotContains(t, out+text, "expires")
+
+	out, text, err = executeVaultCommand(t, client, "vaults", "items", "get", "user", "github", "-o", "json")
+	require.NoError(t, err)
+	assert.NotContains(t, out+text, "access_token_expires_at")
 }

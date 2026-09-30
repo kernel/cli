@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/kernel/cli/pkg/util"
 	kernel "github.com/kernel/kernel-go-sdk"
@@ -46,7 +45,7 @@ var vaultItemFields = vaultOutputFields{
 	"spec": {
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil,
 		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
-		"context": nil, "expires_at": nil, "description": nil, "account": nil, "access_token_expires_at": nil,
+		"context": nil, "expires_at": nil, "description": nil, "account": nil,
 		"requests":        onePasswordRequestFields,
 		"fields":          vaultFieldsOf("name label type required sensitive"),
 		"provider_config": vaultFieldsOf("id name"),
@@ -320,9 +319,6 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 				rows = append(rows, []string{"1Password account (immutable)", item.Spec.Account})
 			} else {
 				rows = append(rows, []string{"1Password account", "stored token (developer-supplied)"})
-			}
-			if !item.Spec.AccessTokenExpiresAt.IsZero() {
-				rows = append(rows, []string{"Access token expires", item.Spec.AccessTokenExpiresAt.Format(time.RFC3339)})
 			}
 			for _, entry := range item.Spec.Requests.Entries {
 				rows = append(rows, []string{"Requested login", entry.Parameters.Website})
