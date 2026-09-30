@@ -441,7 +441,7 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		if item.Action.Instructions != "" {
 			pterm.Printf("Approval instructions:\n%s\n", item.Action.Instructions)
 		}
-		if actions.ApprovalURL != "" {
+		if actions.RequiredAction != "" && actions.ActionURL != "" {
 			pterm.Info.Println("Give the account owner the approval URL as bare text on its own line, not in backticks or a code block, so it stays clickable. The login must be in a vault only the owner can access; shared-vault items cannot be approved.")
 		}
 		pterm.Info.Println("Ready means the account owner approved access, not that sign-in succeeded. 1pw_fill submits the form; inspect the page afterward. Never retry a request or fill automatically; after an uncertain outcome, do not delete and recreate the item.")
