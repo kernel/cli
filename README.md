@@ -1272,12 +1272,6 @@ Automated authentication for web services. The `run` command orchestrates the fu
 - `kernel search providers` - List providers, result caps, and content capabilities
   - `--slug <slug>` - Filter to a single provider; also prints its portable-parameter support matrix and notes
   - `--output json`, `-o json` - Output raw JSON array
-- `kernel search contents <id>` - Deferred content retrieval for a retained search
-  - `--result-ids <ids>` - Result IDs from the retained search, in the desired response order
-  - `--limit <n>` - Number of results to fetch starting from rank 1 (mutually exclusive with `--result-ids`)
-  - `--timeout-ms <ms>` - Overall deadline across all selected results
-  - Accepts the same `--content-*` flags as `kernel search`
-  - This endpoint is reserved and returns 404 until deferred retrieval ships; use `kernel search --content` for inline retrieval
 
 Searches are retained for 24 hours. Omitting the strategy flags lets Kernel pick an
 eligible provider; portable filters a provider cannot honor are approximated or
