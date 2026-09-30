@@ -107,8 +107,6 @@ func TestOnePasswordCredentialOutput(t *testing.T) {
 	output := out + text
 	assert.Contains(t, output, "onepassword://grant-brokered-access?access_request_reference=ref-1")
 	assert.Contains(t, output, "Present this link to the account owner.")
-	assert.Contains(t, output, "as bare text on its own line, not in backticks")
-	assert.Contains(t, output, "shared-vault items cannot be approved")
 	assert.Contains(t, output, "onepassword")
 	assert.Contains(t, output, "entry-1 https://github.com")
 	assert.NotContains(t, output, "stored token")
@@ -266,10 +264,9 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 			"do not\n   choose for them",
 			"Kernel-hosted collection",
 			"1Password brokered approval",
-			"vault only the user can access",
-			"Items in shared vaults cannot be approved",
-			"State this requirement in the question itself",
-			"never inside backticks",
+			"non-shared 1Password vault",
+			"State this requirement when asking",
+			"as plain text rather than code",
 			"passkeys",
 			"offer Kernel-hosted collection",
 			"Never ask the user to paste",
@@ -279,9 +276,7 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"Ask whose 1Password account holds the login",
-		"not a shared vault",
-		"as bare text\n   on its own line",
+		"Ask whose 1Password account holds the login and confirm it is in a non-shared vault",
 		"1-5 login entries",
 		"Invoke 1pw_create_access_request once",
 		"pass entry_id",

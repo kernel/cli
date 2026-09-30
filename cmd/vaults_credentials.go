@@ -25,37 +25,32 @@ const vaultCredentialPathsHelp = `Credential vaults have two sign-in paths. Befo
      collection URL, Kernel stores them encrypted, and items invoke fill writes them
      into a vault-bound browser without submitting.
    - 1Password brokered approval (spec provider "1password", preview): requires the
-     login to be saved in a 1Password vault only the user can access (such as their
-     Personal, Private, or Employee vault). Items in shared vaults cannot be approved,
-     and passkeys are not supported. State this requirement in the question itself,
-     not as a footnote, and ask the user to confirm the login is in such a vault; if it
-     is in a shared vault, they must move it first or choose Kernel-hosted collection.
-     The account owner connects the account once and approves each access request in
-     the 1Password app. 1pw_fill fills and submits through the 1Password extension.
+     login to be in the user's own, non-shared 1Password vault; shared-vault items and
+     passkeys are not supported. State this requirement when asking. The account
+     owner connects the account once and approves each access request in the
+     1Password app. 1pw_fill fills and submits through the 1Password extension.
 3. If 1Password is unavailable in this deployment, the account cannot be connected,
    or the owner declines, tell the user and offer Kernel-hosted collection; do not
    switch paths without asking. If the user wants neither, stop.
 Neither path returns secret values through the API or CLI. Never ask the user to paste
 passwords, OAuth codes, tokens, or keys into the terminal or chat; share only returned
-URLs. Give each URL to the user as bare text on its own line, never inside backticks,
-code blocks, or quotes, so their chat client can make it clickable; this includes
-onepassword:// approval links. An agent controlling the browser can still read filled pages. A filled or
-submitted form is not proof of sign-in: inspect the page afterward.`
+URLs, as plain text rather than code so they stay clickable. An agent controlling
+the browser can still read filled pages. A filled or submitted form is not proof of
+sign-in: inspect the page afterward.`
 
 const vaultOnePasswordCredentialHelp = `1Password flow:
-1. Ask whose 1Password account holds the login and confirm it is saved in a vault
-   only that owner can access, not a shared vault. Reuse that owner's connected
-   credential_account from items list. Otherwise run credentials connect <vault>
-   <account-key> --provider 1password, share the returned authorization URL with
-   that owner, and poll items get <vault> <account-key> --wait 60 until connected.
+1. Ask whose 1Password account holds the login and confirm it is in a non-shared vault.
+   Reuse that owner's connected credential_account from items list. Otherwise run
+   credentials connect <vault> <account-key> --provider 1password, share the returned
+   authorization URL with that owner, and poll items get <vault> <account-key>
+   --wait 60 until connected.
 2. credentials create <vault> <key> --spec-file with provider "1password", account
    (the credential_account key), and requests: version 2 with 1-5 login entries, each
    with the HTTPS website of a login page. Use one entry unless the user needs several
    logins, such as separate accounts or sign-in origins; per-entry reason and
    keywords go in the spec. No field definitions, selectors, or values are accepted.
 3. Invoke 1pw_create_access_request once with a vault-bound browser_id. Present the
-   returned onepassword:// approval link to the account owner unchanged, as bare text
-   on its own line (not in backticks or a code block), with the returned instructions.
+   returned onepassword:// approval link and instructions to the account owner unchanged.
 4. Invoke 1pw_access_request_status (timeout_seconds 0-120) until the credential is
    ready, declined, or failed. Ready means approved, not signed in.
 5. Open the login page and invoke 1pw_fill with browser_id and the exact page_url. When

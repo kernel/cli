@@ -197,9 +197,8 @@ completed exits 0, failed/unknown exit nonzero with valid JSON retained on stdou
 1Password credentials (see credentials --help) use --params or --spec-file without type:
 1pw_create_access_request: browser_id (vault-bound session ID); optional goal (<=140),
   reason (<=100), keywords (1-5 strings); reason and keywords only for single-entry
-  credentials. Present the returned onepassword:// approval link to the account owner
-  unchanged as bare text, not in backticks or a code block, with the returned
-  instructions; invoke it once per credential.
+  credentials. Present the returned onepassword:// approval link and instructions to
+  the account owner unchanged; invoke it once per credential.
 1pw_access_request_status: browser_id; optional timeout_seconds 0-120 (default 10).
   Check status after the account owner has the approval link.
 1pw_fill: browser_id and the exact page_url of one open login page on a requested
