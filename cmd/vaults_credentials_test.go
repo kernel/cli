@@ -42,7 +42,7 @@ func TestCredentialCreateAndUpdate(t *testing.T) {
 					assert.JSONEq(t, `{"fields":{"password":{"value":null}}}`, string(body["spec"]))
 				} else {
 					assert.Equal(t, "PUT", r.Method)
-					assert.JSONEq(t, `{"fields":[{"name":"password","label":"Account Password","type":"password","required":true}]}`, string(body["spec"]))
+					assert.JSONEq(t, `{"provider":"kernel","fields":[{"name":"password","label":"Account Password","type":"password","required":true}]}`, string(body["spec"]))
 				}
 				w.Header().Set("Content-Type", "application/json")
 				io.WriteString(w, credentialFixture)

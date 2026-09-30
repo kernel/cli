@@ -33,6 +33,40 @@ func vaultCredentialError(err error) error {
 	return fmt.Errorf("vault request failed; details withheld to protect credentials; inspect existing state before taking further action")
 }
 
+const onePasswordUnavailable = "1Password is not available in this deployment; tell the user and offer Kernel-hosted collection instead"
+
+// A 5xx or transport failure after dispatch leaves the 1Password outcome unknown;
+// there is no reset operation, so agents must stop rather than retry or recreate.
+func onePasswordOperationError(err error, operation string) error {
+	const unknown = "outcome is unknown; inspect items get and tell the user; do not retry, delete, or recreate the item"
+	var apiErr *kernel.Error
+	if !errors.As(err, &apiErr) {
+		return fmt.Errorf("%s %s", operation, unknown)
+	}
+	switch apiErr.StatusCode {
+	case 400, 403, 404:
+		return fmt.Errorf("%s rejected (HTTP %d); correct the parameters or item before deciding on a new request; do not retry automatically", operation, apiErr.StatusCode)
+	case 409:
+		return fmt.Errorf("%s is not currently available (HTTP 409); inspect items get for the current state; do not retry, delete, or recreate the item to reset it", operation)
+	case 503:
+		return fmt.Errorf("%s unavailable (HTTP 503): %s", operation, onePasswordUnavailable)
+	}
+	return fmt.Errorf("%s request failed (HTTP %d); %s", operation, apiErr.StatusCode, unknown)
+}
+
+func onePasswordConnectError(err error) error {
+	var apiErr *kernel.Error
+	if errors.As(err, &apiErr) && apiErr.StatusCode >= 500 {
+		var body struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil && body.Code == "provider_unavailable" {
+			return fmt.Errorf("1Password account linking unavailable (HTTP %d): %s", apiErr.StatusCode, onePasswordUnavailable)
+		}
+	}
+	return vaultCredentialError(err)
+}
+
 func readVaultSecrets(cmd *cobra.Command, flag string, fields ...string) (map[string]string, error) {
 	path, _ := cmd.Flags().GetString(flag)
 	if path == "" {
