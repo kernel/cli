@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -133,7 +134,7 @@ func newVaultCredentialsCommand() *cobra.Command {
 			},
 		}
 		if update {
-			cmd.Long += "\nUpdate applies to Kernel-hosted credentials only. It preserves omitted fields, replaces nonempty string values, and clears supported values with null or an empty string. Clearing a required text/email/password field returns pending_collection; form submissions still require a nonempty value.\nField definitions are immutable. Do not automatically retry version conflicts."
+			cmd.Long += "\nUpdate applies to Kernel-hosted credentials only. Update spec fields are an object keyed by field name, not the ordered array used on create.\nUpdate preserves omitted fields, replaces nonempty string values, and clears supported values with null or an empty string. Clearing a required text/email/password field returns pending_collection; form submissions still require a nonempty value.\nField definitions are immutable. Do not automatically retry version conflicts."
 			cmd.Flags().Int64("version", 0, "Expected version from items get (required; never auto-refreshed)")
 			_ = cmd.MarkFlagRequired("version")
 			cmd.Flags().String("expected-item-id", "", "Immutable item ID from the original read; reject an update if the key now refers to a replacement item")
@@ -254,9 +255,18 @@ func credentialSpecInput(data []byte) (kernel.CredentialVaultItemSpecInputUnionP
 	case "kernel":
 		var spec kernel.KernelCredentialVaultItemSpecInputParam
 		if json.Unmarshal(data, &spec) != nil || len(spec.Fields) == 0 {
+			if credentialSpecUsesKeyedFields(data) {
+				return kernel.CredentialVaultItemSpecInputUnionParam{}, fmt.Errorf("credential spec fields must be an ordered array of definitions carrying a name, not an object keyed by name")
+			}
 			return kernel.CredentialVaultItemSpecInputUnionParam{}, fmt.Errorf("credential spec requires fields")
 		}
 		spec.Provider = kernel.KernelCredentialVaultItemSpecInputProviderKernel
+		// Names key values, updates, and fills; reject specs the form cannot address.
+		for _, field := range spec.Fields {
+			if strings.TrimSpace(field.Name) == "" {
+				return kernel.CredentialVaultItemSpecInputUnionParam{}, fmt.Errorf("every credential spec field requires a name")
+			}
+		}
 		return kernel.CredentialVaultItemSpecInputUnionParam{OfKernel: &spec}, nil
 	case "1password":
 		var spec kernel.OnePasswordCredentialVaultItemSpecInputParam
@@ -293,4 +303,17 @@ func (c VaultsCmd) connectCredentialAccount(ctx context.Context, vault, key, out
 		return onePasswordConnectError(err)
 	}
 	return c.showItem(item, output, open)
+}
+
+// The create spec moved from fields keyed by name to an ordered array; point
+// callers still sending the object form at the replacement shape.
+func credentialSpecUsesKeyedFields(data []byte) bool {
+	var object struct {
+		Fields json.RawMessage `json:"fields"`
+	}
+	if json.Unmarshal(data, &object) != nil {
+		return false
+	}
+	fields := bytes.TrimSpace(object.Fields)
+	return len(fields) > 0 && fields[0] == '{'
 }

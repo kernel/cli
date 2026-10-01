@@ -503,6 +503,17 @@ func TestPrintTelemetrySummary_Export(t *testing.T) {
 		printTelemetrySummary(parse(`{"browser":{"control":{"enabled":true}},"export":{"otlp":{"enabled":false}}}`))
 		assert.NotContains(t, outBuf.String(), "OTLP")
 	})
+	t.Run("reports storage when off", func(t *testing.T) {
+		setupStdoutCapture(t)
+		printTelemetrySummary(parse(`{"browser":{"control":{"enabled":true}},"storage":{"enabled":false}}`))
+		assert.Contains(t, outBuf.String(), "Telemetry storage: off")
+	})
+	t.Run("stays quiet when storage is on or omitted", func(t *testing.T) {
+		setupStdoutCapture(t)
+		printTelemetrySummary(parse(`{"browser":{"control":{"enabled":true}},"storage":{"enabled":true}}`))
+		printTelemetrySummary(parse(`{"browser":{"control":{"enabled":true}}}`))
+		assert.NotContains(t, outBuf.String(), "storage")
+	})
 }
 
 func TestTelemetryEnabledCategories(t *testing.T) {
@@ -668,35 +679,37 @@ func TestTelemetryEvents_SurfacesNonNotFoundGetError(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// A --types filter is client-side, so it must scan every page in the window to be
-// complete. Setting --types (without --all) must therefore route through the
-// auto-pager, not the single-page fetch that could drop matches on later pages.
-func TestTelemetryEvents_TypesFilterWalksAllPages(t *testing.T) {
+// Types are filtered server-side like categories: they go out as repeated
+// "type" query params on a single-page read, not a client-side full scan.
+func TestTelemetryEvents_TypesSentAsRepeatedQueryParams(t *testing.T) {
 	buf := capturePtermOutput(t)
 	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
 		return &kernel.BrowserGetResponse{SessionID: "sess-1"}, nil
 	}}
-	autoPaged := false
+	var gotQuery kernel.BrowserTelemetryEventsParams
+	var gotOpts []option.RequestOption
 	fakeTelemetry := &FakeBrowserTelemetryService{
 		EventsFunc: func(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse], error) {
-			t.Fatalf("single-page Events must not be called when --types is set")
-			return nil, nil
+			gotQuery, gotOpts = query, opts
+			return &pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse]{}, nil
 		},
 		EventsAutoPagingFunc: func(id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) *pagination.OffsetPaginationAutoPager[kernel.BrowserTelemetryEventsResponse] {
-			autoPaged = true
-			return pagination.NewOffsetPaginationAutoPager(&pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse]{}, nil)
+			t.Fatalf("--types alone must not trigger a full-window scan")
+			return nil
 		},
 	}
 	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
 
-	err := b.TelemetryEvents(context.Background(), BrowsersTelemetryEventsInput{Identifier: "br-1", Types: []string{"network_response"}})
+	err := b.TelemetryEvents(context.Background(), BrowsersTelemetryEventsInput{Identifier: "br-1", Categories: []string{"page"}, Types: []string{"page_crashed", "page_load"}})
 
 	assert.NoError(t, err)
-	assert.True(t, autoPaged, "--types must walk every page so the client-side filter is complete")
+	assert.Empty(t, gotQuery.Type, "types must not use the comma-joined typed field")
+	// One category, two type query params, plus the response-capture option.
+	assert.Len(t, gotOpts, 4)
 	_ = buf
 }
 
-// A full-window scan (--all/--types) must ignore the manual --offset cursor and
+// A full-window scan (--all) must ignore the manual --offset cursor and
 // walk from --since; forwarding the offset would start mid-window and drop
 // earlier pages, contradicting the documented behavior.
 func TestTelemetryEvents_FullScanIgnoresOffsetUsesSince(t *testing.T) {
@@ -798,4 +811,47 @@ func TestBuildManagedAuthTelemetryParam_CdpExcludeNeedsCategories(t *testing.T) 
 
 	_, err = buildManagedAuthTelemetryParam("control", "Page.navigate", "", false)
 	assert.NoError(t, err)
+}
+
+// TestResolveTelemetryStorageFlag covers the --telemetry-storage values and the
+// rules the API enforces on the request payload: storage can only go off with an
+// export destination in the same request, and update/login must restate the
+// category selection because the connection stores its browser config as sent.
+func TestResolveTelemetryStorageFlag(t *testing.T) {
+	t.Run("unset leaves storage omitted", func(t *testing.T) {
+		v, err := resolveTelemetryStorageFlag("", "", "", true)
+		assert.NoError(t, err)
+		assert.False(t, v.Valid())
+	})
+	t.Run("on sends enabled=true", func(t *testing.T) {
+		v, err := resolveTelemetryStorageFlag("on", "", "", true)
+		assert.NoError(t, err)
+		assert.True(t, v.Valid())
+		assert.True(t, v.Value)
+	})
+	t.Run("off with a destination sends enabled=false", func(t *testing.T) {
+		v, err := resolveTelemetryStorageFlag("off", "", "my-collector", true)
+		assert.NoError(t, err)
+		assert.True(t, v.Valid())
+		assert.False(t, v.Value)
+	})
+	t.Run("off requires a destination", func(t *testing.T) {
+		for _, export := range []string{"", "off"} {
+			_, err := resolveTelemetryStorageFlag("off", "all", export, true)
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "requires an export destination")
+		}
+	})
+	t.Run("invalid value is rejected", func(t *testing.T) {
+		_, err := resolveTelemetryStorageFlag("maybe", "", "", true)
+		assert.Error(t, err)
+	})
+	t.Run("update and login require --telemetry", func(t *testing.T) {
+		_, err := resolveTelemetryStorageFlag("off", "", "my-collector", false)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "also requires --telemetry")
+		v, err := resolveTelemetryStorageFlag("off", "all", "my-collector", false)
+		assert.NoError(t, err)
+		assert.False(t, v.Value)
+	})
 }

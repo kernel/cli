@@ -92,6 +92,37 @@ func TestSearchReadCommands(t *testing.T) {
 	}
 }
 
+func TestSearchContents(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"limit", []string{"--limit", "3"}, `{"limit":3}`},
+		{"result ids", []string{"--result-ids", "res_2,res_1", "--timeout-ms", "30000"}, `{"result_ids":["res_2","res_1"],"timeout_ms":30000}`},
+		{"content options", []string{"--limit", "1", "--content-source", "browser", "--content-format", "text", "--content-max-chars", "500", "--content-max-age-hours", "0", "--content-timeout-ms", "5000", "--content-browser-id", "br_1", "--content-browser-mode", "render"},
+			`{"limit":1,"content":{"source":"browser","format":"text","max_chars":500,"max_age_hours":0,"timeout_ms":5000,"browser":{"browser_id":"br_1","mode":"render"}}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			const response = `{"search_id":"srch_test","contents":[],"usage":{"content_fetches":0},"warnings":[],"future_field":9007199254740993}`
+			stdout, err := executeSearchCommand(t, func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				assert.Equal(t, http.MethodPost, r.Method)
+				assert.Equal(t, "/search/srch_test/contents", r.URL.Path)
+				data, err := io.ReadAll(r.Body)
+				require.NoError(t, err)
+				assert.JSONEq(t, tc.want, string(data))
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, response)
+			}, "", append([]string{"contents", "srch_test"}, tc.args...)...)
+			require.NoError(t, err)
+			assert.Equal(t, 1, calls)
+			assert.JSONEq(t, response, stdout)
+		})
+	}
+}
+
 func TestSearchInvalidInput(t *testing.T) {
 	for _, args := range [][]string{
 		{}, {" "}, {strings.Repeat("x", 2049)}, {"a", "b"}, {"test", "--provider", ""},
@@ -100,6 +131,16 @@ func TestSearchInvalidInput(t *testing.T) {
 		{"test", "--request", `{"query":"test"}`}, {"--request", `{}`, "--provider", "exa"},
 		{"--request", `{}`, "--max-results", "5"}, {"--request-file", "request.json"},
 		{"get"}, {"providers", "extra"},
+		{"contents"}, {"contents", "srch_test"}, {"contents", " ", "--limit", "1"},
+		{"contents", "srch_test", "--limit", "1", "--result-ids", "res_1"},
+		{"contents", "srch_test", "--limit", "0"}, {"contents", "srch_test", "--limit", "101"},
+		{"contents", "srch_test", "--limit", "1", "--timeout-ms", "999"},
+		{"contents", "srch_test", "--limit", "1", "--content-source", "cache"},
+		{"contents", "srch_test", "--limit", "1", "--content-format", "html"},
+		{"contents", "srch_test", "--limit", "1", "--content-browser-mode", "headless"},
+		{"contents", "srch_test", "--limit", "1", "--content-max-chars", "-1"},
+		{"contents", "srch_test", "--limit", "1", "--content-browser-id", " "},
+		{"contents", "srch_test", "--result-ids", "res_1,"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			_, err := executeSearchCommand(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unexpected API call") }, "", args...)
@@ -126,7 +167,7 @@ func TestSearchErrorsDoNotRetryCreate(t *testing.T) {
 }
 
 func TestSearchWiring(t *testing.T) {
-	for _, path := range [][]string{{"search"}, {"search", "get"}, {"search", "providers"}} {
+	for _, path := range [][]string{{"search"}, {"search", "get"}, {"search", "providers"}, {"search", "contents"}} {
 		cmd, remaining, err := rootCmd.Find(path)
 		require.NoError(t, err)
 		require.Empty(t, remaining)

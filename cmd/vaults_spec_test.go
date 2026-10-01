@@ -93,7 +93,7 @@ func TestVaultSpecHelpAndFlags(t *testing.T) {
 				for _, field := range []string{"merchant_name:", "merchant:", "line_items?:", "metadata?:", "expires_at?:", "checkout_origin?:", "type LinkLineItem", "type LinkTotal"} {
 					assert.Contains(t, cmd.Long, field)
 				}
-				for _, guidance := range []string{"eligible", "autopilot may not apply", "user approval may", "does not guarantee payment success", "does not\nvalidate this declaration against the page open in the browser", "preparation merchant_origin instead"} {
+				for _, guidance := range []string{"eligible", "autopilot may not apply", "user approval may", "does not guarantee payment success", "Kernel does not validate this declaration against the page open in the browser.", "preparation merchant_origin instead", "Card updates replace the whole spec", "omitting checkout_origin from an update removes"} {
 					assert.Contains(t, cmd.Long, guidance)
 				}
 			} else {

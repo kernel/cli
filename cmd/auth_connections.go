@@ -60,6 +60,7 @@ type AuthConnectionCreateInput struct {
 	Telemetry           string
 	TelemetryCdpExclude string
 	TelemetryExport     string
+	TelemetryStorage    string
 	Output              string
 }
 
@@ -97,6 +98,7 @@ type AuthConnectionUpdateInput struct {
 	Telemetry              string
 	TelemetryCdpExclude    string
 	TelemetryExport        string
+	TelemetryStorage       string
 	Output                 string
 }
 
@@ -122,9 +124,11 @@ type AuthConnectionLoginInput struct {
 	Region              string
 	Stealth             BoolFlag
 	RecordSession       BoolFlag
+	SkillMode           string
 	Telemetry           string
 	TelemetryCdpExclude string
 	TelemetryExport     string
+	TelemetryStorage    string
 	Output              string
 }
 
@@ -251,11 +255,16 @@ func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateIn
 		params.ManagedAuthCreateRequest.RecordSession = kernel.Opt(in.RecordSession.Value)
 	}
 
-	if in.Telemetry != "" || in.TelemetryCdpExclude != "" || in.TelemetryExport != "" {
+	if in.Telemetry != "" || in.TelemetryCdpExclude != "" || in.TelemetryExport != "" || in.TelemetryStorage != "" {
 		t, err := buildManagedAuthTelemetryParam(in.Telemetry, in.TelemetryCdpExclude, in.TelemetryExport, true)
 		if err != nil {
 			return err
 		}
+		storage, err := resolveTelemetryStorageFlag(in.TelemetryStorage, in.Telemetry, in.TelemetryExport, true)
+		if err != nil {
+			return err
+		}
+		t.Storage.Enabled = storage
 		params.ManagedAuthCreateRequest.Browser.Telemetry = t
 	}
 
@@ -412,11 +421,16 @@ func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateIn
 		hasChanges = true
 	}
 
-	if in.Telemetry != "" || in.TelemetryCdpExclude != "" || in.TelemetryExport != "" {
+	if in.Telemetry != "" || in.TelemetryCdpExclude != "" || in.TelemetryExport != "" || in.TelemetryStorage != "" {
 		t, err := buildManagedAuthTelemetryParam(in.Telemetry, in.TelemetryCdpExclude, in.TelemetryExport, false)
 		if err != nil {
 			return err
 		}
+		storage, err := resolveTelemetryStorageFlag(in.TelemetryStorage, in.Telemetry, in.TelemetryExport, false)
+		if err != nil {
+			return err
+		}
+		t.Storage.Enabled = storage
 		params.ManagedAuthUpdateRequest.Browser.Telemetry = t
 		hasChanges = true
 	}
@@ -692,6 +706,9 @@ func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) e
 	if auth.HealthCheckInterval > 0 {
 		tableData = append(tableData, []string{"Health Check Interval", fmt.Sprintf("%d seconds", auth.HealthCheckInterval)})
 	}
+	if auth.HealthCheckUnavailableReason != "" {
+		tableData = append(tableData, []string{"Health Check Unavailable", string(auth.HealthCheckUnavailableReason)})
+	}
 	if auth.BrowserSessionID != "" {
 		tableData = append(tableData, []string{"Browser Session ID", auth.BrowserSessionID})
 	}
@@ -794,6 +811,20 @@ func (c AuthConnectionCmd) Delete(ctx context.Context, in AuthConnectionDeleteIn
 	return nil
 }
 
+// parseSkillModeFlag validates the --skill-mode value against the modes the API
+// accepts for a login, so a typo fails locally instead of starting a flow with
+// the wrong skill behavior.
+func parseSkillModeFlag(mode string) (kernel.AuthConnectionLoginParamsSkillMode, error) {
+	switch kernel.AuthConnectionLoginParamsSkillMode(mode) {
+	case kernel.AuthConnectionLoginParamsSkillModeEnabled:
+		return kernel.AuthConnectionLoginParamsSkillModeEnabled, nil
+	case kernel.AuthConnectionLoginParamsSkillModeDisabled:
+		return kernel.AuthConnectionLoginParamsSkillModeDisabled, nil
+	default:
+		return "", fmt.Errorf("invalid --skill-mode value: %s (must be one of enabled, disabled)", mode)
+	}
+}
+
 func (c AuthConnectionCmd) Login(ctx context.Context, in AuthConnectionLoginInput) error {
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
@@ -825,11 +856,24 @@ func (c AuthConnectionCmd) Login(ctx context.Context, in AuthConnectionLoginInpu
 		params.RecordSession = kernel.Opt(in.RecordSession.Value)
 	}
 
-	if in.Telemetry != "" || in.TelemetryCdpExclude != "" || in.TelemetryExport != "" {
+	if in.SkillMode != "" {
+		mode, err := parseSkillModeFlag(in.SkillMode)
+		if err != nil {
+			return err
+		}
+		params.SkillMode = mode
+	}
+
+	if in.Telemetry != "" || in.TelemetryCdpExclude != "" || in.TelemetryExport != "" || in.TelemetryStorage != "" {
 		t, err := buildManagedAuthTelemetryParam(in.Telemetry, in.TelemetryCdpExclude, in.TelemetryExport, false)
 		if err != nil {
 			return err
 		}
+		storage, err := resolveTelemetryStorageFlag(in.TelemetryStorage, in.Telemetry, in.TelemetryExport, false)
+		if err != nil {
+			return err
+		}
+		t.Storage.Enabled = storage
 		params.Browser.Telemetry = t
 	}
 
@@ -1069,7 +1113,7 @@ func (c AuthConnectionCmd) Timeline(ctx context.Context, in AuthConnectionTimeli
 		return nil
 	}
 
-	tableData := pterm.TableData{{"Timestamp", "Type", "Status", "Step", "Browser Session", "Telemetry", "Details"}}
+	tableData := pterm.TableData{{"Timestamp", "Completed", "Type", "Status", "Step", "Browser Session", "Telemetry", "Details"}}
 	for _, e := range events {
 		details := e.ErrorMessage
 		if details == "" {
@@ -1087,6 +1131,9 @@ func (c AuthConnectionCmd) Timeline(ctx context.Context, in AuthConnectionTimeli
 		}
 		tableData = append(tableData, []string{
 			util.FormatLocal(e.Timestamp),
+			// Absent (dashed out) for in-progress attempts, health checks, and
+			// older attempts recorded before completion times were persisted.
+			util.FormatLocal(e.CompletedAt),
 			string(e.Type),
 			string(e.Status),
 			string(e.Step),
@@ -1325,6 +1372,7 @@ func init() {
 	authConnectionsCreateCmd.Flags().Bool("record-session", false, "Record browser sessions for this connection by default (useful for debugging)")
 	authConnectionsCreateCmd.Flags().String("telemetry", "", "Configure telemetry for this connection's browser sessions (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
 	authConnectionsCreateCmd.Flags().String("telemetry-export-otlp", "", "Export this connection's captured telemetry over OTLP to one of the org's configured destinations, by ID or name; --telemetry-export-otlp=off disables export. Implies --telemetry=all when --telemetry is not set, since export requires capture")
+	authConnectionsCreateCmd.Flags().String("telemetry-storage", "", "Whether this connection's browser sessions persist captured telemetry to Kernel storage: on (default) or off. Turning storage off requires --telemetry-export-otlp=<destination> in the same command, so events are only available on the live stream and through the export")
 	authConnectionsCreateCmd.Flags().String("telemetry-cdp-exclude", "", "Leave the named CDP methods out of control telemetry's cdp_command events, comma-separated (e.g. Input.dispatchMouseEvent,Page.captureScreenshot); --telemetry-cdp-exclude=none clears the list. Excluded commands are still relayed to the browser, they just produce no event")
 	_ = authConnectionsCreateCmd.MarkFlagRequired("domain")
 	_ = authConnectionsCreateCmd.MarkFlagRequired("profile-name")
@@ -1356,6 +1404,7 @@ func init() {
 	authConnectionsUpdateCmd.Flags().Bool("record-session", false, "Set whether browser sessions are recorded by default; use --record-session=false to disable")
 	authConnectionsUpdateCmd.Flags().String("telemetry", "", "Update telemetry for future browser sessions: --telemetry=all (reset to default set), --telemetry=off (disable), or --telemetry=console,network (merge those categories into the current selection)")
 	authConnectionsUpdateCmd.Flags().String("telemetry-export-otlp", "", "Update where future sessions export captured telemetry over OTLP, by destination ID or name; --telemetry-export-otlp=off disables export. Naming a destination requires passing --telemetry in the same command, since export and capture are validated together")
+	authConnectionsUpdateCmd.Flags().String("telemetry-storage", "", "Update whether future sessions persist captured telemetry to Kernel storage: on or off. Requires --telemetry in the same command; turning storage off also requires --telemetry-export-otlp=<destination>")
 	authConnectionsUpdateCmd.Flags().String("telemetry-cdp-exclude", "", "Leave the named CDP methods out of control telemetry's cdp_command events, comma-separated (e.g. Input.dispatchMouseEvent,Page.captureScreenshot); --telemetry-cdp-exclude=none clears the list. Excluded commands are still relayed to the browser, they just produce no event")
 	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("credential-name", "credential-provider")
 	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("save-credentials", "no-save-credentials")
@@ -1381,8 +1430,10 @@ func init() {
 	authConnectionsLoginCmd.Flags().String("region", "", "Geographic region override for this login: 'us-east', 'eu-west', or 'ap-southeast'")
 	authConnectionsLoginCmd.Flags().Bool("stealth", true, "Override stealth mode for this login's browser session; use --stealth=false to disable")
 	authConnectionsLoginCmd.Flags().Bool("record-session", false, "Override whether this login's browser session is recorded; use --record-session=false to disable")
+	authConnectionsLoginCmd.Flags().String("skill-mode", "", "Whether this login reads and writes learned domain skills: 'enabled' (default) or 'disabled'. Automatic reauths inherit the selected mode until a later accepted login sets enabled or omits the flag")
 	authConnectionsLoginCmd.Flags().String("telemetry", "", "Telemetry override for this login only, merged onto the connection's config: --telemetry=all, --telemetry=off, or --telemetry=console,network")
 	authConnectionsLoginCmd.Flags().String("telemetry-export-otlp", "", "Export override for this login only: an OTLP destination ID or name; --telemetry-export-otlp=off disables export for this login. Naming a destination requires passing --telemetry in the same command, since export and capture are validated together")
+	authConnectionsLoginCmd.Flags().String("telemetry-storage", "", "Storage override for this login only: on or off. Requires --telemetry in the same command; turning storage off also requires --telemetry-export-otlp=<destination>")
 	authConnectionsLoginCmd.Flags().String("telemetry-cdp-exclude", "", "Leave the named CDP methods out of control telemetry's cdp_command events, comma-separated (e.g. Input.dispatchMouseEvent,Page.captureScreenshot); --telemetry-cdp-exclude=none clears the list. Excluded commands are still relayed to the browser, they just produce no event")
 
 	// Submit flags
@@ -1441,6 +1492,7 @@ func runAuthConnectionsCreate(cmd *cobra.Command, args []string) error {
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 	telemetryCdpExclude, _ := cmd.Flags().GetString("telemetry-cdp-exclude")
 	telemetryExport, _ := cmd.Flags().GetString("telemetry-export-otlp")
+	telemetryStorage, _ := cmd.Flags().GetString("telemetry-storage")
 
 	svc := client.Auth.Connections
 	c := AuthConnectionCmd{svc: &svc}
@@ -1466,6 +1518,7 @@ func runAuthConnectionsCreate(cmd *cobra.Command, args []string) error {
 		Telemetry:           telemetry,
 		TelemetryCdpExclude: telemetryCdpExclude,
 		TelemetryExport:     telemetryExport,
+		TelemetryStorage:    telemetryStorage,
 		Output:              output,
 	})
 }
@@ -1501,6 +1554,7 @@ func runAuthConnectionsUpdate(cmd *cobra.Command, args []string) error {
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 	telemetryCdpExclude, _ := cmd.Flags().GetString("telemetry-cdp-exclude")
 	telemetryExport, _ := cmd.Flags().GetString("telemetry-export-otlp")
+	telemetryStorage, _ := cmd.Flags().GetString("telemetry-storage")
 
 	saveCredentialsFlag := BoolFlag{}
 
@@ -1556,6 +1610,7 @@ func runAuthConnectionsUpdate(cmd *cobra.Command, args []string) error {
 		Telemetry:              telemetry,
 		TelemetryCdpExclude:    telemetryCdpExclude,
 		TelemetryExport:        telemetryExport,
+		TelemetryStorage:       telemetryStorage,
 		Output:                 output,
 	})
 }
@@ -1600,9 +1655,11 @@ func runAuthConnectionsLogin(cmd *cobra.Command, args []string) error {
 	proxyName, _ := cmd.Flags().GetString("proxy-name")
 	proxyMode, _ := cmd.Flags().GetString("proxy-mode")
 	region, _ := cmd.Flags().GetString("region")
+	skillMode, _ := cmd.Flags().GetString("skill-mode")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 	telemetryCdpExclude, _ := cmd.Flags().GetString("telemetry-cdp-exclude")
 	telemetryExport, _ := cmd.Flags().GetString("telemetry-export-otlp")
+	telemetryStorage, _ := cmd.Flags().GetString("telemetry-storage")
 
 	svc := client.Auth.Connections
 	c := AuthConnectionCmd{svc: &svc}
@@ -1614,9 +1671,11 @@ func runAuthConnectionsLogin(cmd *cobra.Command, args []string) error {
 		Region:              region,
 		Stealth:             readBoolFlag(cmd.Flags(), "stealth"),
 		RecordSession:       readBoolFlag(cmd.Flags(), "record-session"),
+		SkillMode:           skillMode,
 		Telemetry:           telemetry,
 		TelemetryCdpExclude: telemetryCdpExclude,
 		TelemetryExport:     telemetryExport,
+		TelemetryStorage:    telemetryStorage,
 		Output:              output,
 	})
 }

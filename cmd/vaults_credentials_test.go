@@ -210,3 +210,13 @@ func TestCredentialDiscoveryAndInvalidInput(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"fields":{}}`, string(data))
 }
+
+func TestCredentialSpecInputProvider(t *testing.T) {
+	spec, err := credentialSpecInput([]byte(`{"provider":"kernel","fields":[{"name":"password","type":"password"}]}`))
+	require.NoError(t, err)
+	require.NotNil(t, spec.OfKernel)
+	assert.EqualValues(t, "kernel", spec.OfKernel.Provider)
+
+	_, err = credentialSpecInput([]byte(`{"provider":"bitwarden","fields":[{"name":"password","type":"password"}]}`))
+	assert.EqualError(t, err, "credential spec provider must be kernel or 1password")
+}
