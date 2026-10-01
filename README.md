@@ -572,14 +572,23 @@ kernel vaults cards create agentcard-checkout order-1 --provider agentcard --spe
   "wallet": "wallet-1",
   "merchant": "Example Shop",
   "amount": 1234,
-  "currency": "usd"
+  "currency": "usd",
+  "checkout_origin": "https://shop.example.com"
 }'
 kernel browsers create --vault agentcard-checkout
 ```
 
-AgentCard authorizes at checkout and does not currently advertise `authorize`. To select a
-vaulted card in advance, inspect `wallets payment-methods` and include its ID as `card_id` in the
-card spec. Otherwise, the cardholder selects a card at approval. AgentCard-only
+AgentCard authorizes at checkout and does not currently advertise `authorize`. For non-prepared
+authorization, optional `checkout_origin` declares the merchant origin for eligible AgentCard
+autopilot rule matching. Use a canonical HTTPS origin with a lowercase host, no default port,
+and no path, such as `https://shop.example.com`; HTTP localhost is allowed for test pages.
+Kernel forwards the declaration but does not validate it against the page open in the browser.
+Omitting it retains the current approval flow. Supplying it does not enable autopilot by itself:
+if autopilot does not apply, user approval may still be required, and it does not guarantee
+payment success. Prepared checkout uses `preparation.merchant_origin` instead.
+
+To select a vaulted card in advance, inspect `wallets payment-methods` and include its ID as
+`card_id` in the card spec. Otherwise, the cardholder selects a card at approval. AgentCard-only
 `state.aliases` support egress substitution with checkout hold, approval, and replay
 in a browser with the vault attached. This is not a fallback after Link fill.
 A reusable card being `ready` does not mean the last payment succeeded.

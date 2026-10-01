@@ -70,7 +70,7 @@ type AgentCardCardSpec = {
   amount: number;             // integer minor units; 1..9007199254740991
   currency: string;           // three letters
   card_id?: string;           // opaque AgentCard ID, pass through unchanged; else chosen at approval
-  checkout_origin?: string;   // top-level checkout page origin (https://host[:port], no path) for autopilot matching; omitted asks for approval; updates that omit it remove it
+  checkout_origin?: string;   // top-level checkout origin for autopilot matching; update omission removes it
 };
 
 type LinkLineItem = {
@@ -90,6 +90,15 @@ type LinkTotal = {
   display_text: string;
   amount: number;             // integer minor units
 };
+
+Card updates replace the whole spec, so omitting checkout_origin from an update removes
+its existing value. For non-prepared authorization, checkout_origin is forwarded to
+AgentCard for eligible autopilot rule matching. Use a canonical HTTPS origin (lowercase
+host, omit the default port, and include no path), or localhost HTTP for test pages.
+Kernel does not validate this declaration against the page open in the browser. Omitting
+it retains the current approval flow; even when supplied, autopilot may not apply and
+user approval may still be required. This field does not guarantee payment success.
+Prepared checkout uses preparation merchant_origin instead.
 
 Permitted domains are provider-assigned, not configurable in the spec.
 `

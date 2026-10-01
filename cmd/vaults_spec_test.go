@@ -18,6 +18,7 @@ func TestVaultRawSpecForwarding(t *testing.T) {
 			for _, raw := range []string{
 				`{}`,
 				`{"custom_option":false,"amount":0,"currency":"USD","metadata":null}`,
+				`{"checkout_origin":"https://shop.example.com","amount":1234}`,
 				`{"expires_at":9223372036854775807,"line_items":[{"name":"Item","quantity":2,"unit_amount":100,"totals":[{"type":"tax","display_text":"Tax","amount":10}]}],"totals":[],"metadata":{"reference":"order-1"}}`,
 			} {
 				t.Run(path+"/"+provider+"/"+raw, func(t *testing.T) {
@@ -89,8 +90,11 @@ func TestVaultSpecHelpAndFlags(t *testing.T) {
 			assert.NotContains(t, cmd.Long, "test: boolean")
 			assert.NotContains(t, cmd.Long, "sandbox/live")
 			if strings.HasPrefix(path, "cards") {
-				for _, field := range []string{"merchant_name:", "merchant:", "line_items?:", "metadata?:", "expires_at?:", "type LinkLineItem", "type LinkTotal"} {
+				for _, field := range []string{"merchant_name:", "merchant:", "line_items?:", "metadata?:", "expires_at?:", "checkout_origin?:", "type LinkLineItem", "type LinkTotal"} {
 					assert.Contains(t, cmd.Long, field)
+				}
+				for _, guidance := range []string{"eligible", "autopilot may not apply", "user approval may", "does not guarantee payment success", "Kernel does not validate this declaration against the page open in the browser.", "preparation merchant_origin instead", "Card updates replace the whole spec", "omitting checkout_origin from an update removes"} {
+					assert.Contains(t, cmd.Long, guidance)
 				}
 			} else {
 				assert.Contains(t, cmd.Long, "authorization:")
