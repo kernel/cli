@@ -44,12 +44,15 @@ type CredentialsGetInput struct {
 }
 
 type CredentialsCreateInput struct {
-	Name        string
-	Domain      string
-	Values      map[string]string
-	SSOProvider string
-	TotpSecret  string
-	Output      string
+	Name          string
+	Domain        string
+	Values        map[string]string
+	SSOProvider   string
+	TotpSecret    string
+	TotpAlgorithm string
+	TotpDigits    Int64Flag
+	TotpPeriod    Int64Flag
+	Output        string
 }
 
 type CredentialsUpdateInput struct {
@@ -57,6 +60,9 @@ type CredentialsUpdateInput struct {
 	Name            string
 	SSOProvider     string
 	TotpSecret      string
+	TotpAlgorithm   string
+	TotpDigits      Int64Flag
+	TotpPeriod      Int64Flag
 	Values          map[string]string
 	RemoveValueKeys []string
 	Output          string
@@ -167,10 +173,13 @@ func (c CredentialsCmd) Get(ctx context.Context, in CredentialsGetInput) error {
 		{"Name", cred.Name},
 		{"Domain", cred.Domain},
 		{"Has TOTP Secret", hasTOTP},
+	}
+	tableData = append(tableData, credentialTotpRows(cred)...)
+	tableData = append(tableData, pterm.TableData{
 		{"SSO Provider", ssoProvider},
 		{"Created At", util.FormatLocal(cred.CreatedAt)},
 		{"Updated At", util.FormatLocal(cred.UpdatedAt)},
-	}
+	}...)
 
 	PrintTableNoPad(tableData, true)
 	return nil
@@ -204,6 +213,19 @@ func (c CredentialsCmd) Create(ctx context.Context, in CredentialsCreateInput) e
 	if in.TotpSecret != "" {
 		params.CreateCredentialRequest.TotpSecret = kernel.Opt(in.TotpSecret)
 	}
+	if in.TotpAlgorithm != "" {
+		algorithm, err := normalizeTotpAlgorithm(in.TotpAlgorithm)
+		if err != nil {
+			return err
+		}
+		params.CreateCredentialRequest.TotpAlgorithm = kernel.CreateCredentialRequestTotpAlgorithm(algorithm)
+	}
+	if in.TotpDigits.Set {
+		params.CreateCredentialRequest.TotpDigits = kernel.Opt(in.TotpDigits.Value)
+	}
+	if in.TotpPeriod.Set {
+		params.CreateCredentialRequest.TotpPeriod = kernel.Opt(in.TotpPeriod.Value)
+	}
 
 	if in.Output != "json" {
 		pterm.Info.Printf("Creating credential '%s'...\n", in.Name)
@@ -235,8 +257,9 @@ func (c CredentialsCmd) Create(ctx context.Context, in CredentialsCreateInput) e
 		{"Name", cred.Name},
 		{"Domain", cred.Domain},
 		{"Has TOTP Secret", hasTOTP},
-		{"SSO Provider", ssoProvider},
 	}
+	tableData = append(tableData, credentialTotpRows(cred)...)
+	tableData = append(tableData, []string{"SSO Provider", ssoProvider})
 
 	PrintTableNoPad(tableData, true)
 
@@ -246,6 +269,36 @@ func (c CredentialsCmd) Create(ctx context.Context, in CredentialsCreateInput) e
 	}
 
 	return nil
+}
+
+// normalizeTotpAlgorithm validates a TOTP HMAC algorithm and returns its
+// canonical upper-case form (SHA1, SHA256, or SHA512).
+func normalizeTotpAlgorithm(algorithm string) (string, error) {
+	normalized := strings.ToUpper(strings.TrimSpace(algorithm))
+	switch normalized {
+	case "SHA1", "SHA256", "SHA512":
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("invalid --totp-algorithm %q (must be one of SHA1, SHA256, SHA512)", algorithm)
+	}
+}
+
+// credentialTotpRows returns TOTP metadata rows for credentials with a TOTP secret.
+func credentialTotpRows(cred *kernel.Credential) pterm.TableData {
+	if !cred.HasTotpSecret {
+		return nil
+	}
+	rows := pterm.TableData{}
+	if cred.TotpAlgorithm != "" {
+		rows = append(rows, []string{"TOTP Algorithm", string(cred.TotpAlgorithm)})
+	}
+	if cred.TotpDigits > 0 {
+		rows = append(rows, []string{"TOTP Digits", fmt.Sprintf("%d", cred.TotpDigits)})
+	}
+	if cred.TotpPeriod > 0 {
+		rows = append(rows, []string{"TOTP Period", fmt.Sprintf("%ds", cred.TotpPeriod)})
+	}
+	return rows
 }
 
 func (c CredentialsCmd) Update(ctx context.Context, in CredentialsUpdateInput) error {
@@ -264,6 +317,19 @@ func (c CredentialsCmd) Update(ctx context.Context, in CredentialsUpdateInput) e
 	}
 	if in.TotpSecret != "" {
 		params.UpdateCredentialRequest.TotpSecret = kernel.Opt(in.TotpSecret)
+	}
+	if in.TotpAlgorithm != "" {
+		algorithm, err := normalizeTotpAlgorithm(in.TotpAlgorithm)
+		if err != nil {
+			return err
+		}
+		params.UpdateCredentialRequest.TotpAlgorithm = kernel.UpdateCredentialRequestTotpAlgorithm(algorithm)
+	}
+	if in.TotpDigits.Set {
+		params.UpdateCredentialRequest.TotpDigits = kernel.Opt(in.TotpDigits.Value)
+	}
+	if in.TotpPeriod.Set {
+		params.UpdateCredentialRequest.TotpPeriod = kernel.Opt(in.TotpPeriod.Value)
 	}
 	if len(in.Values) > 0 {
 		params.UpdateCredentialRequest.Values = in.Values
@@ -374,6 +440,9 @@ Examples:
   # Create a credential with TOTP for 2FA
   kernel credentials create --name "my-2fa-site" --domain "example.com" --value "username=myuser" --value "password=mypass" --totp-secret "JBSWY3DPEHPK3PXP"
 
+  # Create a credential with custom TOTP parameters
+  kernel credentials create --name "my-8digit-site" --domain "example.com" --value "username=myuser" --totp-secret "JBSWY3DPEHPK3PXP" --totp-algorithm SHA256 --totp-digits 8 --totp-period 60
+
   # Create a credential with SSO provider
   kernel credentials create --name "google-sso" --domain "example.com" --value "email=user@gmail.com" --value "password=mypass" --sso-provider google`,
 	Args: cobra.NoArgs,
@@ -398,7 +467,7 @@ var credentialsDeleteCmd = &cobra.Command{
 var credentialsTotpCodeCmd = &cobra.Command{
 	Use:   "totp-code <id-or-name>",
 	Short: "Get the current TOTP code for a credential",
-	Long:  `Returns the current 6-digit TOTP code for a credential with a configured totp_secret.`,
+	Long:  `Returns the current TOTP code for a credential with a configured totp_secret.`,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runCredentialsTotpCode,
 }
@@ -427,7 +496,10 @@ func init() {
 	credentialsCreateCmd.Flags().String("domain", "", "Target domain this credential is for (required)")
 	credentialsCreateCmd.Flags().StringArray("value", []string{}, "Field name=value pair (repeatable, e.g., --value username=myuser --value password=mypass)")
 	credentialsCreateCmd.Flags().String("sso-provider", "", "SSO provider (e.g., google, github, microsoft)")
-	credentialsCreateCmd.Flags().String("totp-secret", "", "Base32-encoded TOTP secret for 2FA")
+	credentialsCreateCmd.Flags().String("totp-secret", "", "Base32-encoded TOTP secret (16-128 chars) or otpauth://totp/... URI for 2FA")
+	credentialsCreateCmd.Flags().String("totp-algorithm", "", "HMAC algorithm for TOTP codes: SHA1, SHA256, or SHA512 (default SHA1; ignored when an otpauth:// URI supplies it)")
+	credentialsCreateCmd.Flags().Int64("totp-digits", 0, "Number of digits in generated TOTP codes (default 6; ignored when an otpauth:// URI supplies it)")
+	credentialsCreateCmd.Flags().Int64("totp-period", 0, "TOTP rotation period in seconds (default 30; ignored when an otpauth:// URI supplies it)")
 	_ = credentialsCreateCmd.MarkFlagRequired("name")
 	_ = credentialsCreateCmd.MarkFlagRequired("domain")
 
@@ -435,7 +507,10 @@ func init() {
 	addJSONOutputFlag(credentialsUpdateCmd)
 	credentialsUpdateCmd.Flags().String("name", "", "New name for the credential")
 	credentialsUpdateCmd.Flags().String("sso-provider", "", "SSO provider (set to empty string to remove)")
-	credentialsUpdateCmd.Flags().String("totp-secret", "", "Base32-encoded TOTP secret (set to empty string to remove)")
+	credentialsUpdateCmd.Flags().String("totp-secret", "", "Base32-encoded TOTP secret or otpauth://totp/... URI (set to empty string to remove)")
+	credentialsUpdateCmd.Flags().String("totp-algorithm", "", "HMAC algorithm for TOTP codes: SHA1, SHA256, or SHA512 (requires --totp-secret)")
+	credentialsUpdateCmd.Flags().Int64("totp-digits", 0, "Number of digits in generated TOTP codes (requires --totp-secret)")
+	credentialsUpdateCmd.Flags().Int64("totp-period", 0, "TOTP rotation period in seconds (requires --totp-secret)")
 	credentialsUpdateCmd.Flags().StringArray("value", []string{}, "Field name=value pair to update (repeatable)")
 	credentialsUpdateCmd.Flags().StringArray("remove-value-key", []string{}, "Field name to remove from the credential's stored values (repeatable). Removals are applied before --value is merged, so a key given to both keeps its new value")
 
@@ -485,6 +560,9 @@ func runCredentialsCreate(cmd *cobra.Command, args []string) error {
 	valuePairs, _ := cmd.Flags().GetStringArray("value")
 	ssoProvider, _ := cmd.Flags().GetString("sso-provider")
 	totpSecret, _ := cmd.Flags().GetString("totp-secret")
+	totpAlgorithm, _ := cmd.Flags().GetString("totp-algorithm")
+	totpDigits, _ := cmd.Flags().GetInt64("totp-digits")
+	totpPeriod, _ := cmd.Flags().GetInt64("totp-period")
 
 	// Parse value pairs into map
 	values := make(map[string]string)
@@ -499,12 +577,15 @@ func runCredentialsCreate(cmd *cobra.Command, args []string) error {
 	svc := client.Credentials
 	c := CredentialsCmd{credentials: &svc}
 	return c.Create(cmd.Context(), CredentialsCreateInput{
-		Name:        name,
-		Domain:      domain,
-		Values:      values,
-		SSOProvider: ssoProvider,
-		TotpSecret:  totpSecret,
-		Output:      output,
+		Name:          name,
+		Domain:        domain,
+		Values:        values,
+		SSOProvider:   ssoProvider,
+		TotpSecret:    totpSecret,
+		TotpAlgorithm: totpAlgorithm,
+		TotpDigits:    Int64Flag{Set: cmd.Flags().Changed("totp-digits"), Value: totpDigits},
+		TotpPeriod:    Int64Flag{Set: cmd.Flags().Changed("totp-period"), Value: totpPeriod},
+		Output:        output,
 	})
 }
 
@@ -514,6 +595,9 @@ func runCredentialsUpdate(cmd *cobra.Command, args []string) error {
 	name, _ := cmd.Flags().GetString("name")
 	ssoProvider, _ := cmd.Flags().GetString("sso-provider")
 	totpSecret, _ := cmd.Flags().GetString("totp-secret")
+	totpAlgorithm, _ := cmd.Flags().GetString("totp-algorithm")
+	totpDigits, _ := cmd.Flags().GetInt64("totp-digits")
+	totpPeriod, _ := cmd.Flags().GetInt64("totp-period")
 	valuePairs, _ := cmd.Flags().GetStringArray("value")
 	removeValueKeys, _ := cmd.Flags().GetStringArray("remove-value-key")
 
@@ -534,6 +618,9 @@ func runCredentialsUpdate(cmd *cobra.Command, args []string) error {
 		Name:            name,
 		SSOProvider:     ssoProvider,
 		TotpSecret:      totpSecret,
+		TotpAlgorithm:   totpAlgorithm,
+		TotpDigits:      Int64Flag{Set: cmd.Flags().Changed("totp-digits"), Value: totpDigits},
+		TotpPeriod:      Int64Flag{Set: cmd.Flags().Changed("totp-period"), Value: totpPeriod},
 		Values:          values,
 		RemoveValueKeys: removeValueKeys,
 		Output:          output,
