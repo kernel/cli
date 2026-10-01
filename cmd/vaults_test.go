@@ -22,9 +22,8 @@ import (
 const linkWalletSpecFixture = `{"authorization":{"method":"oauth","client":{"type":"kernel_managed"}}}`
 
 const vaultFixture = `{"id":"vault-1","name":"checkout","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}`
-const requestedCardFixture = `{"id":"item-1","key":"order-1","type":"card","spec":{"provider":"link","wallet":"wallet-1","browser_id":"browser-1","page_url":"https://shop.example/checkout","payment_method_id":"pm-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","context":"Purchase description"},"state":{"provider":"link","status":"pending_authorization"},"action":{"name":"spend_approval","url":"https://example.com/approve"},"available_operations":[],"available_expansions":[]}`
-const connectedWalletFixture = `{"id":"wallet-id","key":"wallet-1","type":"wallet","description":"Reach checkout before creating a credential.","spec":{"provider":"link","authorization":{"method":"oauth","client":{"type":"kernel_managed"}}},"state":{"provider":"link","status":"connected"},"available_operations":[],"available_expansions":[{"type":"payment_methods","description":"Select a payment method explicitly."}]}`
-const fillCardFixture = `{"id":"item-1","key":"order-1","type":"card","spec":{"provider":"link","wallet":"wallet-1","browser_id":"browser-1","page_url":"https://shop.example/checkout","payment_method_id":"pm-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","context":"Purchase description"},"state":{"provider":"link","status":"ready"},"available_operations":[{"type":"fill","description":"Fill this approved credential without submitting payment."}],"available_expansions":[]}`
+const requestedCardFixture = `{"id":"item-1","key":"order-1","type":"card","spec":{"provider":"link","wallet":"wallet-1","payment_method_id":"pm-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://shop.example","context":"Purchase description"},"state":{"provider":"link","status":"requested"},"available_operations":[{"type":"authorize","description":"Use only after explicit user approval."}],"available_expansions":[]}`
+const connectedWalletFixture = `{"id":"wallet-id","key":"wallet-1","type":"wallet","spec":{"provider":"link","authorization":{"method":"oauth","client":{"type":"kernel_managed"}}},"state":{"provider":"link","status":"connected"},"available_operations":[],"available_expansions":[{"type":"payment_methods","description":"Select a payment method explicitly."}]}`
 
 func vaultTestClient(t *testing.T, handler http.HandlerFunc) kernel.Client {
 	t.Helper()
@@ -72,7 +71,7 @@ func TestVaultCommandConstruction(t *testing.T) {
 	cmd, _, err := rootCmd.Find([]string{"vaults", "items", "invoke"})
 	require.NoError(t, err)
 	assert.False(t, isAuthExempt(cmd))
-	for _, unsupported := range []string{"rename", "update", "items put", "items action", "wallets callback", "cards pay", "cards authorize", "cards update", "payment-tokens create"} {
+	for _, unsupported := range []string{"rename", "update", "items put", "items action", "wallets callback", "cards pay", "cards authorize", "cards update"} {
 		cmd, remaining, _ := newVaultsCommand().Find(strings.Fields(unsupported))
 		assert.True(t, len(remaining) > 0 || cmd.RunE == nil, unsupported)
 	}
@@ -139,6 +138,7 @@ func TestVaultCommandsWithoutProject(t *testing.T) {
 		{[]string{"wallets", "create", "checkout", "wallet-1", "--provider", "link", "--spec", linkWalletSpecFixture}, connectedWalletFixture, 1},
 		{[]string{"wallets", "payment-methods", "checkout", "wallet-1"}, connectedWalletFixture, 1},
 		{append([]string{"cards", "create", "checkout", "order-1"}, linkCardArgs()...), requestedCardFixture, 1},
+		{[]string{"items", "invoke", "checkout", "order-1", "authorize"}, requestedCardFixture, 2},
 	}
 	for _, tt := range tests {
 		t.Run(strings.Join(tt.args[:min(2, len(tt.args))], " "), func(t *testing.T) {
@@ -163,7 +163,7 @@ func TestVaultCommandsWithoutProject(t *testing.T) {
 }
 
 func linkCardArgs() []string {
-	return []string{"--provider", "link", "--spec", fmt.Sprintf(`{"wallet":"wallet-1","browser_id":"browser-1","page_url":"https://shop.example/checkout","amount":1234,"currency":"USD","merchant_name":"Example Shop","payment_method_id":"pm-1","context":%q}`, strings.Repeat("Purchase purpose. ", 7))}
+	return []string{"--provider", "link", "--spec", fmt.Sprintf(`{"wallet":"wallet-1","amount":1234,"currency":"USD","merchant_name":"Example Shop","payment_method_id":"pm-1","merchant_url":"https://shop.example","context":%q}`, strings.Repeat("Purchase purpose. ", 7))}
 }
 
 func TestVaultSpecValidation(t *testing.T) {
@@ -262,96 +262,141 @@ func TestVaultWalletRequestMapping(t *testing.T) {
 
 func TestVaultCardRequestMapping(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "project-test")
-	for _, provider := range []string{"link", "agentcard"} {
-		t.Run(provider, func(t *testing.T) {
-			calls := 0
+	for _, operation := range []string{"create"} {
+		for _, provider := range []string{"link", "agentcard"} {
+			t.Run(operation+provider, func(t *testing.T) {
+				calls := 0
+				client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					assert.Equal(t, http.MethodPut, r.Method)
+					assert.Equal(t, "/vaults/checkout/items/order-1", r.URL.Path)
+					var body map[string]json.RawMessage
+					require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+					assert.JSONEq(t, `"card"`, string(body["type"]))
+					assert.Len(t, body, 2)
+					if provider == "link" {
+						assert.JSONEq(t, fmt.Sprintf(`{"provider":"link","wallet":"wallet-1","amount":1234,"currency":"USD","merchant_name":"Example Shop","merchant_url":"https://shop.example","payment_method_id":"pm-1","context":%q}`, strings.Repeat("Purchase purpose. ", 7)), string(body["spec"]))
+					} else {
+						assert.JSONEq(t, `{"provider":"agentcard","wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop","card_id":"vc_chosen","checkout_origin":"https://shop.example.com"}`, string(body["spec"]))
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, requestedCardFixture)
+				})
+				flags := linkCardArgs()
+				if provider == "agentcard" {
+					flags = []string{"--provider", provider, "--spec", `{"wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop","card_id":"vc_chosen","checkout_origin":"https://shop.example.com"}`}
+				}
+				args := append([]string{"vaults", "cards", operation, "checkout", "order-1", "-o", "json"}, flags...)
+				out, human, err := executeVaultCommand(t, client, args...)
+				require.NoError(t, err)
+				assert.JSONEq(t, requestedCardFixture, out)
+				assert.Empty(t, human)
+				assert.Equal(t, 1, calls, "card writes must not authorize implicitly")
+			})
+		}
+	}
+}
+
+func TestVaultCardAgentcardCardIDIsOpaque(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "project-test")
+	// AgentCard card IDs are opaque: the CLI must forward whatever the caller
+	// supplies without assuming a prefix or format.
+	for _, cardID := range []string{"vc_chosen", "chosen", "card-123", "AGC/9f2e::7"} {
+		t.Run(cardID, func(t *testing.T) {
 			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-				calls++
-				assert.Equal(t, http.MethodPut, r.Method)
-				assert.Equal(t, "/vaults/checkout/items/order-1", r.URL.Path)
 				var body map[string]json.RawMessage
 				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-				assert.JSONEq(t, `"card"`, string(body["type"]))
-				assert.Len(t, body, 2)
-				if provider == "link" {
-					assert.JSONEq(t, fmt.Sprintf(`{"provider":"link","wallet":"wallet-1","browser_id":"browser-1","page_url":"https://shop.example/checkout","amount":1234,"currency":"USD","merchant_name":"Example Shop","payment_method_id":"pm-1","context":%q}`, strings.Repeat("Purchase purpose. ", 7)), string(body["spec"]))
-				} else {
-					assert.JSONEq(t, `{"provider":"agentcard","wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop","card_id":"vc_chosen"}`, string(body["spec"]))
+				var spec struct {
+					CardID string `json:"card_id"`
 				}
+				require.NoError(t, json.Unmarshal(body["spec"], &spec))
+				assert.Equal(t, cardID, spec.CardID)
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = io.WriteString(w, requestedCardFixture)
 			})
-			flags := linkCardArgs()
-			if provider == "agentcard" {
-				flags = []string{"--provider", provider, "--spec", `{"wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop","card_id":"vc_chosen"}`}
-			}
-			args := append([]string{"vaults", "cards", "create", "checkout", "order-1", "-o", "json"}, flags...)
-			out, human, err := executeVaultCommand(t, client, args...)
+			spec := fmt.Sprintf(`{"wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop","card_id":%q}`, cardID)
+			_, _, err := executeVaultCommand(t, client,
+				"vaults", "cards", "create", "checkout", "order-1", "-o", "json",
+				"--provider", "agentcard", "--spec", spec)
 			require.NoError(t, err)
-			assert.JSONEq(t, requestedCardFixture, out)
-			assert.Empty(t, human)
-			assert.Equal(t, 1, calls)
 		})
 	}
 }
 
-func TestVaultInvokeRequiresAdvertisedFill(t *testing.T) {
+func TestVaultCardAgentcardCheckoutOriginIsPublic(t *testing.T) {
+	raw := `{"id":"item-1","key":"order-1","type":"card","spec":{"provider":"agentcard","wallet":"wallet-1","merchant":"Example Shop","amount":1234,"currency":"usd","checkout_origin":"https://shop.example.com"}}`
+	out, err := filterVaultJSON(json.RawMessage(raw), vaultItemFields)
+	require.NoError(t, err)
+	var item struct {
+		Spec struct {
+			CheckoutOrigin string `json:"checkout_origin"`
+		} `json:"spec"`
+	}
+	require.NoError(t, json.Unmarshal(out, &item))
+	assert.Equal(t, "https://shop.example.com", item.Spec.CheckoutOrigin)
+}
+
+func TestVaultInvokeRequiresAdvertisedOperation(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "project-test")
-	for _, advertised := range []bool{false, true} {
-		t.Run(fmt.Sprint(advertised), func(t *testing.T) {
-			getCalls, postCalls := 0, 0
-			body := fillCardFixture
-			if !advertised {
-				body = strings.ReplaceAll(body, `[{"type":"fill","description":"Fill this approved credential without submitting payment."}]`, `[]`)
-			}
-			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				if r.Method == http.MethodGet {
-					getCalls++
-					_, _ = io.WriteString(w, body)
-					return
+	for _, state := range []string{"requested", "pending_authorization", "ready", "consumed", "expired", "declined"} {
+		for _, advertised := range []bool{false, true} {
+			t.Run(fmt.Sprint(state, advertised), func(t *testing.T) {
+				getCalls, postCalls := 0, 0
+				body := strings.ReplaceAll(requestedCardFixture, `"status":"requested"`, `"status":"`+state+`"`)
+				if !advertised {
+					body = strings.ReplaceAll(body, `[{"type":"authorize","description":"Use only after explicit user approval."}]`, `[]`)
 				}
-				postCalls++
-				payload, _ := io.ReadAll(r.Body)
-				assert.JSONEq(t, `{"type":"fill","browser_id":"browser","page_url":"https://shop.example","fields":[{"field":"number","selector":"#number"}]}`, string(payload))
-				_, _ = io.WriteString(w, `{"type":"fill","status":"completed","fields":[{"index":0,"status":"filled"}]}`)
+				client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					if r.Method == http.MethodGet {
+						getCalls++
+						_, _ = io.WriteString(w, body)
+						return
+					}
+					postCalls++
+					assert.Equal(t, http.MethodPost, r.Method)
+					assert.Equal(t, "/vaults/checkout/items/order-1/operations", r.URL.Path)
+					payload, _ := io.ReadAll(r.Body)
+					assert.JSONEq(t, `{"type":"authorize"}`, string(payload))
+					_, _ = io.WriteString(w, body)
+				})
+				_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "authorize", "-o", "json")
+				assert.Equal(t, 1, getCalls)
+				if advertised {
+					require.NoError(t, err)
+					assert.Equal(t, 1, postCalls)
+				} else {
+					require.ErrorContains(t, err, "not advertised in available_operations")
+					assert.Zero(t, postCalls)
+				}
 			})
-			spec := `{"browser_id":"browser","page_url":"https://shop.example","fields":[{"field":"number","selector":"#number"}]}`
-			out, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "fill", "--params", spec, "-o", "json")
-			assert.Equal(t, 1, getCalls)
-			if advertised {
-				require.NoError(t, err)
-				assert.Equal(t, 1, postCalls)
-				assert.JSONEq(t, `{"type":"fill","status":"completed","fields":[{"index":0,"status":"filled"}]}`, out)
-			} else {
-				require.ErrorContains(t, err, "not advertised in available_operations")
-				assert.Zero(t, postCalls)
-			}
-		})
+		}
 	}
 }
 
-func TestVaultFillNoSDKRetriesAndAPIErrorMessages(t *testing.T) {
+func TestVaultNoSDKRetriesAndAPIErrorMessages(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "project-test")
-	for _, status := range []int{409, 429, 500} {
+	for _, status := range []int{409, 500} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			calls := 0
 			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				w.Header().Set("Content-Type", "application/json")
 				if r.Method == http.MethodGet {
-					_, _ = io.WriteString(w, fillCardFixture)
+					_, _ = io.WriteString(w, requestedCardFixture)
 					return
 				}
 				w.WriteHeader(status)
-				_, _ = io.WriteString(w, `{"message":"Fill service unavailable","code":"fill_failed"}`)
+				_, _ = io.WriteString(w, `{"message":"Authorization service unavailable","code":"authorization_failed"}`)
 			})
-			spec := `{"browser_id":"browser","page_url":"https://shop.example","fields":[{"field":"number","selector":"#number"}]}`
-			out, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "fill", "--params", spec, "-o", "json")
+			out, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "authorize", "-o", "json")
 			require.Error(t, err)
 			assert.Equal(t, 2, calls)
 			assert.Empty(t, out)
-			assert.Contains(t, err.Error(), fmt.Sprintf("HTTP %d", status))
+			var apiErr *kernel.Error
+			require.ErrorAs(t, err, &apiErr)
+			assert.Equal(t, status, apiErr.StatusCode)
+			assert.Equal(t, "authorization_failed: Authorization service unavailable", util.CleanedUpSdkError{Err: err}.Error())
 		})
 	}
 }
@@ -365,7 +410,7 @@ func TestVaultInvalidProjectErrors(t *testing.T) {
 		{"wallets", "create", "checkout", "wallet-1", "--provider", "link", "--spec", linkWalletSpecFixture},
 		{"wallets", "payment-methods", "checkout", "wallet-1"},
 		append([]string{"cards", "create", "checkout", "order-1"}, linkCardArgs()...),
-		{"items", "invoke", "checkout", "order-1", "fill", "--params", `{"browser_id":"browser","page_url":"https://shop.example"}`},
+		{"items", "invoke", "checkout", "order-1", "authorize"},
 	}
 	for _, project := range []string{"doesntexist", "abcdefghijklmnopqrstuvwx"} {
 		for _, args := range commands {
@@ -380,10 +425,8 @@ func TestVaultInvalidProjectErrors(t *testing.T) {
 				})
 				out, human, err := executeVaultCommand(t, client, append([]string{"--project", project, "vaults"}, args...)...)
 				require.Error(t, err)
-				if (args[0] == "wallets" || args[0] == "cards") && args[1] == "create" {
+				if args[0] == "wallets" && args[1] == "create" {
 					assert.Equal(t, "vault resource not found (HTTP 404)", err.Error())
-				} else if args[0] == "items" && args[1] == "invoke" {
-					assert.Equal(t, "could not retrieve vault item; fill was not invoked", err.Error())
 				} else {
 					assert.Equal(t, "project_not_found: Project not found or inactive", util.CleanedUpSdkError{Err: err}.Error())
 				}

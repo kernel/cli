@@ -261,6 +261,37 @@ func validateTelemetryExportCombo(telemetry, id, name string, canImply bool) err
 	return nil
 }
 
+// resolveTelemetryStorageFlag interprets a --telemetry-storage flag value: "on"
+// persists captured telemetry to Kernel storage (the server default) and "off"
+// leaves events only on the live stream and the OTLP export. Storage can only be
+// turned off alongside an export destination in the same command, since the API
+// validates the request payload on its own and the setting cannot be changed once
+// a browser exists.
+//
+// canImply mirrors buildManagedAuthTelemetryParam: on update and login a
+// connection stores the browser config as sent, so a storage setting on its own
+// would drop the connection's category selection.
+func resolveTelemetryStorageFlag(storage, telemetry, export string, canImply bool) (param.Opt[bool], error) {
+	var enabled param.Opt[bool]
+	switch strings.TrimSpace(storage) {
+	case "":
+		return enabled, nil
+	case "on":
+		enabled = kernel.Opt(true)
+	case "off":
+		enabled = kernel.Opt(false)
+		if v := strings.TrimSpace(export); v == "" || v == telemetryExportOff {
+			return enabled, fmt.Errorf("turning telemetry storage off requires an export destination in the same command: pass --telemetry-export-otlp=<destination ID or name> so captured events have somewhere to go")
+		}
+	default:
+		return enabled, fmt.Errorf("invalid telemetry storage value %q: must be on or off", storage)
+	}
+	if telemetry == "" && !canImply {
+		return enabled, fmt.Errorf("setting --telemetry-storage also requires --telemetry in the same command: the connection stores its browser config as sent, so a storage setting on its own would drop its category selection")
+	}
+	return enabled, nil
+}
+
 // buildNewTelemetryParam converts --telemetry, --telemetry-cdp-exclude and
 // --telemetry-export-otlp flag values to the create API param.
 func buildNewTelemetryParam(s, cdpExclude, export string) (kernel.BrowserNewParamsTelemetry, error) {
@@ -451,6 +482,11 @@ func printTelemetrySummary(cfg kernel.BrowserTelemetryConfig) {
 			pterm.Info.Println("Telemetry exporting over OTLP")
 		}
 	}
+	// Storage defaults on and is omitted for browsers created before the setting
+	// existed, so only call it out when the response reports it off.
+	if cfg.Storage.JSON.Enabled.Valid() && !cfg.Storage.Enabled {
+		pterm.Info.Println("Telemetry storage: off (events are only available on the live stream and through any configured export)")
+	}
 }
 
 // formatCdpExcludedMethods renders the CDP methods left out of control
@@ -587,11 +623,9 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 		return util.CleanedUpSdkError{Err: gerr}
 	}
 
-	// A --types filter is client-side (the archive endpoint filters only by
-	// category), so it must see every page to be complete. Walk the whole window
-	// whenever --all or a --types filter is set; otherwise read a single page and
+	// Walk the whole window when --all is set; otherwise read a single page and
 	// surface the X-Next-Offset cursor for manual --offset paging.
-	fullScan := in.All || len(in.Types) > 0
+	fullScan := in.All
 
 	params := kernel.BrowserTelemetryEventsParams{}
 	if in.Limit > 0 {
@@ -612,12 +646,15 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 	if in.Until != "" {
 		params.Until = kernel.Opt(in.Until)
 	}
-	// Send each category as a repeated query param. The SDK serializes a []string
-	// field as a single comma-joined value, but the endpoint expects the parameter
-	// repeated, so a comma-joined value matches no category.
-	opts := make([]option.RequestOption, 0, len(in.Categories)+1)
+	// Send each category and type as a repeated query param. The SDK serializes a
+	// []string field as a single comma-joined value, but the endpoint expects the
+	// parameter repeated, so a comma-joined value matches nothing.
+	opts := make([]option.RequestOption, 0, len(in.Categories)+len(in.Types)+1)
 	for _, c := range in.Categories {
 		opts = append(opts, option.WithQueryAdd("category", c))
+	}
+	for _, t := range in.Types {
+		opts = append(opts, option.WithQueryAdd("type", t))
 	}
 
 	var items []kernel.BrowserTelemetryEventsResponse
@@ -626,10 +663,7 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 	if fullScan {
 		pager := b.telemetry.EventsAutoPaging(ctx, sessionID, params, opts...)
 		for pager.Next() {
-			it := pager.Current()
-			if shouldEmit(it.Event.Category, it.Event.Type, nil, in.Types) {
-				items = append(items, it)
-			}
+			items = append(items, pager.Current())
 		}
 		if err := pager.Err(); err != nil {
 			return util.CleanedUpSdkError{Err: err}
@@ -674,6 +708,11 @@ func (b BrowsersCmd) TelemetryEvents(ctx context.Context, in BrowsersTelemetryEv
 
 	if len(items) == 0 {
 		pterm.Info.Println("No telemetry events found")
+		// Filters apply within each page, so an empty filtered page can still be
+		// followed by pages with matches.
+		if nextOffset != "" {
+			pterm.Info.Printf("More events available — re-run with --offset %s\n", nextOffset)
+		}
 		return nil
 	}
 

@@ -8,43 +8,13 @@ import (
 	"os"
 	"strings"
 
+	"github.com/kernel/cli/pkg/util"
 	kernel "github.com/kernel/kernel-go-sdk"
 	"github.com/spf13/cobra"
 )
 
 // Do not wrap SDK errors here: response bodies and transport errors can echo
 // write-only credentials, and the root command unwraps SDK errors for display.
-func vaultCardError(err error) error {
-	var apiErr *kernel.Error
-	if errors.As(err, &apiErr) {
-		var body struct {
-			Code string `json:"code"`
-		}
-		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
-			discoveryFailure := false
-			switch body.Code {
-			case "ambiguous_page", "timeout":
-				discoveryFailure = apiErr.StatusCode == 400
-			case "destination_denied":
-				discoveryFailure = apiErr.StatusCode == 403
-			case "browser_not_found":
-				discoveryFailure = apiErr.StatusCode == 404
-			case "browser_unavailable":
-				discoveryFailure = apiErr.StatusCode == 409
-			case "browser_error":
-				discoveryFailure = apiErr.StatusCode == 500
-			}
-			if discoveryFailure {
-				return fmt.Errorf("%s: Link checkout inspection failed before a card was created; correct the browser or page and retry", body.Code)
-			}
-			if apiErr.StatusCode == 409 && body.Code == "conflict" {
-				return fmt.Errorf("vault conflict (HTTP 409); inspect current state and immutable bindings")
-			}
-		}
-	}
-	return vaultCredentialError(err)
-}
-
 func vaultCredentialError(err error) error {
 	var apiErr *kernel.Error
 	if errors.As(err, &apiErr) {
@@ -62,6 +32,71 @@ func vaultCredentialError(err error) error {
 		}
 	}
 	return fmt.Errorf("vault request failed; details withheld to protect credentials; inspect existing state before taking further action")
+}
+
+// Checkout inspection errors are returned before Kernel creates a spend request,
+// so a bound authorize can run again once the browser or page is corrected.
+func vaultLinkAuthorizeError(err error, bound bool) error {
+	var apiErr *kernel.Error
+	if !errors.As(err, &apiErr) {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	var body struct {
+		Code string `json:"code"`
+	}
+	_ = json.Unmarshal([]byte(apiErr.RawJSON()), &body)
+	inspection := map[string]int{
+		"ambiguous_page":      400,
+		"timeout":             400,
+		"destination_denied":  403,
+		"browser_not_found":   404,
+		"browser_unavailable": 409,
+		"browser_error":       500,
+	}
+	if status, ok := inspection[body.Code]; bound && ok && status == apiErr.StatusCode {
+		return fmt.Errorf("%s (HTTP %d): checkout inspection failed before approval started; open the final checkout page in the vault-attached browser, then authorize again with its browser_id and exact page_url", body.Code, apiErr.StatusCode)
+	}
+	switch {
+	case apiErr.StatusCode == 409 && body.Code == "conflict":
+		return fmt.Errorf("authorize conflict (HTTP 409): inspect the item; after the first authorization, repeat its browser_id and page_url or omit both")
+	case apiErr.StatusCode == 429:
+		return fmt.Errorf("rate limited (HTTP 429): the card is retained; back off, then retry the same authorize")
+	}
+	return util.CleanedUpSdkError{Err: err}
+}
+
+const onePasswordUnavailable = "1Password is not available in this deployment; tell the user and offer Kernel-hosted collection instead"
+
+// A 5xx or transport failure after dispatch leaves the 1Password outcome unknown;
+// there is no reset operation, so agents must stop rather than retry or recreate.
+func onePasswordOperationError(err error, operation string) error {
+	const unknown = "outcome is unknown; inspect items get and tell the user; do not retry, delete, or recreate the item"
+	var apiErr *kernel.Error
+	if !errors.As(err, &apiErr) {
+		return fmt.Errorf("%s %s", operation, unknown)
+	}
+	switch apiErr.StatusCode {
+	case 400, 403, 404:
+		return fmt.Errorf("%s rejected (HTTP %d); correct the parameters or item before deciding on a new request; do not retry automatically", operation, apiErr.StatusCode)
+	case 409:
+		return fmt.Errorf("%s is not currently available (HTTP 409); inspect items get for the current state; do not retry, delete, or recreate the item to reset it", operation)
+	case 503:
+		return fmt.Errorf("%s unavailable (HTTP 503): %s", operation, onePasswordUnavailable)
+	}
+	return fmt.Errorf("%s request failed (HTTP %d); %s", operation, apiErr.StatusCode, unknown)
+}
+
+func onePasswordConnectError(err error) error {
+	var apiErr *kernel.Error
+	if errors.As(err, &apiErr) && apiErr.StatusCode >= 500 {
+		var body struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil && body.Code == "provider_unavailable" {
+			return fmt.Errorf("1Password account linking unavailable (HTTP %d): %s", apiErr.StatusCode, onePasswordUnavailable)
+		}
+	}
+	return vaultCredentialError(err)
 }
 
 func readVaultSecrets(cmd *cobra.Command, flag string, fields ...string) (map[string]string, error) {
@@ -102,7 +137,7 @@ func vaultSpecHasSecrets(value json.RawMessage) bool {
 	}
 	for key, child := range object {
 		switch strings.ToLower(key) {
-		case "tokens", "access_token", "refresh_token", "link_pay_token", "client_secret", "credentials":
+		case "tokens", "access_token", "refresh_token", "client_secret", "credentials":
 			return true
 		case "authorization", "client", "provider_config":
 			if vaultSpecHasSecrets(child) {

@@ -48,19 +48,14 @@ type AgentCardWalletSpec = {
 `
 
 const vaultCardSpecHelp = `
-Create the card only after reaching final checkout and gathering the final spend details.
-Creation starts human approval. Card requests are immutable; changed purchase details
-require cancellation and a new item. Never replace an uncertain payment.
-
 type LinkCardSpec = {
   provider: "link";
   wallet: string;             // wallet item key
-  browser_id: string;         // active vault-linked browser session ID
-  page_url: string;           // exact final checkout page URL
   payment_method_id: string;  // from wallets payment-methods
-  amount: number;             // integer minor units; 1..500000 (virtual-card fallback: 1..50000)
+  amount: number;             // integer minor units; 1..500000 (virtual card: 1..50000)
   currency: string;           // three letters
-  merchant_name: string;      // approval-screen name; 1..255 characters
+  merchant_name: string;      // 1..255 characters
+  merchant_url: string;       // URI
   context: string;            // at least 100 characters
   line_items?: LinkLineItem[];
   totals?: LinkTotal[];
@@ -74,16 +69,10 @@ type AgentCardCardSpec = {
   merchant: string;           // approval-screen name; 1..120 characters
   amount: number;             // integer minor units; 1..9007199254740991
   currency: string;           // three letters
-  card_id?: string;           // vc_...; otherwise chosen at approval
+  card_id?: string;           // opaque AgentCard ID, pass through unchanged; else chosen at approval
+  checkout_origin?: string;   // top-level checkout origin for autopilot matching
 };
 
-For Link, Kernel inspects WebMCP in the active checkout and internally selects a
-Link payment token when definitely supported or a virtual card otherwise. Agents do
-not provide merchant_account_id or choose the execution mode. The browser and page
-bindings are immutable. Permitted domains are provider-assigned, not configurable.
-`
-
-const vaultLinkPurchaseTypesHelp = `
 type LinkLineItem = {
   name: string;
   quantity?: number;          // integer >= 1
@@ -101,4 +90,18 @@ type LinkTotal = {
   display_text: string;
   amount: number;             // integer minor units
 };
+
+For Link, authorize at the final checkout page with browser_id and page_url. Kernel
+inspects the checkout and internally selects a Link payment token or virtual card;
+agents do not provide merchant_account_id or choose the execution mode.
+
+For non-prepared AgentCard authorization, checkout_origin is forwarded to
+AgentCard for eligible autopilot rule matching. Use a canonical HTTPS origin (lowercase
+host, omit the default port, and include no path), or localhost HTTP for test pages.
+Kernel does not validate this declaration against the page open in the browser. Omitting
+it retains the current approval flow; even when supplied, autopilot may not apply and
+user approval may still be required. This field does not guarantee payment success.
+Prepared checkout uses preparation merchant_origin instead.
+
+Permitted domains are provider-assigned, not configurable in the spec.
 `

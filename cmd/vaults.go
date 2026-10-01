@@ -137,16 +137,40 @@ func (c VaultsCmd) ListItems(ctx context.Context, vault, output string) error {
 		pterm.Info.Println("No vault items found")
 		return nil
 	}
-	rows := pterm.TableData{{"Key", "Type", "Provider", "Status", "Action"}}
-	for _, item := range *items {
+	filtered, err := vaultSafeJSONSlice(*items, vaultItemFields)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(filtered)
+	var safe []kernel.VaultItemUnion
+	if err != nil || json.Unmarshal(data, &safe) != nil {
+		return fmt.Errorf("invalid vault item response")
+	}
+	rows := pterm.TableData{{"Key", "Type", "Provider", "Status", "Site", "Action"}}
+	for _, item := range safe {
 		actions, err := effectiveVaultItemActions(&item)
 		if err != nil {
 			return err
 		}
-		rows = append(rows, []string{item.Key, item.Type, item.Spec.Provider, item.State.Status, util.OrDash(actions.RequiredAction)})
+		rows = append(rows, []string{item.Key, item.Type, item.Spec.Provider, item.State.Status, util.OrDash(vaultItemSite(item)), util.OrDash(actions.RequiredAction)})
 	}
 	PrintTableNoPad(rows, true)
 	return nil
+}
+
+// vaultItemSite names the site a credential signs in to so agents can reuse it.
+func vaultItemSite(item kernel.VaultItemUnion) string {
+	if item.Type != "credential" {
+		return ""
+	}
+	if item.Spec.Provider != "1password" {
+		return item.Spec.Description
+	}
+	websites := make([]string, 0, len(item.Spec.Requests.Entries))
+	for _, entry := range item.Spec.Requests.Entries {
+		websites = append(websites, entry.Parameters.Website)
+	}
+	return strings.Join(websites, ", ")
 }
 
 func validateVaultWait(wait int64) error {
@@ -191,7 +215,7 @@ func (c VaultsCmd) CreateWallet(ctx context.Context, vault, key string, spec ker
 func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.CardVaultItemSpecUnionParam, output string) error {
 	item, err := c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCard: &kernel.VaultItemUpsertParamsBodyCard{Spec: spec}}, option.WithMaxRetries(0))
 	if err != nil {
-		return vaultCardError(err)
+		return util.CleanedUpSdkError{Err: err}
 	}
 	return c.showItem(item, output, false)
 }
@@ -206,10 +230,13 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	if operation == "prepare_checkout" && (params == nil || params.Checkout == nil) {
 		return fmt.Errorf("prepare_checkout requires checkout parameters")
 	}
+	if isOnePasswordOperation(operation) && (params == nil || params.OnePassword == nil) {
+		return fmt.Errorf("%s requires its documented parameters", operation)
+	}
 	item, err := c.vaults.Items.Get(ctx, key, kernel.VaultItemGetParams{IDOrName: vault}, option.WithMaxRetries(0))
 	if err != nil {
-		if operation == "fill" {
-			return fmt.Errorf("could not retrieve vault item; fill was not invoked")
+		if operation == "fill" || operation == "1pw_fill" {
+			return vaultFillLookupError(err, operation)
 		}
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -234,6 +261,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		}
 	}
 	if !available {
+		if isOnePasswordOperation(operation) {
+			return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item with items get -o json. For 1Password credentials, check that the linked credential_account is connected and the credential state; do not delete or recreate the item to reset it", operation)
+		}
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
 	if operation == "fill" {
@@ -245,25 +275,43 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		}
 		return c.fill(ctx, vault, key, params.Fill, output)
 	}
+	if operation == "1pw_fill" {
+		return c.onePasswordFill(ctx, vault, key, params.OnePassword, output)
+	}
 	request := kernel.VaultItemPerformOperationParams{IDOrName: vault}
-	if operation == "prepare_checkout" {
+	if params != nil && params.OnePassword != nil {
+		request = *params.OnePassword
+		request.IDOrName = vault
+	} else if operation == "prepare_checkout" {
 		if item.Type != "card" || item.Spec.Provider != "agentcard" {
 			return fmt.Errorf("prepare_checkout requires an AgentCard card")
 		}
 		request.OfPrepareCheckout = &kernel.PrepareCheckoutVaultItemOperationRequestParam{Type: "prepare_checkout", Checkout: *params.Checkout}
 	} else if operation == "collect" {
 		request.OfCollect = &kernel.CollectVaultItemOperationRequestParam{Type: "collect"}
+	} else if params != nil && params.Authorize != nil {
+		if item.Type != "card" || item.Spec.Provider != "link" {
+			return fmt.Errorf("authorize browser_id and page_url apply only to Link cards")
+		}
+		request.OfAuthorize = params.Authorize
 	} else {
-		return fmt.Errorf("unsupported vault item operation %q", operation)
+		// Preserve support for other advertised parameterless operations.
+		request.OfAuthorize = &kernel.AuthorizeVaultItemOperationRequestParam{Type: kernel.AuthorizeVaultItemOperationRequestType(operation)}
 	}
 	response, err := c.vaults.Items.PerformOperation(ctx, key, request, option.WithMaxRetries(0))
 	if err != nil {
-		if item.Type == "credential" {
+		if isOnePasswordOperation(operation) {
+			return onePasswordOperationError(err, operation)
+		}
+		if item.Type == "credential" || item.Type == "credential_account" {
 			return vaultCredentialError(err)
+		}
+		if operation == "authorize" && item.Type == "card" && item.Spec.Provider == "link" {
+			return vaultLinkAuthorizeError(err, params != nil && params.Authorize != nil)
 		}
 		return util.CleanedUpSdkError{Err: err}
 	}
-	if response == nil || (response.Type != "card" && response.Type != "wallet" && response.Type != "credential") {
+	if response == nil || (response.Type != "card" && response.Type != "wallet" && response.Type != "credential" && response.Type != "credential_account") {
 		return fmt.Errorf("unexpected vault operation response; inspect the item and do not retry")
 	}
 	var updated kernel.VaultItemUnion

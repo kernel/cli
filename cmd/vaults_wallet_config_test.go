@@ -171,7 +171,7 @@ func TestVaultImportedWalletErrorSafety(t *testing.T) {
 
 func TestVaultRecoveryRequired(t *testing.T) {
 	for _, provider := range []string{"link", "agentcard"} {
-		body := strings.ReplaceAll(requestedCardFixture, `"status":"pending_authorization"`, `"status":"recovery_required"`)
+		body := strings.ReplaceAll(requestedCardFixture, `"status":"requested"`, `"status":"recovery_required"`)
 		body = strings.ReplaceAll(body, `"provider":"link"`, `"provider":"`+provider+`"`)
 		for _, operation := range []string{"get", "invoke"} {
 			t.Run(provider+"/"+operation, func(t *testing.T) {
@@ -184,7 +184,7 @@ func TestVaultRecoveryRequired(t *testing.T) {
 				})
 				args := []string{"vaults", "items", operation, "checkout", "order-1"}
 				if operation == "invoke" {
-					args = append(args, "fill", "--params", `{"browser_id":"browser","page_url":"https://shop.example"}`)
+					args = append(args, "authorize")
 				} else {
 					args = append(args, "--wait", "60")
 				}
@@ -204,7 +204,7 @@ func TestVaultRecoveryRequired(t *testing.T) {
 }
 
 func TestVaultRecoveryDoesNotOpenStaleAction(t *testing.T) {
-	body := strings.ReplaceAll(requestedCardFixture, `"status":"pending_authorization"`, `"status":"recovery_required"`)
+	body := strings.ReplaceAll(requestedCardFixture, `"status":"requested"`, `"status":"recovery_required"`)
 	body = strings.TrimSuffix(body, "}") + `,"action":{"name":"spend_approval","url":"https://example.test/approve"}}`
 	var item kernel.VaultItemUnion
 	require.NoError(t, json.Unmarshal([]byte(body), &item))

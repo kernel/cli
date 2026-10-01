@@ -26,6 +26,11 @@ func vaultFieldsOf(names string) vaultOutputFields {
 var vaultFields = vaultFieldsOf("id name created_at updated_at")
 var vaultOperationFields = vaultFieldsOf("type description")
 var vaultTotalFields = vaultFieldsOf("type display_text amount")
+var onePasswordRequestEntryFields = vaultOutputFields{
+	"id": nil, "type": nil, "reason": nil, "keywords": nil,
+	"parameters": vaultFieldsOf("website"),
+}
+var onePasswordRequestFields = vaultOutputFields{"version": nil, "goal": nil, "entries": onePasswordRequestEntryFields}
 var vaultMethodFields = vaultOutputFields{
 	"id": nil, "provider": nil, "type": nil, "is_default": nil,
 	"display":      vaultFieldsOf("label brand last4"),
@@ -35,12 +40,13 @@ var vaultItemFields = vaultOutputFields{
 	"id": nil, "key": nil, "type": nil, "description": nil, "version": nil, "created_at": nil, "updated_at": nil, "expires_at": nil,
 	"available_operations": vaultOperationFields,
 	"available_expansions": vaultOperationFields,
-	"action":               vaultFieldsOf("name url expires_at"),
+	"action":               vaultFieldsOf("name url expires_at instructions"),
 	"expanded":             {"payment_methods": vaultMethodFields},
 	"spec": {
-		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil,
-		"browser_id": nil, "page_url": nil, "amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil,
-		"context": nil, "expires_at": nil, "description": nil,
+		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil, "checkout_origin": nil,
+		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
+		"context": nil, "expires_at": nil, "description": nil, "account": nil,
+		"requests":        onePasswordRequestFields,
 		"fields":          vaultFieldsOf("name label type required sensitive"),
 		"provider_config": vaultFieldsOf("id name"),
 		"authorization":   {"method": nil, "client": {"type": nil, "provider_config": vaultFieldsOf("id name")}},
@@ -51,7 +57,11 @@ var vaultItemFields = vaultOutputFields{
 		},
 	},
 	"state": {
-		"provider": nil, "status": nil, "status_reason": nil, "user_id": nil, "domains": nil,
+		"provider": nil, "status": nil, "status_reason": nil, "user_id": nil, "domains": nil, "access_request_id": nil,
+		"access_request": {
+			"id": nil, "state": nil, "goal": nil, "createdAt": nil, "has_autofill_token": nil, "granted_count": nil,
+			"request": onePasswordRequestFields, "entries": onePasswordRequestEntryFields,
+		},
 		"fields":        {"*": vaultFieldsOf("has_value")},
 		"masks":         vaultFieldsOf("brand last4"),
 		"aliases":       vaultFieldsOf("number cvc exp_month exp_year"),
@@ -111,9 +121,14 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 			continue
 		}
 		if value, ok := object[key]; ok {
-			if key == "url" || key == "approval_url" || key == "page_url" || key == "merchant_origin" || key == "image_url" || key == "product_url" {
+			if key == "url" || key == "approval_url" || key == "merchant_url" || key == "merchant_origin" || key == "image_url" || key == "product_url" || key == "website" {
 				var address string
-				if json.Unmarshal(value, &address) != nil || !vaultDisplayURL(address) {
+				if json.Unmarshal(value, &address) != nil {
+					continue
+				}
+				var name string
+				approval := key == "url" && json.Unmarshal(object["name"], &name) == nil && name == "1password_access_approval"
+				if !vaultDisplayURL(address) && !(approval && onePasswordApprovalURL(address)) {
 					continue
 				}
 			}
@@ -125,28 +140,9 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 		}
 	}
 	var itemType string
-	if result["spec"] != nil && result["state"] != nil && json.Unmarshal(result["type"], &itemType) == nil {
-		if itemType == "credential" {
-			if err := preservePublicCredentialValues(object, result); err != nil {
-				return nil, err
-			}
-		}
-		if itemType == "card" {
-			var spec struct {
-				Provider string `json:"provider"`
-			}
-			if json.Unmarshal(result["spec"], &spec) == nil && spec.Provider == "link" {
-				var state vaultJSON
-				if json.Unmarshal(result["state"], &state) != nil {
-					return nil, fmt.Errorf("invalid vault response shape")
-				}
-				delete(state, "aliases")
-				filteredState, err := json.Marshal(state)
-				if err != nil {
-					return nil, err
-				}
-				result["state"] = filteredState
-			}
+	if result["spec"] != nil && result["state"] != nil && json.Unmarshal(result["type"], &itemType) == nil && itemType == "credential" {
+		if err := preservePublicCredentialValues(object, result); err != nil {
+			return nil, err
 		}
 	}
 	return json.Marshal(result)
@@ -258,6 +254,17 @@ func vaultDisplayURL(address string) bool {
 	return true
 }
 
+// The native 1Password approval link is handed to the account owner unchanged; it
+// grants nothing until they approve in their own 1Password app.
+func onePasswordApprovalURL(address string) bool {
+	u, err := url.Parse(address)
+	if err != nil || u.Scheme != "onepassword" || u.Host != "grant-brokered-access" || u.User != nil || u.Fragment != "" {
+		return false
+	}
+	query, err := url.ParseQuery(u.RawQuery)
+	return err == nil && len(query) == 1 && len(query["access_request_reference"]) == 1 && query.Get("access_request_reference") != ""
+}
+
 func vaultShellArgument(value string) string {
 	if vaultNamePattern.MatchString(value) {
 		return value
@@ -276,23 +283,12 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 	}
 	for _, op := range actions.Operations {
 		command := prefix
-		if op.Type == "fill" || op.Type == "prepare_checkout" {
+		if vaultOperationTakesParams(op.Type) && (op.Type != "authorize" || item.Spec.Provider == "link") {
 			command += " --params '<json>'"
 		}
 		pterm.Printf("Invoke: %s -- %s %s %s\n", command, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
 	}
 	return nil
-}
-
-type vaultLinkCardDisplay struct {
-	Spec struct {
-		BrowserID       string `json:"browser_id"`
-		PageURL         string `json:"page_url"`
-		Wallet          string `json:"wallet"`
-		PaymentMethodID string `json:"payment_method_id"`
-		Amount          int64  `json:"amount"`
-		Currency        string `json:"currency"`
-	} `json:"spec"`
 }
 
 func vaultItemDescription(item *kernel.VaultItemUnion) string {
@@ -329,7 +325,34 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	}
 	if item.Type == "credential" {
 		rows = append(rows, []string{"Version", fmt.Sprint(item.Version)})
-		pterm.Info.Println("Use -o json for field definitions, presence, and non-sensitive values; sensitive values are omitted")
+		if item.Spec.Provider == "1password" {
+			if item.Spec.Account != "" {
+				rows = append(rows, []string{"1Password account (immutable)", item.Spec.Account})
+			} else {
+				rows = append(rows, []string{"1Password account", "stored token (developer-supplied)"})
+			}
+			for _, entry := range item.Spec.Requests.Entries {
+				rows = append(rows, []string{"Requested login", entry.Parameters.Website})
+			}
+			if item.State.JSON.AccessRequest.Valid() {
+				rows = append(rows, []string{"Access request state", item.State.AccessRequest.State})
+				entryRow := func(id, website string) {
+					if id != "" {
+						rows = append(rows, []string{"Entry ID", id + " " + website})
+					}
+				}
+				for _, entry := range item.State.AccessRequest.Entries {
+					entryRow(entry.ID, entry.Parameters.Website)
+				}
+				if len(item.State.AccessRequest.Entries) == 0 {
+					for _, entry := range item.State.AccessRequest.Request.Entries {
+						entryRow(entry.ID, entry.Parameters.Website)
+					}
+				}
+			}
+		} else {
+			pterm.Info.Println("Use -o json for field definitions, presence, and non-sensitive values; sensitive values are omitted")
+		}
 	}
 	if item.Type == "wallet" {
 		configID, configName := item.Spec.ProviderConfig.ID, item.Spec.ProviderConfig.Name
@@ -348,21 +371,16 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		rows = append(rows, []string{"Status reason", item.State.StatusReason})
 	}
 	if item.Type == "card" {
-		rows = append(rows, []string{"Wallet key", item.Spec.Wallet}, []string{"Amount (minor units)", fmt.Sprintf("%d %s", item.Spec.Amount, item.Spec.Currency)})
+		merchant := item.Spec.MerchantName
 		if item.Spec.Provider == "agentcard" {
-			rows = append(rows, []string{"Merchant", item.Spec.Merchant})
+			merchant = item.Spec.Merchant
 		}
+		rows = append(rows, []string{"Wallet key", item.Spec.Wallet}, []string{"Merchant", merchant}, []string{"Amount (minor units)", fmt.Sprintf("%d %s", item.Spec.Amount, item.Spec.Currency)})
 		if item.Spec.Provider == "link" {
-			rows = append(rows, []string{"Merchant", item.Spec.MerchantName})
-			var card vaultLinkCardDisplay
-			if json.Unmarshal([]byte(item.RawJSON()), &card) != nil {
-				return fmt.Errorf("invalid Link card response")
-			}
-			rows = append(rows,
-				[]string{"Payment method ID", card.Spec.PaymentMethodID},
-				[]string{"Browser session ID", card.Spec.BrowserID},
-				[]string{"Checkout page", card.Spec.PageURL},
-			)
+			rows = append(rows, []string{"Payment method ID", item.Spec.PaymentMethodID})
+		}
+		if item.Spec.Provider == "agentcard" && item.Spec.CheckoutOrigin != "" {
+			rows = append(rows, []string{"Checkout origin", item.Spec.CheckoutOrigin})
 		}
 	}
 	if item.State.JSON.Domains.Valid() {
@@ -374,7 +392,7 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	if !item.ExpiresAt.IsZero() {
 		rows = append(rows, []string{"Expires At", util.FormatLocal(item.ExpiresAt)})
 	}
-	if item.Spec.Provider == "agentcard" && item.State.JSON.Aliases.Valid() {
+	if item.State.JSON.Aliases.Valid() {
 		a := item.State.Aliases
 		rows = append(rows, []string{"Checkout alias: number", a.Number}, []string{"Checkout alias: cvc", a.Cvc}, []string{"Checkout alias: exp_month", a.ExpMonth}, []string{"Checkout alias: exp_year", a.ExpYear})
 	}
@@ -425,6 +443,21 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	for _, op := range actions.Operations {
 		pterm.Printf("Available operation: %s — %s\n", op.Type, op.Description)
 	}
+	if item.Type == "credential_account" {
+		if actions.RequiredAction != "" {
+			pterm.Info.Println("Share the 1Password authorization URL with the account owner. Observe the connection with items get --wait 60; never ask for 1Password passwords or codes.")
+		} else if item.State.Status == "reconnect_required" || item.State.Status == "declined" {
+			pterm.Info.Println("This 1Password account is not connected. Ask the owner before running credentials connect again with the same key; use 1pw_recover first if it is advertised.")
+		}
+		return
+	}
+	if item.Type == "credential" && item.Spec.Provider == "1password" {
+		if item.Action.Instructions != "" {
+			pterm.Printf("Approval instructions:\n%s\n", item.Action.Instructions)
+		}
+		pterm.Info.Println("Ready means the account owner approved access, not that sign-in succeeded. 1pw_fill submits the form; inspect the page afterward. Never retry a request or fill automatically; after an uncertain outcome, do not delete and recreate the item.")
+		return
+	}
 	if item.Type == "credential" {
 		if actions.RequiredAction != "" {
 			pterm.Info.Println("Share the collection URL with the user to complete the credential form. Observe readiness with items get --wait 60; for edits to an already-ready item, compare versions without --wait.")
@@ -447,10 +480,10 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		for _, expansion := range card.AvailableExpansions {
 			pterm.Printf("Available expansion: %s — %s\n", expansion.Type, expansion.Description)
 		}
-		if item.Spec.Provider == "agentcard" && item.State.JSON.Aliases.Valid() {
+		if item.State.JSON.Aliases.Valid() {
 			pterm.Info.Println("Aliases are non-secret checkout values. Use only in a browser created with this vault attached; ready does not mean paid.")
 		}
-		pterm.Info.Println("Inspect items events for payment outcomes. Fill supplies credentials but does not submit payment. Never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")
+		pterm.Info.Println("Inspect items events for payment outcomes. Fill supplies the payment credential but does not submit payment. Never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")
 	} else {
 		wallet := item.AsWallet()
 		for _, expansion := range wallet.AvailableExpansions {
@@ -480,7 +513,7 @@ func printVaultPaymentMethods(methods []kernel.VaultPaymentMethod) {
 		rows = append(rows, []string{m.ID, m.Provider, m.Type, m.Display.Label, m.Display.Brand, m.Display.Last4, fmt.Sprint(m.IsDefault), eligible, strings.Join(capability.Reasons, ", ")})
 	}
 	PrintTableNoPad(rows, true)
-	pterm.Info.Println("Select an ID explicitly. Link cards require payment_method_id; Kernel inspects checkout and selects the execution method. AgentCard uses card_id (or omit it for cardholder selection). Capabilities are advisory; missing means unknown, not ineligible.")
+	pterm.Info.Println("Select an ID explicitly in the card --spec JSON: Link uses payment_method_id; AgentCard uses card_id (or omit it for cardholder selection). Capabilities are advisory; missing means unknown, not ineligible.")
 }
 
 func printVaultEvents(events []kernel.VaultItemEvent, data []vaultJSON) {

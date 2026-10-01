@@ -42,7 +42,7 @@ func TestCredentialCreateAndUpdate(t *testing.T) {
 					assert.JSONEq(t, `{"fields":{"password":{"value":null}}}`, string(body["spec"]))
 				} else {
 					assert.Equal(t, "PUT", r.Method)
-					assert.JSONEq(t, `{"fields":[{"name":"password","label":"Account Password","type":"password","required":true}]}`, string(body["spec"]))
+					assert.JSONEq(t, `{"provider":"kernel","fields":[{"name":"password","label":"Account Password","type":"password","required":true}]}`, string(body["spec"]))
 				}
 				w.Header().Set("Content-Type", "application/json")
 				io.WriteString(w, credentialFixture)
@@ -209,4 +209,14 @@ func TestCredentialDiscoveryAndInvalidInput(t *testing.T) {
 	data, err := readVaultSpecFile(cmd)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"fields":{}}`, string(data))
+}
+
+func TestCredentialSpecInputProvider(t *testing.T) {
+	spec, err := credentialSpecInput([]byte(`{"provider":"kernel","fields":[{"name":"password","type":"password"}]}`))
+	require.NoError(t, err)
+	require.NotNil(t, spec.OfKernel)
+	assert.EqualValues(t, "kernel", spec.OfKernel.Provider)
+
+	_, err = credentialSpecInput([]byte(`{"provider":"bitwarden","fields":[{"name":"password","type":"password"}]}`))
+	assert.EqualError(t, err, "credential spec provider must be kernel or 1password")
 }
