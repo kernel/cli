@@ -80,15 +80,20 @@ Vault names, item keys, and project ownership are immutable.
 
 1. Create/select a vault, then create a provider wallet and follow its returned action.
 2. For Link, list wallet payment methods and select an ID explicitly.
-3. Create a card request with --provider and --spec JSON.
+3. Create a card request with --provider and --spec JSON. Link card creation does not
+   contact Link; the card is requested and advertises authorize.
 4. Inspect items get, then use items invoke <vault> <key> <operation> only when advertised.
    Follow the operation description and any returned provider action.
-5. Attach the vault with browsers create --vault <id-or-name>; attachment is required for fill.
-   Ready Link cards use only advertised fill with --params for browser checkout.
+   For Link, attach the vault with browsers create --vault <id-or-name>, open the final
+   checkout page, and authorize with that browser_id and exact page_url. Kernel inspects
+   the checkout, selects a Link payment token or virtual card, binds fill to that browser
+   and page, and starts approval. Omitting both issues an unbound virtual card.
+5. Browser-vault attachment is required for fill. Ready Link cards use only advertised fill with
+   --params, passing the browser_id and page_url used to authorize.
    Link cards do not expose aliases or support egress substitution.
    AgentCard-only checkout aliases support egress substitution with checkout hold,
    approval, and replay; they are not a fallback after fill.
-   Inspect items get/events for payment outcomes.
+   Fill never submits payment. Inspect items get/events for payment outcomes.
 
 Permitted checkout domains are provider-assigned and displayed when returned;
 there is no domain-setting API.
@@ -159,10 +164,19 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 	invoke := &cobra.Command{Use: "invoke <vault> <key> <operation>", Short: "Invoke an operation advertised by an item", Args: cobra.ExactArgs(3), PreRunE: vaultPreRun,
 		Long: `Retrieve the item and invoke only an operation listed in available_operations.
 collect returns a time-scoped URL for the full credential form without clearing values.
-authorize sends {"type":"authorize"} for payment authorization.
-Read the operation description and follow any approval requirements before invoking.
-fill requires --params JSON or --spec-file <path|-> with browser_id (session ID, not name)
-and 1-32 ordered fields (field, selector). Do not include type, values, or frame IDs.
+Each operation's description lists the inputs that item needs; read it before invoking.
+authorize starts payment approval after explicit user approval. For Link, pass --params
+with browser_id and page_url together from the final checkout page, or omit both for an
+unbound virtual card. The first authorization fixes the binding; later re-checks must
+repeat the same values or omit both. Checkout inspection errors (ambiguous_page, timeout,
+destination_denied, browser_not_found, browser_unavailable, browser_error) start no
+approval; correct the browser or page and authorize again. If the checkout needs a virtual
+card and amount exceeds 50000, authorize returns 400: delete the card and create a
+smaller one. Do not retry other provider failures or indeterminate outcomes.
+fill requires --params JSON or --spec-file <path|-> with browser_id (session ID, not name).
+Credentials require 1-32 ordered fields (field, selector). Link cards require the
+page_url used to authorize; include fields only when the advertised fill description
+asks for them. Do not include type, values, or frame IDs.
 The vault must already be attached to the browser. page_url selects an existing page;
 fill never navigates. Credentials use declared field names, must omit format, and may
 omit page_url only when the API can resolve a unique page. TOTP codes stay server-generated.
@@ -175,7 +189,7 @@ Fill is available for credential items and ready Link cards when advertised, not
 Link cards do not expose aliases or support egress substitution.
 Fill writes real values into the browser; unrestricted browser/CDP access can read them.
 Fill never explicitly submits forms or clicks buttons, but input/change events may trigger site behavior.
-completed means fields were filled, not website acceptance, login, or payment success.
+completed means credentials were supplied, not website acceptance, login, or payment success.
 failed may leave partial writes; unknown quarantines the browser. Never automatically
 retry or fall back to aliases. Requests are not automatically retried.
 API validation errors (400/403/404/409) include HTTP status, recognized error codes,
@@ -223,6 +237,8 @@ JSON
   kernel vaults items invoke user-vault github 1pw_access_request_status --params '{"browser_id":"<browser-id>","timeout_seconds":60}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login"}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login","entry_id":"<entry-id>"}'
+  kernel vaults items invoke checkout order-1 authorize --params '{"browser_id":"browser-session-id","page_url":"https://shop.example/checkout"}'
+  kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browser-session-id","page_url":"https://shop.example/checkout"}' -o json
   kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browser-session-id","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#card-number"}]}' -o json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			open, _ := cmd.Flags().GetBool("open")
@@ -233,7 +249,7 @@ JSON
 			}
 			if cmd.Flags().Changed("spec-file") {
 				if !vaultOperationTakesParams(args[2]) {
-					return fmt.Errorf("--spec-file is only supported for fill, prepare_checkout, and 1Password operations with parameters")
+					return fmt.Errorf("--spec-file is only supported for fill, authorize, prepare_checkout, and 1Password operations with parameters")
 				}
 				data, err := readVaultSpecFile(cmd)
 				if err != nil {
@@ -247,7 +263,7 @@ JSON
 			}
 			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], params, vaultOutput(cmd), open)
 		}}
-	invoke.Flags().String("params", "", "Operation parameters JSON for fill, prepare_checkout, or 1pw_* (maximum 128 KiB); omit type and credential values; 1pw_update_access_token requires --spec-file")
+	invoke.Flags().String("params", "", "Operation parameters JSON for fill, authorize, prepare_checkout, or 1pw_* (maximum 128 KiB); omit type and credential values; 1pw_update_access_token requires --spec-file")
 	invoke.Flags().String("spec-file", "", "Operation parameters JSON file (use '-' for stdin; maximum 128 KiB)")
 	invoke.MarkFlagsMutuallyExclusive("params", "spec-file")
 	invoke.Flags().Bool("open", false, "Open a returned HTTPS action URL in your browser")
@@ -291,8 +307,8 @@ JSON
 	addVaultJSONOutputFlag(methods)
 	wallets.AddCommand(walletCreate, methods)
 
-	cards := &cobra.Command{Use: "cards", Short: "Configure card requests"}
-	cards.AddCommand(newVaultCardCommand(false), newVaultCardCommand(true))
+	cards := &cobra.Command{Use: "cards", Short: "Create immutable card requests"}
+	cards.AddCommand(newVaultCardCommand())
 	cmd.AddCommand(items, wallets, cards, newVaultCredentialsCommand())
 	return cmd
 }
@@ -315,22 +331,17 @@ func newVaultDeleteCommand(item bool) *cobra.Command {
 	return cmd
 }
 
-func newVaultCardCommand(update bool) *cobra.Command {
-	use, short := "create", "Create a card request without authorizing it"
-	if update {
-		use, short = "update", "Update a card spec when the API permits configuration"
-	}
-	cmd := &cobra.Command{Use: use + " <vault> <key> --provider <link|agentcard> --spec '<json>'", Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: short + `. Neither create nor update authorizes a Link card.
-Requested cards accept a replacement spec. Pending issuance updates preserve omitted
-optional fields; explicit empty lists clear them. The API restricts fields after
-authorization starts; wallet/provider bindings cannot change. An uncertain update
-enters recovery_required and must not be retried. Checkout cards can be edited
-between authorizations. Identical creates return existing state without resetting it.
-Never reconfigure the same item to retry a failed, timed-out, rejected, or indeterminate payment.
+func newVaultCardCommand() *cobra.Command {
+	short := "Create a card request without authorizing it"
+	cmd := &cobra.Command{Use: "create <vault> <key> --provider <link|agentcard> --spec '<json>'", Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+		Long: short + `. Creating a Link card does not contact Link; invoke the
+advertised authorize operation at final checkout. Card requests are immutable: there is
+no card update. Changed purchase details require deleting the card and creating a new
+item. Identical creates return existing state without resetting it.
+Never recreate an item to retry a failed, timed-out, rejected, or indeterminate payment.
 A recovery item that permits abandonment must be deleted after explicit user confirmation before creating a replacement.
 ` + vaultSpecHelp + vaultCardSpecHelp,
-		Example: "  kernel vaults cards " + use + ` checkout order-1 \
+		Example: "  kernel vaults cards create" + ` checkout order-1 \
     --provider agentcard --spec '{
       "wallet": "wallet-1",
       "merchant": "Example Shop",
@@ -342,7 +353,7 @@ A recovery item that permits abandonment must be deleted after explicit user con
 			if err != nil {
 				return err
 			}
-			return getVaultsHandler(cmd).SaveCard(cmd.Context(), args[0], args[1], param.Override[kernel.CardVaultItemSpecUnionParam](spec), update, vaultOutput(cmd))
+			return getVaultsHandler(cmd).SaveCard(cmd.Context(), args[0], args[1], param.Override[kernel.CardVaultItemSpecUnionParam](spec), vaultOutput(cmd))
 		}}
 	addVaultSpecFlags(cmd)
 	addVaultJSONOutputFlag(cmd)

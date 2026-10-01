@@ -134,7 +134,7 @@ func TestVaultWalletConfigInvalidInput(t *testing.T) {
 		require.Error(t, err)
 		assert.False(t, strings.Contains(out+human+err.Error(), secret))
 	}
-	for _, path := range []string{"wallets create", "cards create", "cards update"} {
+	for _, path := range []string{"wallets create", "cards create"} {
 		for _, raw := range []string{
 			fmt.Sprintf(`{"authorization":{"tokens":{"access_token":%q}}}`, secret),
 			fmt.Sprintf(`{"credentials":{"client_secret":%q}}`, secret),
@@ -256,20 +256,5 @@ func TestVaultRecoveryEventProjection(t *testing.T) {
 		require.False(t, strings.Contains(out+human, secret))
 		assert.Contains(t, out+human, "card_update")
 		assert.Contains(t, out+human, "outcome_unknown")
-	}
-}
-
-func TestVaultPendingUpdatePreservesOmissionsAndEmptyLists(t *testing.T) {
-	for _, fields := range []string{"", `,"line_items":[],"totals":[]`} {
-		client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-			assert.Equal(t, http.MethodPatch, r.Method)
-			body, _ := io.ReadAll(r.Body)
-			assert.JSONEq(t, `{"type":"card","spec":{"provider":"link","wallet":"wallet-1","amount":2000`+fields+`}}`, string(body))
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, strings.ReplaceAll(requestedCardFixture, "requested", "recovery_required"))
-		})
-		out, _, err := executeVaultInputCommand(t, client, "", "vaults", "cards", "update", "checkout", "order-1", "--provider", "link", "--spec", `{"wallet":"wallet-1","amount":2000`+fields+`}`, "-o", "json")
-		require.NoError(t, err)
-		assert.Contains(t, out, "recovery_required")
 	}
 }

@@ -212,14 +212,8 @@ func (c VaultsCmd) CreateWallet(ctx context.Context, vault, key string, spec ker
 	return c.showItem(item, output, open)
 }
 
-func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.CardVaultItemSpecUnionParam, update bool, output string) error {
-	var item *kernel.VaultItemUnion
-	var err error
-	if update {
-		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCardVaultItemUpdateRequest: &kernel.VaultItemUpdateParamsBodyCardVaultItemUpdateRequest{Type: "card", Spec: spec}}, option.WithMaxRetries(0))
-	} else {
-		item, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCard: &kernel.VaultItemUpsertParamsBodyCard{Spec: spec}}, option.WithMaxRetries(0))
-	}
+func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.CardVaultItemSpecUnionParam, output string) error {
+	item, err := c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCard: &kernel.VaultItemUpsertParamsBodyCard{Spec: spec}}, option.WithMaxRetries(0))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -273,6 +267,12 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
 	if operation == "fill" {
+		if item.Type == "credential" && len(params.Fill.Fields) == 0 {
+			return fmt.Errorf("credential fill requires 1-32 field bindings")
+		}
+		if item.Type == "card" && params.Fill.PageURL == "" {
+			return fmt.Errorf("card fill requires page_url")
+		}
 		return c.fill(ctx, vault, key, params.Fill, output)
 	}
 	if operation == "1pw_fill" {
@@ -289,6 +289,11 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		request.OfPrepareCheckout = &kernel.PrepareCheckoutVaultItemOperationRequestParam{Type: "prepare_checkout", Checkout: *params.Checkout}
 	} else if operation == "collect" {
 		request.OfCollect = &kernel.CollectVaultItemOperationRequestParam{Type: "collect"}
+	} else if params != nil && params.Authorize != nil {
+		if item.Type != "card" || item.Spec.Provider != "link" {
+			return fmt.Errorf("authorize browser_id and page_url apply only to Link cards")
+		}
+		request.OfAuthorize = params.Authorize
 	} else {
 		// Preserve support for other advertised parameterless operations.
 		request.OfAuthorize = &kernel.AuthorizeVaultItemOperationRequestParam{Type: kernel.AuthorizeVaultItemOperationRequestType(operation)}
@@ -300,6 +305,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		}
 		if item.Type == "credential" || item.Type == "credential_account" {
 			return vaultCredentialError(err)
+		}
+		if operation == "authorize" && item.Type == "card" && item.Spec.Provider == "link" {
+			return vaultLinkAuthorizeError(err, params != nil && params.Authorize != nil)
 		}
 		return util.CleanedUpSdkError{Err: err}
 	}

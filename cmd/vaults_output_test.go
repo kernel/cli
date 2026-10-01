@@ -242,3 +242,14 @@ func TestVaultGetCancellation(t *testing.T) {
 	assert.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, int32(1), calls.Load())
 }
+
+func TestVaultWalletDescriptionIsDisplayed(t *testing.T) {
+	const description = "Connected Link wallet. Create Link cards that reference this wallet key."
+	var item kernel.VaultItemUnion
+	require.NoError(t, json.Unmarshal([]byte(strings.Replace(connectedWalletFixture, `"type":"wallet",`, `"type":"wallet","description":"`+description+`",`, 1)), &item))
+	buf := capturePtermOutput(t)
+	require.NoError(t, printVaultItem(&item, ""))
+	assert.Contains(t, buf.String(), description)
+	out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
+	assert.Contains(t, out, description)
+}

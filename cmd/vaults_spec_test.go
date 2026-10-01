@@ -13,7 +13,7 @@ import (
 
 func TestVaultRawSpecForwarding(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
-	for _, path := range []string{"wallets create", "cards create", "cards update"} {
+	for _, path := range []string{"wallets create", "cards create"} {
 		for _, provider := range []string{"link", "agentcard"} {
 			for _, raw := range []string{
 				`{}`,
@@ -35,13 +35,8 @@ func TestVaultRawSpecForwarding(t *testing.T) {
 						require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 						assert.Equal(t, expected, body.Spec, "preserve exact numbers, false, zero, null, nested fields, and omissions")
 						assert.Equal(t, "/vaults/checkout/items/item-1", r.URL.Path)
-						if path == "cards update" {
-							assert.Equal(t, http.MethodPatch, r.Method)
-							assert.Equal(t, "card", body.Type)
-						} else {
-							assert.Equal(t, http.MethodPut, r.Method)
-							assert.Equal(t, strings.TrimSuffix(strings.Fields(path)[0], "s"), body.Type)
-						}
+						assert.Equal(t, http.MethodPut, r.Method)
+						assert.Equal(t, strings.TrimSuffix(strings.Fields(path)[0], "s"), body.Type)
 						w.Header().Set("Content-Type", "application/json")
 						_, _ = io.WriteString(w, requestedCardFixture)
 					})
@@ -73,7 +68,7 @@ func TestVaultRawSpecValidationIsLeftToAPI(t *testing.T) {
 }
 
 func TestVaultSpecHelpAndFlags(t *testing.T) {
-	for _, path := range []string{"wallets create", "cards create", "cards update"} {
+	for _, path := range []string{"wallets create", "cards create"} {
 		t.Run(path, func(t *testing.T) {
 			cmd, _, err := newVaultsCommand().Find(strings.Fields(path))
 			require.NoError(t, err)
@@ -93,7 +88,7 @@ func TestVaultSpecHelpAndFlags(t *testing.T) {
 				for _, field := range []string{"merchant_name:", "merchant:", "line_items?:", "metadata?:", "expires_at?:", "checkout_origin?:", "type LinkLineItem", "type LinkTotal"} {
 					assert.Contains(t, cmd.Long, field)
 				}
-				for _, guidance := range []string{"eligible", "autopilot may not apply", "user approval may", "does not guarantee payment success", "Kernel does not validate this declaration against the page open in the browser.", "preparation merchant_origin instead", "Card updates replace the whole spec", "omitting checkout_origin from an update removes"} {
+				for _, guidance := range []string{"eligible", "autopilot may not apply", "user approval may", "does not guarantee payment success", "Kernel does not validate this declaration against the page open in the browser.", "preparation merchant_origin instead", "there is\nno card update", "authorize at the final checkout page with browser_id and page_url"} {
 					assert.Contains(t, cmd.Long, guidance)
 				}
 			} else {

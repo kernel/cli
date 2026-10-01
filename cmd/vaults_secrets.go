@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/kernel/cli/pkg/util"
 	kernel "github.com/kernel/kernel-go-sdk"
 	"github.com/spf13/cobra"
 )
@@ -31,6 +32,37 @@ func vaultCredentialError(err error) error {
 		}
 	}
 	return fmt.Errorf("vault request failed; details withheld to protect credentials; inspect existing state before taking further action")
+}
+
+// Checkout inspection errors are returned before Kernel creates a spend request,
+// so a bound authorize can run again once the browser or page is corrected.
+func vaultLinkAuthorizeError(err error, bound bool) error {
+	var apiErr *kernel.Error
+	if !errors.As(err, &apiErr) {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	var body struct {
+		Code string `json:"code"`
+	}
+	_ = json.Unmarshal([]byte(apiErr.RawJSON()), &body)
+	inspection := map[string]int{
+		"ambiguous_page":      400,
+		"timeout":             400,
+		"destination_denied":  403,
+		"browser_not_found":   404,
+		"browser_unavailable": 409,
+		"browser_error":       500,
+	}
+	if status, ok := inspection[body.Code]; bound && ok && status == apiErr.StatusCode {
+		return fmt.Errorf("%s (HTTP %d): checkout inspection failed before approval started; open the final checkout page in the vault-attached browser, then authorize again with its browser_id and exact page_url", body.Code, apiErr.StatusCode)
+	}
+	switch {
+	case apiErr.StatusCode == 409 && body.Code == "conflict":
+		return fmt.Errorf("authorize conflict (HTTP 409): inspect the item; after the first authorization, repeat its browser_id and page_url or omit both")
+	case apiErr.StatusCode == 429:
+		return fmt.Errorf("rate limited (HTTP 429): the card is retained; back off, then retry the same authorize")
+	}
+	return util.CleanedUpSdkError{Err: err}
 }
 
 const onePasswordUnavailable = "1Password is not available in this deployment; tell the user and offer Kernel-hosted collection instead"

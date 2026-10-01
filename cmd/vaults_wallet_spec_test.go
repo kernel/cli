@@ -15,7 +15,7 @@ import (
 func TestVaultSpecsPreserveOpaqueMetadata(t *testing.T) {
 	metadata := `{"tokens":"loyalty-points","credentials":{"label":"member"},"client_secret":"field-description","entries":[{"access_token":"column-name"}]}`
 	for _, provider := range []string{"link", "agentcard"} {
-		for _, command := range []string{"wallets create", "cards create", "cards update"} {
+		for _, command := range []string{"wallets create", "cards create"} {
 			t.Run(provider+"/"+command, func(t *testing.T) {
 				client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 					var body struct {

@@ -37,7 +37,7 @@ var vaultMethodFields = vaultOutputFields{
 	"capabilities": {"single_use_card": vaultFieldsOf("eligible reasons")},
 }
 var vaultItemFields = vaultOutputFields{
-	"id": nil, "key": nil, "type": nil, "version": nil, "created_at": nil, "updated_at": nil, "expires_at": nil,
+	"id": nil, "key": nil, "type": nil, "description": nil, "version": nil, "created_at": nil, "updated_at": nil, "expires_at": nil,
 	"available_operations": vaultOperationFields,
 	"available_expansions": vaultOperationFields,
 	"action":               vaultFieldsOf("name url expires_at instructions"),
@@ -283,12 +283,20 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 	}
 	for _, op := range actions.Operations {
 		command := prefix
-		if vaultOperationTakesParams(op.Type) {
+		if vaultOperationTakesParams(op.Type) && (op.Type != "authorize" || item.Spec.Provider == "link") {
 			command += " --params '<json>'"
 		}
 		pterm.Printf("Invoke: %s -- %s %s %s\n", command, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
 	}
 	return nil
+}
+
+func vaultItemDescription(item *kernel.VaultItemUnion) string {
+	var value struct {
+		Description string `json:"description"`
+	}
+	_ = json.Unmarshal([]byte(item.RawJSON()), &value)
+	return value.Description
 }
 
 func printVaultItem(item *kernel.VaultItemUnion, output string) error {
@@ -311,6 +319,9 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	rows := pterm.TableData{
 		{"Property", "Value"}, {"Key (immutable)", item.Key}, {"ID", item.ID},
 		{"Type", item.Type}, {"Provider", item.Spec.Provider}, {"Status", item.State.Status},
+	}
+	if description := vaultItemDescription(item); description != "" {
+		rows = append(rows, []string{"Description", description})
 	}
 	if item.Type == "credential" {
 		rows = append(rows, []string{"Version", fmt.Sprint(item.Version)})
@@ -472,7 +483,7 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		if item.State.JSON.Aliases.Valid() {
 			pterm.Info.Println("Aliases are non-secret checkout values. Use only in a browser created with this vault attached; ready does not mean paid.")
 		}
-		pterm.Info.Println("Inspect items events for payment outcomes. Never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")
+		pterm.Info.Println("Inspect items events for payment outcomes. Fill supplies the payment credential but does not submit payment. Never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")
 	} else {
 		wallet := item.AsWallet()
 		for _, expansion := range wallet.AvailableExpansions {

@@ -52,7 +52,7 @@ type LinkCardSpec = {
   provider: "link";
   wallet: string;             // wallet item key
   payment_method_id: string;  // from wallets payment-methods
-  amount: number;             // integer minor units; 1..500000
+  amount: number;             // integer minor units; 1..500000 (virtual card: 1..50000)
   currency: string;           // three letters
   merchant_name: string;      // 1..255 characters
   merchant_url: string;       // URI
@@ -70,7 +70,7 @@ type AgentCardCardSpec = {
   amount: number;             // integer minor units; 1..9007199254740991
   currency: string;           // three letters
   card_id?: string;           // opaque AgentCard ID, pass through unchanged; else chosen at approval
-  checkout_origin?: string;   // top-level checkout origin for autopilot matching; update omission removes it
+  checkout_origin?: string;   // top-level checkout origin for autopilot matching
 };
 
 type LinkLineItem = {
@@ -91,8 +91,11 @@ type LinkTotal = {
   amount: number;             // integer minor units
 };
 
-Card updates replace the whole spec, so omitting checkout_origin from an update removes
-its existing value. For non-prepared authorization, checkout_origin is forwarded to
+For Link, authorize at the final checkout page with browser_id and page_url. Kernel
+inspects the checkout and internally selects a Link payment token or virtual card;
+agents do not provide merchant_account_id or choose the execution mode.
+
+For non-prepared AgentCard authorization, checkout_origin is forwarded to
 AgentCard for eligible autopilot rule matching. Use a canonical HTTPS origin (lowercase
 host, omit the default port, and include no path), or localhost HTTP for test pages.
 Kernel does not validate this declaration against the page open in the browser. Omitting

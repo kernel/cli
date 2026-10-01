@@ -395,3 +395,51 @@ func TestVaultAuthorizeRejectsFillResponse(t *testing.T) {
 		})
 	}
 }
+
+func TestVaultLinkFillWithoutFieldBindings(t *testing.T) {
+	for _, status := range []string{"completed", "failed", "unknown"} {
+		t.Run(status, func(t *testing.T) {
+			result, err := parseVaultFillResult(json.RawMessage(`{"type":"fill","status":"`+status+`","fields":[]}`), 0)
+			require.NoError(t, err)
+			require.Equal(t, status, result.Status)
+			require.Empty(t, result.Fields)
+		})
+	}
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, readyFillCardFixture)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"type":"fill","browser_id":"browser-1","page_url":"https://shop.example/checkout"}`, string(body))
+		_, _ = io.WriteString(w, `{"type":"fill","status":"completed","fields":[]}`)
+	})
+	params := `{"browser_id":"browser-1","page_url":"https://shop.example/checkout"}`
+	out, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "fill", "--params", params, "-o", "json")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"type":"fill","status":"completed","fields":[]}`, out)
+	_, human, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "fill", "--params", params)
+	require.NoError(t, err)
+	assert.Contains(t, human, "Fields filled; this does not confirm website acceptance or form submission.")
+	assert.NotContains(t, human, "Field index")
+}
+
+func TestVaultFillRequiresItemInputs(t *testing.T) {
+	credential := `{"id":"item-1","key":"login","type":"credential","spec":{"provider":"kernel","fields":[]},"state":{"status":"ready"},"available_operations":[{"type":"fill","description":"Fill."}]}`
+	for name, tt := range map[string]struct{ item, params, want string }{
+		"card without page_url":     {readyFillCardFixture, `{"browser_id":"browser-1","fields":[{"field":"number","selector":"#n"}]}`, "card fill requires page_url"},
+		"credential without fields": {credential, `{"browser_id":"browser-1","page_url":"https://shop.example/"}`, "credential fill requires 1-32 field bindings"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, http.MethodGet, r.Method, "fill must not reach the API")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, tt.item)
+			})
+			_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "fill", "--params", tt.params, "-o", "json")
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
+}
