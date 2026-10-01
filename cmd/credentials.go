@@ -182,35 +182,27 @@ func (c CredentialsCmd) Get(ctx context.Context, in CredentialsGetInput) error {
 	return nil
 }
 
-func totpExtraFields(secret, algorithm string, digits, period *int) (map[string]any, error) {
+func validateTotpSettings(secret, algorithm string, digits, period *int) error {
 	if algorithm == "" && digits == nil && period == nil {
-		return nil, nil
+		return nil
 	}
 	if secret == "" {
-		return nil, fmt.Errorf("TOTP settings require --totp-secret")
+		return fmt.Errorf("TOTP settings require --totp-secret")
 	}
-	fields := make(map[string]any)
 	if algorithm != "" {
 		switch strings.ToUpper(algorithm) {
 		case "SHA1", "SHA256", "SHA512":
-			fields["totp_algorithm"] = strings.ToUpper(algorithm)
 		default:
-			return nil, fmt.Errorf("--totp-algorithm must be SHA1, SHA256, or SHA512")
+			return fmt.Errorf("--totp-algorithm must be SHA1, SHA256, or SHA512")
 		}
 	}
-	if digits != nil {
-		if *digits < 6 || *digits > 9 {
-			return nil, fmt.Errorf("--totp-digits must be between 6 and 9")
-		}
-		fields["totp_digits"] = *digits
+	if digits != nil && (*digits < 6 || *digits > 9) {
+		return fmt.Errorf("--totp-digits must be between 6 and 9")
 	}
-	if period != nil {
-		if *period < 15 || *period > 300 {
-			return nil, fmt.Errorf("--totp-period must be between 15 and 300")
-		}
-		fields["totp_period"] = *period
+	if period != nil && (*period < 15 || *period > 300) {
+		return fmt.Errorf("--totp-period must be between 15 and 300")
 	}
-	return fields, nil
+	return nil
 }
 
 func (c CredentialsCmd) Create(ctx context.Context, in CredentialsCreateInput) error {
@@ -228,8 +220,7 @@ func (c CredentialsCmd) Create(ctx context.Context, in CredentialsCreateInput) e
 		return fmt.Errorf("at least one --value is required")
 	}
 
-	extra, err := totpExtraFields(in.TotpSecret, in.TotpAlgorithm, in.TotpDigits, in.TotpPeriod)
-	if err != nil {
+	if err := validateTotpSettings(in.TotpSecret, in.TotpAlgorithm, in.TotpDigits, in.TotpPeriod); err != nil {
 		return err
 	}
 	params := kernel.CredentialNewParams{
@@ -245,7 +236,15 @@ func (c CredentialsCmd) Create(ctx context.Context, in CredentialsCreateInput) e
 	if in.TotpSecret != "" {
 		params.CreateCredentialRequest.TotpSecret = kernel.Opt(in.TotpSecret)
 	}
-	params.CreateCredentialRequest.SetExtraFields(extra)
+	if in.TotpAlgorithm != "" {
+		params.CreateCredentialRequest.TotpAlgorithm = kernel.CreateCredentialRequestTotpAlgorithm(strings.ToUpper(in.TotpAlgorithm))
+	}
+	if in.TotpDigits != nil {
+		params.CreateCredentialRequest.TotpDigits = kernel.Int(int64(*in.TotpDigits))
+	}
+	if in.TotpPeriod != nil {
+		params.CreateCredentialRequest.TotpPeriod = kernel.Int(int64(*in.TotpPeriod))
+	}
 
 	if in.Output != "json" {
 		pterm.Info.Printf("Creating credential '%s'...\n", in.Name)
@@ -294,8 +293,7 @@ func (c CredentialsCmd) Update(ctx context.Context, in CredentialsUpdateInput) e
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
 	}
-	extra, err := totpExtraFields(in.TotpSecret, in.TotpAlgorithm, in.TotpDigits, in.TotpPeriod)
-	if err != nil {
+	if err := validateTotpSettings(in.TotpSecret, in.TotpAlgorithm, in.TotpDigits, in.TotpPeriod); err != nil {
 		return err
 	}
 
@@ -311,7 +309,15 @@ func (c CredentialsCmd) Update(ctx context.Context, in CredentialsUpdateInput) e
 	if in.TotpSecret != "" {
 		params.UpdateCredentialRequest.TotpSecret = kernel.Opt(in.TotpSecret)
 	}
-	params.UpdateCredentialRequest.SetExtraFields(extra)
+	if in.TotpAlgorithm != "" {
+		params.UpdateCredentialRequest.TotpAlgorithm = kernel.UpdateCredentialRequestTotpAlgorithm(strings.ToUpper(in.TotpAlgorithm))
+	}
+	if in.TotpDigits != nil {
+		params.UpdateCredentialRequest.TotpDigits = kernel.Int(int64(*in.TotpDigits))
+	}
+	if in.TotpPeriod != nil {
+		params.UpdateCredentialRequest.TotpPeriod = kernel.Int(int64(*in.TotpPeriod))
+	}
 	if len(in.Values) > 0 {
 		params.UpdateCredentialRequest.Values = in.Values
 	}
