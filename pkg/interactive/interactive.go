@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 
+	"atomicgo.dev/keyboard/keys"
 	"github.com/pterm/pterm"
 	"golang.org/x/term"
 )
@@ -149,13 +150,21 @@ func ErrInputsRequired(problems []string) error {
 // reports the choice. When the Prompter cannot prompt it fails fast with
 // ErrConfirmationRequired(action) instead.
 func (p Prompter) Confirm(action, promptText string) (bool, error) {
+	return p.ConfirmDefault(action, promptText, false)
+}
+
+// ConfirmDefault shows a yes/no confirmation with the requested default.
+func (p Prompter) ConfirmDefault(action, promptText string, defaultValue bool) (bool, error) {
 	if !p.CanPrompt() {
 		return false, ErrConfirmationRequired(action)
 	}
+	return newConfirmPrinter(promptText, defaultValue).Show()
+}
+
+func newConfirmPrinter(promptText string, defaultValue bool) *pterm.InteractiveConfirmPrinter {
 	return pterm.DefaultInteractiveConfirm.
 		WithDefaultText(promptText).
-		WithDefaultValue(false).
-		Show()
+		WithDefaultValue(defaultValue)
 }
 
 // Select shows a select prompt over options and returns the chosen option.
@@ -177,13 +186,18 @@ func (p Prompter) MultiSelect(what, hint, promptText string, options, defaults [
 	if !p.CanPrompt() {
 		return nil, ErrInputRequired(what, hint)
 	}
+	return newMultiSelectPrinter(promptText, options, defaults).Show()
+}
+
+func newMultiSelectPrinter(promptText string, options, defaults []string) *pterm.InteractiveMultiselectPrinter {
 	return pterm.DefaultInteractiveMultiselect.
 		WithOptions(options).
 		WithDefaultOptions(defaults).
 		WithDefaultText(promptText).
-		WithFilter(true).
-		WithMaxHeight(min(len(options), 12)).
-		Show()
+		WithFilter(false).
+		WithKeySelect(keys.Space).
+		WithKeyConfirm(keys.Enter).
+		WithMaxHeight(min(len(options), 12))
 }
 
 // TextInput shows a free-text prompt and returns the entered text. When the

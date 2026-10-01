@@ -213,6 +213,24 @@ func TestSelectedCookieClauseEscapesInput(t *testing.T) {
 	assert.NotContains(t, clause, "example.com' OR 1=1 --'")
 }
 
+func TestCountCookiesForSitesDoesNotDecryptValues(t *testing.T) {
+	profile := sqliteProfileFixture(t)
+	database := filepath.Join(profile.Path, "Network", "Cookies")
+	require.NoError(t, os.MkdirAll(filepath.Dir(database), 0o755))
+	runSQLite(t, database, `
+CREATE TABLE cookies (
+  host_key TEXT, path TEXT, name TEXT, value TEXT, encrypted_value BLOB,
+  expires_utc INTEGER, is_httponly INTEGER, is_secure INTEGER, samesite INTEGER
+);
+INSERT INTO cookies VALUES ('.google.com', '/', 'encrypted', '', X'DEADBEEF', 0, 1, 1, 1);
+`)
+
+	sites, err := CountCookiesForSites(t.Context(), profile, []Site{{Domain: "google.com"}, {Domain: "github.com"}})
+	require.NoError(t, err)
+	assert.Equal(t, 1, sites[0].CookieCount)
+	assert.Zero(t, sites[1].CookieCount)
+}
+
 func writeBrowserFixture(t *testing.T, home, rootSuffix, directory, name string) {
 	t.Helper()
 	root := filepath.Join(home, "Library/Application Support", rootSuffix)
