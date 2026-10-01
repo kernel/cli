@@ -172,6 +172,20 @@ func (p Prompter) Select(what, hint, promptText string, options []string) (strin
 		Show()
 }
 
+// MultiSelect shows a checkbox menu and returns the selected options.
+func (p Prompter) MultiSelect(what, hint, promptText string, options, defaults []string) ([]string, error) {
+	if !p.CanPrompt() {
+		return nil, ErrInputRequired(what, hint)
+	}
+	return pterm.DefaultInteractiveMultiselect.
+		WithOptions(options).
+		WithDefaultOptions(defaults).
+		WithDefaultText(promptText).
+		WithFilter(true).
+		WithMaxHeight(min(len(options), 12)).
+		Show()
+}
+
 // TextInput shows a free-text prompt and returns the entered text. When the
 // Prompter cannot prompt it fails fast with ErrInputRequired(what, hint)
 // instead.

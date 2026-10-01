@@ -20,6 +20,7 @@ require (
 	github.com/tailscale/hujson v0.0.0-20250605163823-992244df8c5a
 	github.com/zalando/go-keyring v0.2.6
 	golang.org/x/crypto v0.52.0
+	golang.org/x/net v0.54.0
 	golang.org/x/oauth2 v0.30.0
 	golang.org/x/sync v0.20.0
 	golang.org/x/term v0.43.0
