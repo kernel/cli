@@ -236,12 +236,15 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	if operation == "prepare_checkout" && (params == nil || params.Checkout == nil) {
 		return fmt.Errorf("prepare_checkout requires checkout parameters")
 	}
+	if operation == "webmcp_invoke" && (params == nil || params.WebMCP == nil || open) {
+		return fmt.Errorf("webmcp_invoke requires --params and does not support --open")
+	}
 	if isOnePasswordOperation(operation) && (params == nil || params.OnePassword == nil) {
 		return fmt.Errorf("%s requires its documented parameters", operation)
 	}
 	item, err := c.vaults.Items.Get(ctx, key, kernel.VaultItemGetParams{IDOrName: vault}, option.WithMaxRetries(0))
 	if err != nil {
-		if operation == "fill" || operation == "1pw_fill" {
+		if operation == "fill" || operation == "1pw_fill" || operation == "webmcp_invoke" {
 			return vaultFillLookupError(err, operation)
 		}
 		return util.CleanedUpSdkError{Err: err}
@@ -260,7 +263,7 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	for _, op := range actions.Operations {
 		if op.Type == operation {
 			available = true
-			if output != "json" && operation != "fill" {
+			if output != "json" && operation != "fill" && operation != "webmcp_invoke" {
 				pterm.Info.Println(op.Description)
 			}
 			break
@@ -274,6 +277,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	}
 	if operation == "fill" {
 		return c.fill(ctx, vault, key, params.Fill, output)
+	}
+	if operation == "webmcp_invoke" {
+		return c.webmcpInvoke(ctx, vault, key, params.WebMCP, output)
 	}
 	if operation == "1pw_fill" {
 		return c.onePasswordFill(ctx, vault, key, params.OnePassword, output)

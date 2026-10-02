@@ -129,7 +129,7 @@ Commands with JSON output support:
 - **Proxies**: `create`, `list`, `get`, `update`, `check`
 - **API Keys**: `create`, `list`, `get`, `update`, `rotate`
 - **Auth Connections**: `timeline`
-- **Vaults**: `create`, `list`, `get`, `credentials create/update`, `items list/get/events/invoke` (including `collect`, `fill`, and `prepare_checkout`), `wallets create/payment-methods`, `cards create/update` (display-safe public fields only)
+- **Vaults**: `create`, `list`, `get`, `credentials create/update`, `items list/get/events/invoke` (including `collect`, `fill`, `webmcp_invoke`, and `prepare_checkout`), `wallets create/payment-methods`, `cards create/update` (display-safe public fields only)
 - **Projects**: `update`
 - **Org**: `limits get/set`
 - **Apps**: `list`, `history`
@@ -398,7 +398,7 @@ cannot switch projects.
 | `kernel vaults cards update <vault> <key> --provider link\|agentcard --spec '<json>'` | Update a card spec; pending issuance preserves omitted optional fields, and the API enforces state/provider constraints |
 | `kernel vaults items list <vault>` | List item keys, types, providers, status, and required actions |
 | `kernel vaults items get <vault> <key>` | Inspect state/actions/returned AgentCard aliases and copyable operation commands; `--wait 0..60`, `--expand payment_methods`, `--open` |
-| `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; `authorize --open` opens a returned HTTPS action; `prepare_checkout --params '<json>'` prepares an unused AgentCard card for Square Pay; `fill --params '<json>'` fills checkout or login fields; `collect --open` opens a credential item's hosted form |
+| `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; `authorize --open` opens a returned HTTPS action; `prepare_checkout --params '<json>'` prepares an unused AgentCard card for Square Pay; `fill --params '<json>'` fills checkout or login fields; `webmcp_invoke --params '<json>'` invokes a WebMCP tool (from `browsers webmcp list`) with vaulted values bound to null input slots by JSON Pointer; `collect --open` opens a credential item's hosted form |
 | `kernel vaults items events <vault> <key>` | Read ordered audit events; `--after <event-id>`, `--wait 0..60` |
 | `kernel vaults items delete <vault> <key>` | Invalidate an item; `--yes` skips confirmation |
 
