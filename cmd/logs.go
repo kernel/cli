@@ -65,7 +65,12 @@ func runLogs(cmd *cobra.Command, args []string) error {
 			pterm.Info.Println("Showing recent logs (timeout after 3s with no events)")
 		}
 
-		stream := client.Invocations.FollowStreaming(cmd.Context(), inv.ID, kernel.InvocationFollowParams{}, option.WithMaxRetries(0))
+		// Only forward --since when explicitly set so older invocations still show their full logs
+		invParams := kernel.InvocationFollowParams{}
+		if cmd.Flags().Changed("since") {
+			invParams.Since = kernel.Opt(since)
+		}
+		stream := client.Invocations.FollowStreaming(cmd.Context(), inv.ID, invParams, option.WithMaxRetries(0))
 		if stream.Err() != nil {
 			return fmt.Errorf("failed to follow streaming: %w", stream.Err())
 		}

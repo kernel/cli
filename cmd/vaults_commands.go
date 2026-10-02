@@ -114,11 +114,13 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 		RunE: func(cmd *cobra.Command, args []string) error {
 			limit, _ := cmd.Flags().GetInt64("limit")
 			offset, _ := cmd.Flags().GetInt64("offset")
+			query, _ := cmd.Flags().GetString("query")
 			project, _ := cmd.Flags().GetString("project")
-			return getVaultsHandler(cmd).List(cmd.Context(), limit, offset, resolveProjectSelection(project), vaultOutput(cmd))
+			return getVaultsHandler(cmd).List(cmd.Context(), limit, offset, query, resolveProjectSelection(project), vaultOutput(cmd))
 		}}
 	list.Flags().Int64("limit", 20, "Maximum vaults to return (1-100)")
 	list.Flags().Int64("offset", 0, "Number of vaults to skip")
+	list.Flags().String("query", "", "Case-insensitive substring match against vault name; IDs match by exact value")
 	addVaultJSONOutputFlag(list)
 
 	get := &cobra.Command{Use: "get <vault>", Short: "Get a vault by ID or name", Args: cobra.ExactArgs(1), PreRunE: vaultPreRun,

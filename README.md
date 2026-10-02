@@ -389,7 +389,7 @@ cannot switch projects.
 | Command | Purpose / flags |
 | --- | --- |
 | `kernel vaults create --name <name>` | Create or retrieve the vault with that immutable name |
-| `kernel vaults list` | `--limit 1..100` (default 20), `--offset`; JSON includes `vaults` and optional `next_offset` |
+| `kernel vaults list` | `--limit 1..100` (default 20), `--offset`, `--query` (name substring or exact ID); JSON includes `vaults` and optional `next_offset` |
 | `kernel vaults get <vault>` | Get by ID or name |
 | `kernel vaults delete <vault>` | Invalidate the vault and all its items; `--yes` skips confirmation |
 | `kernel vaults wallets create <vault> <key> --provider link\|agentcard --spec '<json>'` | Connect/enroll a wallet using its provider's spec; `--open` opens a returned HTTPS action URL |
