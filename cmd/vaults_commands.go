@@ -253,7 +253,7 @@ JSON
 				if !vaultOperationTakesParams(args[2]) {
 					return fmt.Errorf("--spec-file is only supported for fill, webmcp_invoke, prepare_checkout, and 1Password operations with parameters")
 				}
-				data, err := readVaultSpecFile(cmd)
+				data, err := readVaultJSONFile(cmd, "spec-file")
 				if err != nil {
 					return err
 				}

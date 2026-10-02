@@ -102,7 +102,7 @@ func TestVaultWebMCPInvokeInputPreservedAndCardFormat(t *testing.T) {
 	assert.Equal(t, 1, posts)
 	assert.Empty(t, out)
 	assert.Contains(t, human, "WebMCP invoke: awaiting_submission")
-	assert.Contains(t, human, "do not invoke the tool again")
+	assert.Contains(t, human, "rather than invoking the tool again")
 }
 
 func TestVaultWebMCPInvokeValidation(t *testing.T) {
@@ -258,4 +258,77 @@ func TestVaultWebMCPInvokeRequiresAdvertisedOperation(t *testing.T) {
 	})
 	_, _, err = executeVaultCommand(t, client, vaultWebMCPArgs()...)
 	require.ErrorContains(t, err, "webmcp_invoke was not invoked")
+}
+
+func TestVaultWebMCPInvokeEmptyKeyPointerAndInputFile(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	want := `{"type":"webmcp_invoke","browser_id":"b","tool_ref":"t","page_url":"https://resy.com/login","input":{"":null,"password":null},"bindings":[{"field":"email","input_path":"/"},{"field":"password","input_path":"/password"}]}`
+	inputFile := filepath.Join(t.TempDir(), "input.json")
+	require.NoError(t, os.WriteFile(inputFile, []byte(`{"":null,"password":null}`), 0o600))
+	for name, source := range map[string][]string{
+		"input":      {"--input", `{"":null,"password":null}`},
+		"input-file": {"--input-file", inputFile},
+		"stdin":      {"--input-file", "-"},
+		"params":     nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			posts := 0
+			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					body, err := io.ReadAll(r.Body)
+					require.NoError(t, err)
+					assert.JSONEq(t, want, string(body))
+				}
+				vaultWebMCPClient(t, resyCredentialFixture, 200, resyWebMCPResult, &posts)(w, r)
+			})
+			args := []string{"vaults", "items", "invoke", "user-vault", "resy", "webmcp_invoke", "--params", strings.Replace(want, `"type":"webmcp_invoke",`, "", 1), "-o", "json"}
+			if source != nil {
+				args = append([]string{"vaults", "items", "webmcp", "invoke", "user-vault", "resy", "--browser-id", "b", "--tool-ref", "t", "--page-url", "https://resy.com/login", "--bind", "email=/", "--bind", "password=/password", "-o", "json"}, source...)
+			}
+			if name == "stdin" {
+				restore := os.Stdin
+				r, w, err := os.Pipe()
+				require.NoError(t, err)
+				_, _ = io.WriteString(w, `{"":null,"password":null}`)
+				require.NoError(t, w.Close())
+				os.Stdin = r
+				t.Cleanup(func() { os.Stdin = restore })
+			}
+			_, _, err := executeVaultCommand(t, client, args...)
+			require.NoError(t, err)
+			assert.Equal(t, 1, posts)
+		})
+	}
+}
+
+func TestVaultWebMCPInvokeInputFileErrors(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Errorf("unexpected %s request", r.Method) })
+	dir := t.TempDir()
+	large := filepath.Join(dir, "large.json")
+	require.NoError(t, os.WriteFile(large, []byte(`{"pad":"`+strings.Repeat("x", 128*1024)+`"}`), 0o600))
+	array := filepath.Join(dir, "array.json")
+	require.NoError(t, os.WriteFile(array, []byte(`["credential-sentinel"]`), 0o600))
+	for path, want := range map[string]string{
+		filepath.Join(dir, "missing.json"): "could not open --input-file",
+		large:                              "could not read --input-file (maximum 128 KiB)",
+		array:                              "--input-file must contain a JSON object",
+	} {
+		args := vaultWebMCPArgs()
+		for i, arg := range args {
+			if arg == "--input" {
+				args[i], args[i+1] = "--input-file", path
+			}
+		}
+		_, _, err := executeVaultCommand(t, client, args...)
+		require.EqualError(t, err, want)
+	}
+}
+
+func TestVaultOperationOutcomeErrorNamesOperation(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	posts := 0
+	client := vaultTestClient(t, vaultWebMCPClient(t, resyCredentialFixture, 200, `{"type":"webmcp_invoke","status":"error"}`, &posts))
+	_, _, err := executeVaultCommand(t, client, vaultWebMCPArgs("-o", "json")...)
+	require.EqualError(t, err, "webmcp_invoke error")
 }

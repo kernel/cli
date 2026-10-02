@@ -67,28 +67,34 @@ func vaultFillLookupError(err error, operation string) error {
 	return fmt.Errorf("could not retrieve vault item; %s was not invoked", operation)
 }
 
-func vaultFillRequestError(err error) error {
+// vaultOperationRequestError reports a failed operation request. rejected maps the HTTP
+// statuses the API returns before the operation runs to their guidance; every other
+// failure, including transport loss, gets the uncertain guidance.
+func vaultOperationRequestError(err error, operation string, messages map[string]string, rejected map[int]string, uncertain string) error {
 	var apiErr *kernel.Error
-	if errors.As(err, &apiErr) {
-		var body struct {
-			Code string `json:"code"`
-		}
-		guidance := vaultFillUncertain
-		switch apiErr.StatusCode {
-		case 400, 403, 404, 409:
-			guidance = "no fields were written by this request; inspect and correct the cause before deciding on a new fill; do not automatically retry"
-		}
-		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
-			if message, ok := vaultFillErrorMessages[body.Code]; ok {
-				return fmt.Errorf("fill failed: %s (HTTP %d): %s; %s", body.Code, apiErr.StatusCode, message, guidance)
-			}
-		}
-		return fmt.Errorf("fill request failed (HTTP %d); %s", apiErr.StatusCode, guidance)
+	if !errors.As(err, &apiErr) {
+		// Do not wrap SDK/transport errors: they can contain request or response data,
+		// and the root error handler extracts raw SDK error messages through Unwrap.
+		return fmt.Errorf("%s result unavailable; %s", operation, uncertain)
 	}
-	// Do not wrap SDK/transport errors: they can contain request or response data,
-	// and the root error handler extracts raw SDK error messages through Unwrap.
-	return fmt.Errorf("fill result unavailable; %s", vaultFillUncertain)
+	guidance, ok := rejected[apiErr.StatusCode]
+	if !ok {
+		guidance = uncertain
+	}
+	var body struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
+		if message, ok := messages[body.Code]; ok {
+			return fmt.Errorf("%s failed: %s (HTTP %d): %s; %s", operation, body.Code, apiErr.StatusCode, message, guidance)
+		}
+	}
+	return fmt.Errorf("%s request failed (HTTP %d); %s", operation, apiErr.StatusCode, guidance)
 }
+
+const vaultFillNotWritten = "no fields were written by this request; inspect and correct the cause before deciding on a new fill; do not automatically retry"
+
+var vaultFillRejected = map[int]string{400: vaultFillNotWritten, 403: vaultFillNotWritten, 404: vaultFillNotWritten, 409: vaultFillNotWritten}
 
 func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFillParams, output string) error {
 	request := kernel.FillVaultItemOperationRequestParam{
@@ -111,7 +117,7 @@ func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFil
 	}
 	response, err := c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, OfFill: &request}, option.WithMaxRetries(0))
 	if err != nil {
-		return vaultFillRequestError(err)
+		return vaultOperationRequestError(err, "fill", vaultFillErrorMessages, vaultFillRejected, vaultFillUncertain)
 	}
 	if response == nil {
 		return fmt.Errorf("empty fill result; %s", vaultFillUncertain)
@@ -138,16 +144,16 @@ func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFil
 		}
 	}
 	if result.Status != "completed" {
-		return vaultFillOutcomeError{status: result.Status}
+		return vaultOperationOutcomeError{operation: "fill", status: result.Status}
 	}
 	return nil
 }
 
 // The result has already been printed; retain a nonzero exit without diagnostics.
-type vaultFillOutcomeError struct{ status string }
+type vaultOperationOutcomeError struct{ operation, status string }
 
-func (e vaultFillOutcomeError) Error() string { return "fill " + e.status }
-func (e vaultFillOutcomeError) Silent() bool  { return true }
+func (e vaultOperationOutcomeError) Error() string { return e.operation + " " + e.status }
+func (e vaultOperationOutcomeError) Silent() bool  { return true }
 
 func parseVaultFillResult(raw json.RawMessage, count int) (*vaultFillResult, error) {
 	invalid := fmt.Errorf("invalid fill result; %s", vaultFillUncertain)
@@ -197,6 +203,14 @@ func parseVaultFillResult(raw json.RawMessage, count int) (*vaultFillResult, err
 
 const onePasswordFillUncertain = "the form may have been submitted; inspect the browser and do not retry in the same browser"
 
+const onePasswordFillNotSubmitted = "nothing was submitted by this request; inspect the item, browser, and page_url before deciding on a new fill; do not automatically retry"
+
+// Only these statuses are returned before the extension is invoked.
+var onePasswordFillRejected = map[int]string{
+	400: onePasswordFillNotSubmitted, 403: onePasswordFillNotSubmitted, 404: onePasswordFillNotSubmitted,
+	409: "nothing was submitted by this request; if several approved entries match this page, pass entry_id from items get -o json; do not automatically retry",
+}
+
 var onePasswordFillResultFields = vaultFieldsOf("type status error_code")
 
 func (c VaultsCmd) onePasswordFill(ctx context.Context, vault, key string, request *kernel.VaultItemPerformOperationParams, output string) error {
@@ -205,28 +219,10 @@ func (c VaultsCmd) onePasswordFill(ctx context.Context, vault, key string, reque
 	response, err := c.vaults.Items.PerformOperation(ctx, key, params, option.WithMaxRetries(0))
 	if err != nil {
 		var apiErr *kernel.Error
-		if !errors.As(err, &apiErr) {
-			return fmt.Errorf("1pw_fill result unavailable; %s", onePasswordFillUncertain)
-		}
-		// Only these statuses are returned before the extension is invoked.
-		guidance := onePasswordFillUncertain
-		switch apiErr.StatusCode {
-		case 400, 403, 404:
-			guidance = "nothing was submitted by this request; inspect the item, browser, and page_url before deciding on a new fill; do not automatically retry"
-		case 409:
-			guidance = "nothing was submitted by this request; if several approved entries match this page, pass entry_id from items get -o json; do not automatically retry"
-		case 503:
+		if errors.As(err, &apiErr) && apiErr.StatusCode == 503 {
 			return fmt.Errorf("1pw_fill unavailable (HTTP 503): %s", onePasswordUnavailable)
 		}
-		var body struct {
-			Code string `json:"code"`
-		}
-		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
-			if message, ok := vaultFillErrorMessages[body.Code]; ok {
-				return fmt.Errorf("1pw_fill failed: %s (HTTP %d): %s; %s", body.Code, apiErr.StatusCode, message, guidance)
-			}
-		}
-		return fmt.Errorf("1pw_fill request failed (HTTP %d); %s", apiErr.StatusCode, guidance)
+		return vaultOperationRequestError(err, "1pw_fill", vaultFillErrorMessages, onePasswordFillRejected, onePasswordFillUncertain)
 	}
 	if response == nil {
 		return fmt.Errorf("empty 1pw_fill result; %s", onePasswordFillUncertain)
@@ -267,7 +263,7 @@ func (c VaultsCmd) onePasswordFill(ctx context.Context, vault, key string, reque
 		}
 	}
 	if result.Status != "fill_submitted" {
-		return vaultFillOutcomeError{status: result.Status}
+		return vaultOperationOutcomeError{operation: "1pw_fill", status: result.Status}
 	}
 	return nil
 }

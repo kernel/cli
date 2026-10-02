@@ -4,11 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 
@@ -33,22 +31,6 @@ var vaultWebMCPErrorMessages = map[string]string{
 	"execution_failed":   "WebMCP invocation failed",
 }
 
-type vaultWebMCPParams struct {
-	BrowserID string
-	ToolRef   string
-	PageURL   string
-	// Input members stay raw: the SDK encodes json.Number as a string, which would change numeric arguments.
-	Input      map[string]json.RawMessage
-	Bindings   []vaultWebMCPBinding
-	TimeoutSec *int64
-}
-
-type vaultWebMCPBinding struct {
-	Field     string
-	InputPath string
-	Format    string
-}
-
 type vaultWebMCPResult struct {
 	Type         string          `json:"type"`
 	Status       string          `json:"status"`
@@ -57,12 +39,28 @@ type vaultWebMCPResult struct {
 	ErrorText    *string         `json:"error_text,omitempty"`
 }
 
-func parseVaultWebMCPParams(raw string) (*vaultWebMCPParams, error) {
+// vaultWebMCPStatuses maps each result status to whether it exits 0 and its human hint.
+var vaultWebMCPStatuses = map[string]struct {
+	ok   bool
+	hint string
+}{
+	"completed":           {true, "The tool reported completion; this does not confirm the website accepted the action. Inspect the page."},
+	"awaiting_submission": {true, "The tool populated a form with the supplied values without submitting it. " + webMCPAwaitingSubmissionHint},
+	"canceled":            {false, "The tool reported cancellation and may have had side effects. Inspect the page before deciding on a new invocation; do not retry automatically."},
+	"error":               {false, "The tool reported an error and may have had side effects. Inspect the page before deciding on a new invocation; do not retry automatically."},
+	"unknown":             {false, vaultWebMCPUncertain},
+}
+
+const vaultWebMCPNotInvoked = "the tool was not invoked by this request; inspect and correct the cause before deciding on a new invocation; do not automatically retry"
+
+var vaultWebMCPRejected = map[int]string{400: vaultWebMCPNotInvoked, 403: vaultWebMCPNotInvoked, 404: vaultWebMCPNotInvoked, 409: vaultWebMCPNotInvoked}
+
+func parseVaultWebMCPParams(raw string) (*kernel.WebmcpInvokeVaultItemOperationRequestParam, error) {
 	object, err := vaultParamsObject(raw, "browser_id tool_ref page_url input bindings timeout_sec")
 	if err != nil {
 		return nil, err
 	}
-	var params vaultWebMCPParams
+	params := kernel.WebmcpInvokeVaultItemOperationRequestParam{Type: kernel.WebmcpInvokeVaultItemOperationRequestTypeWebmcpInvoke}
 	for name, target := range map[string]*string{"browser_id": &params.BrowserID, "tool_ref": &params.ToolRef, "page_url": &params.PageURL} {
 		if value, ok := object[name]; ok && json.Unmarshal(value, target) != nil {
 			return nil, fmt.Errorf("%s must be a string", name)
@@ -80,20 +78,28 @@ func parseVaultWebMCPParams(raw string) (*vaultWebMCPParams, error) {
 		if err != nil {
 			return nil, fmt.Errorf("bindings[%d]: %w", i, err)
 		}
-		var b vaultWebMCPBinding
+		var b kernel.VaultWebmcpBindingParam
 		if json.Unmarshal(binding["field"], &b.Field) != nil {
 			return nil, fmt.Errorf("bindings[%d].field must be a string", i)
 		}
 		if json.Unmarshal(binding["input_path"], &b.InputPath) != nil {
 			return nil, fmt.Errorf("bindings[%d].input_path must be a string", i)
 		}
-		if format, ok := binding["format"]; ok && (json.Unmarshal(format, &b.Format) != nil || b.Format == "") {
-			return nil, fmt.Errorf("bindings[%d].format must be MM/YY or MM/YYYY", i)
+		if rawFormat, ok := binding["format"]; ok {
+			var format string
+			if json.Unmarshal(rawFormat, &format) != nil || format == "" {
+				return nil, fmt.Errorf("bindings[%d].format must be MM/YY or MM/YYYY", i)
+			}
+			b.Format = kernel.Opt(format)
 		}
 		params.Bindings = append(params.Bindings, b)
 	}
-	if timeout, ok := object["timeout_sec"]; ok && (json.Unmarshal(timeout, &params.TimeoutSec) != nil || params.TimeoutSec == nil) {
-		return nil, fmt.Errorf("timeout_sec must be an integer between 1 and 120")
+	if rawTimeout, ok := object["timeout_sec"]; ok {
+		var timeout *int64
+		if json.Unmarshal(rawTimeout, &timeout) != nil || timeout == nil {
+			return nil, fmt.Errorf("timeout_sec must be an integer between 1 and 120")
+		}
+		params.TimeoutSec = kernel.Opt(*timeout)
 	}
 	if err := validateVaultWebMCPParams(&params, func(i int) string { return fmt.Sprintf("bindings[%d]", i) }); err != nil {
 		return nil, err
@@ -102,21 +108,29 @@ func parseVaultWebMCPParams(raw string) (*vaultWebMCPParams, error) {
 }
 
 // decodeVaultWebMCPInput accepts only a JSON object without echoing its contents in errors.
-func decodeVaultWebMCPInput(raw []byte) (map[string]json.RawMessage, error) {
+// Members stay json.RawMessage: the SDK encodes json.Number as a string, which would change
+// numeric arguments.
+func decodeVaultWebMCPInput(raw []byte) (map[string]any, error) {
 	invalid := fmt.Errorf("input must be a JSON object of public tool arguments (maximum 64 KiB)")
 	dec := json.NewDecoder(bytes.NewReader(raw))
-	var input map[string]json.RawMessage
-	if dec.Decode(&input) != nil || input == nil {
+	var members map[string]json.RawMessage
+	if dec.Decode(&members) != nil || members == nil {
 		return nil, invalid
 	}
 	if _, err := dec.Token(); err != io.EOF {
 		return nil, invalid
 	}
+	input := make(map[string]any, len(members))
+	for name, value := range members {
+		input[name] = value
+	}
 	return input, nil
 }
 
-// binding names a binding by index in diagnostics.
-func validateVaultWebMCPParams(params *vaultWebMCPParams, binding func(int) string) error {
+// validateVaultWebMCPParams mirrors the API's webmcp_invoke request rules so mistakes are
+// reported locally with specifics; the API remains the source of truth. binding names a
+// binding by index in diagnostics.
+func validateVaultWebMCPParams(params *kernel.WebmcpInvokeVaultItemOperationRequestParam, binding func(int) string) error {
 	if strings.TrimSpace(params.BrowserID) == "" {
 		return fmt.Errorf("browser_id must be a non-empty browser session ID, not a name")
 	}
@@ -126,21 +140,22 @@ func validateVaultWebMCPParams(params *vaultWebMCPParams, binding func(int) stri
 	if u, err := url.ParseRequestURI(params.PageURL); err != nil || u.Scheme == "" || strings.Contains(params.PageURL, "#") {
 		return fmt.Errorf("page_url must be the exact source.page_url from browsers webmcp list (absolute, without a fragment)")
 	}
-	if params.TimeoutSec != nil && (*params.TimeoutSec < 1 || *params.TimeoutSec > 120) {
+	if params.TimeoutSec.Valid() && (params.TimeoutSec.Value < 1 || params.TimeoutSec.Value > 120) {
 		return fmt.Errorf("timeout_sec must be an integer between 1 and 120")
 	}
+	invalidInput := fmt.Errorf("input must be a JSON object of public tool arguments (maximum 64 KiB)")
 	if params.Input == nil {
-		return fmt.Errorf("input must be a JSON object of public tool arguments (maximum 64 KiB)")
+		return invalidInput
 	}
 	encoded, err := json.Marshal(params.Input)
 	if err != nil || len(encoded) > maxVaultWebMCPInputBytes {
-		return fmt.Errorf("input must be a JSON object of public tool arguments (maximum 64 KiB)")
+		return invalidInput
 	}
 	dec := json.NewDecoder(bytes.NewReader(encoded))
 	dec.UseNumber()
 	var input any
 	if dec.Decode(&input) != nil {
-		return fmt.Errorf("input must be a JSON object of public tool arguments (maximum 64 KiB)")
+		return invalidInput
 	}
 	if len(params.Bindings) < 1 || len(params.Bindings) > 32 {
 		return fmt.Errorf("bindings must contain 1-32 field bindings")
@@ -157,7 +172,7 @@ func validateVaultWebMCPParams(params *vaultWebMCPParams, binding func(int) stri
 			return fmt.Errorf("%s input_path repeats an earlier binding; bind each path once", binding(i))
 		}
 		fields[b.Field], paths[b.InputPath] = true, true
-		if b.Format != "" && b.Format != "MM/YY" && b.Format != "MM/YYYY" {
+		if b.Format.Valid() && b.Format.Value != "MM/YY" && b.Format.Value != "MM/YYYY" {
 			return fmt.Errorf("%s format must be MM/YY or MM/YYYY", binding(i))
 		}
 		if !vaultWebMCPNullSlot(input, b.InputPath) {
@@ -168,9 +183,10 @@ func validateVaultWebMCPParams(params *vaultWebMCPParams, binding func(int) stri
 }
 
 // vaultWebMCPNullSlot mirrors the API: a binding replaces an existing null and never
-// creates a property or array entry.
+// creates a property or array entry. "/" addresses the empty-string key; only the
+// root pointer "" is rejected.
 func vaultWebMCPNullSlot(input any, path string) bool {
-	if len(path) < 2 || len(path) > 2048 || path[0] != '/' {
+	if len(path) < 1 || len(path) > 2048 || path[0] != '/' {
 		return false
 	}
 	parts := strings.Split(path[1:], "/")
@@ -203,53 +219,10 @@ func vaultWebMCPNullSlot(input any, path string) bool {
 	return value == nil
 }
 
-func vaultWebMCPRequestError(err error) error {
-	var apiErr *kernel.Error
-	if errors.As(err, &apiErr) {
-		guidance := vaultWebMCPUncertain
-		switch apiErr.StatusCode {
-		case 400, 403, 404, 409:
-			guidance = "the tool was not invoked by this request; inspect and correct the cause before deciding on a new invocation; do not automatically retry"
-		}
-		var body struct {
-			Code string `json:"code"`
-		}
-		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
-			if message, ok := vaultWebMCPErrorMessages[body.Code]; ok {
-				return fmt.Errorf("webmcp_invoke failed: %s (HTTP %d): %s; %s", body.Code, apiErr.StatusCode, message, guidance)
-			}
-		}
-		return fmt.Errorf("webmcp_invoke request failed (HTTP %d); %s", apiErr.StatusCode, guidance)
-	}
-	// Do not wrap SDK/transport errors: they can contain request or response data.
-	return fmt.Errorf("webmcp_invoke result unavailable; %s", vaultWebMCPUncertain)
-}
-
-func (c VaultsCmd) webMCPInvoke(ctx context.Context, vault, key string, params *vaultWebMCPParams, output string) error {
-	request := kernel.WebmcpInvokeVaultItemOperationRequestParam{
-		Type:      kernel.WebmcpInvokeVaultItemOperationRequestTypeWebmcpInvoke,
-		BrowserID: params.BrowserID,
-		ToolRef:   params.ToolRef,
-		PageURL:   params.PageURL,
-		Input:     make(map[string]any, len(params.Input)),
-		Bindings:  make([]kernel.VaultWebmcpBindingParam, 0, len(params.Bindings)),
-	}
-	for name, value := range params.Input {
-		request.Input[name] = value
-	}
-	for _, binding := range params.Bindings {
-		b := kernel.VaultWebmcpBindingParam{Field: binding.Field, InputPath: binding.InputPath}
-		if binding.Format != "" {
-			b.Format = kernel.Opt(binding.Format)
-		}
-		request.Bindings = append(request.Bindings, b)
-	}
-	if params.TimeoutSec != nil {
-		request.TimeoutSec = kernel.Opt(*params.TimeoutSec)
-	}
-	response, err := c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, OfWebmcpInvoke: &request}, option.WithMaxRetries(0))
+func (c VaultsCmd) webMCPInvoke(ctx context.Context, vault, key string, request *kernel.WebmcpInvokeVaultItemOperationRequestParam, output string) error {
+	response, err := c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, OfWebmcpInvoke: request}, option.WithMaxRetries(0))
 	if err != nil {
-		return vaultWebMCPRequestError(err)
+		return vaultOperationRequestError(err, "webmcp_invoke", vaultWebMCPErrorMessages, vaultWebMCPRejected, vaultWebMCPUncertain)
 	}
 	if response == nil {
 		return fmt.Errorf("empty webmcp_invoke result; %s", vaultWebMCPUncertain)
@@ -258,20 +231,22 @@ func (c VaultsCmd) webMCPInvoke(ctx context.Context, vault, key string, params *
 	if json.Unmarshal([]byte(response.RawJSON()), &result) != nil || result.Type != "webmcp_invoke" {
 		return fmt.Errorf("invalid webmcp_invoke result; %s", vaultWebMCPUncertain)
 	}
-	switch result.Status {
-	case "completed", "awaiting_submission", "canceled", "error", "unknown":
-	default:
+	status, known := vaultWebMCPStatuses[result.Status]
+	if !known {
 		return fmt.Errorf("invalid webmcp_invoke result; %s", vaultWebMCPUncertain)
 	}
 	if output == "json" {
 		if err := printVaultJSON(result); err != nil {
 			return err
 		}
-	} else if err := printVaultWebMCPResult(result); err != nil {
-		return err
+	} else {
+		if err := printVaultWebMCPResult(result); err != nil {
+			return err
+		}
+		pterm.Println(status.hint)
 	}
-	if result.Status != "completed" && result.Status != "awaiting_submission" {
-		return vaultFillOutcomeError{status: result.Status}
+	if !status.ok {
+		return vaultOperationOutcomeError{operation: "webmcp_invoke", status: result.Status}
 	}
 	return nil
 }
@@ -296,16 +271,6 @@ func printVaultWebMCPResult(result vaultWebMCPResult) error {
 			return err
 		}
 		pterm.Printf("Error text (untrusted page data; may contain supplied vault values): %s\n", data)
-	}
-	switch result.Status {
-	case "completed":
-		pterm.Println("The tool reported completion; this does not confirm the website accepted the action. Inspect the page.")
-	case "awaiting_submission":
-		pterm.Println("The tool populated a form with the supplied values without submitting it. Inspect the form and obtain any required confirmation, then submit it with 'kernel browsers playwright execute' or 'kernel browsers computer'; do not invoke the tool again.")
-	case "canceled", "error":
-		pterm.Printf("The tool reported %s and may have had side effects. Inspect the page before deciding on a new invocation; do not retry automatically.\n", result.Status)
-	default:
-		pterm.Println(vaultWebMCPUncertain)
 	}
 	return nil
 }
@@ -365,28 +330,17 @@ inspect the browser instead of re-invoking after an uncertain outcome. API rejec
 	return root
 }
 
-func vaultWebMCPParamsFromFlags(cmd *cobra.Command) (*vaultWebMCPParams, error) {
-	var params vaultWebMCPParams
+func vaultWebMCPParamsFromFlags(cmd *cobra.Command) (*kernel.WebmcpInvokeVaultItemOperationRequestParam, error) {
+	params := kernel.WebmcpInvokeVaultItemOperationRequestParam{Type: kernel.WebmcpInvokeVaultItemOperationRequestTypeWebmcpInvoke}
 	params.BrowserID, _ = cmd.Flags().GetString("browser-id")
 	params.ToolRef, _ = cmd.Flags().GetString("tool-ref")
 	params.PageURL, _ = cmd.Flags().GetString("page-url")
 	input, _ := cmd.Flags().GetString("input")
 	data := []byte(input)
 	if cmd.Flags().Changed("input-file") {
-		path, _ := cmd.Flags().GetString("input-file")
-		var reader io.Reader = cmd.InOrStdin()
-		if path != "-" {
-			f, err := os.Open(path)
-			if err != nil {
-				return nil, fmt.Errorf("could not open --input-file")
-			}
-			defer f.Close()
-			reader = f
-		}
-		const limit = 128 * 1024
 		var err error
-		if data, err = io.ReadAll(io.LimitReader(reader, limit+1)); err != nil || len(data) > limit {
-			return nil, fmt.Errorf("could not read --input-file (maximum 128 KiB)")
+		if data, err = readVaultJSONFile(cmd, "input-file"); err != nil {
+			return nil, err
 		}
 	}
 	var err error
@@ -399,18 +353,18 @@ func vaultWebMCPParamsFromFlags(cmd *cobra.Command) (*vaultWebMCPParams, error) 
 		if !ok || !strings.HasPrefix(path, "/") {
 			return nil, fmt.Errorf("binding %d (--bind) must be <field>=<json-pointer> or <field>:<format>=<json-pointer>, e.g. password=/password", i+1)
 		}
-		binding := vaultWebMCPBinding{Field: field, InputPath: path}
+		binding := kernel.VaultWebmcpBindingParam{Field: field, InputPath: path}
 		if name, format, hasFormat := strings.Cut(field, ":"); hasFormat {
 			if format == "" {
 				return nil, fmt.Errorf("binding %d (--bind) format must be MM/YY or MM/YYYY", i+1)
 			}
-			binding.Field, binding.Format = name, format
+			binding.Field, binding.Format = name, kernel.Opt(format)
 		}
 		params.Bindings = append(params.Bindings, binding)
 	}
 	if cmd.Flags().Changed("timeout-sec") {
 		timeout, _ := cmd.Flags().GetInt64("timeout-sec")
-		params.TimeoutSec = &timeout
+		params.TimeoutSec = kernel.Opt(timeout)
 	}
 	if err := validateVaultWebMCPParams(&params, func(i int) string { return fmt.Sprintf("binding %d (--bind)", i+1) }); err != nil {
 		return nil, err

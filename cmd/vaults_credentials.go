@@ -130,7 +130,7 @@ func newVaultCredentialsCommand() *cobra.Command {
 		}
 		cmd := &cobra.Command{Use: name + " <vault> <key> --spec-file <path|->", Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun, Long: vaultCredentialHelp,
 			RunE: func(cmd *cobra.Command, args []string) error {
-				data, err := readVaultSpecFile(cmd)
+				data, err := readVaultJSONFile(cmd, "spec-file")
 				if err != nil {
 					return err
 				}
@@ -194,16 +194,17 @@ still-pending account unchanged; otherwise it starts a new authorization with a 
 	return group
 }
 
-func readVaultSpecFile(cmd *cobra.Command) ([]byte, error) {
-	path, _ := cmd.Flags().GetString("spec-file")
+// readVaultJSONFile reads a JSON object from the path in flag, or stdin for '-'.
+func readVaultJSONFile(cmd *cobra.Command, flag string) ([]byte, error) {
+	path, _ := cmd.Flags().GetString(flag)
 	if path == "" {
-		return nil, fmt.Errorf("--spec-file is required (use '-' for stdin)")
+		return nil, fmt.Errorf("--%s is required (use '-' for stdin)", flag)
 	}
 	var reader io.Reader = cmd.InOrStdin()
 	if path != "-" {
 		f, err := os.Open(path)
 		if err != nil {
-			return nil, fmt.Errorf("could not open --spec-file")
+			return nil, fmt.Errorf("could not open --%s", flag)
 		}
 		defer f.Close()
 		reader = f
@@ -211,11 +212,11 @@ func readVaultSpecFile(cmd *cobra.Command) ([]byte, error) {
 	const limit = 128 * 1024
 	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
 	if err != nil || len(data) > limit {
-		return nil, fmt.Errorf("could not read --spec-file (maximum 128 KiB)")
+		return nil, fmt.Errorf("could not read --%s (maximum 128 KiB)", flag)
 	}
 	var object map[string]json.RawMessage
 	if json.Unmarshal(data, &object) != nil || object == nil {
-		return nil, fmt.Errorf("--spec-file must contain a JSON object")
+		return nil, fmt.Errorf("--%s must contain a JSON object", flag)
 	}
 	return data, nil
 }
