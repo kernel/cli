@@ -129,7 +129,7 @@ Commands with JSON output support:
 - **Proxies**: `create`, `list`, `get`, `update`, `check`
 - **API Keys**: `create`, `list`, `get`, `update`, `rotate`
 - **Auth Connections**: `timeline`
-- **Vaults**: `create`, `list`, `get`, `credentials create/update`, `items list/get/events/invoke` (including `collect`, `fill`, and `prepare_checkout`), `wallets create/payment-methods`, `cards create/update` (display-safe public fields only)
+- **Vaults**: `create`, `list`, `get`, `credentials create/update`, `items list/get/events/invoke` (including `collect`, `fill`, `webmcp_invoke`, and `prepare_checkout`), `wallets create/payment-methods`, `cards create/update` (display-safe public fields only)
 - **Projects**: `update`
 - **Org**: `limits get/set`
 - **Apps**: `list`, `history`
@@ -378,6 +378,17 @@ text/email values, definitions, version, and `has_value`. Sensitive values and T
 seeds are omitted.
 Credential spec input is capped at 128 KiB; write errors are redacted.
 
+To reuse a managed auth connection's saved credential, create a credential with
+provider `managed_auth` and the connection ID from `kernel auth connections list`.
+The item stores no values and reads the connection's credential at fill time; it is
+created `ready`, `state.fields` lists fill binding names, and `update` returns 409:
+
+```sh
+kernel vaults credentials create user-vault amazon --spec-file - <<'JSON'
+{"provider":"managed_auth","connection_id":"<connection-id>","description":"Amazon"}
+JSON
+```
+
 Vault names, item keys, and project ownership are immutable. Optionally select a project with
 `--project <id-or-name>` or `KERNEL_PROJECT`; otherwise, the API resolves the project from your
 credentials and its defaults (the default project for org-wide credentials, not all projects).
@@ -389,7 +400,7 @@ cannot switch projects.
 | Command | Purpose / flags |
 | --- | --- |
 | `kernel vaults create --name <name>` | Create or retrieve the vault with that immutable name |
-| `kernel vaults list` | `--limit 1..100` (default 20), `--offset`; JSON includes `vaults` and optional `next_offset` |
+| `kernel vaults list` | `--limit 1..100` (default 20), `--offset`, `--query` (name substring or exact ID); JSON includes `vaults` and optional `next_offset` |
 | `kernel vaults get <vault>` | Get by ID or name |
 | `kernel vaults delete <vault>` | Invalidate the vault and all its items; `--yes` skips confirmation |
 | `kernel vaults wallets create <vault> <key> --provider link\|agentcard --spec '<json>'` | Connect/enroll a wallet using its provider's spec; `--open` opens a returned HTTPS action URL |
@@ -398,7 +409,7 @@ cannot switch projects.
 | `kernel vaults cards update <vault> <key> --provider link\|agentcard --spec '<json>'` | Update a card spec; pending issuance preserves omitted optional fields, and the API enforces state/provider constraints |
 | `kernel vaults items list <vault>` | List item keys, types, providers, status, and required actions |
 | `kernel vaults items get <vault> <key>` | Inspect state/actions/returned AgentCard aliases and copyable operation commands; `--wait 0..60`, `--expand payment_methods`, `--open` |
-| `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; `authorize --open` opens a returned HTTPS action; `prepare_checkout --params '<json>'` prepares an unused AgentCard card for Square Pay; `fill --params '<json>'` fills checkout or login fields; `collect --open` opens a credential item's hosted form |
+| `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; `authorize --open` opens a returned HTTPS action; `prepare_checkout --params '<json>'` prepares an unused AgentCard card for Square Pay; `fill --params '<json>'` fills checkout or login fields; `webmcp_invoke --params '<json>'` invokes a WebMCP tool (from `browsers webmcp list`) with vaulted values bound to null input slots by JSON Pointer; `collect --open` opens a credential item's hosted form |
 | `kernel vaults items events <vault> <key>` | Read ordered audit events; `--after <event-id>`, `--wait 0..60` |
 | `kernel vaults items delete <vault> <key>` | Invalidate an item; `--yes` skips confirmation |
 

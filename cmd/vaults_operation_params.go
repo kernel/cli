@@ -16,6 +16,7 @@ type vaultOperationParams struct {
 	Checkout *kernel.VaultCheckoutContextParam
 	// OnePassword is a complete 1pw_* request body; Invoke supplies the vault.
 	OnePassword *kernel.VaultItemPerformOperationParams
+	WebMCP      *kernel.WebmcpInvokeVaultItemOperationRequestParam
 }
 
 func isOnePasswordOperation(operation string) bool {
@@ -24,7 +25,7 @@ func isOnePasswordOperation(operation string) bool {
 
 // vaultOperationTakesParams reports whether an operation accepts --params or --spec-file.
 func vaultOperationTakesParams(operation string) bool {
-	return operation == "fill" || operation == "prepare_checkout" || (isOnePasswordOperation(operation) && operation != "1pw_recover")
+	return operation == "fill" || operation == "prepare_checkout" || operation == "webmcp_invoke" || (isOnePasswordOperation(operation) && operation != "1pw_recover")
 }
 
 type vaultFillParams struct {
@@ -116,9 +117,19 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 		}
 		return &vaultOperationParams{Checkout: checkout}, nil
 	}
+	if operation == "webmcp_invoke" {
+		if !paramsSet {
+			return nil, fmt.Errorf("webmcp_invoke requires --params or --spec-file with browser_id, tool_ref, page_url, input, and bindings")
+		}
+		request, err := parseVaultWebMCPParams(raw)
+		if err != nil {
+			return nil, err
+		}
+		return &vaultOperationParams{WebMCP: request}, nil
+	}
 	if operation != "fill" {
 		if paramsSet {
-			return nil, fmt.Errorf("--params is only supported for fill, prepare_checkout, and 1Password operations; authorize takes no parameters")
+			return nil, fmt.Errorf("--params is only supported for fill, prepare_checkout, webmcp_invoke, and 1Password operations; authorize takes no parameters")
 		}
 		return nil, nil
 	}

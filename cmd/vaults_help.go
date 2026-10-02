@@ -45,6 +45,13 @@ type AgentCardWalletSpec = {
   provider_config?: ProviderConfigReference; // omit for Kernel-managed credentials
   user_id?: string; // usr_...; enrolled in this organization under the SAME config
 };
+
+// Kernel-managed Visa/Mastercard agentic network token enrollment. Creation returns a
+// card_enrollment action: the cardholder enters the card on a Kernel-hosted page.
+// The card number never reaches Kernel or the CLI. No provider config or tokens.
+type KernelWalletSpec = {
+  provider: "kernel";
+};
 `
 
 const vaultCardSpecHelp = `
@@ -71,6 +78,18 @@ type AgentCardCardSpec = {
   currency: string;           // three letters
   card_id?: string;           // opaque AgentCard ID, pass through unchanged; else chosen at approval
   checkout_origin?: string;   // top-level checkout origin for autopilot matching; update omission removes it
+};
+
+// One live purchase with a Kernel-enrolled card. Authorize obtains a network token and
+// one-time code for fill on merchant_url's origin until expires_at. Visa purchases are
+// not yet supported (authorize returns 400). Updates are not supported.
+type KernelCardSpec = {
+  provider: "kernel";
+  wallet: string;             // Kernel wallet item key
+  amount: number;             // integer minor units; 1..50000
+  currency: string;           // ISO 4217 three letters
+  merchant_name: string;      // 1..255 characters
+  merchant_url: string;       // HTTPS merchant checkout URL; fill is locked to its origin
 };
 
 type LinkLineItem = {

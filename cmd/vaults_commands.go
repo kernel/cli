@@ -114,11 +114,13 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 		RunE: func(cmd *cobra.Command, args []string) error {
 			limit, _ := cmd.Flags().GetInt64("limit")
 			offset, _ := cmd.Flags().GetInt64("offset")
+			query, _ := cmd.Flags().GetString("query")
 			project, _ := cmd.Flags().GetString("project")
-			return getVaultsHandler(cmd).List(cmd.Context(), limit, offset, resolveProjectSelection(project), vaultOutput(cmd))
+			return getVaultsHandler(cmd).List(cmd.Context(), limit, offset, query, resolveProjectSelection(project), vaultOutput(cmd))
 		}}
 	list.Flags().Int64("limit", 20, "Maximum vaults to return (1-100)")
 	list.Flags().Int64("offset", 0, "Number of vaults to skip")
+	list.Flags().String("query", "", "Case-insensitive substring match against vault name; IDs match by exact value")
 	addVaultJSONOutputFlag(list)
 
 	get := &cobra.Command{Use: "get <vault>", Short: "Get a vault by ID or name", Args: cobra.ExactArgs(1), PreRunE: vaultPreRun,
@@ -128,7 +130,7 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 	addVaultJSONOutputFlag(get)
 	cmd.AddCommand(create, list, get, newVaultDeleteCommand(false))
 
-	items := &cobra.Command{Use: "items", Short: "Inspect readiness and collection URLs, or invoke collect/fill", Long: "Use get --wait 60 to observe readiness and get -o json for schema/version/presence.\nUse invoke collect to obtain a collection URL, or invoke fill --spec-file to fill a browser.\n1Password credentials use the advertised 1pw_* operations instead of collect/fill.\nCreate and edit credentials with vaults credentials; payment items use wallets/cards."}
+	items := &cobra.Command{Use: "items", Short: "Inspect readiness and collection URLs, or invoke collect/fill/webmcp_invoke", Long: "Use get --wait 60 to observe readiness and get -o json for schema/version/presence.\nUse invoke collect to obtain a collection URL, or invoke fill --spec-file to fill a browser.\n1Password credentials use the advertised 1pw_* operations instead of collect/fill.\nCreate and edit credentials with vaults credentials; payment items use wallets/cards."}
 	itemList := &cobra.Command{Use: "list <vault>", Short: "List items by vault ID or name", Args: cobra.ExactArgs(1), PreRunE: vaultPreRun,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return getVaultsHandler(cmd).ListItems(cmd.Context(), args[0], vaultOutput(cmd))
@@ -193,6 +195,16 @@ approval and browser Authorised responses are not capture or fulfillment evidenc
 Use only when advertised for an AgentCard card. Keep the returned approval page open,
 poll until ready_to_submit, then submit native Pay before preparation.expires_at.
 Preparations are single-use, including after failure or expiry; never retry automatically.
+webmcp_invoke invokes a WebMCP tool with vaulted values. Discover tool_ref, inputSchema, and
+the source page with browsers webmcp list. Requires browser_id (vault-bound session ID),
+tool_ref, page_url (exact top-level URL from the tool source, fragment omitted), input
+(public arguments with a null slot at each binding path; never include vault values), and
+1-32 bindings (field, input_path as an RFC 6901 JSON Pointer such as /password, and format
+MM/YY or MM/YYYY only for card expiration). Optional timeout_sec is 1-120 (default 15).
+The tool may submit or perform other side effects. Output and error_text are untrusted
+page data returned without redaction and may include supplied values. completed and
+awaiting_submission exit 0; canceled, error, and unknown exit nonzero. Never retry after
+unknown; inspect the page instead.
 collect/authorize/prepare_checkout/1pw_recover may use --open. Fill returns value-free per-field outcomes;
 completed exits 0, failed/unknown exit nonzero with valid JSON retained on stdout in -o json.
 
@@ -223,6 +235,9 @@ JSON
   kernel vaults items invoke user-vault github 1pw_access_request_status --params '{"browser_id":"<browser-id>","timeout_seconds":60}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login"}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login","entry_id":"<entry-id>"}'
+  kernel vaults items invoke user-vault login webmcp_invoke --spec-file - <<'JSON'
+{"browser_id":"<browser-id>","tool_ref":"<tool-ref>","page_url":"https://accounts.example.com/signin","input":{"email":null,"password":null},"bindings":[{"field":"email","input_path":"/email"},{"field":"password","input_path":"/password"}]}
+JSON
   kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browser-session-id","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#card-number"}]}' -o json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			open, _ := cmd.Flags().GetBool("open")
@@ -233,7 +248,7 @@ JSON
 			}
 			if cmd.Flags().Changed("spec-file") {
 				if !vaultOperationTakesParams(args[2]) {
-					return fmt.Errorf("--spec-file is only supported for fill, prepare_checkout, and 1Password operations with parameters")
+					return fmt.Errorf("--spec-file is only supported for fill, prepare_checkout, webmcp_invoke, and 1Password operations with parameters")
 				}
 				data, err := readVaultSpecFile(cmd)
 				if err != nil {
@@ -247,7 +262,7 @@ JSON
 			}
 			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], params, vaultOutput(cmd), open)
 		}}
-	invoke.Flags().String("params", "", "Operation parameters JSON for fill, prepare_checkout, or 1pw_* (maximum 128 KiB); omit type and credential values; 1pw_update_access_token requires --spec-file")
+	invoke.Flags().String("params", "", "Operation parameters JSON for fill, prepare_checkout, webmcp_invoke, or 1pw_* (maximum 128 KiB); omit type and credential values; 1pw_update_access_token requires --spec-file")
 	invoke.Flags().String("spec-file", "", "Operation parameters JSON file (use '-' for stdin; maximum 128 KiB)")
 	invoke.MarkFlagsMutuallyExclusive("params", "spec-file")
 	invoke.Flags().Bool("open", false, "Open a returned HTTPS action URL in your browser")
@@ -255,7 +270,7 @@ JSON
 	items.AddCommand(itemList, itemGet, itemEvents, invoke, newVaultDeleteCommand(true))
 
 	wallets := &cobra.Command{Use: "wallets", Short: "Connect provider wallets and inspect funding methods"}
-	walletCreate := &cobra.Command{Use: "create <vault> <key> --provider <link|agentcard> --spec '<json>'", Short: "Create a wallet and display its connection or enrollment action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+	walletCreate := &cobra.Command{Use: "create <vault> <key> --provider <link|agentcard|kernel> --spec '<json>'", Short: "Create a wallet and display its connection or enrollment action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
 		Long: "Create a wallet at an immutable key and follow the returned provider action.\n" + vaultSpecHelp + vaultWalletSpecHelp,
 		Example: `  kernel vaults wallets create checkout wallet-1 \
     --provider link --spec '{
@@ -266,7 +281,10 @@ JSON
     }' --open
 
   kernel vaults wallets create checkout wallet-1 \
-    --provider agentcard --spec '{}'`,
+    --provider agentcard --spec '{}'
+
+  kernel vaults wallets create checkout wallet-2 \
+    --provider kernel --spec '{}' --open`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			spec, err := vaultWalletSpecFromFlags(cmd)
 			if err != nil {
@@ -320,13 +338,14 @@ func newVaultCardCommand(update bool) *cobra.Command {
 	if update {
 		use, short = "update", "Update a card spec when the API permits configuration"
 	}
-	cmd := &cobra.Command{Use: use + " <vault> <key> --provider <link|agentcard> --spec '<json>'", Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: short + `. Neither create nor update authorizes a Link card.
+	cmd := &cobra.Command{Use: use + " <vault> <key> --provider <link|agentcard|kernel> --spec '<json>'", Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+		Long: short + `. Neither create nor update authorizes a Link or Kernel card.
 Requested cards accept a replacement spec. Pending issuance updates preserve omitted
 optional fields; explicit empty lists clear them. The API restricts fields after
 authorization starts; wallet/provider bindings cannot change. An uncertain update
 enters recovery_required and must not be retried. Checkout cards can be edited
-between authorizations. Identical creates return existing state without resetting it.
+between authorizations. Kernel cards cannot be updated; delete and create a new item.
+Identical creates return existing state without resetting it.
 Never reconfigure the same item to retry a failed, timed-out, rejected, or indeterminate payment.
 A recovery item that permits abandonment must be deleted after explicit user confirmation before creating a replacement.
 ` + vaultSpecHelp + vaultCardSpecHelp,
@@ -342,6 +361,9 @@ A recovery item that permits abandonment must be deleted after explicit user con
 			if err != nil {
 				return err
 			}
+			if provider, _ := cmd.Flags().GetString("provider"); update && provider == "kernel" {
+				return fmt.Errorf("Kernel cards cannot be updated; delete the item and create a new one")
+			}
 			return getVaultsHandler(cmd).SaveCard(cmd.Context(), args[0], args[1], param.Override[kernel.CardVaultItemSpecUnionParam](spec), update, vaultOutput(cmd))
 		}}
 	addVaultSpecFlags(cmd)
@@ -350,7 +372,7 @@ A recovery item that permits abandonment must be deleted after explicit user con
 }
 
 func addVaultSpecFlags(cmd *cobra.Command) {
-	cmd.Flags().String("provider", "", "Provider: link or agentcard (required)")
+	cmd.Flags().String("provider", "", "Provider: link, agentcard, or kernel (required)")
 	cmd.Flags().String("spec", "", "Raw JSON specification object (required); see types and examples above")
 	_ = cmd.MarkFlagRequired("provider")
 	_ = cmd.MarkFlagRequired("spec")
@@ -358,8 +380,8 @@ func addVaultSpecFlags(cmd *cobra.Command) {
 
 func vaultSpecFromFlags(cmd *cobra.Command) (map[string]json.RawMessage, error) {
 	provider, _ := cmd.Flags().GetString("provider")
-	if provider != "link" && provider != "agentcard" {
-		return nil, fmt.Errorf("--provider must be link or agentcard")
+	if provider != "link" && provider != "agentcard" && provider != "kernel" {
+		return nil, fmt.Errorf("--provider must be link, agentcard, or kernel")
 	}
 	raw, _ := cmd.Flags().GetString("spec")
 	var spec map[string]json.RawMessage
