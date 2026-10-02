@@ -79,7 +79,7 @@ func TestCredentialCreateOnePassword(t *testing.T) {
 		{`{"provider":"1password","account":"onepassword"}`, "1-5 login entries"},
 		{`{"provider":"1password","access_token":"token-secret","integration_key":"key-secret","website":"https://github.com"}`, "1-5 login entries"},
 		{`{"provider":"1password","account":"onepassword","requests":{"version":2,"entries":[` + strings.Repeat(entry+",", 5) + entry + `]}}`, "1-5 login entries"},
-		{`{"provider":"lastpass","fields":[{"name":"password","type":"password"}]}`, "kernel or 1password"},
+		{`{"provider":"lastpass","fields":[{"name":"password","type":"password"}]}`, "kernel, 1password, or managed_auth"},
 	} {
 		_, _, err := executeVaultCommand(t, client, "vaults", "credentials", "create", "user", "github", "--spec-file", credentialSpecFile(t, tc.spec))
 		require.ErrorContains(t, err, tc.err, tc.spec)

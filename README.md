@@ -378,6 +378,17 @@ text/email values, definitions, version, and `has_value`. Sensitive values and T
 seeds are omitted.
 Credential spec input is capped at 128 KiB; write errors are redacted.
 
+To reuse a managed auth connection's saved credential, create a credential with
+provider `managed_auth` and the connection ID from `kernel auth connections list`.
+The item stores no values and reads the connection's credential at fill time; it is
+created `ready`, `state.fields` lists fill binding names, and `update` returns 409:
+
+```sh
+kernel vaults credentials create user-vault amazon --spec-file - <<'JSON'
+{"provider":"managed_auth","connection_id":"<connection-id>","description":"Amazon"}
+JSON
+```
+
 Vault names, item keys, and project ownership are immutable. Optionally select a project with
 `--project <id-or-name>` or `KERNEL_PROJECT`; otherwise, the API resolves the project from your
 credentials and its defaults (the default project for org-wide credentials, not all projects).
