@@ -26,7 +26,6 @@ Kernel provides sandboxed, ready-to-use Chrome browsers for browser automations 
 - Invoke app actions (sync or async) and stream logs
 - Create, list, view, and delete managed browser sessions
 - Get a live view URL for visual monitoring and remote control
-- Search the web across providers and retrieve page content for results
 
 ## Installation
 
