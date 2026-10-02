@@ -63,7 +63,7 @@ var vaultItemFields = vaultOutputFields{
 			"request": onePasswordRequestFields, "entries": onePasswordRequestEntryFields,
 		},
 		"fields":        {"*": vaultFieldsOf("has_value")},
-		"masks":         vaultFieldsOf("brand last4"),
+		"masks":         vaultFieldsOf("brand last4 token_last4"),
 		"aliases":       vaultFieldsOf("number cvc exp_month exp_year"),
 		"preparation":   vaultFieldsOf("id status browser_id merchant_origin environment psp created_at expires_at approval_url"),
 		"authorization": vaultFieldsOf("id status psp merchant amount amount_cents currency created_at expires_at approval_url browser_id reason psp_error_code expected_cents actual_cents amount_authority amount_verified charged_amount_cents charged_currency charged_kind replay_attempted replay_status replay_delivered"),
@@ -370,6 +370,15 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		}
 		if item.Spec.Provider == "agentcard" && item.Spec.CheckoutOrigin != "" {
 			rows = append(rows, []string{"Checkout origin", item.Spec.CheckoutOrigin})
+		}
+		if item.Spec.Provider == "kernel" && item.Spec.MerchantURL != "" {
+			rows = append(rows, []string{"Merchant URL", item.Spec.MerchantURL})
+		}
+		if masks := item.State.Masks; masks.Last4 != "" || masks.TokenLast4 != "" {
+			rows = append(rows, []string{"Card last4", util.OrDash(masks.Last4)})
+			if masks.TokenLast4 != "" {
+				rows = append(rows, []string{"Network token last4", masks.TokenLast4})
+			}
 		}
 	}
 	if item.State.JSON.Domains.Valid() {
