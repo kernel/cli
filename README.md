@@ -348,6 +348,11 @@ bearer credential: share it only with that user. Readiness means required values
 populated, not that login succeeded. `fill` requires an already-open page and never
 navigates or submits it. Optional `page_url` selects the exact page; cards require it.
 Do not automatically retry failed/unknown fills or fall back to aliases.
+Once ready, use `fill` for ordinary web forms. When the item advertises `webmcp_invoke`, use
+`items webmcp invoke` instead to bind credential fields to existing `null` inputs of a live
+WebMCP tool; the tool may submit or have other side effects, so never retry an uncertain
+outcome (see [Invoke WebMCP tools with vault fields](#invoke-webmcp-tools-with-vault-fields)).
+1Password credentials use their own advertised `1pw_*` operations instead.
 
 Create specs list `fields` as an ordered array. Each entry carries a stable `name`
 (letters, digits, and underscores, starting with a letter) that keys values, updates,

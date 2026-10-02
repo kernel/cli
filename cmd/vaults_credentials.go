@@ -23,8 +23,11 @@ const vaultCredentialPathsHelp = `Credential vaults have two sign-in paths. Befo
    choose for them:
    - Kernel-hosted collection (spec provider "kernel", the default): you define the
      site's fields, the user types values into a Kernel-hosted form at the returned
-     collection URL, Kernel stores them encrypted, and items invoke fill writes them
-     into a vault-bound browser without submitting.
+     collection URL, and Kernel stores them encrypted. Once ready, items invoke fill
+     writes them into ordinary web form fields in a vault-bound browser without
+     submitting. When the item advertises webmcp_invoke, items webmcp invoke instead
+     binds credential fields to existing null inputs of a live WebMCP tool; the tool
+     may submit or have other side effects.
    - 1Password brokered approval (spec provider "1password", preview): requires the
      login to be in the user's own, non-shared 1Password vault; shared-vault items and
      passkeys are not supported. State this requirement when asking. The account
@@ -100,7 +103,14 @@ Set sensitive:false explicitly for ordinary usernames and email addresses.
 Reserve sensitive:true for secrets such as passwords, API tokens, and TOTP seeds.
 Password and totp must be sensitive. Omitted sensitive defaults to true for safety.
 Omit required values to receive a collection URL to present to the user.
-Poll items get --wait 60 until state.status is ready, then use items invoke fill.
+Poll items get --wait 60 until state.status is ready. Then choose an advertised operation:
+- Ordinary web forms: items invoke fill writes field values without submitting.
+- Live WebMCP tool: when webmcp_invoke is advertised, run browsers webmcp list, then
+  items webmcp invoke with the tool_ref, exact source.page_url, public input containing
+  null slots, and --bind <field>=<json-pointer>. The tool may submit or have other
+  side effects, and its output may include the supplied values.
+Never automatically retry fill or webmcp_invoke; after an uncertain outcome, inspect
+the browser and tell the user.
 Ready means populated, not a successful login. An agent controlling the browser
 can read filled values. TOTP seeds must not be collected through the hosted form.
 Get/list output includes definitions, has_value, and explicitly non-sensitive text/email values.

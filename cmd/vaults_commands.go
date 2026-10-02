@@ -59,15 +59,18 @@ Use wallet and card item types for credit cards and payment checkout instead.
 
 ` + vaultCredentialPathsHelp + `
 
-Kernel-hosted credential flow (fill never submits website forms):
+Kernel-hosted credential flow (fill never submits website forms; WebMCP tools may):
 1. Create a vault per end user and create a browser with --vault <id-or-name>.
 2. Navigate to a sensitive form and define its fields in natural top-to-bottom order with credentials create --spec-file; that array order controls the user-facing collection form.
 3. Present the returned collection URL to the user. Poll items get --wait 60 for ready.
-4. Use items invoke <vault> <key> fill --spec-file with browser_id and field selectors,
-   or items webmcp invoke to call a live WebMCP tool with fields bound to null input slots.
+4. Once ready, for ordinary web forms use items invoke <vault> <key> fill --spec-file with
+   browser_id and field selectors (writes fields without submitting). When the item
+   advertises webmcp_invoke, items webmcp invoke instead binds credential fields to existing
+   null inputs of a live WebMCP tool (the tool may submit or have side effects).
+   Never automatically retry either; inspect the browser after an uncertain outcome.
 Use credentials update --version for edits, or items invoke collect to reopen the form.
 Credential values belong in protected files/stdin, never command-line arguments.
-See credentials --help and items invoke --help for examples.
+See credentials --help, items invoke --help, and items webmcp invoke --help for examples.
 
 1Password credential flow: reuse or connect the owner's account with credentials connect,
 create a 1password credential for the site's login entries, then invoke only the
@@ -129,7 +132,7 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 	addVaultJSONOutputFlag(get)
 	cmd.AddCommand(create, list, get, newVaultDeleteCommand(false))
 
-	items := &cobra.Command{Use: "items", Short: "Inspect readiness and collection URLs, or invoke collect/fill/webmcp_invoke", Long: "Use get --wait 60 to observe readiness and get -o json for schema/version/presence.\nUse invoke collect to obtain a collection URL, or invoke fill --spec-file to fill a browser.\nUse webmcp invoke to call a live WebMCP tool with item fields bound to null input slots.\n1Password credentials use the advertised 1pw_* operations instead of collect/fill.\nCreate and edit credentials with vaults credentials; payment items use wallets/cards."}
+	items := &cobra.Command{Use: "items", Short: "Inspect readiness and collection URLs, or invoke collect/fill/webmcp_invoke", Long: "Use get --wait 60 to observe readiness and get -o json for schema/version/presence.\nUse invoke collect to obtain a collection URL, or invoke fill --spec-file to fill a browser.\nUse webmcp invoke to call a live WebMCP tool with item fields bound to null input slots.\n1Password credentials use the advertised 1pw_* operations instead of collect/fill/webmcp_invoke.\nCreate and edit credentials with vaults credentials; payment items use wallets/cards."}
 	itemList := &cobra.Command{Use: "list <vault>", Short: "List items by vault ID or name", Args: cobra.ExactArgs(1), PreRunE: vaultPreRun,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return getVaultsHandler(cmd).ListItems(cmd.Context(), args[0], vaultOutput(cmd))
