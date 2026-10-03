@@ -1,7 +1,10 @@
 package mcp
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/pterm/pterm"
@@ -32,6 +35,7 @@ const (
 	TargetGoose       Target = "goose"
 	TargetZed         Target = "zed"
 	TargetFx          Target = "fx"
+	TargetCodex       Target = "codex"
 )
 
 // KernelMCPURL is the URL for the Kernel MCP server
@@ -76,4 +80,61 @@ func gooseConfig(spec targetSpec, cacheDir string) string {
 	}
 	fmt.Fprintf(&config, "    envs:\n      MCP_REMOTE_CONFIG_DIR: %q", cacheDir)
 	return config.String()
+}
+
+// installForCodex delegates to `codex mcp add`, which edits config.toml in
+// place and starts the OAuth flow. Without the Codex CLI on PATH (e.g. IDE
+// extension only), print the TOML to add by hand.
+func installForCodex(configPath string, spec targetSpec) error {
+	codex, err := exec.LookPath("codex")
+	if err != nil {
+		pterm.Info.Println("Codex CLI not found on PATH. Add the following to your Codex config:")
+		pterm.Println()
+		fmt.Println(codexConfig())
+		pterm.Println()
+		pterm.Info.Printf("Config file location: %s\n", configPath)
+		pterm.Info.Println("Then restart Codex and authenticate with 'codex mcp login kernel' (requires the Codex CLI)")
+		return nil
+	}
+	// `codex mcp add` replaces the whole entry, so leave an existing one alone
+	// to keep fields like bearer_token_env_var or enabled_tools.
+	if codexHasKernel(codex) {
+		pterm.Success.Printf("MCP server already configured for %s at %s\n", spec.target, configPath)
+	} else {
+		cmd := exec.Command(codex, "mcp", "add", "kernel", "--url", KernelMCPURL)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("codex mcp add failed: %w", err)
+		}
+		pterm.Success.Printf("MCP server successfully configured for %s at %s\n", spec.target, configPath)
+	}
+	pterm.Println()
+	pterm.Info.Println("Next steps:")
+	pterm.Println("  1. Restart Codex")
+	pterm.Println("  2. Run '/mcp' in Codex to verify that Kernel is connected")
+	pterm.Println("  3. If Kernel isn't authenticated, run 'codex mcp login kernel'")
+	return nil
+}
+
+func codexHasKernel(codex string) bool {
+	out, err := exec.Command(codex, "mcp", "get", "kernel", "--json").Output()
+	if err != nil {
+		return false
+	}
+	var server struct {
+		Transport struct {
+			Type string `json:"type"`
+			URL  string `json:"url"`
+		} `json:"transport"`
+	}
+	if err := json.Unmarshal(out, &server); err != nil {
+		return false
+	}
+	return server.Transport.Type == "streamable_http" && server.Transport.URL == KernelMCPURL
+}
+
+func codexConfig() string {
+	return fmt.Sprintf("[mcp_servers.kernel]\nurl = %q", KernelMCPURL)
 }

@@ -61,8 +61,8 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to install MCP configuration: %w", err)
 	}
 
-	// For Goose, the install function already printed instructions
-	if spec.printOnly {
+	// Targets with their own installer print their own instructions
+	if spec.install != nil {
 		return nil
 	}
 

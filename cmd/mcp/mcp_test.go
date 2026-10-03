@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -333,5 +334,88 @@ func TestInstallForAntigravityPreservesExistingKernelFields(t *testing.T) {
 		if got := info.Mode().Perm(); got != 0600 {
 			t.Fatalf("config permissions = %o, want 600", got)
 		}
+	}
+}
+
+func TestInstallForCodex(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a shell script stub")
+	}
+	add := "mcp add kernel --url " + KernelMCPURL
+	get := "mcp get kernel --json"
+	cases := []struct {
+		name     string
+		existing string
+		want     []string
+	}{
+		{"missing", "", []string{get, add}},
+		{"configured", `{"transport":{"type":"streamable_http","url":"` + KernelMCPURL + `","bearer_token_env_var":"KERNEL_API_KEY"}}`, []string{get}},
+		{"stdio", `{"transport":{"type":"stdio","command":"npx"}}`, []string{get, add}},
+		{"other url", `{"transport":{"type":"streamable_http","url":"https://old.example/mcp"}}`, []string{get, add}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			testHome(t)
+			bin := t.TempDir()
+			argsPath := filepath.Join(bin, "args")
+			getPath := filepath.Join(bin, "get.json")
+			if tc.existing != "" {
+				if err := os.WriteFile(getPath, []byte(tc.existing), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			stub := "#!/bin/sh\necho \"$*\" >> " + argsPath + "\nif [ \"$2\" = get ]; then cat " + getPath + " 2>/dev/null || exit 1; fi\n"
+			if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(stub), 0755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			if err := Install(TargetCodex); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(argsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Split(strings.TrimSpace(string(data)), "\n"); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("codex calls = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestInstallForCodexWithoutCLIWritesNothing(t *testing.T) {
+	testHome(t)
+	t.Setenv("PATH", t.TempDir())
+
+	if err := Install(TargetCodex); err != nil {
+		t.Fatal(err)
+	}
+	path, err := GetConfigPath(TargetCodex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("config should not be written without the Codex CLI: %v", err)
+	}
+}
+
+func TestCodexConfigPathHonorsCodexHome(t *testing.T) {
+	testHome(t)
+	path, err := GetConfigPath(TargetCodex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(os.Getenv("HOME"), ".codex", "config.toml"); path != want {
+		t.Fatalf("config path = %q, want %q", path, want)
+	}
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	path, err = GetConfigPath(TargetCodex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(codexHome, "config.toml"); path != want {
+		t.Fatalf("config path = %q, want %q", path, want)
 	}
 }
