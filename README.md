@@ -348,6 +348,11 @@ bearer credential: share it only with that user. Readiness means required values
 populated, not that login succeeded. `fill` requires an already-open page and never
 navigates or submits it. Optional `page_url` selects the exact page; cards require it.
 Do not automatically retry failed/unknown fills or fall back to aliases.
+Once ready, use `fill` for ordinary web forms. When the item advertises `webmcp_invoke`, use
+`items webmcp invoke` instead to bind credential fields to existing `null` inputs of a live
+WebMCP tool; the tool may submit or have other side effects, so never retry an uncertain
+outcome (see [Invoke WebMCP tools with vault fields](#invoke-webmcp-tools-with-vault-fields)).
+1Password credentials use their own advertised `1pw_*` operations instead.
 
 Create specs list `fields` as an ordered array. Each entry carries a stable `name`
 (letters, digits, and underscores, starting with a letter) that keys values, updates,
@@ -399,6 +404,7 @@ cannot switch projects.
 | `kernel vaults items list <vault>` | List item keys, types, providers, status, and required actions |
 | `kernel vaults items get <vault> <key>` | Inspect state/actions/returned AgentCard aliases and copyable operation commands; `--wait 0..60`, `--expand payment_methods`, `--open` |
 | `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; `authorize --open` opens a returned HTTPS action; `prepare_checkout --params '<json>'` prepares an unused AgentCard card for Square Pay; `fill --params '<json>'` fills checkout or login fields; `collect --open` opens a credential item's hosted form |
+| `kernel vaults items webmcp invoke <vault> <key>` | Invoke a live WebMCP tool with item fields bound to null input slots; `--browser-id`, `--tool-ref`, `--page-url`, `--input`/`--input-file`, repeatable `--bind <field>=<json-pointer>`, `--timeout-sec 1..120`. Same as `items invoke <vault> <key> webmcp_invoke --params '<json>'` |
 | `kernel vaults items events <vault> <key>` | Read ordered audit events; `--after <event-id>`, `--wait 0..60` |
 | `kernel vaults items delete <vault> <key>` | Invalidate an item; `--yes` skips confirmation |
 
@@ -705,6 +711,46 @@ before deciding what to do next. The CLI never retries, explicitly submits websi
 back to aliases. Link cards do not expose `state.aliases` or support egress substitution.
 AgentCard-only checkout aliases are a separate integration, not a recovery path after a failed
 or indeterminate fill.
+
+##### Invoke WebMCP tools with vault fields
+
+`webmcp_invoke` calls a live WebMCP tool with values from a credential item or ready Link card,
+when the item advertises it. Discover the tool first, then pass its opaque `tool_ref` and exact
+`source.page_url` (fragment omitted). The vault must already be attached to the browser. Put
+`null` at each input slot a vault field fills; `--input` holds only public tool arguments, never
+vault values:
+
+```bash
+kernel browsers webmcp list <browser-id> -o json
+kernel vaults items webmcp invoke user-vault resy \
+  --browser-id <browser-id> --tool-ref <tool-ref> --page-url https://resy.com/login \
+  --input '{"email":null,"password":null}' \
+  --bind email=/email --bind password=/password -o json
+```
+
+- Each `--bind <field>=<json-pointer>` maps one vault field to an RFC 6901 JSON Pointer to an existing
+  `null` in input (no root or `-` append paths; array indices must be canonical and in range). Each
+  field and path may be bound once; 1-32 bindings. Card expiration uses
+  `--bind expiration:MM/YY=/card/expiry` (or `MM/YYYY`); other fields take no format. TOTP fields
+  supply a fresh code, never the seed.
+- `--timeout-sec` is 1-120 (API default 15). Input numbers are sent unchanged; input is capped at 64 KiB.
+- The equivalent request body for `items invoke <vault> <key> webmcp_invoke --params`/`--spec-file` is
+  `{"browser_id":"...","tool_ref":"...","page_url":"...","input":{...},"bindings":[{"field":"email","input_path":"/email"}],"timeout_sec":15}`.
+
+The tool may submit forms or perform other side effects. The result returns `status`,
+`invocation_id`, `output`, and `error_text` as the API returns them; `output` and `error_text`
+are untrusted page-provided data and may contain the supplied vault values:
+
+```json
+{"type":"webmcp_invoke","status":"completed","invocation_id":"invoke-1","output":{"authenticated":true}}
+```
+
+`completed` and `awaiting_submission` exit 0; neither confirms the website accepted the action.
+After `awaiting_submission`, submit the populated form through Playwright or computer interaction
+instead of invoking the tool again. `canceled`, `error`, and `unknown` exit nonzero with the result
+still on stdout in `-o json`. `unknown` means the tool may have run. Requests are never retried:
+API rejections (400/403/404/409) mean the tool was not invoked by that request; other failures
+and transport loss are uncertain, so inspect the browser instead of re-invoking.
 
 #### Expansions, updates, and lifecycle
 

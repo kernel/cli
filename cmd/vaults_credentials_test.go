@@ -206,7 +206,7 @@ func TestCredentialDiscoveryAndInvalidInput(t *testing.T) {
 	require.NoError(t, err)
 	cmd.Flags().Set("spec-file", "-")
 	cmd.SetIn(strings.NewReader(`{"fields":{}}`))
-	data, err := readVaultSpecFile(cmd)
+	data, err := readVaultJSONFile(cmd, "spec-file")
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"fields":{}}`, string(data))
 }

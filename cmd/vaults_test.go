@@ -52,7 +52,7 @@ func executeVaultCommand(t *testing.T, client kernel.Client, args ...string) (st
 }
 
 func TestVaultCommandConstruction(t *testing.T) {
-	for _, path := range []string{"create", "list", "get", "delete", "items list", "items get", "items delete", "items events", "wallets create", "wallets payment-methods", "cards create", "cards update", "items invoke"} {
+	for _, path := range []string{"create", "list", "get", "delete", "items list", "items get", "items delete", "items events", "wallets create", "wallets payment-methods", "cards create", "cards update", "items invoke", "items webmcp invoke"} {
 		t.Run(path, func(t *testing.T) {
 			cmd, remaining, err := newVaultsCommand().Find(strings.Fields(path))
 			require.NoError(t, err)

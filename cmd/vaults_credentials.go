@@ -23,8 +23,11 @@ const vaultCredentialPathsHelp = `Credential vaults have two sign-in paths. Befo
    choose for them:
    - Kernel-hosted collection (spec provider "kernel", the default): you define the
      site's fields, the user types values into a Kernel-hosted form at the returned
-     collection URL, Kernel stores them encrypted, and items invoke fill writes them
-     into a vault-bound browser without submitting.
+     collection URL, and Kernel stores them encrypted. Once ready, items invoke fill
+     writes them into ordinary web form fields in a vault-bound browser without
+     submitting. When the item advertises webmcp_invoke, items webmcp invoke instead
+     binds credential fields to existing null inputs of a live WebMCP tool; the tool
+     may submit or have other side effects.
    - 1Password brokered approval (spec provider "1password", preview): requires the
      login to be in the user's own, non-shared 1Password vault; shared-vault items and
      passkeys are not supported. State this requirement when asking. The account
@@ -100,7 +103,14 @@ Set sensitive:false explicitly for ordinary usernames and email addresses.
 Reserve sensitive:true for secrets such as passwords, API tokens, and TOTP seeds.
 Password and totp must be sensitive. Omitted sensitive defaults to true for safety.
 Omit required values to receive a collection URL to present to the user.
-Poll items get --wait 60 until state.status is ready, then use items invoke fill.
+Poll items get --wait 60 until state.status is ready. Then choose an advertised operation:
+- Ordinary web forms: items invoke fill writes field values without submitting.
+- Live WebMCP tool: when webmcp_invoke is advertised, run browsers webmcp list, then
+  items webmcp invoke with the tool_ref, exact source.page_url, public input containing
+  null slots, and --bind <field>=<json-pointer>. The tool may submit or have other
+  side effects, and its output may include the supplied values.
+Never automatically retry fill or webmcp_invoke; after an uncertain outcome, inspect
+the browser and tell the user.
 Ready means populated, not a successful login. An agent controlling the browser
 can read filled values. TOTP seeds must not be collected through the hosted form.
 Get/list output includes definitions, has_value, and explicitly non-sensitive text/email values.
@@ -120,7 +130,7 @@ func newVaultCredentialsCommand() *cobra.Command {
 		}
 		cmd := &cobra.Command{Use: name + " <vault> <key> --spec-file <path|->", Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun, Long: vaultCredentialHelp,
 			RunE: func(cmd *cobra.Command, args []string) error {
-				data, err := readVaultSpecFile(cmd)
+				data, err := readVaultJSONFile(cmd, "spec-file")
 				if err != nil {
 					return err
 				}
@@ -184,16 +194,17 @@ still-pending account unchanged; otherwise it starts a new authorization with a 
 	return group
 }
 
-func readVaultSpecFile(cmd *cobra.Command) ([]byte, error) {
-	path, _ := cmd.Flags().GetString("spec-file")
+// readVaultJSONFile reads a JSON object from the path in flag, or stdin for '-'.
+func readVaultJSONFile(cmd *cobra.Command, flag string) ([]byte, error) {
+	path, _ := cmd.Flags().GetString(flag)
 	if path == "" {
-		return nil, fmt.Errorf("--spec-file is required (use '-' for stdin)")
+		return nil, fmt.Errorf("--%s is required (use '-' for stdin)", flag)
 	}
 	var reader io.Reader = cmd.InOrStdin()
 	if path != "-" {
 		f, err := os.Open(path)
 		if err != nil {
-			return nil, fmt.Errorf("could not open --spec-file")
+			return nil, fmt.Errorf("could not open --%s", flag)
 		}
 		defer f.Close()
 		reader = f
@@ -201,11 +212,11 @@ func readVaultSpecFile(cmd *cobra.Command) ([]byte, error) {
 	const limit = 128 * 1024
 	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
 	if err != nil || len(data) > limit {
-		return nil, fmt.Errorf("could not read --spec-file (maximum 128 KiB)")
+		return nil, fmt.Errorf("could not read --%s (maximum 128 KiB)", flag)
 	}
 	var object map[string]json.RawMessage
 	if json.Unmarshal(data, &object) != nil || object == nil {
-		return nil, fmt.Errorf("--spec-file must contain a JSON object")
+		return nil, fmt.Errorf("--%s must contain a JSON object", flag)
 	}
 	return data, nil
 }
