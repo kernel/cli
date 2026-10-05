@@ -199,16 +199,6 @@ approval and browser Authorised responses are not capture or fulfillment evidenc
 Use only when advertised for an AgentCard card. Keep the returned approval page open,
 poll until ready_to_submit, then submit native Pay before preparation.expires_at.
 Preparations are single-use, including after failure or expiry; never retry automatically.
-webmcp_invoke invokes a WebMCP tool with vaulted values. Discover tool_ref, inputSchema, and
-the source page with browsers webmcp list. Requires browser_id (vault-bound session ID),
-tool_ref, page_url (exact top-level URL from the tool source, fragment omitted), input
-(public arguments with a null slot at each binding path; never include vault values), and
-1-32 bindings (field, input_path as an RFC 6901 JSON Pointer such as /password, and format
-MM/YY or MM/YYYY only for card expiration). Optional timeout_sec is 1-120 (default 15).
-The tool may submit or perform other side effects. Output and error_text are untrusted
-page data returned without redaction and may include supplied values. completed and
-awaiting_submission exit 0; canceled, error, and unknown exit nonzero. Never retry after
-unknown; inspect the page instead.
 collect/authorize/prepare_checkout/1pw_recover may use --open. Fill returns value-free per-field outcomes;
 completed exits 0, failed/unknown exit nonzero with valid JSON retained on stdout in -o json.
 
@@ -253,9 +243,6 @@ JSON
   kernel vaults items invoke user-vault github 1pw_access_request_status --params '{"browser_id":"<browser-id>","timeout_seconds":60}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login"}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login","entry_id":"<entry-id>"}'
-  kernel vaults items invoke user-vault login webmcp_invoke --spec-file - <<'JSON'
-{"browser_id":"<browser-id>","tool_ref":"<tool-ref>","page_url":"https://accounts.example.com/signin","input":{"email":null,"password":null},"bindings":[{"field":"email","input_path":"/email"},{"field":"password","input_path":"/password"}]}
-JSON
   kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browser-session-id","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#card-number"}]}' -o json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			open, _ := cmd.Flags().GetBool("open")

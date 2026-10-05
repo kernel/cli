@@ -17,7 +17,6 @@ type vaultOperationParams struct {
 	Checkout *kernel.VaultCheckoutContextParam
 	// OnePassword is a complete 1pw_* request body; Invoke supplies the vault.
 	OnePassword *kernel.VaultItemPerformOperationParams
-	WebMCP      *kernel.WebmcpInvokeVaultItemOperationRequestParam
 }
 
 func isOnePasswordOperation(operation string) bool {
