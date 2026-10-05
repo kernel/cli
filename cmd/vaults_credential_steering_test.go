@@ -40,3 +40,40 @@ func TestCredentialHelpSteering(t *testing.T) {
 	assert.Contains(t, cmd.Example, `"label":"Username"`)
 	assert.Contains(t, cmd.Example, `"sensitive":false`)
 }
+
+func TestCredentialHelpReadyOperations(t *testing.T) {
+	create, _, err := newVaultsCommand().Find([]string{"credentials", "create"})
+	require.NoError(t, err)
+	group, _, err := newVaultsCommand().Find([]string{"credentials"})
+	require.NoError(t, err)
+	items, _, err := newVaultsCommand().Find([]string{"items"})
+	require.NoError(t, err)
+	flat := func(s string) string { return strings.Join(strings.Fields(s), " ") }
+	for name, long := range map[string]string{"vaults": newVaultsCommand().Long, "credentials": group.Long, "credentials create": create.Long} {
+		t.Run(name, func(t *testing.T) {
+			text := flat(long)
+			paths := flat(vaultCredentialPathsHelp)
+			assert.Contains(t, text, paths)
+			assert.Contains(t, paths, "Once ready, items invoke fill writes them into ordinary web form fields in a vault-bound browser without submitting")
+			assert.Contains(t, paths, "When the item advertises webmcp_invoke, items webmcp invoke instead binds credential fields to existing null inputs of a live WebMCP tool; the tool may submit or have other side effects")
+			assert.Contains(t, paths, "1pw_fill fills and submits through the 1Password extension")
+			assert.Contains(t, text, "Never automatically retry")
+		})
+	}
+	text := flat(create.Long)
+	assert.Contains(t, text, "Ordinary web forms: items invoke fill writes field values without submitting")
+	assert.Contains(t, text, "Live WebMCP tool: when webmcp_invoke is advertised, run browsers webmcp list, then items webmcp invoke")
+	assert.Contains(t, text, "Never automatically retry fill or webmcp_invoke")
+	assert.Contains(t, text, "approves each access request in the 1Password app")
+
+	vaults := flat(newVaultsCommand().Long)
+	assert.Contains(t, vaults, "for ordinary web forms use items invoke <vault> <key> fill --spec-file")
+	assert.Contains(t, vaults, "When the item advertises webmcp_invoke, items webmcp invoke instead binds credential fields to existing null inputs of a live WebMCP tool (the tool may submit or have side effects)")
+	assert.Contains(t, vaults, "items webmcp invoke --help")
+	assert.Contains(t, items.Long, "1Password credentials use the advertised 1pw_* operations instead of collect/fill/webmcp_invoke")
+
+	// The 1Password path keeps its own operations and does not advertise webmcp_invoke.
+	onePassword := flat(vaultOnePasswordCredentialHelp)
+	assert.NotContains(t, onePassword, "webmcp")
+	assert.Contains(t, onePassword, "Never automatically retry an access request, fill, or recovery")
+}

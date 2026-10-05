@@ -63,6 +63,8 @@ func (b BrowsersCmd) WebMCPList(ctx context.Context, in BrowsersWebMCPListInput)
 	return nil
 }
 
+const webMCPAwaitingSubmissionHint = "Inspect the form and obtain any required confirmation, then submit it with 'kernel browsers playwright execute' or 'kernel browsers computer' rather than invoking the tool again."
+
 func (b BrowsersCmd) WebMCPInvoke(ctx context.Context, in BrowsersWebMCPInvokeInput) error {
 	if strings.TrimSpace(in.ToolRef) == "" {
 		return fmt.Errorf("missing --tool-ref value")
@@ -94,7 +96,7 @@ func (b BrowsersCmd) WebMCPInvoke(ctx context.Context, in BrowsersWebMCPInvokeIn
 	case kernel.InvocationResultStatusAwaitingSubmission:
 		// A populated form is a result, not a failure. Re-invoking would refill the
 		// same fields, so point the caller at submitting the form they already have.
-		pterm.Warning.Printfln("WebMCP invocation %s: awaiting_submission — populated a form without submitting it. Inspect the form and obtain any required confirmation, then submit it with 'kernel browsers playwright execute' or 'kernel browsers computer' rather than invoking the tool again.", res.InvocationID)
+		pterm.Warning.Printfln("WebMCP invocation %s: awaiting_submission — populated a form without submitting it. %s", res.InvocationID, webMCPAwaitingSubmissionHint)
 	default:
 		return fmt.Errorf("WebMCP invocation %s: %s: %s", res.InvocationID, res.Status, res.ErrorText)
 	}

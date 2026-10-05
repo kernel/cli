@@ -59,14 +59,18 @@ Use wallet and card item types for credit cards and payment checkout instead.
 
 ` + vaultCredentialPathsHelp + `
 
-Kernel-hosted credential flow (fill never submits website forms):
+Kernel-hosted credential flow (fill never submits website forms; WebMCP tools may):
 1. Create a vault per end user and create a browser with --vault <id-or-name>.
 2. Navigate to a sensitive form and define its fields in natural top-to-bottom order with credentials create --spec-file; that array order controls the user-facing collection form.
 3. Present the returned collection URL to the user. Poll items get --wait 60 for ready.
-4. Use items invoke <vault> <key> fill --spec-file with browser_id and field selectors.
+4. Once ready, for ordinary web forms use items invoke <vault> <key> fill --spec-file with
+   browser_id and field selectors (writes fields without submitting). When the item
+   advertises webmcp_invoke, items webmcp invoke instead binds credential fields to existing
+   null inputs of a live WebMCP tool (the tool may submit or have side effects).
+   Never automatically retry either; inspect the browser after an uncertain outcome.
 Use credentials update --version for edits, or items invoke collect to reopen the form.
 Credential values belong in protected files/stdin, never command-line arguments.
-See credentials --help and items invoke --help for examples.
+See credentials --help, items invoke --help, and items webmcp invoke --help for examples.
 
 1Password credential flow: reuse or connect the owner's account with credentials connect,
 create a 1password credential for the site's login entries, then invoke only the
@@ -130,7 +134,7 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 	addVaultJSONOutputFlag(get)
 	cmd.AddCommand(create, list, get, newVaultDeleteCommand(false))
 
-	items := &cobra.Command{Use: "items", Short: "Inspect readiness and collection URLs, or invoke collect/fill/webmcp_invoke", Long: "Use get --wait 60 to observe readiness and get -o json for schema/version/presence.\nUse invoke collect to obtain a collection URL, or invoke fill --spec-file to fill a browser.\n1Password credentials use the advertised 1pw_* operations instead of collect/fill.\nCreate and edit credentials with vaults credentials; payment items use wallets/cards."}
+	items := &cobra.Command{Use: "items", Short: "Inspect readiness and collection URLs, or invoke collect/fill/webmcp_invoke", Long: "Use get --wait 60 to observe readiness and get -o json for schema/version/presence.\nUse invoke collect to obtain a collection URL, or invoke fill --spec-file to fill a browser.\nUse webmcp invoke to call a live WebMCP tool with item fields bound to null input slots.\n1Password credentials use the advertised 1pw_* operations instead of collect/fill/webmcp_invoke.\nCreate and edit credentials with vaults credentials; payment items use wallets/cards."}
 	itemList := &cobra.Command{Use: "list <vault>", Short: "List items by vault ID or name", Args: cobra.ExactArgs(1), PreRunE: vaultPreRun,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return getVaultsHandler(cmd).ListItems(cmd.Context(), args[0], vaultOutput(cmd))
@@ -208,6 +212,17 @@ unknown; inspect the page instead.
 collect/authorize/prepare_checkout/1pw_recover may use --open. Fill returns value-free per-field outcomes;
 completed exits 0, failed/unknown exit nonzero with valid JSON retained on stdout in -o json.
 
+webmcp_invoke (credential items and ready Link cards when advertised; see items webmcp invoke --help
+for the flag-based form) requires browser_id, the opaque live tool_ref and exact source.page_url
+from browsers webmcp list, input (public JSON object with a null at each bound slot; never vault
+values), and 1-32 bindings (field, input_path as an RFC 6901 JSON Pointer to an existing null in
+input; format MM/YY or MM/YYYY only for card expiration). Optional timeout_sec is 1-120 (default 15).
+The tool may submit or have other side effects. The result returns status, invocation_id, output,
+and error_text; output and error_text are untrusted page data and may contain supplied values.
+completed/awaiting_submission exit 0 without confirming site acceptance; canceled/error/unknown
+exit nonzero with JSON retained on stdout. unknown means the tool may have run: inspect the browser
+and never retry automatically. 400/403/404/409 rejections mean the tool was not invoked.
+
 1Password credentials (see credentials --help) use --params or --spec-file without type:
 1pw_create_access_request: browser_id (vault-bound session ID); optional goal (<=140),
   reason (<=100), keywords (1-5 strings); reason and keywords only for single-entry
@@ -231,6 +246,9 @@ and recreate an item to reset an uncertain outcome; stop and tell the user inste
   kernel vaults items invoke user-vault login fill --spec-file - <<'JSON'
 {"browser_id":"<browser-id>","fields":[{"field":"username","selector":"#username"},{"field":"password","selector":"#password"}]}
 JSON
+  kernel vaults items invoke user-vault login webmcp_invoke --spec-file - <<'JSON'
+{"browser_id":"<browser-id>","tool_ref":"<tool-ref>","page_url":"https://example.com/login","input":{"email":null,"password":null},"bindings":[{"field":"email","input_path":"/email"},{"field":"password","input_path":"/password"}]}
+JSON
   kernel vaults items invoke user-vault github 1pw_create_access_request --params '{"browser_id":"<browser-id>","reason":"Sign in to GitHub"}'
   kernel vaults items invoke user-vault github 1pw_access_request_status --params '{"browser_id":"<browser-id>","timeout_seconds":60}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login"}'
@@ -248,9 +266,9 @@ JSON
 			}
 			if cmd.Flags().Changed("spec-file") {
 				if !vaultOperationTakesParams(args[2]) {
-					return fmt.Errorf("--spec-file is only supported for fill, prepare_checkout, webmcp_invoke, and 1Password operations with parameters")
+					return fmt.Errorf("--spec-file is only supported for fill, webmcp_invoke, prepare_checkout, and 1Password operations with parameters")
 				}
-				data, err := readVaultSpecFile(cmd)
+				data, err := readVaultJSONFile(cmd, "spec-file")
 				if err != nil {
 					return err
 				}
@@ -262,12 +280,12 @@ JSON
 			}
 			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], params, vaultOutput(cmd), open)
 		}}
-	invoke.Flags().String("params", "", "Operation parameters JSON for fill, prepare_checkout, webmcp_invoke, or 1pw_* (maximum 128 KiB); omit type and credential values; 1pw_update_access_token requires --spec-file")
+	invoke.Flags().String("params", "", "Operation parameters JSON for fill, webmcp_invoke, prepare_checkout, or 1pw_* (maximum 128 KiB); omit type and credential values; 1pw_update_access_token requires --spec-file")
 	invoke.Flags().String("spec-file", "", "Operation parameters JSON file (use '-' for stdin; maximum 128 KiB)")
 	invoke.MarkFlagsMutuallyExclusive("params", "spec-file")
 	invoke.Flags().Bool("open", false, "Open a returned HTTPS action URL in your browser")
 	addVaultJSONOutputFlag(invoke)
-	items.AddCommand(itemList, itemGet, itemEvents, invoke, newVaultDeleteCommand(true))
+	items.AddCommand(itemList, itemGet, itemEvents, invoke, newVaultWebMCPCommand(), newVaultDeleteCommand(true))
 
 	wallets := &cobra.Command{Use: "wallets", Short: "Connect provider wallets and inspect funding methods"}
 	walletCreate := &cobra.Command{Use: "create <vault> <key> --provider <link|agentcard|kernel> --spec '<json>'", Short: "Create a wallet and display its connection or enrollment action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,

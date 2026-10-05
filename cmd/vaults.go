@@ -241,6 +241,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	if operation == "fill" && (params == nil || params.Fill == nil || open) {
 		return fmt.Errorf("fill requires --params and does not support --open")
 	}
+	if operation == "webmcp_invoke" && (params == nil || params.WebMCP == nil || open) {
+		return fmt.Errorf("webmcp_invoke requires --params and does not support --open")
+	}
 	if operation == "prepare_checkout" && (params == nil || params.Checkout == nil) {
 		return fmt.Errorf("prepare_checkout requires checkout parameters")
 	}
@@ -291,6 +294,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	}
 	if operation == "1pw_fill" {
 		return c.onePasswordFill(ctx, vault, key, params.OnePassword, output)
+	}
+	if operation == "webmcp_invoke" {
+		return c.webMCPInvoke(ctx, vault, key, params.WebMCP, output)
 	}
 	request := kernel.VaultItemPerformOperationParams{IDOrName: vault}
 	if params != nil && params.OnePassword != nil {
