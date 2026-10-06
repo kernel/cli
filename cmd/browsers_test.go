@@ -777,6 +777,10 @@ func TestBrowsersCreate_WithRegion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"region":"ap-southeast"`)
 
+	err = b.Create(context.Background(), BrowsersCreateInput{Region: "us-west"})
+	require.NoError(t, err)
+	assert.Equal(t, kernel.BrowserNewParamsRegionUsWest, captured.Region)
+
 	// Omitting the flag sends nothing; the server defaults to us-east.
 	err = b.Create(context.Background(), BrowsersCreateInput{})
 	require.NoError(t, err)

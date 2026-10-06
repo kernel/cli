@@ -259,14 +259,14 @@ kernel search contents srch_01jsearchresult --limit 3 --content-source browser
 
 - `kernel browsers list` - List running browsers
   - `--query <q>` - Search by name, session ID, profile ID, proxy ID, or pool name
-  - `--region us-east|eu-west|ap-southeast` - Filter by geographic region; omit to list sessions in all regions
+  - `--region us-east|us-west|eu-west|ap-southeast` - Filter by geographic region; omit to list sessions in all regions
   - `--tag <KEY=VALUE>` - Filter by tag, repeatable; a session must match every pair
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel browsers create` - Create a new browser session
   - `-s, --stealth` - Launch browser in stealth mode to avoid detection
   - `-H, --headless` - Launch browser without GUI access
   - `--kiosk` - Launch browser in kiosk mode
-  - `--region us-east|eu-west|ap-southeast` - Geographic region for the session. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to `us-east`.
+  - `--region us-east|us-west|eu-west|ap-southeast` - Geographic region for the session. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to `us-east`.
   - `--private-host <host>` - Destination the browser reaches directly through the session's own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel the session joins (repeatable or comma-separated, max 32). Accepts hostname patterns (`*.example.ts.net`), IPs (`10.1.30.63`, `[fd00::1]`), and private CIDRs (`100.64.0.0/10`). Replaces the default private ranges (RFC1918, `100.64.0.0/10`, `fc00::/7`); omit to keep them. Fixed once the session is created. Unrelated to a proxy's `--bypass-host`, which only chooses between upstream proxy and Kernel-managed direct egress.
   - `--allowed-host <host>` - Egress allowlist: the only destinations the browser may reach through Kernel-managed egress (repeatable or comma-separated, max 100). Other destinations are refused with a 403 whose `X-Kernel-Proxy-Error` header is `network_policy_denied`. Accepts exact hostnames (`example.com`), a leading wildcard that matches subdomains but not the domain itself (`*.example.com`), public IPs (`8.8.8.8`, `[2001:4860:4860::8888]`), and public CIDRs (`8.8.4.0/24`); no ports, paths, or schemes. `--start-url` must be allowed. Omit for unfiltered egress. Requires proxy v3; not supported with pools. Create-only.
   - `--proxy-route '<host>[,<host>...]=<proxy>'` - Route matching browser requests through a selected proxy (repeatable, max 10 routes with 1–50 hosts each). Example: `--proxy-route 'api.ipify.org,*.ipify.org=name:my-dc-proxy'`. The proxy is an ID by default; use `id:<id>` or `name:<name>` explicitly. Exact hostnames beat wildcards; longer wildcard suffixes beat shorter ones. `*.example.com` matches subdomains, not `example.com`. Matching ignores case and ports. Unmatched hosts use `--proxy-*` or default egress, while `--start-url` uses the top-level proxy during setup. Routes are create-only and are not available on pool sessions.
@@ -787,7 +787,7 @@ exists.
 ### Browser Pools
 
 - `kernel browser-pools list` - List browser pools
-  - `--region us-east|eu-west|ap-southeast` - Filter by geographic region; omit to list pools in all regions
+  - `--region us-east|us-west|eu-west|ap-southeast` - Filter by geographic region; omit to list pools in all regions
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel browser-pools create` - Create a browser pool
   - `--name <name>` - Optional unique name for the pool
@@ -1181,21 +1181,21 @@ Managed auth connections (`kernel auth connections`). The commands below are new
   - `--per-page <n>` - Items per page (default: 20)
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel auth connections create` - New flags:
-  - `--region us-east|eu-west|ap-southeast` - Region for this connection's login, reauth, and health-check browser sessions. Defaults to `us-east`.
+  - `--region us-east|us-west|eu-west|ap-southeast` - Region for this connection's login, reauth, and health-check browser sessions. Defaults to `us-east`.
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy configuration for this connection's login, reauth, and health-check browser sessions (mutually exclusive). Omit to derive the default from stealth.
   - `--stealth` - Whether those browser sessions run in stealth mode (default: true); use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Default telemetry for this connection's browser sessions. Same semantics as `kernel browsers create`
   - `--telemetry-export-otlp <id-or-name>` - Export this connection's captured telemetry over OTLP to one of the org's configured destinations. Implies `--telemetry=all` when `--telemetry` is not set. Use `=off` to disable export.
   - `--telemetry-storage on|off` - Whether this connection's sessions persist captured telemetry to Kernel storage (default on). `off` requires `--telemetry-export-otlp <id-or-name>` in the same command.
 - `kernel auth connections update <id>` - New flags:
-  - `--region us-east|eu-west|ap-southeast` - Update the region for browser sessions created after this command. Active sessions don't move.
+  - `--region us-east|us-west|eu-west|ap-southeast` - Update the region for browser sessions created after this command. Active sessions don't move.
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy configuration for future browser sessions (mutually exclusive). Use `--proxy-mode=default` to drop a selected proxy rather than passing an empty value.
   - `--stealth` - Set whether future browser sessions run in stealth mode; use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Update telemetry for future browser sessions
   - `--telemetry-export-otlp <id-or-name>` - Update where future sessions export captured telemetry. Naming a destination requires passing `--telemetry` in the same command, since the API validates capture and export together and enabling capture here would replace the connection's current category selection. Use `=off` to disable export.
   - `--telemetry-storage on|off` - Update whether future sessions persist captured telemetry to Kernel storage. Requires `--telemetry` in the same command; `off` also requires an export destination.
 - `kernel auth connections login <id>` - New flags:
-  - `--region us-east|eu-west|ap-southeast` - Region override for this login only. Omit it to inherit the connection region.
+  - `--region us-east|us-west|eu-west|ap-southeast` - Region override for this login only. Omit it to inherit the connection region.
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy override for this login's browser session (mutually exclusive); omitted properties inherit the connection defaults
   - `--stealth` - Stealth override for this login's browser session; use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Telemetry override for this login only, merged onto the connection's config
