@@ -236,6 +236,19 @@ func buildNetworkParam(privateHosts []string) (kernel.BrowserNetworkConfigParam,
 	return network, nil
 }
 
+// maxAllowedHosts mirrors the API's cap on network.allowed_hosts entries.
+const maxAllowedHosts = 100
+
+// normalizeAllowedHosts trims --allowed-host values, drops empty ones, and
+// enforces the API's entry cap. Entry syntax is validated by the API.
+func normalizeAllowedHosts(hosts []string) ([]string, error) {
+	out := normalizePrivateHosts(hosts)
+	if len(out) > maxAllowedHosts {
+		return nil, fmt.Errorf("too many --allowed-host entries: %d (maximum %d)", len(out), maxAllowedHosts)
+	}
+	return out, nil
+}
+
 const (
 	maxProxyRoutes     = 10
 	maxProxyRouteHosts = 50
@@ -298,6 +311,15 @@ func formatProxyRoutes(network kernel.BrowserNetworkConfig) string {
 		routes = append(routes, strings.Join(route.Hosts, ", ")+" = "+proxy)
 	}
 	return strings.Join(routes, "; ")
+}
+
+// formatAllowedHosts renders a session's egress allowlist for table output. A
+// missing allowed_hosts list means egress is unfiltered.
+func formatAllowedHosts(network kernel.BrowserNetworkConfig) string {
+	if len(network.AllowedHosts) == 0 {
+		return "-"
+	}
+	return strings.Join(network.AllowedHosts, ", ")
 }
 
 // formatPrivateHosts renders a network configuration for table output. A missing
@@ -460,6 +482,7 @@ type BrowsersCreateInput struct {
 	ProxyMode           string
 	Region              string
 	PrivateHosts        []string
+	AllowedHosts        []string
 	ProxyRoutes         []string
 	StartURL            string
 	Extensions          []string
@@ -733,7 +756,12 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		return err
 	}
 	network.ProxyRoutes = routes
-	if len(network.PrivateHosts) > 0 || len(network.ProxyRoutes) > 0 {
+	allowedHosts, err := normalizeAllowedHosts(in.AllowedHosts)
+	if err != nil {
+		return err
+	}
+	network.AllowedHosts = allowedHosts
+	if len(network.PrivateHosts) > 0 || len(network.ProxyRoutes) > 0 || len(network.AllowedHosts) > 0 {
 		params.Network = network
 	}
 
@@ -811,7 +839,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 
 	tableData := buildBrowserTableData(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.ProfileSaveChanges, browser.StartURL, browser.Name, browser.Tags)
-	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)}, []string{"Proxy Routes", formatProxyRoutes(browser.Network)})
+	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)}, []string{"Allowed Hosts", formatAllowedHosts(browser.Network)}, []string{"Proxy Routes", formatProxyRoutes(browser.Network)})
 	PrintTableNoPad(tableData, true)
 	if len(browser.Vaults) > 0 {
 		rows := pterm.TableData{{"Attached vault ID", "Name"}}
@@ -954,6 +982,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		tableData = append(tableData, []string{"Proxy", proxy})
 	}
 	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)})
+	tableData = append(tableData, []string{"Allowed Hosts", formatAllowedHosts(browser.Network)})
 	tableData = append(tableData, []string{"Proxy Routes", formatProxyRoutes(browser.Network)})
 	if vaults := formatVaultReferences(browser.Vaults); vaults != "" {
 		tableData = append(tableData, []string{"Vaults", vaults})
@@ -3253,6 +3282,7 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' for the browser default (Kernel's stealth proxy when --stealth is set, direct egress otherwise)")
 	browsersCreateCmd.Flags().String("region", "", "Geographic region for the session: 'us-east', 'eu-west', or 'ap-southeast'. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to us-east")
 	browsersCreateCmd.Flags().StringSlice("private-host", nil, "Destinations the browser reaches directly through its own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel the session joins (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Replaces the default private ranges (RFC1918, 100.64.0.0/10, fc00::/7); omit to keep them. Fixed once the session is created")
+	browsersCreateCmd.Flags().StringSlice("allowed-host", nil, "Egress allowlist: the only destinations the browser may reach through Kernel-managed egress (repeat or comma-separated, max 100); anything else is refused with a 403 (network_policy_denied). Accepts exact hostnames ('example.com'), a leading wildcard matching subdomains only ('*.example.com'), public IPs ('8.8.8.8', '[2001:4860:4860::8888]'), and public CIDRs ('8.8.4.0/24'). No ports, paths, or schemes. --start-url must be allowed. Omit for unfiltered egress. Requires proxy v3; not supported with pools. Create-only")
 	browsersCreateCmd.Flags().StringArray("proxy-route", nil, "Route HOST[,HOST...]=PROXY through a proxy (repeatable, max 10 routes and 50 hosts per route). PROXY is an ID by default; use id:ID or name:NAME explicitly. Exact hosts beat wildcards (longer suffixes win); *.example.com excludes example.com. Unmatched hosts use --proxy-* or default egress; start_url uses the top-level proxy. Create-only")
 	browsersCreateCmd.Flags().String("start-url", "", "Initial page to open on launch")
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
@@ -3392,6 +3422,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	proxyMode, _ := cmd.Flags().GetString("proxy-mode")
 	region, _ := cmd.Flags().GetString("region")
 	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
+	allowedHosts, _ := cmd.Flags().GetStringSlice("allowed-host")
 	proxyRoutes, _ := cmd.Flags().GetStringArray("proxy-route")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
@@ -3543,6 +3574,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		ProxyMode:           proxyMode,
 		Region:              region,
 		PrivateHosts:        privateHosts,
+		AllowedHosts:        allowedHosts,
 		ProxyRoutes:         proxyRoutes,
 		StartURL:            startURL,
 		Extensions:          extensions,

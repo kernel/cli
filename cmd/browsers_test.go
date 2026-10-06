@@ -610,6 +610,38 @@ func TestBrowsersCreate_WithPrivateHosts(t *testing.T) {
 	}))
 }
 
+func TestBrowsersCreate_WithAllowedHosts(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-allowlist"}, nil
+		},
+	}
+
+	err := (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
+		AllowedHosts: []string{" example.com ", "*.example.com", ""},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"example.com", "*.example.com"}, captured.Network.AllowedHosts)
+
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"allowed_hosts":["example.com","*.example.com"]`)
+	assert.NotContains(t, string(raw), "private_hosts")
+
+	// The API's 100-entry cap is enforced client-side.
+	tooMany := make([]string, maxAllowedHosts+1)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("host-%d.example.com", i)
+	}
+	assert.Error(t, (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
+		AllowedHosts: tooMany,
+	}))
+}
+
 func TestParseProxyRoutes(t *testing.T) {
 	routes, err := parseProxyRoutes([]string{" api.ipify.org , *.ipify.org =name:my-dc-proxy", "other.example=id:proxy-123", "fallback.example=proxy-456"})
 	require.NoError(t, err)
