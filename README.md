@@ -1021,8 +1021,12 @@ Destinations are the OTLP/HTTP endpoints sessions export to. They belong to the 
 ### Browser Playwright
 
 - `kernel browsers playwright execute <id> [code]` - Execute Playwright/TypeScript code against the browser
+  - `--executor <name>` - Executor to run the call in. Calls on different executors run concurrently in separate tabs of the same browser; calls on one executor run one at a time. Omit to use the always-present `default` executor bound to the active tab. Any other name creates a named executor on first use that owns a background tab `page` is bound to. At most 8 named executors per browser (409 when exceeded)
   - `--timeout <seconds>` - Maximum execution time in seconds (defaults server-side)
   - If `[code]` is omitted, code is read from stdin
+- `kernel browsers playwright executors list <id>` - List the browser's Playwright executors (default first) with busy state, timestamps, and the tab each named executor owns
+- `kernel browsers playwright executors delete <id> <executor>` - Delete a Playwright executor. Deleting `default` restarts it instead of removing it
+  - `--close-tab` - Close the tab owned by the executor (default: true)
 
 ### Browser REPL
 
@@ -1535,6 +1539,15 @@ TS
 
 # With a timeout in seconds
 kernel browsers playwright execute my-browser --timeout 30 'await (await context.newPage()).goto("https://example.com")'
+
+# Drive two tabs in parallel with named executors (each owns its own tab)
+kernel browsers playwright execute my-browser --executor docs 'await page.goto("https://example.com/docs"); return await page.title();' &
+kernel browsers playwright execute my-browser --executor pricing 'await page.goto("https://example.com/pricing"); return await page.title();' &
+wait
+
+# List executors and delete one (closes its tab unless --close-tab=false)
+kernel browsers playwright executors list my-browser
+kernel browsers playwright executors delete my-browser docs
 
 # Mini CDP connection load test (10s)
 cat <<'TS' | kernel browsers playwright execute my-browser

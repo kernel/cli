@@ -548,6 +548,7 @@ type BrowsersCmd struct {
 	logs       BrowserLogService
 	computer   BrowserComputerService
 	playwright BrowserPlaywrightService
+	executors  BrowserPlaywrightExecutorService
 	telemetry  BrowserTelemetryService
 	webmcp     BrowserWebMCPService
 }
@@ -1869,6 +1870,7 @@ type BrowsersFSWatchEventsInput struct {
 type BrowsersPlaywrightExecuteInput struct {
 	Identifier string
 	Code       string
+	Executor   string
 	Timeout    int64
 	Output     string
 }
@@ -1887,12 +1889,15 @@ func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrigh
 		return util.CleanedUpSdkError{Err: err}
 	}
 	params := kernel.BrowserPlaywrightExecuteParams{Code: in.Code}
+	if in.Executor != "" {
+		params.Executor = kernel.Opt(in.Executor)
+	}
 	if in.Timeout > 0 {
 		params.TimeoutSec = kernel.Opt(in.Timeout)
 	}
 	res, err := b.playwright.Execute(ctx, br.SessionID, params)
 	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
+		return playwrightExecuteError(err)
 	}
 
 	if in.Output == "json" {
@@ -1900,6 +1905,9 @@ func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrigh
 	}
 
 	rows := pterm.TableData{{"Property", "Value"}, {"Success", fmt.Sprintf("%t", res.Success)}}
+	if res.JSON.Tab.Valid() {
+		rows = append(rows, []string{"Tab Target ID", res.Tab.TargetID}, []string{"Tab Created", fmt.Sprintf("%t", res.Tab.Created)})
+	}
 	PrintTableNoPad(rows, true)
 
 	if res.Stdout != "" {
@@ -3230,13 +3238,7 @@ func init() {
 	computerRoot.AddCommand(computerClick, computerMove, computerScreenshot, computerType, computerPressKey, computerScroll, computerDrag, computerSetCursor, computerGetMousePosition, computerBatch, computerReadClipboard, computerWriteClipboard)
 	browsersCmd.AddCommand(computerRoot)
 
-	// playwright
-	playwrightRoot := &cobra.Command{Use: "playwright", Short: "Playwright operations"}
-	playwrightExecute := &cobra.Command{Use: "execute <id> [code]", Short: "Execute Playwright/TypeScript code against the browser", Args: cobra.MinimumNArgs(1), RunE: runBrowsersPlaywrightExecute}
-	playwrightExecute.Flags().Int64("timeout", 0, "Maximum execution time in seconds (default per server)")
-	addJSONOutputFlag(playwrightExecute)
-	playwrightRoot.AddCommand(playwrightExecute)
-	browsersCmd.AddCommand(playwrightRoot)
+	browsersCmd.AddCommand(newBrowsersPlaywrightCommand())
 
 	// repl
 	replCmd := &cobra.Command{
@@ -3881,10 +3883,11 @@ func runBrowsersPlaywrightExecute(cmd *cobra.Command, args []string) error {
 		}
 		code = string(data)
 	}
+	executor, _ := cmd.Flags().GetString("executor")
 	timeout, _ := cmd.Flags().GetInt64("timeout")
 	output, _ := cmd.Flags().GetString("output")
 	b := BrowsersCmd{browsers: &svc, playwright: &svc.Playwright}
-	return b.PlaywrightExecute(cmd.Context(), BrowsersPlaywrightExecuteInput{Identifier: args[0], Code: strings.TrimSpace(code), Timeout: timeout, Output: output})
+	return b.PlaywrightExecute(cmd.Context(), BrowsersPlaywrightExecuteInput{Identifier: args[0], Code: strings.TrimSpace(code), Executor: executor, Timeout: timeout, Output: output})
 }
 
 func runBrowsersRepl(cmd *cobra.Command, args []string) error {
