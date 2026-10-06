@@ -46,8 +46,11 @@ type AgentCardWalletSpec = {
   user_id?: string; // usr_...; enrolled in this organization under the SAME config
 };
 
-// Kernel-managed Visa/Mastercard agentic network token enrollment. Creation returns a
-// card_enrollment action: the cardholder enters the card on a Kernel-hosted page.
+// One card stored with Kernel-managed credentials. Creation returns a card_enrollment
+// action: the cardholder enters the card on a Kernel-hosted page, and the wallet
+// connects once the card is stored. Kernel then enrolls it for an agentic network
+// token when the issuer supports it; until then payment-methods reports
+// capabilities.single_use_card.eligible=false and authorize returns 400.
 // The card number never reaches Kernel or the CLI. No provider config or tokens.
 type KernelWalletSpec = {
   provider: "kernel";
