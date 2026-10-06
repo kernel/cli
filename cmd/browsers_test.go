@@ -783,7 +783,13 @@ func TestBrowsersCreate_WithMemory(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, kernel.BrowserMemoryRequest8GiB, captured.Memory)
 
-	// Omitting the flag sends nothing; the server defaults to 8GiB.
+	// The large GPU tier is requested through the same flag.
+	err = b.Create(context.Background(), BrowsersCreateInput{Memory: "12GiB", GPU: BoolFlag{Set: true, Value: true}})
+	require.NoError(t, err)
+	assert.Equal(t, kernel.BrowserMemoryRequest("12GiB"), captured.Memory)
+	assert.True(t, captured.GPU.Value)
+
+	// Omitting the flag sends nothing; the server applies its per-type default.
 	err = b.Create(context.Background(), BrowsersCreateInput{})
 	require.NoError(t, err)
 	assert.Empty(t, captured.Memory)
@@ -793,7 +799,7 @@ func TestBrowsersCreate_WithMemory(t *testing.T) {
 	assert.NotContains(t, string(raw), "memory")
 
 	// An unsupported size is rejected before the request is made.
-	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{Memory: "4GiB"}))
+	assert.EqualError(t, b.Create(context.Background(), BrowsersCreateInput{Memory: "4GiB"}), "invalid --memory value: 4GiB (must be one of 8GiB, 12GiB, 16GiB)")
 }
 
 func TestBrowsersCreate_WithChromePolicy(t *testing.T) {

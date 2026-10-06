@@ -765,3 +765,25 @@ func TestBrowserPoolsAcquire_WithTelemetryOverride(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, captured.Telemetry.Browser.Page.Enabled.Value)
 }
+
+func TestBrowserPoolsMemoryRejectsGPUTier(t *testing.T) {
+	setupStdoutCapture(t)
+
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			t.Fatal("create must not reach the API with a GPU-only memory size")
+			return nil, nil
+		},
+		UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			t.Fatal("update must not reach the API with a GPU-only memory size")
+			return nil, nil
+		},
+	}
+	c := BrowserPoolsCmd{client: fake}
+
+	err := c.Create(context.Background(), BrowserPoolsCreateInput{Name: "pool", Size: 1, Memory: "12GiB"})
+	require.EqualError(t, err, "invalid --memory value: 12GiB (must be one of 8GiB, 16GiB)")
+
+	err = c.Update(context.Background(), BrowserPoolsUpdateInput{IDOrName: "pool", Memory: "12GiB"})
+	require.EqualError(t, err, "invalid --memory value: 12GiB (must be one of 8GiB, 16GiB)")
+}

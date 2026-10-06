@@ -197,7 +197,7 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 	if in.Kiosk.Set {
 		params.KioskMode = kernel.Bool(in.Kiosk.Value)
 	}
-	memory, err := parseMemoryFlag(in.Memory)
+	memory, err := parseMemoryFlag(in.Memory, poolMemorySizes())
 	if err != nil {
 		return err
 	}
@@ -432,7 +432,7 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 	if in.Kiosk.Set {
 		params.KioskMode = kernel.Bool(in.Kiosk.Value)
 	}
-	memory, err := parseMemoryFlag(in.Memory)
+	memory, err := parseMemoryFlag(in.Memory, poolMemorySizes())
 	if err != nil {
 		return err
 	}

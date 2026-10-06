@@ -184,25 +184,32 @@ func parseRegionFlag(region string) (string, error) {
 	return "", fmt.Errorf("invalid --region value: %s (must be one of %s)", region, strings.Join(availableRegions(), ", "))
 }
 
-// availableMemorySizes returns the memory sizes the API accepts when creating a
-// browser session. Only headful, non-GPU sessions can request memory; every
-// other configuration gets a fixed allocation.
-func availableMemorySizes() []string {
+// browserMemorySizes returns the memory sizes the API accepts when creating a
+// browser session. Headful CPU browsers take 8GiB or 16GiB and headful GPU
+// browsers accept 12GiB (the large tier); every other configuration gets a
+// fixed allocation.
+func browserMemorySizes() []string {
+	return []string{"8GiB", "12GiB", "16GiB"}
+}
+
+// poolMemorySizes returns the memory sizes the API accepts for browser pools.
+// Pools never run GPU browsers, so the 12GiB GPU tier is not offered.
+func poolMemorySizes() []string {
 	return []string{"8GiB", "16GiB"}
 }
 
-// parseMemoryFlag validates a --memory value. An empty value means the flag was
-// not set, which lets the API apply its default (8GiB).
-func parseMemoryFlag(memory string) (kernel.BrowserMemoryRequest, error) {
+// parseMemoryFlag validates a --memory value against sizes. An empty value
+// means the flag was not set, which lets the API apply its per-type default.
+func parseMemoryFlag(memory string, sizes []string) (kernel.BrowserMemoryRequest, error) {
 	if memory == "" {
 		return "", nil
 	}
-	for _, m := range availableMemorySizes() {
+	for _, m := range sizes {
 		if strings.EqualFold(memory, m) {
 			return kernel.BrowserMemoryRequest(m), nil
 		}
 	}
-	return "", fmt.Errorf("invalid --memory value: %s (must be one of %s)", memory, strings.Join(availableMemorySizes(), ", "))
+	return "", fmt.Errorf("invalid --memory value: %s (must be one of %s)", memory, strings.Join(sizes, ", "))
 }
 
 // maxPrivateHosts mirrors the API's cap on network.private_hosts entries.
@@ -673,7 +680,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	if in.GPU.Set {
 		params.GPU = kernel.Opt(in.GPU.Value)
 	}
-	memory, err := parseMemoryFlag(in.Memory)
+	memory, err := parseMemoryFlag(in.Memory, browserMemorySizes())
 	if err != nil {
 		return err
 	}
@@ -3241,7 +3248,7 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().BoolP("stealth", "s", false, "Launch browser in stealth mode to avoid detection")
 	browsersCreateCmd.Flags().BoolP("headless", "H", false, "Launch browser without GUI access")
 	browsersCreateCmd.Flags().Bool("gpu", false, "Launch browser with hardware-accelerated GPU rendering")
-	browsersCreateCmd.Flags().String("memory", "", "Memory for a headful, non-GPU browser session: '8GiB' (default) or '16GiB'")
+	browsersCreateCmd.Flags().String("memory", "", "Memory for a headful browser session: '8GiB' (default) or '16GiB' for CPU browsers, '12GiB' for the large GPU browser (with --gpu)")
 	browsersCreateCmd.Flags().String("invocation-id", "", "Associate the browser session with an invocation")
 	browsersCreateCmd.Flags().Bool("kiosk", false, "Launch browser in kiosk mode")
 	browsersCreateCmd.Flags().IntP("timeout", "t", 60, "Timeout in seconds for the browser session")
