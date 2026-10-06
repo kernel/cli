@@ -83,18 +83,22 @@ Otherwise, the API resolves the project from your credentials and its defaults.
 Vault names, item keys, and project ownership are immutable.
 
 1. Create/select a vault, then create a provider wallet and follow its returned action.
-2. For Link, list wallet payment methods and select an ID explicitly.
+   For Kernel, share the hosted card_enrollment URL; card details stay on that page.
+2. Inspect wallets payment-methods for eligibility and reasons before creating a card.
+   For Link, select a payment method ID explicitly.
 3. Create a card request with --provider and --spec JSON.
 4. Inspect items get, then use items invoke <vault> <key> <operation> only when advertised.
    Follow the operation description and any returned provider action.
 5. Attach the vault with browsers create --vault <id-or-name>; attachment is required for fill.
-   Ready Link cards use only advertised fill with --params for browser checkout.
-   Link cards do not expose aliases or support egress substitution.
+   Ready Link and Kernel cards use only advertised fill with --params for browser checkout.
+   Neither exposes aliases or supports egress substitution. Kernel fill is locked to
+   merchant_url's origin; submit the merchant checkout before the card expires.
    AgentCard-only checkout aliases support egress substitution with checkout hold,
    approval, and replay; they are not a fallback after fill.
-   Inspect items get/events for payment outcomes.
+   Inspect items get/events for vault outcomes; Kernel does not observe merchant charges.
 
-Permitted checkout domains are provider-assigned and displayed when returned;
+Permitted checkout domains are provider-assigned and displayed when returned; Kernel
+card fill instead uses the exact origin of merchant_url.
 there is no domain-setting API.
 Never supply card data, OAuth codes, ciphertext, or secrets in shell arguments.
 Use vault-provider-configs for client credentials and wallets create --tokens-file
@@ -175,8 +179,9 @@ exp_year (YYYY), billing_name, billing_line1, billing_line2, billing_city,
 billing_state, billing_postal_code, billing_country. expiration requires format MM/YY
 or MM/YYYY. Optional timeout_ms is 1-30000 (default 10000).
 The API searches the page and descendant frames, including payment iframes.
-Fill is available for credential items and ready Link cards when advertised, not AgentCard.
-Link cards do not expose aliases or support egress substitution.
+Fill is available for credential items and ready Link or Kernel cards when advertised, not AgentCard.
+Link and Kernel cards do not expose aliases or support egress substitution. Kernel card fill
+is locked to merchant_url's origin and its one-time code expires; submit checkout before expiry.
 Fill writes real values into the browser; unrestricted browser/CDP access can read them.
 Fill never explicitly submits forms or clicks buttons, but input/change events may trigger site behavior.
 completed means fields were filled, not website acceptance, login, or payment success.
@@ -237,6 +242,7 @@ JSON
   kernel vaults items invoke user-vault login webmcp_invoke --spec-file - <<'JSON'
 {"browser_id":"<browser-id>","tool_ref":"<tool-ref>","page_url":"https://example.com/login","input":{"email":null,"password":null},"bindings":[{"field":"email","input_path":"/email"},{"field":"password","input_path":"/password"}]}
 JSON
+  kernel vaults items invoke checkout order-1 authorize --open
   kernel vaults items invoke user-vault github 1pw_create_access_request --params '{"browser_id":"<browser-id>","reason":"Sign in to GitHub"}'
   kernel vaults items invoke user-vault github 1pw_access_request_status --params '{"browser_id":"<browser-id>","timeout_seconds":60}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login"}'
@@ -273,7 +279,7 @@ JSON
 	items.AddCommand(itemList, itemGet, itemEvents, invoke, newVaultWebMCPCommand(), newVaultDeleteCommand(true))
 
 	wallets := &cobra.Command{Use: "wallets", Short: "Connect provider wallets and inspect funding methods"}
-	walletCreate := &cobra.Command{Use: "create <vault> <key> --provider <link|agentcard> --spec '<json>'", Short: "Create a wallet and display its connection or enrollment action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+	walletCreate := &cobra.Command{Use: "create <vault> <key> --provider <link|agentcard|kernel> --spec '<json>'", Short: "Create a wallet and display its connection or enrollment action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
 		Long: "Create a wallet at an immutable key and follow the returned provider action.\n" + vaultSpecHelp + vaultWalletSpecHelp,
 		Example: `  kernel vaults wallets create checkout wallet-1 \
     --provider link --spec '{
@@ -284,7 +290,9 @@ JSON
     }' --open
 
   kernel vaults wallets create checkout wallet-1 \
-    --provider agentcard --spec '{}'`,
+    --provider agentcard --spec '{}'
+
+  kernel vaults wallets create checkout cardholder --provider kernel --spec '{}' --open`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			spec, err := vaultWalletSpecFromFlags(cmd)
 			if err != nil {
@@ -307,7 +315,17 @@ JSON
 			return getVaultsHandler(cmd).GetItem(cmd.Context(), args[0], args[1], 0, []string{"payment_methods"}, resolveProjectSelection(project), vaultOutput(cmd), false)
 		}}
 	addVaultJSONOutputFlag(methods)
-	wallets.AddCommand(walletCreate, methods)
+	walletGet := &cobra.Command{Use: "get <vault> <key>", Short: "Get a wallet's state and hosted enrollment action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			project, _ := cmd.Flags().GetString("project")
+			wait, _ := cmd.Flags().GetInt64("wait")
+			open, _ := cmd.Flags().GetBool("open")
+			return getVaultsHandler(cmd).GetItem(cmd.Context(), args[0], args[1], wait, nil, resolveProjectSelection(project), vaultOutput(cmd), open)
+		}}
+	walletGet.Flags().Int64("wait", 0, "Hold while pending for up to this many seconds (0-60); observe only")
+	walletGet.Flags().Bool("open", false, "Open a returned HTTPS enrollment URL")
+	addVaultJSONOutputFlag(walletGet)
+	wallets.AddCommand(walletCreate, walletGet, methods)
 
 	cards := &cobra.Command{Use: "cards", Short: "Configure card requests"}
 	cards.AddCommand(newVaultCardCommand(false), newVaultCardCommand(true))
@@ -338,10 +356,14 @@ func newVaultCardCommand(update bool) *cobra.Command {
 	if update {
 		use, short = "update", "Update a card spec when the API permits configuration"
 	}
-	cmd := &cobra.Command{Use: use + " <vault> <key> --provider <link|agentcard> --spec '<json>'", Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: short + `. Neither create nor update authorizes a Link card.
-Requested cards accept a replacement spec. Pending issuance updates preserve omitted
-optional fields; explicit empty lists clear them. The API restricts fields after
+	providers := "link|agentcard|kernel"
+	if update {
+		providers = "link|agentcard"
+	}
+	cmd := &cobra.Command{Use: use + " <vault> <key> --provider <" + providers + "> --spec '<json>'", Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+		Long: short + `. Neither create nor update authorizes a card.
+Kernel cards cannot be updated. Other requested cards accept a replacement spec.
+Pending issuance updates preserve omitted optional fields; explicit empty lists clear them. The API restricts fields after
 authorization starts; wallet/provider bindings cannot change. An uncertain update
 enters recovery_required and must not be retried. Checkout cards can be edited
 between authorizations. Identical creates return existing state without resetting it.
@@ -360,6 +382,9 @@ A recovery item that permits abandonment must be deleted after explicit user con
 			if err != nil {
 				return err
 			}
+			if update && string(spec["provider"]) == `"kernel"` {
+				return fmt.Errorf("Kernel card updates are not supported; create a new card item for a new purchase")
+			}
 			return getVaultsHandler(cmd).SaveCard(cmd.Context(), args[0], args[1], param.Override[kernel.CardVaultItemSpecUnionParam](spec), update, vaultOutput(cmd))
 		}}
 	addVaultSpecFlags(cmd)
@@ -368,7 +393,7 @@ A recovery item that permits abandonment must be deleted after explicit user con
 }
 
 func addVaultSpecFlags(cmd *cobra.Command) {
-	cmd.Flags().String("provider", "", "Provider: link or agentcard (required)")
+	cmd.Flags().String("provider", "", "Provider: link, agentcard, or kernel (required)")
 	cmd.Flags().String("spec", "", "Raw JSON specification object (required); see types and examples above")
 	_ = cmd.MarkFlagRequired("provider")
 	_ = cmd.MarkFlagRequired("spec")
@@ -376,8 +401,8 @@ func addVaultSpecFlags(cmd *cobra.Command) {
 
 func vaultSpecFromFlags(cmd *cobra.Command) (map[string]json.RawMessage, error) {
 	provider, _ := cmd.Flags().GetString("provider")
-	if provider != "link" && provider != "agentcard" {
-		return nil, fmt.Errorf("--provider must be link or agentcard")
+	if provider != "link" && provider != "agentcard" && provider != "kernel" {
+		return nil, fmt.Errorf("--provider must be link, agentcard, or kernel")
 	}
 	raw, _ := cmd.Flags().GetString("spec")
 	var spec map[string]json.RawMessage
@@ -392,6 +417,9 @@ func vaultSpecFromFlags(cmd *cobra.Command) (map[string]json.RawMessage, error) 
 	}
 	if vaultSpecHasSecrets(json.RawMessage(raw)) {
 		return nil, fmt.Errorf("--spec must not contain credentials or tokens; use the dedicated file/stdin inputs")
+	}
+	if provider == "kernel" && vaultSpecHasCardData(json.RawMessage(raw)) {
+		return nil, fmt.Errorf("--spec must not contain card details; use hosted enrollment")
 	}
 	spec["provider"], _ = json.Marshal(provider)
 	return spec, nil

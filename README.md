@@ -397,9 +397,10 @@ cannot switch projects.
 | `kernel vaults list` | `--limit 1..100` (default 20), `--offset`; JSON includes `vaults` and optional `next_offset` |
 | `kernel vaults get <vault>` | Get by ID or name |
 | `kernel vaults delete <vault>` | Invalidate the vault and all its items; `--yes` skips confirmation |
-| `kernel vaults wallets create <vault> <key> --provider link\|agentcard --spec '<json>'` | Connect/enroll a wallet using its provider's spec; `--open` opens a returned HTTPS action URL |
+| `kernel vaults wallets create <vault> <key> --provider link\|agentcard\|kernel --spec '<json>'` | Connect/enroll a wallet using its provider's spec; `--open` opens a returned HTTPS action URL |
+| `kernel vaults wallets get <vault> <key>` | Observe wallet state and its hosted action; `--wait 0..60`, `--open` |
 | `kernel vaults wallets payment-methods <vault> <key>` | Fetch advertised live payment methods; JSON is the item with `expanded.payment_methods` |
-| `kernel vaults cards create <vault> <key> --provider link\|agentcard --spec '<json>'` | Create a card request; never implicitly authorize Link |
+| `kernel vaults cards create <vault> <key> --provider link\|agentcard\|kernel --spec '<json>'` | Create a card request without authorizing it |
 | `kernel vaults cards update <vault> <key> --provider link\|agentcard --spec '<json>'` | Update a card spec; pending issuance preserves omitted optional fields, and the API enforces state/provider constraints |
 | `kernel vaults items list <vault>` | List item keys, types, providers, status, and required actions |
 | `kernel vaults items get <vault> <key>` | Inspect state/actions/returned AgentCard aliases and copyable operation commands; `--wait 0..60`, `--expand payment_methods`, `--open` |
@@ -414,7 +415,8 @@ its generated item ID. Names and keys use letters, digits, dots, underscores, an
 JSON preserves field presence and API-returned AgentCard aliases, while omitting unknown fields,
 opaque metadata, and unrecognized event data. Human output labels aliases as non-secret
 checkout values and distinguishes card readiness from checkout authorization/payment outcomes.
-Link cards do not expose aliases or support egress substitution; browser checkout uses only `fill`.
+Link and Kernel cards do not expose aliases or support egress substitution; browser checkout
+uses only advertised `fill`.
 Action and approval URLs print in full on separate lines, without table truncation.
 Most API failures use the CLI's standard error formatter. Wallet creation and provider config
 commands withhold response/transport details to prevent credential echoes; HTTP status remains visible.
@@ -425,23 +427,29 @@ Other API errors still return a nonzero exit status.
 **Provider specifications:** wallet creation and card creation/update require `--provider`
 and `--spec '<json>'`. Supply only the spec object, not a `{type, spec}` envelope. The command
 sets the item type and injects `provider`; if JSON also contains `provider`, it must match.
-Other values are forwarded unchanged, including optional fields, without defaults or normalization.
-The API validates the provider-specific schema. Each command's `--help` includes its raw
+Other non-secret values are forwarded unchanged, including optional fields, without defaults
+or normalization. The API validates the provider-specific schema. Each command's `--help` includes its raw
 TypeScript-style types, which must stay in sync with the [API spec](https://api.onkernel.com/spec.yaml).
 
+- **Kernel wallet:** use `{}`; no provider configuration or token file is accepted. The hosted
+  `card_enrollment` action collects card details from the cardholder, never from the CLI.
 - **Link wallet:** supply `authorization: {method: "oauth", client: {type: "kernel_managed"}}`.
 - **AgentCard wallet:** use `{}` to enroll, or supply `user_id` for a user enrolled in the same organization and provider configuration.
+- **Kernel card:** supply `wallet`, `amount` (minor units, at most 50000), `currency`,
+  `merchant_name`, and HTTPS `merchant_url`. Supply two-letter `merchant_country` for Visa.
+  Kernel card updates are unsupported.
 - **Link card:** include the required fields shown in help. Optional `line_items`, `totals`,
   `metadata`, and `expires_at` are supported through JSON.
 - **AgentCard card:** uses `merchant`, not Link's `merchant_name`. Its optional `card_id` selects
   a vaulted card; otherwise the cardholder selects one at approval.
 
-`cards update` replaces the spec for requested cards. Pending issuance updates preserve omitted
-optional fields; explicit empty lists clear them. Wallet/provider bindings and unsupported fields
+`cards update` replaces the spec for supported providers' requested cards; Kernel cards
+cannot be updated. Pending issuance updates preserve omitted optional fields; explicit empty lists clear them. Wallet/provider bindings and unsupported fields
 cannot change after authorization starts. Checkout cards can be edited between authorizations.
 An uncertain update enters `recovery_required` and must not be retried. Identical card creation
-returns its existing state without polling, reauthorizing, or resetting recovery. Permitted
-checkout domains remain provider-assigned. Neither command submits a merchant payment.
+returns its existing state without polling, reauthorizing, or resetting recovery. Link and
+AgentCard checkout domains remain provider-assigned; Kernel fill is locked to the exact origin
+of `merchant_url`. Neither command submits a merchant payment.
 
 #### Provider configurations and imported grants
 
@@ -506,6 +514,40 @@ imported-wallet reauthorization.
 Do not retry, delete, or replace the original operation. Reconcile with the provider or support;
 there is no reset or caller-asserted reconciliation endpoint. Unresolved child cards can block
 wallet and vault deletion. Time passing or deletion is not evidence of non-execution.
+
+#### Kernel-managed card checkout
+
+```bash
+kernel vaults create --name checkout
+kernel vaults wallets create checkout cardholder --provider kernel --spec '{}' --open
+kernel vaults wallets get checkout cardholder --wait 60
+kernel vaults wallets payment-methods checkout cardholder
+```
+
+Share the returned `card_enrollment` URL with the cardholder. A connected wallet may still
+report `single_use_card.eligible: false` with a `network_token_*` reason while network token
+enrollment is pending or unsupported. Inspect the expansion before requesting a card; this
+wallet uses its enrolled card, not a `payment_method_id` in the card spec.
+
+```bash
+kernel vaults cards create checkout order-1 --provider kernel --spec '{
+  "wallet":"cardholder", "amount":1200, "currency":"usd",
+  "merchant_name":"Example Shop", "merchant_url":"https://shop.example/checkout",
+  "merchant_country":"US"
+}'
+kernel vaults items get checkout order-1
+kernel vaults items invoke checkout order-1 authorize --open
+kernel vaults items get checkout order-1 --wait 60
+```
+
+Only invoke `authorize` when advertised. Visa may return a `spend_approval` URL for the
+cardholder; Mastercard may become ready without one. An unresolved `recovery_required` item
+must not be retried, deleted, or replaced. When ready, create a browser with `--vault checkout`
+and invoke the advertised `fill` operation with the browser ID, an HTTPS `page_url` on the
+exact origin of `merchant_url`, and the checkout field selectors (see `items invoke --help`).
+Fill types the one-time network token and code but does not submit the merchant form.
+Submit before `expires_at`; neither ready nor fill proves that the merchant charged the card.
+Never put PAN, CVC, or enrollment credentials in CLI arguments or logs.
 
 #### Link checkout preparation
 

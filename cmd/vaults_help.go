@@ -13,7 +13,12 @@ or normalization. Never include card data, OAuth tokens, or provider secrets in 
 `
 
 const vaultWalletSpecHelp = `
-Omit config selection to preserve Kernel-managed defaults.
+For --provider kernel, use --spec '{}'. Share the returned card_enrollment URL
+with the cardholder; never enter card details in the CLI. Use wallets get --wait 60
+to observe connection, then wallets payment-methods to inspect token eligibility.
+A connected wallet may still be ineligible while network token enrollment runs.
+Kernel wallets accept neither provider configuration flags nor --tokens-file.
+For Link and AgentCard, omit config selection to preserve managed defaults.
 --provider-config-id and --provider-config-name are mutually exclusive.
 For Link with selection flags, use --spec '{}' and --tokens-file <path|->.
 Alternatively, set the customer_managed client and provider_config in --spec,
@@ -30,6 +35,8 @@ or resolve uncertain payments. Retain old items for reconciliation; do not repea
 an uncertain payment through the new wallet. There is no in-place reauthorization.
 
 type ProviderConfigReference = { id: string } | { name: string };
+
+type KernelWalletSpec = { provider: "kernel" };
 
 type LinkWalletSpec = {
   provider: "link";
@@ -48,6 +55,16 @@ type AgentCardWalletSpec = {
 `
 
 const vaultCardSpecHelp = `
+type KernelCardSpec = {
+  provider: "kernel";
+  wallet: string;             // enrolled Kernel wallet item key
+  amount: number;             // integer minor units; 1..50000
+  currency: string;           // ISO 4217 three-letter code
+  merchant_name: string;      // 1..255 characters
+  merchant_url: string;       // HTTPS checkout URL; fill locked to its exact origin
+  merchant_country?: string;  // ISO 3166-1 alpha-2; required for Visa
+};
+
 type LinkCardSpec = {
   provider: "link";
   wallet: string;             // wallet item key
@@ -90,6 +107,13 @@ type LinkTotal = {
   display_text: string;
   amount: number;             // integer minor units
 };
+
+Kernel cards cannot be updated. Create a new card item for a new purchase, but
+never retry an uncertain authorization or replace an item in recovery_required.
+Invoke authorize only when advertised. For Visa, present the returned
+spend_approval URL to the cardholder and poll items get --wait 60 until ready.
+Mastercard may become ready without hosted approval. Neither ready nor fill
+confirms merchant payment. Fill and submit before expires_at; never pass PAN to CLI.
 
 Card updates replace the whole spec, so omitting checkout_origin from an update removes
 its existing value. For non-prepared authorization, checkout_origin is forwarded to
