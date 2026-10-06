@@ -44,7 +44,7 @@ var vaultItemFields = vaultOutputFields{
 	"expanded":             {"payment_methods": vaultMethodFields},
 	"spec": {
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil, "checkout_origin": nil,
-		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
+		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil, "merchant_country": nil,
 		"context": nil, "expires_at": nil, "description": nil, "account": nil, "connection_id": nil,
 		"requests":        onePasswordRequestFields,
 		"fields":          vaultFieldsOf("name label type required sensitive"),
@@ -380,6 +380,9 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		}
 		if item.Spec.Provider == "kernel" && item.Spec.MerchantURL != "" {
 			rows = append(rows, []string{"Merchant URL", item.Spec.MerchantURL})
+		}
+		if item.Spec.Provider == "kernel" && item.Spec.MerchantCountry != "" {
+			rows = append(rows, []string{"Merchant country", item.Spec.MerchantCountry})
 		}
 		if masks := item.State.Masks; masks.Last4 != "" || masks.TokenLast4 != "" {
 			rows = append(rows, []string{"Card last4", util.OrDash(masks.Last4)})

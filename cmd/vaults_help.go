@@ -84,8 +84,10 @@ type AgentCardCardSpec = {
 };
 
 // One live purchase with a Kernel-enrolled card. Authorize obtains a network token and
-// one-time code for fill on merchant_url's origin until expires_at. Visa purchases are
-// not yet supported (authorize returns 400). Updates are not supported.
+// one-time code for fill on merchant_url's origin until expires_at. Mastercard purchases
+// need no hosted approval. A Visa purchase returns a spend_approval action: the cardholder
+// approves it with a Visa passkey (the link expires after 30 minutes) before the code is
+// issued. Updates are not supported.
 type KernelCardSpec = {
   provider: "kernel";
   wallet: string;             // Kernel wallet item key
@@ -93,6 +95,7 @@ type KernelCardSpec = {
   currency: string;           // ISO 4217 three letters
   merchant_name: string;      // 1..255 characters
   merchant_url: string;       // HTTPS merchant checkout URL; fill is locked to its origin
+  merchant_country?: string;  // ISO 3166-1 alpha-2; required for Visa cards
 };
 
 type LinkLineItem = {
