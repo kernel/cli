@@ -44,7 +44,7 @@ var vaultItemFields = vaultOutputFields{
 	"expanded":             {"payment_methods": vaultMethodFields},
 	"spec": {
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil, "checkout_origin": nil,
-		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
+		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil, "merchant_country": nil,
 		"context": nil, "expires_at": nil, "description": nil, "account": nil,
 		"requests":        onePasswordRequestFields,
 		"fields":          vaultFieldsOf("name label type required sensitive"),
@@ -63,7 +63,7 @@ var vaultItemFields = vaultOutputFields{
 			"request": onePasswordRequestFields, "entries": onePasswordRequestEntryFields,
 		},
 		"fields":        {"*": vaultFieldsOf("has_value")},
-		"masks":         vaultFieldsOf("brand last4"),
+		"masks":         vaultFieldsOf("brand last4 token_last4"),
 		"aliases":       vaultFieldsOf("number cvc exp_month exp_year"),
 		"preparation":   vaultFieldsOf("id status browser_id merchant_origin environment psp created_at expires_at approval_url"),
 		"authorization": vaultFieldsOf("id status psp merchant amount amount_cents currency created_at expires_at approval_url browser_id reason psp_error_code expected_cents actual_cents amount_authority amount_verified charged_amount_cents charged_currency charged_kind replay_attempted replay_status replay_delivered"),
@@ -368,9 +368,15 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		if item.Spec.Provider == "link" {
 			rows = append(rows, []string{"Payment method ID", item.Spec.PaymentMethodID})
 		}
+		if item.Spec.Provider == "kernel" {
+			rows = append(rows, []string{"Merchant URL", item.Spec.MerchantURL})
+		}
 		if item.Spec.Provider == "agentcard" && item.Spec.CheckoutOrigin != "" {
 			rows = append(rows, []string{"Checkout origin", item.Spec.CheckoutOrigin})
 		}
+	}
+	if item.Type == "card" && item.Spec.Provider == "kernel" && item.State.JSON.Masks.Valid() {
+		rows = append(rows, []string{"Enrolled card last4", item.State.Masks.Last4}, []string{"Network token last4", item.State.Masks.TokenLast4})
 	}
 	if item.State.JSON.Domains.Valid() {
 		rows = append(rows, []string{"Permitted domains (provider-assigned)", strings.Join(item.State.Domains, ", ")})
@@ -456,6 +462,9 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		return
 	}
 	if item.Type == "card" {
+		if item.Spec.Provider == "kernel" {
+			pterm.Info.Println("Visa may require the returned spend_approval action; observe readiness with items get --wait 60. Ready means a one-time code is available, not that the merchant charged the card. Fill and submit checkout before expires_at; do not retry uncertain authorizations.")
+		}
 		if item.State.JSON.Preparation.Valid() {
 			switch item.State.Status {
 			case "preparing":
@@ -472,22 +481,29 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		if item.State.JSON.Aliases.Valid() {
 			pterm.Info.Println("Aliases are non-secret checkout values. Use only in a browser created with this vault attached; ready does not mean paid.")
 		}
-		pterm.Info.Println("Inspect items events for payment outcomes. Never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")
+		if item.Spec.Provider == "kernel" {
+			pterm.Info.Println("Kernel does not observe merchant charges; confirm the checkout outcome independently. Never retry an uncertain authorization or replace an item in recovery_required.")
+		} else {
+			pterm.Info.Println("Inspect items events for payment outcomes. Never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")
+		}
 	} else {
 		wallet := item.AsWallet()
+		if item.Spec.Provider == "kernel" {
+			pterm.Info.Println("Share the hosted card_enrollment URL with the cardholder. Connected does not imply token eligibility; inspect wallets payment-methods for eligible and reasons before requesting a card.")
+		}
 		for _, expansion := range wallet.AvailableExpansions {
 			pterm.Printf("Available expansion: %s — %s\n", expansion.Type, expansion.Description)
 		}
 	}
 	if item.Expanded.JSON.PaymentMethods.Valid() {
-		printVaultPaymentMethods(item.Expanded.PaymentMethods)
+		printVaultPaymentMethods(item.Spec.Provider, item.Expanded.PaymentMethods)
 	}
 	if actions.RequiredAction != "" {
 		pterm.Info.Println("Complete the returned action with the provider; never pass card data or OAuth codes to the CLI. Observe with items get --wait 60.")
 	}
 }
 
-func printVaultPaymentMethods(methods []kernel.VaultPaymentMethod) {
+func printVaultPaymentMethods(provider string, methods []kernel.VaultPaymentMethod) {
 	if len(methods) == 0 {
 		pterm.Info.Println("No payment methods returned")
 		return
@@ -502,7 +518,11 @@ func printVaultPaymentMethods(methods []kernel.VaultPaymentMethod) {
 		rows = append(rows, []string{m.ID, m.Provider, m.Type, m.Display.Label, m.Display.Brand, m.Display.Last4, fmt.Sprint(m.IsDefault), eligible, strings.Join(capability.Reasons, ", ")})
 	}
 	PrintTableNoPad(rows, true)
-	pterm.Info.Println("Select an ID explicitly in the card --spec JSON: Link uses payment_method_id; AgentCard uses card_id (or omit it for cardholder selection). Capabilities are advisory; missing means unknown, not ineligible.")
+	if provider == "kernel" {
+		pterm.Info.Println("Kernel cards use the wallet key, not a payment method ID. Wait for single_use_card.eligible before requesting a card; reasons explain ineligibility. Missing capability means unknown, not eligible.")
+	} else {
+		pterm.Info.Println("Select an ID explicitly in the card --spec JSON: Link uses payment_method_id; AgentCard uses card_id (or omit it for cardholder selection). Capabilities are advisory; missing means unknown, not ineligible.")
+	}
 }
 
 func printVaultEvents(events []kernel.VaultItemEvent, data []vaultJSON) {

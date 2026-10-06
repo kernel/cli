@@ -18,8 +18,8 @@ func TestVaultPaymentHelpProviderBoundaries(t *testing.T) {
 			name: "vaults",
 			want: []string{
 				"attachment is required for fill",
-				"Ready Link cards use only advertised fill",
-				"Link cards do not expose aliases or support egress substitution",
+				"Ready Link and Kernel cards use only advertised fill",
+				"Neither exposes aliases or supports egress substitution",
 				"AgentCard-only checkout aliases support egress substitution with checkout hold, approval, and replay",
 				"not a fallback after fill",
 			},
@@ -34,8 +34,8 @@ func TestVaultPaymentHelpProviderBoundaries(t *testing.T) {
 			path: []string{"items", "invoke"},
 			want: []string{
 				"The vault must already be attached to the browser",
-				"Fill is available for credential items and ready Link cards when advertised, not AgentCard",
-				"Link cards do not expose aliases or support egress substitution",
+				"Fill is available for credential items and ready Link or Kernel cards when advertised, not AgentCard",
+				"Link and Kernel cards do not expose aliases or support egress substitution",
 				"Fill writes real values into the browser; unrestricted browser/CDP access can read them",
 				"Fill never explicitly submits forms or clicks buttons",
 				"input/change events may trigger site behavior",
