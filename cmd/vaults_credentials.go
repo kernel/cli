@@ -53,7 +53,7 @@ const vaultOnePasswordCredentialHelp = `1Password flow:
    with the HTTPS website of a login page. Use one entry unless the user needs several
    logins, such as separate accounts or sign-in origins; per-entry reason and
    keywords go in the spec. No field definitions, selectors, or values are accepted.
-3. Invoke 1pw_create_access_request once with a vault-bound browser_id. Present the
+3. Invoke 1pw_create_access_request once (no browser needed). Present the
    returned onepassword:// approval link and instructions to the account owner unchanged.
 4. Invoke 1pw_access_request_status (timeout_seconds 0-120) until the credential is
    ready, declined, or failed. Ready means approved, not signed in.

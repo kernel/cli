@@ -134,11 +134,13 @@ func TestOnePasswordOperationRequests(t *testing.T) {
 	for _, tc := range []struct {
 		operation, params, body, item string
 	}{
-		{"1pw_create_access_request", `{"browser_id":"browser-1","goal":"Manage billing","reason":"Sign in","keywords":["personal"]}`, `{"type":"1pw_create_access_request","browser_id":"browser-1","goal":"Manage billing","reason":"Sign in","keywords":["personal"]}`, onePasswordCredentialFixture},
-		{"1pw_access_request_status", `{"browser_id":"browser-1","timeout_seconds":60}`, `{"type":"1pw_access_request_status","browser_id":"browser-1","timeout_seconds":60}`, onePasswordCredentialFixture},
+		{"1pw_create_access_request", `{"goal":"Manage billing","reason":"Sign in","keywords":["personal"]}`, `{"type":"1pw_create_access_request","goal":"Manage billing","reason":"Sign in","keywords":["personal"]}`, onePasswordCredentialFixture},
+		{"1pw_create_access_request", "", `{"type":"1pw_create_access_request"}`, onePasswordCredentialFixture},
+		{"1pw_access_request_status", `{"timeout_seconds":60}`, `{"type":"1pw_access_request_status","timeout_seconds":60}`, onePasswordCredentialFixture},
+		{"1pw_access_request_status", "", `{"type":"1pw_access_request_status"}`, onePasswordCredentialFixture},
 		{"1pw_recover", "", `{"type":"1pw_recover"}`, onePasswordAccountFixture},
 	} {
-		t.Run(tc.operation, func(t *testing.T) {
+		t.Run(tc.operation+tc.params, func(t *testing.T) {
 			item := strings.Replace(tc.item, `"available_operations":[]`, `"available_operations":[{"type":"1pw_access_request_status","description":"x"}]`, 1)
 			item = strings.Replace(item, `"1pw_access_request_status"`, `"`+tc.operation+`"`, 1)
 			posts := 0
@@ -166,11 +168,12 @@ func TestOnePasswordOperationRequests(t *testing.T) {
 func TestOnePasswordOperationValidation(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
 	for _, tc := range []struct{ operation, params, err string }{
-		{"1pw_create_access_request", "", "requires --params"},
-		{"1pw_create_access_request", `{"browser_id":""}`, "browser_id"},
-		{"1pw_create_access_request", `{"browser_id":"b","password":"x"}`, "only supported"},
-		{"1pw_create_access_request", `{"type":"1pw_create_access_request","browser_id":"b"}`, "must not contain type"},
-		{"1pw_access_request_status", `{"browser_id":"b","timeout_seconds":121}`, "timeout_seconds"},
+		{"1pw_create_access_request", `{"browser_id":"b"}`, "only supported"},
+		{"1pw_create_access_request", `{"password":"x"}`, "only supported"},
+		{"1pw_create_access_request", `{"type":"1pw_create_access_request"}`, "must not contain type"},
+		{"1pw_access_request_status", `{"timeout_seconds":121}`, "timeout_seconds"},
+		{"1pw_fill", "", "requires --params"},
+		{"1pw_fill", `{"browser_id":"","page_url":"https://github.com/login"}`, "browser_id"},
 		{"1pw_reconcile_access", `{"acknowledge_unconfirmed":true}`, "unsupported 1Password operation"},
 		{"1pw_fill", `{"browser_id":"b"}`, "page_url"},
 		{"1pw_fill", `{"browser_id":"b","page_url":"https://github.com/login","timeout_ms":0}`, "timeout_ms"},
@@ -400,7 +403,7 @@ func TestOnePasswordOperationErrorGuidance(t *testing.T) {
 				w.WriteHeader(tc.status)
 				io.WriteString(w, tc.body)
 			})
-			_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "user", "github", "1pw_create_access_request", "--params", `{"browser_id":"browser-1"}`)
+			_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "user", "github", "1pw_create_access_request")
 			require.ErrorContains(t, err, tc.want)
 			assert.NotContains(t, err.Error(), "secret-echo")
 			assert.NotContains(t, err.Error(), "before retrying")
@@ -412,7 +415,7 @@ func TestOnePasswordOperationErrorGuidance(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, onePasswordCredentialFixture)
 	})
-	_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "user", "github", "1pw_create_access_request", "--params", `{"browser_id":"browser-1"}`)
+	_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "user", "github", "1pw_create_access_request")
 	require.ErrorContains(t, err, "check that the linked credential_account is connected")
 	assert.Contains(t, err.Error(), "do not delete or recreate the item")
 }
