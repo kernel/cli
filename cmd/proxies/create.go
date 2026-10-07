@@ -21,8 +21,11 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 	// Validate proxy type
 	var proxyType kernel.ProxyNewParamsType
 	switch in.Type {
-	case "datacenter":
-		proxyType = kernel.ProxyNewParamsTypeDatacenter
+	case proxyTypeDatacenter:
+		// Deprecated: the API still accepts datacenter proxies for backward
+		// compatibility, but the SDK no longer exposes the type.
+		pterm.Warning.Println("datacenter proxies are deprecated; use --type isp instead")
+		proxyType = kernel.ProxyNewParamsType(proxyTypeDatacenter)
 	case "isp":
 		proxyType = kernel.ProxyNewParamsTypeIsp
 	case "residential":
@@ -48,16 +51,8 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 
 	// Build config based on type
 	switch proxyType {
-	case kernel.ProxyNewParamsTypeDatacenter:
-		config := kernel.ProxyNewParamsConfigDatacenter{}
-		if in.Country != "" {
-			config.Country = kernel.Opt(in.Country)
-		}
-		params.Config = kernel.ProxyNewParamsConfigUnion{
-			OfDatacenter: &config,
-		}
-
-	case kernel.ProxyNewParamsTypeIsp:
+	// Datacenter config has the same shape as ISP config (country only).
+	case kernel.ProxyNewParamsType(proxyTypeDatacenter), kernel.ProxyNewParamsTypeIsp:
 		config := kernel.ProxyNewParamsConfigIsp{}
 		if in.Country != "" {
 			config.Country = kernel.Opt(in.Country)

@@ -268,7 +268,7 @@ kernel search contents srch_01jsearchresult --limit 3 --content-source browser
   - `--kiosk` - Launch browser in kiosk mode
   - `--region us-east|us-west|eu-west|ap-southeast` - Geographic region for the session. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to `us-east`.
   - `--private-host <host>` - Destination the browser reaches directly through the session's own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel the session joins (repeatable or comma-separated, max 32). Accepts hostname patterns (`*.example.ts.net`), IPs (`10.1.30.63`, `[fd00::1]`), and private CIDRs (`100.64.0.0/10`). Replaces the default private ranges (RFC1918, `100.64.0.0/10`, `fc00::/7`); omit to keep them. Fixed once the session is created. Unrelated to a proxy's `--bypass-host`, which only chooses between upstream proxy and Kernel-managed direct egress.
-  - `--allowed-host <host>` - Egress allowlist: the only destinations the browser may reach through Kernel-managed egress (repeatable or comma-separated, max 100). Other destinations are refused with a 403 whose `X-Kernel-Proxy-Error` header is `network_policy_denied`. Accepts exact hostnames (`example.com`), a leading wildcard that matches subdomains but not the domain itself (`*.example.com`), public IPs (`8.8.8.8`, `[2001:4860:4860::8888]`), and public CIDRs (`8.8.4.0/24`); no ports, paths, or schemes. `--start-url` must be allowed. Omit for unfiltered egress. Requires proxy v3; not supported with pools. Create-only.
+  - `--allowed-host <host>` - Egress allowlist: the only destinations the browser may reach through Kernel-managed egress (repeatable or comma-separated, max 100). Other destinations are refused with a 403 whose `X-Kernel-Proxy-Error` header is `network_policy_denied`. Accepts exact hostnames (`example.com`), a leading wildcard that matches subdomains but not the domain itself (`*.example.com`), public IPs (`8.8.8.8`, `[2001:4860:4860::8888]`), and public CIDRs (`8.8.4.0/24`); no ports, paths, or schemes. `--start-url` must be allowed. Omit for unfiltered egress. Requires proxy v3; not supported with pools. Can be replaced or removed later with `browsers update --allowed-host` / `--clear-allowed-hosts`.
   - `--proxy-route '<host>[,<host>...]=<proxy>'` - Route matching browser requests through a selected proxy (repeatable, max 10 routes with 1–50 hosts each). Example: `--proxy-route 'api.ipify.org,*.ipify.org=name:my-dc-proxy'`. The proxy is an ID by default; use `id:<id>` or `name:<name>` explicitly. Exact hostnames beat wildcards; longer wildcard suffixes beat shorter ones. `*.example.com` matches subdomains, not `example.com`. Matching ignores case and ports. Unmatched hosts use `--proxy-*` or default egress, while `--start-url` uses the top-level proxy during setup. Routes are create-only and are not available on pool sessions.
   - `--start-url <url>` - Initial page to open on launch
   - `--proxy-id <id>` / `--proxy-name <name>` - Use that proxy for the session regardless of stealth (mutually exclusive with each other and with `--proxy-mode`)
@@ -304,6 +304,8 @@ kernel search contents srch_01jsearchresult --limit 3 --content-source browser
   - `--proxy-mode direct|default` - Change egress mode: `direct` for no proxy regardless of stealth, `default` to restore the browser default after using a selected proxy. Changing the proxy does not change stealth or CAPTCHA solver behavior.
   - `--clear-proxy` - Drop the selected proxy and restore the browser default (same as `--proxy-mode=default`)
   - `--disable-default-proxy` - Connect directly instead of through the default stealth proxy (same as `--proxy-mode=direct`); use `--disable-default-proxy=false` to restore the default
+  - `--allowed-host <host>` - Replace the egress allowlist (repeatable or comma-separated, max 100), using the same entry rules as `browsers create --allowed-host`. Applies without restarting the browser: new requests to destinations no longer allowed are refused within a few seconds and open connections to them are closed within about 30 seconds. `--start-url` in the same update must be allowed by the new list. Requires a browser created with proxy v3; not supported on pooled browsers. Mutually exclusive with `--clear-allowed-hosts`
+  - `--clear-allowed-hosts` - Remove the egress allowlist and return to unfiltered egress
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers curl <id> <url>` - Make HTTP requests through a browser session's Chrome network stack
   - `-X, --request <method>` - HTTP method (default: GET; defaults to POST when `--data` is set)
@@ -1147,7 +1149,7 @@ anywhere a project ID does.
   - `--output json`, `-o json` - Output raw JSON object
 
   - `--name <name>` - Proxy configuration name (required)
-  - `--type <type>` - Proxy type: datacenter, isp, residential, mobile, custom (required)
+  - `--type <type>` - Proxy type: isp, residential, mobile, custom (required)
   - `--protocol <http|https>` - Protocol to use (default: https)
   - `--country <code>` - ISO 3166 country code or "EU" (location-based types)
   - `--city <name>` - City name (no spaces, e.g. sanfrancisco) (residential, mobile; requires `--country`)
@@ -1614,11 +1616,11 @@ kernel browsers extensions upload my-browser ./extension1 ./extension2
 # List proxy configurations
 kernel proxies list
 
-# Create a datacenter proxy
-kernel proxies create --type datacenter --country US --name "US Datacenter"
+# Create an ISP proxy
+kernel proxies create --type isp --country US --name "US ISP"
 
-# Create a datacenter proxy using HTTP protocol
-kernel proxies create --type datacenter --country US --protocol http --name "US DC (HTTP)"
+# Create an ISP proxy using HTTP protocol
+kernel proxies create --type isp --country US --protocol http --name "US ISP (HTTP)"
 
 # Create a custom proxy
 kernel proxies create --type custom --host proxy.example.com --port 8080 --username myuser --password mypass --name "My Custom Proxy"

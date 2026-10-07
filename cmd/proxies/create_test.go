@@ -19,19 +19,19 @@ func TestProxyCreate_Datacenter_Success(t *testing.T) {
 	fake := &FakeProxyService{
 		NewFunc: func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error) {
 			// Verify the request
-			assert.Equal(t, kernel.ProxyNewParamsTypeDatacenter, body.Type)
+			assert.Equal(t, kernel.ProxyNewParamsType(proxyTypeDatacenter), body.Type)
 			assert.Equal(t, "My DC Proxy", body.Name.Value)
 			assert.Equal(t, []string{"localhost", "internal.service.local"}, body.BypassHosts)
 
 			// Check config
-			dcConfig := body.Config.OfDatacenter
+			dcConfig := body.Config.OfIsp
 			assert.NotNil(t, dcConfig)
 			assert.Equal(t, "US", dcConfig.Country.Value)
 
 			return &kernel.ProxyNewResponse{
 				ID:          "dc-new",
 				Name:        "My DC Proxy",
-				Type:        kernel.ProxyNewResponseTypeDatacenter,
+				Type:        kernel.ProxyNewResponseType(proxyTypeDatacenter),
 				BypassHosts: []string{"localhost", "internal.service.local"},
 			}, nil
 		},
@@ -48,6 +48,7 @@ func TestProxyCreate_Datacenter_Success(t *testing.T) {
 	assert.NoError(t, err)
 	output := buf.String()
 
+	assert.Contains(t, output, "datacenter proxies are deprecated")
 	assert.Contains(t, output, "Creating datacenter proxy")
 	assert.Contains(t, output, "Successfully created proxy")
 	assert.Contains(t, output, "dc-new")
@@ -63,17 +64,17 @@ func TestProxyCreate_Datacenter_WithoutCountry(t *testing.T) {
 	fake := &FakeProxyService{
 		NewFunc: func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error) {
 			// Verify the request
-			assert.Equal(t, kernel.ProxyNewParamsTypeDatacenter, body.Type)
+			assert.Equal(t, kernel.ProxyNewParamsType(proxyTypeDatacenter), body.Type)
 			assert.Equal(t, "My DC Proxy", body.Name.Value)
 
 			// Check config - country should not be set (it should be zero/nil)
-			dcConfig := body.Config.OfDatacenter
+			dcConfig := body.Config.OfIsp
 			assert.NotNil(t, dcConfig)
 
 			return &kernel.ProxyNewResponse{
 				ID:   "dc-new",
 				Name: "My DC Proxy",
-				Type: kernel.ProxyNewResponseTypeDatacenter,
+				Type: kernel.ProxyNewResponseType(proxyTypeDatacenter),
 			}, nil
 		},
 	}
@@ -87,6 +88,7 @@ func TestProxyCreate_Datacenter_WithoutCountry(t *testing.T) {
 
 	assert.NoError(t, err)
 	output := buf.String()
+	assert.Contains(t, output, "datacenter proxies are deprecated")
 	assert.Contains(t, output, "Creating datacenter proxy")
 	assert.Contains(t, output, "Successfully created proxy")
 }
@@ -163,7 +165,7 @@ func TestProxyCreate_Residential_InvalidOS(t *testing.T) {
 func TestProxyCreate_MissingName(t *testing.T) {
 	p := ProxyCmd{proxies: &FakeProxyService{}}
 	err := p.Create(context.Background(), ProxyCreateInput{
-		Type:    "datacenter",
+		Type:    "isp",
 		Country: "US",
 	})
 
@@ -356,7 +358,7 @@ func TestProxyCreate_Protocol_Valid(t *testing.T) {
 					return &kernel.ProxyNewResponse{
 						ID:   "test-proxy",
 						Name: "Test Proxy",
-						Type: kernel.ProxyNewResponseTypeDatacenter,
+						Type: kernel.ProxyNewResponseType(proxyTypeDatacenter),
 					}, nil
 				},
 			}
@@ -364,7 +366,7 @@ func TestProxyCreate_Protocol_Valid(t *testing.T) {
 			p := ProxyCmd{proxies: fake}
 			err := p.Create(context.Background(), ProxyCreateInput{
 				Name:     "Test Proxy",
-				Type:     "datacenter",
+				Type:     "isp",
 				Country:  "US",
 				Protocol: tt.protocol,
 			})
@@ -379,7 +381,7 @@ func TestProxyCreate_Protocol_Invalid(t *testing.T) {
 	p := ProxyCmd{proxies: fake}
 	err := p.Create(context.Background(), ProxyCreateInput{
 		Name:     "Test Proxy",
-		Type:     "datacenter",
+		Type:     "isp",
 		Country:  "US",
 		Protocol: "ftp",
 	})
@@ -394,7 +396,7 @@ func TestProxyCreate_BypassHosts_Normalized(t *testing.T) {
 			assert.Equal(t, []string{"localhost", "internal.service.local"}, body.BypassHosts)
 			return &kernel.ProxyNewResponse{
 				ID:   "test-proxy",
-				Type: kernel.ProxyNewResponseTypeDatacenter,
+				Type: kernel.ProxyNewResponseType(proxyTypeDatacenter),
 			}, nil
 		},
 	}
@@ -402,7 +404,7 @@ func TestProxyCreate_BypassHosts_Normalized(t *testing.T) {
 	p := ProxyCmd{proxies: fake}
 	err := p.Create(context.Background(), ProxyCreateInput{
 		Name:        "Test Proxy",
-		Type:        "datacenter",
+		Type:        "isp",
 		Country:     "US",
 		BypassHosts: []string{" localhost ", "", "internal.service.local"},
 	})
@@ -422,7 +424,7 @@ func TestProxyCreate_APIError(t *testing.T) {
 	p := ProxyCmd{proxies: fake}
 	err := p.Create(context.Background(), ProxyCreateInput{
 		Name:    "Test",
-		Type:    "datacenter",
+		Type:    "isp",
 		Country: "US",
 	})
 

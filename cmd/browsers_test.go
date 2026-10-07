@@ -3090,3 +3090,100 @@ func TestBrowsersRepl_ReportsFailureAndTermination(t *testing.T) {
 	assert.Contains(t, out, "truncated")
 	assert.Contains(t, out, "terminated")
 }
+
+func TestBrowsersUpdate_WithAllowedHosts_ForwardsParam(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier:           "session123",
+		AllowedHosts:         []string{" example.com ", "", "*.example.com"},
+		AllowedHostsProvided: true,
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"example.com", "*.example.com"}, captured.Network.AllowedHosts)
+	raw, marshalErr := json.Marshal(*captured)
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(raw), `"network":{"allowed_hosts":["example.com","*.example.com"]}`)
+}
+
+func TestBrowsersUpdate_ClearAllowedHosts_SendsNull(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier:        "session123",
+		ClearAllowedHosts: true,
+	})
+
+	assert.NoError(t, err)
+	raw, marshalErr := json.Marshal(*captured)
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(raw), `"network":{"allowed_hosts":null}`)
+}
+
+// An unrelated update must not touch the allowlist.
+func TestBrowsersUpdate_OmitAllowedHosts_NotSent(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Name:       "new-name",
+		SetName:    true,
+	})
+
+	assert.NoError(t, err)
+	raw, marshalErr := json.Marshal(*captured)
+	require.NoError(t, marshalErr)
+	assert.NotContains(t, string(raw), "network")
+}
+
+func TestBrowsersUpdate_AllowedHostsValidation(t *testing.T) {
+	tooMany := make([]string, maxAllowedHosts+1)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("host%d.example.com", i)
+	}
+	tests := []struct {
+		name    string
+		in      BrowsersUpdateInput
+		wantErr string
+	}{
+		{
+			name:    "both set and clear",
+			in:      BrowsersUpdateInput{Identifier: "s", AllowedHosts: []string{"example.com"}, AllowedHostsProvided: true, ClearAllowedHosts: true},
+			wantErr: "cannot specify both --allowed-host and --clear-allowed-hosts",
+		},
+		{
+			name:    "only empty entries",
+			in:      BrowsersUpdateInput{Identifier: "s", AllowedHosts: []string{" ", ""}, AllowedHostsProvided: true},
+			wantErr: "at least one --allowed-host entry is required",
+		},
+		{
+			name:    "too many entries",
+			in:      BrowsersUpdateInput{Identifier: "s", AllowedHosts: tooMany, AllowedHostsProvided: true},
+			wantErr: "too many --allowed-host entries",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupStdoutCapture(t)
+			called := false
+			fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, idOrName string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+				called = true
+				return &kernel.BrowserUpdateResponse{}, nil
+			}}
+			b := BrowsersCmd{browsers: fake}
+
+			err := b.Update(context.Background(), tt.in)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+			assert.False(t, called)
+		})
+	}
+}

@@ -22,7 +22,7 @@ func TestProxyUpdate_RenamesProxy(t *testing.T) {
 			return &kernel.ProxyUpdateResponse{
 				ID:     id,
 				Name:   body.Name,
-				Type:   kernel.ProxyUpdateResponseTypeDatacenter,
+				Type:   kernel.ProxyUpdateResponseType(proxyTypeDatacenter),
 				Status: kernel.ProxyUpdateResponseStatusAvailable,
 			}, nil
 		},

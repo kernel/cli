@@ -9,6 +9,10 @@ import (
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
 )
 
+// proxyTypeDatacenter is the deprecated datacenter proxy type. The SDK no longer
+// exposes it, but the API still accepts it and returns it for existing proxies.
+const proxyTypeDatacenter = "datacenter"
+
 // ProxyService defines the subset of the Kernel SDK proxy client that we use.
 type ProxyService interface {
 	List(ctx context.Context, query kernel.ProxyListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.ProxyListResponse], err error)
@@ -45,7 +49,7 @@ type ProxyCreateInput struct {
 	Protocol string
 	// Hostnames that should bypass the parent proxy and connect directly.
 	BypassHosts []string
-	// Datacenter/ISP config
+	// ISP (and deprecated datacenter) config
 	Country string
 	// Residential/Mobile config
 	City  string

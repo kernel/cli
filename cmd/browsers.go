@@ -23,6 +23,7 @@ import (
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
+	"github.com/kernel/kernel-go-sdk/packages/param"
 	"github.com/kernel/kernel-go-sdk/packages/ssestream"
 	"github.com/kernel/kernel-go-sdk/shared"
 	"github.com/pterm/pterm"
@@ -535,7 +536,12 @@ type BrowsersUpdateInput struct {
 	TagsProvided        bool
 	ClearTags           bool
 	StartURL            string
-	Output              string
+	// AllowedHosts replaces the session's egress allowlist when
+	// AllowedHostsProvided is set; ClearAllowedHosts removes it.
+	AllowedHosts         []string
+	AllowedHostsProvided bool
+	ClearAllowedHosts    bool
+	Output               string
 }
 
 // BrowsersCmd is a cobra-independent command handler for browsers operations.
@@ -1089,6 +1095,20 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	hasTagsChange := len(in.Tags) > 0 || in.ClearTags
 	hasStartURLChange := in.StartURL != ""
 
+	// The API replaces the allowlist with the given entries, or removes it when
+	// sent null. An empty list is rejected, so require at least one entry.
+	if in.AllowedHostsProvided && in.ClearAllowedHosts {
+		return fmt.Errorf("cannot specify both --allowed-host and --clear-allowed-hosts")
+	}
+	allowedHosts, err := normalizeAllowedHosts(in.AllowedHosts)
+	if err != nil {
+		return err
+	}
+	if in.AllowedHostsProvided && len(allowedHosts) == 0 {
+		return fmt.Errorf("at least one --allowed-host entry is required; use --clear-allowed-hosts to remove the allowlist")
+	}
+	hasAllowedHostsChange := len(allowedHosts) > 0 || in.ClearAllowedHosts
+
 	// Validate --save-changes is only used with a profile
 	if in.ProfileSaveChanges.Set && !hasProfileChange {
 		return fmt.Errorf("--save-changes requires --profile-id or --profile-name")
@@ -1100,8 +1120,8 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	// Validate that at least one update option is provided
-	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && in.TelemetryCdpExclude == "" && !hasNameChange && !hasTagsChange && !hasStartURLChange {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --telemetry-cdp-exclude, --name, --clear-name, --tag, --clear-tags, or --start-url")
+	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && in.TelemetryCdpExclude == "" && !hasNameChange && !hasTagsChange && !hasStartURLChange && !hasAllowedHostsChange {
+		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --telemetry-cdp-exclude, --name, --clear-name, --tag, --clear-tags, --start-url, --allowed-host, or --clear-allowed-hosts")
 	}
 
 	params := kernel.BrowserUpdateParams{}
@@ -1125,6 +1145,13 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	// rather than treated as a request to blank the current page.
 	if hasStartURLChange {
 		params.StartURL = kernel.String(in.StartURL)
+	}
+
+	// Handle egress allowlist changes. Null removes the allowlist.
+	if in.ClearAllowedHosts {
+		params.Network.AllowedHosts = param.NullSlice[[]string]()
+	} else if len(allowedHosts) > 0 {
+		params.Network.AllowedHosts = allowedHosts
 	}
 
 	// Handle proxy changes
@@ -1203,6 +1230,9 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 	if hasStartURLChange {
 		pterm.Info.Printf("Start URL: %s\n", util.OrDash(browser.StartURL))
+	}
+	if hasAllowedHostsChange {
+		pterm.Info.Printf("Allowed Hosts: %s\n", formatAllowedHosts(browser.Network))
 	}
 	if in.Telemetry != "" || in.TelemetryCdpExclude != "" {
 		printTelemetrySummary(browser.Telemetry)
@@ -2938,12 +2968,18 @@ Supported operations:
   - Rename or clear the session name (--name or --clear-name)
   - Replace or clear the session tags (--tag or --clear-tags)
   - Navigate the session to a URL (--start-url)
+  - Replace or remove the egress allowlist (--allowed-host or --clear-allowed-hosts)
 
 Notes:
   - Profiles can only be loaded into sessions that don't already have a profile.
   - --start-url navigation is best-effort: the update succeeds even if the page fails to load.
   - --start-url combined with --profile-id/--profile-name overrides the profile's restored tabs.
-  - --tag replaces the entire tag set (it is not merged with existing tags).`,
+  - --tag replaces the entire tag set (it is not merged with existing tags).
+  - --allowed-host replaces the entire allowlist without restarting the browser. New requests
+    to destinations no longer allowed are refused within a few seconds, and open connections
+    to them are closed within about 30 seconds. --start-url must be allowed by the new list.
+    Requires a browser created with proxy v3; not supported on pooled browsers. If the update
+    fails, retry it: the new list may already apply to some requests.`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			return fmt.Errorf("missing required argument: browser ID or name\n\nUsage: kernel browsers update <id-or-name> [flags]")
@@ -2992,6 +3028,8 @@ func init() {
 	browsersUpdateCmd.Flags().Bool("clear-name", false, "Clear the browser session name")
 	browsersUpdateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE (repeatable; up to 50 pairs). Replaces the entire tag set; mutually exclusive with --clear-tags")
 	browsersUpdateCmd.Flags().Bool("clear-tags", false, "Remove all tags from the browser session")
+	browsersUpdateCmd.Flags().StringSlice("allowed-host", nil, "Replace the egress allowlist (repeat or comma-separated, max 100), using the same entry rules as 'browsers create --allowed-host'. Applies without restarting the browser; --start-url must be allowed by the new list. Requires proxy v3; not supported on pooled browsers (mutually exclusive with --clear-allowed-hosts)")
+	browsersUpdateCmd.Flags().Bool("clear-allowed-hosts", false, "Remove the egress allowlist and return to unfiltered egress")
 	browsersUpdateCmd.Flags().String("start-url", "", "Navigate the browser to this URL after applying the update. Overrides the restored tabs when a profile is loaded in the same update. Navigation is best-effort, so failures do not fail the update")
 
 	browsersCmd.AddCommand(browsersListCmd)
@@ -3284,7 +3322,7 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' for the browser default (Kernel's stealth proxy when --stealth is set, direct egress otherwise)")
 	browsersCreateCmd.Flags().String("region", "", "Geographic region for the session: 'us-east', 'us-west', 'eu-west', or 'ap-southeast'. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to us-east")
 	browsersCreateCmd.Flags().StringSlice("private-host", nil, "Destinations the browser reaches directly through its own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel the session joins (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Replaces the default private ranges (RFC1918, 100.64.0.0/10, fc00::/7); omit to keep them. Fixed once the session is created")
-	browsersCreateCmd.Flags().StringSlice("allowed-host", nil, "Egress allowlist: the only destinations the browser may reach through Kernel-managed egress (repeat or comma-separated, max 100); anything else is refused with a 403 (network_policy_denied). Accepts exact hostnames ('example.com'), a leading wildcard matching subdomains only ('*.example.com'), public IPs ('8.8.8.8', '[2001:4860:4860::8888]'), and public CIDRs ('8.8.4.0/24'). No ports, paths, or schemes. --start-url must be allowed. Omit for unfiltered egress. Requires proxy v3; not supported with pools. Create-only")
+	browsersCreateCmd.Flags().StringSlice("allowed-host", nil, "Egress allowlist: the only destinations the browser may reach through Kernel-managed egress (repeat or comma-separated, max 100); anything else is refused with a 403 (network_policy_denied). Accepts exact hostnames ('example.com'), a leading wildcard matching subdomains only ('*.example.com'), public IPs ('8.8.8.8', '[2001:4860:4860::8888]'), and public CIDRs ('8.8.4.0/24'). No ports, paths, or schemes. --start-url must be allowed. Omit for unfiltered egress. Requires proxy v3; not supported with pools. Change later with 'browsers update --allowed-host'")
 	browsersCreateCmd.Flags().StringArray("proxy-route", nil, "Route HOST[,HOST...]=PROXY through a proxy (repeatable, max 10 routes and 50 hosts per route). PROXY is an ID by default; use id:ID or name:NAME explicitly. Exact hosts beat wildcards (longer suffixes win); *.example.com excludes example.com. Unmatched hosts use --proxy-* or default egress; start_url uses the top-level proxy. Create-only")
 	browsersCreateCmd.Flags().String("start-url", "", "Initial page to open on launch")
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
@@ -3658,31 +3696,36 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	tags, tagsProvided := tagsFromFlag(cmd, "tag")
 	clearTags, _ := cmd.Flags().GetBool("clear-tags")
 	startURL, _ := cmd.Flags().GetString("start-url")
+	allowedHosts, _ := cmd.Flags().GetStringSlice("allowed-host")
+	clearAllowedHosts, _ := cmd.Flags().GetBool("clear-allowed-hosts")
 
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
 	return b.Update(cmd.Context(), BrowsersUpdateInput{
-		Identifier:          args[0],
-		ProxyID:             proxyID,
-		ProxyName:           proxyName,
-		ProxyMode:           proxyMode,
-		ClearProxy:          clearProxy,
-		DisableDefaultProxy: BoolFlag{Set: cmd.Flags().Changed("disable-default-proxy"), Value: disableDefaultProxy},
-		ProfileID:           profileID,
-		ProfileName:         profileName,
-		ProfileSaveChanges:  BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
-		Viewport:            viewport,
-		Force:               force,
-		Telemetry:           telemetry,
-		TelemetryCdpExclude: telemetryCdpExclude,
-		Name:                name,
-		SetName:             cmd.Flags().Changed("name"),
-		ClearName:           clearName,
-		Tags:                tags,
-		TagsProvided:        tagsProvided,
-		ClearTags:           clearTags,
-		StartURL:            startURL,
-		Output:              out,
+		Identifier:           args[0],
+		ProxyID:              proxyID,
+		ProxyName:            proxyName,
+		ProxyMode:            proxyMode,
+		ClearProxy:           clearProxy,
+		DisableDefaultProxy:  BoolFlag{Set: cmd.Flags().Changed("disable-default-proxy"), Value: disableDefaultProxy},
+		ProfileID:            profileID,
+		ProfileName:          profileName,
+		ProfileSaveChanges:   BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
+		Viewport:             viewport,
+		Force:                force,
+		Telemetry:            telemetry,
+		TelemetryCdpExclude:  telemetryCdpExclude,
+		Name:                 name,
+		SetName:              cmd.Flags().Changed("name"),
+		ClearName:            clearName,
+		Tags:                 tags,
+		TagsProvided:         tagsProvided,
+		ClearTags:            clearTags,
+		StartURL:             startURL,
+		AllowedHosts:         allowedHosts,
+		AllowedHostsProvided: cmd.Flags().Changed("allowed-host"),
+		ClearAllowedHosts:    clearAllowedHosts,
+		Output:               out,
 	})
 }
 

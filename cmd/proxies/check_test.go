@@ -17,7 +17,7 @@ func TestProxyCheck_ShowsBypassHosts(t *testing.T) {
 			return &kernel.ProxyCheckResponse{
 				ID:          id,
 				Name:        "Proxy 1",
-				Type:        kernel.ProxyCheckResponseTypeDatacenter,
+				Type:        kernel.ProxyCheckResponseType(proxyTypeDatacenter),
 				BypassHosts: []string{"localhost", "internal.service.local"},
 				Status:      kernel.ProxyCheckResponseStatusAvailable,
 			}, nil
@@ -45,7 +45,7 @@ func TestProxyCheck_PassesURL(t *testing.T) {
 			return &kernel.ProxyCheckResponse{
 				ID:     id,
 				Name:   "Proxy 1",
-				Type:   kernel.ProxyCheckResponseTypeDatacenter,
+				Type:   kernel.ProxyCheckResponseType(proxyTypeDatacenter),
 				Status: kernel.ProxyCheckResponseStatusAvailable,
 			}, nil
 		},
