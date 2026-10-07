@@ -19,7 +19,7 @@ func TestProxyGet_Datacenter(t *testing.T) {
 			return &kernel.ProxyGetResponse{
 				ID:          "dc-1",
 				Name:        "US Datacenter",
-				Type:        kernel.ProxyGetResponseTypeDatacenter,
+				Type:        "datacenter",
 				BypassHosts: []string{"localhost", "internal.service.local"},
 				Config: kernel.ProxyGetResponseConfigUnion{
 					Country: "US",

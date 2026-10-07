@@ -38,17 +38,13 @@ Proxy types (from best to worst for bot detection):
 - mobile: Mobile carrier proxies
 - residential: Residential IP proxies  
 - isp: ISP proxies (supported countries: US, GB, FR, DE, SG)
-- datacenter: Datacenter proxies
 - custom: Your own proxy server
 
 Country targeting:
-- datacenter and isp default to US when --country is omitted
+- isp defaults to US when --country is omitted
 - residential and mobile use the global pool without country targeting when --country is omitted
 
 Examples:
-  # Create a datacenter proxy
-  kernel proxies create --type datacenter --country US --name "US Datacenter"
-
   # Create a custom proxy
   kernel proxies create --type custom --host proxy.example.com --port 8080 --username myuser --password mypass --name "My Custom Proxy"
 
@@ -62,7 +58,7 @@ Examples:
   kernel proxies create --type residential --country US --city sanfrancisco --state CA --name "SF Residential"
 
   # Create a proxy with bypass hosts
-  kernel proxies create --type datacenter --country US --bypass-host localhost,internal.service.local --name "Internal Services"`,
+  kernel proxies create --type isp --country US --bypass-host localhost,internal.service.local --name "Internal Services"`,
 	RunE: runProxiesCreate,
 }
 
@@ -110,12 +106,12 @@ func init() {
 	// Add flags for create command
 	proxiesCreateCmd.Flags().String("name", "", "Proxy configuration name (required)")
 	_ = proxiesCreateCmd.MarkFlagRequired("name")
-	proxiesCreateCmd.Flags().String("type", "", "Proxy type (datacenter|isp|residential|mobile|custom)")
+	proxiesCreateCmd.Flags().String("type", "", "Proxy type (isp|residential|mobile|custom)")
 	_ = proxiesCreateCmd.MarkFlagRequired("type")
 	proxiesCreateCmd.Flags().String("protocol", "https", "Protocol to use for the proxy connection (http|https)")
 
-	// Location flags (datacenter, isp, residential, mobile)
-	proxiesCreateCmd.Flags().String("country", "", "ISO 3166 country code or EU (isp proxies support US, GB, FR, DE, SG; datacenter and isp default to US, residential and mobile use the global pool without country targeting)")
+	// Location flags (isp, residential, mobile)
+	proxiesCreateCmd.Flags().String("country", "", "ISO 3166 country code or EU (isp proxies support US, GB, FR, DE, SG; isp defaults to US, residential and mobile use the global pool without country targeting)")
 	proxiesCreateCmd.Flags().String("city", "", "City name (no spaces, e.g. sanfrancisco)")
 	proxiesCreateCmd.Flags().String("state", "", "Two-letter state code")
 	proxiesCreateCmd.Flags().String("zip", "", "US ZIP code")
