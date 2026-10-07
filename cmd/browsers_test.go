@@ -479,6 +479,10 @@ func TestBrowsersList_WithRegion_PassesParam(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, kernel.BrowserListParamsRegionApSoutheast, captured.Region)
 
+	err = b.List(context.Background(), BrowsersListInput{Region: "us-west"})
+	assert.NoError(t, err)
+	assert.Equal(t, kernel.BrowserListParamsRegionUsWest, captured.Region)
+
 	// Omitting the flag leaves the param unset, so all regions are listed.
 	captured = kernel.BrowserListParams{}
 	err = b.List(context.Background(), BrowsersListInput{})
@@ -780,6 +784,9 @@ func TestBrowsersCreate_WithRegion(t *testing.T) {
 	err = b.Create(context.Background(), BrowsersCreateInput{Region: "us-west"})
 	require.NoError(t, err)
 	assert.Equal(t, kernel.BrowserNewParamsRegionUsWest, captured.Region)
+	raw, err = captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"region":"us-west"`)
 
 	// Omitting the flag sends nothing; the server defaults to us-east.
 	err = b.Create(context.Background(), BrowsersCreateInput{})
@@ -792,6 +799,29 @@ func TestBrowsersCreate_WithRegion(t *testing.T) {
 
 	// An unknown region is rejected before the request is made.
 	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{Region: "emea"}))
+}
+
+func TestBrowsersCreate_DisabledRegion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/browsers", r.URL.Path)
+		var body struct {
+			Region string `json:"region"`
+		}
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.Equal(t, "us-west", body.Region)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"code":"region_not_enabled","message":"region \"us-west\" is not enabled for your organization"}`)
+	}))
+	defer server.Close()
+	client := kernel.NewClient(option.WithBaseURL(server.URL), option.WithAPIKey("test-key"))
+	b := BrowsersCmd{browsers: &client.Browsers}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{Region: "us-west"})
+	require.EqualError(t, err, `region_not_enabled: region "us-west" is not enabled for your organization`)
+	var apiErr *kernel.Error
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, http.StatusForbidden, apiErr.StatusCode)
 }
 
 func TestBrowsersCreate_WithMemory(t *testing.T) {
