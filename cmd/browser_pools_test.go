@@ -149,6 +149,10 @@ func TestBrowserPoolsList_ForwardsRegion(t *testing.T) {
 	assert.Equal(t, kernel.BrowserPoolListParamsRegionApSoutheast, captured.Region)
 	assert.Contains(t, outBuf.String(), "ap-southeast")
 
+	err = c.List(context.Background(), BrowserPoolsListInput{Region: "us-west"})
+	assert.NoError(t, err)
+	assert.Equal(t, kernel.BrowserPoolListParamsRegionUsWest, captured.Region)
+
 	// Omitting the flag leaves the param unset, so all regions are listed.
 	captured = kernel.BrowserPoolListParams{}
 	err = c.List(context.Background(), BrowserPoolsListInput{})
@@ -174,6 +178,9 @@ func TestBrowserPoolsCreate_WithRegion(t *testing.T) {
 	c := BrowserPoolsCmd{client: fake}
 	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Region: "ap-southeast"}))
 	assert.Equal(t, kernel.BrowserPoolNewParamsRegionApSoutheast, captured.Region)
+
+	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Region: "us-west"}))
+	assert.Equal(t, kernel.BrowserPoolNewParamsRegionUsWest, captured.Region)
 
 	// Omitting the flag leaves the region unset so the API default applies.
 	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1}))
