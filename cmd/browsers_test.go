@@ -750,14 +750,14 @@ func TestBrowsersGet_ProxyRoutes(t *testing.T) {
 }
 
 func TestProxyRouteFlagIsCreateOnly(t *testing.T) {
-	create, _, err := rootCmd.Find([]string{"browsers", "create"})
-	require.NoError(t, err)
-	assert.NotNil(t, create.Flags().Lookup("proxy-route"))
-	for _, path := range [][]string{{"browsers", "update"}, {"browser-pools", "create"}, {"browser-pools", "update"}} {
+	for _, path := range [][]string{{"browsers", "create"}, {"browser-pools", "create"}, {"browser-pools", "update"}} {
 		cmd, _, err := rootCmd.Find(path)
 		require.NoError(t, err)
-		assert.Nil(t, cmd.Flags().Lookup("proxy-route"))
+		assert.NotNil(t, cmd.Flags().Lookup("proxy-route"))
 	}
+	update, _, err := rootCmd.Find([]string{"browsers", "update"})
+	require.NoError(t, err)
+	assert.Nil(t, update.Flags().Lookup("proxy-route"))
 	assert.False(t, poolLeaseAllowedFlags()["proxy-route"])
 }
 
