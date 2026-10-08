@@ -350,8 +350,8 @@ navigates or submits it. Optional `page_url` selects the exact page; cards requi
 Fill is safe to retry after a failed/unknown outcome; do not fall back to aliases.
 Once ready, use `fill` for ordinary web forms. When the item advertises `webmcp_invoke`, use
 `items webmcp invoke` instead to bind credential fields to existing `null` inputs of a live
-WebMCP tool; the tool may submit or have other side effects, so never retry an uncertain
-outcome (see [Invoke WebMCP tools with vault fields](#invoke-webmcp-tools-with-vault-fields)).
+WebMCP tool; the tool may submit or have other side effects (see
+[Invoke WebMCP tools with vault fields](#invoke-webmcp-tools-with-vault-fields)).
 1Password credentials use their own advertised `1pw_*` operations instead.
 
 Create specs list `fields` as an ordered array. Each entry carries a stable `name`
@@ -748,9 +748,9 @@ are untrusted page-provided data and may contain the supplied vault values:
 `completed` and `awaiting_submission` exit 0; neither confirms the website accepted the action.
 After `awaiting_submission`, submit the populated form through Playwright or computer interaction
 instead of invoking the tool again. `canceled`, `error`, and `unknown` exit nonzero with the result
-still on stdout in `-o json`. `unknown` means the tool may have run. Requests are never retried:
-API rejections (400/403/404/409) mean the tool was not invoked by that request; other failures
-and transport loss are uncertain, so inspect the browser instead of re-invoking.
+still on stdout in `-o json`. `unknown` means the tool may have run. API rejections
+(400/403/404/409) mean the tool was not invoked by that request; other failures and transport
+loss are uncertain, so inspect the browser to see whether the tool ran.
 
 #### Expansions, updates, and lifecycle
 
@@ -1037,7 +1037,7 @@ Destinations are the OTLP/HTTP endpoints sessions export to. They belong to the 
   - `--timeout-sec <seconds>` - Maximum execution time, 1-120 seconds (defaults server-side)
   - Prints the tool's `output` as pretty JSON on completion; tool errors and cancellations exit non-zero
   - `awaiting_submission` is successful but warns that a non-autosubmit declarative form was filled, not submitted. Inspect the form, obtain any required confirmation, then submit through Playwright or computer interaction instead of invoking the tool again
-  - Invocations are never retried automatically. A 504 `outcome_unknown` error prints the code, invocation ID, and message and exits non-zero. The tool may already have had side effects; verify the outcome before invoking it again
+  - Invocations are never retried automatically. A 504 `outcome_unknown` error prints the code, invocation ID, and message and exits non-zero. The tool may already have had side effects; check the page to see whether it ran
 - `kernel browsers webmcp custom-tools list <id-or-name>` - List registered custom tools with their generated ID, namespace, kind, URL patterns, and metadata
   - `-o json` - Output the raw response
 - `kernel browsers webmcp custom-tools add <id-or-name> --namespace <ns> --source '<js>'` - Atomically add a namespaced batch of page-backed or CDP-backed custom tools
