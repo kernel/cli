@@ -67,8 +67,7 @@ Kernel-hosted credential flow (fill never submits website forms; WebMCP tools ma
    browser_id and field selectors (writes fields without submitting). When the item
    advertises webmcp_invoke, items webmcp invoke instead binds credential fields to existing
    null inputs of a live WebMCP tool (the tool may submit or have side effects).
-   fill is safe to retry. Never automatically retry a WebMCP invocation; inspect the
-   browser after an uncertain outcome.
+   fill is safe to retry.
 Use credentials update --version for edits, or items invoke collect to reopen the form.
 Credential values belong in protected files/stdin, never command-line arguments.
 See credentials --help, items invoke --help, and items webmcp invoke --help for examples.
