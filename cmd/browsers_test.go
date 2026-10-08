@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
@@ -644,6 +645,43 @@ func TestBrowsersCreate_WithAllowedHosts(t *testing.T) {
 	assert.Error(t, (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
 		AllowedHosts: tooMany,
 	}))
+}
+
+func TestBrowsersCreate_AllowedHostsRejectsPools(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	for _, selector := range []string{"pool-id", "pool-name"} {
+		for _, yes := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/yes=%t", selector, yes), func(t *testing.T) {
+				setupStdoutCapture(t)
+				calls := 0
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, `{"session_id":"pool-browser"}`)
+				}))
+				t.Cleanup(server.Close)
+				client := kernel.NewClient(option.WithBaseURL(server.URL), option.WithAPIKey("test"))
+				cmd := &cobra.Command{Use: "create"}
+				cmd.SetContext(context.WithValue(context.Background(), util.KernelClientKey, client))
+				cmd.Flags().String("pool-id", "", "")
+				cmd.Flags().String("pool-name", "", "")
+				cmd.Flags().StringSlice("allowed-host", nil, "")
+				cmd.Flags().Bool("yes", false, "")
+				flags := []string{"--" + selector, "pool", "--allowed-host", "example.com"}
+				if yes {
+					flags = append(flags, "--yes")
+				}
+				require.NoError(t, cmd.ParseFlags(flags))
+
+				err := runBrowsersCreate(cmd, nil)
+
+				require.ErrorContains(t, err, "--allowed-host cannot be used with --pool-id or --pool-name")
+				assert.Zero(t, calls)
+				assert.NotContains(t, outBuf.String(), "The conflicting flags will be ignored")
+			})
+		}
+	}
 }
 
 func TestParseProxyRoutes(t *testing.T) {

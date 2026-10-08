@@ -2975,11 +2975,17 @@ Notes:
   - --start-url navigation is best-effort: the update succeeds even if the page fails to load.
   - --start-url combined with --profile-id/--profile-name overrides the profile's restored tabs.
   - --tag replaces the entire tag set (it is not merged with existing tags).
-  - --allowed-host replaces the entire allowlist without restarting the browser. New requests
-    to destinations no longer allowed are refused within a few seconds, and open connections
-    to them are closed within about 30 seconds. --start-url must be allowed by the new list.
-    Requires a browser created with proxy v3; not supported on pooled browsers. If the update
-    fails, retry it: the new list may already apply to some requests.`,
+  - --allowed-host replaces an existing allowlist only; it cannot add one to a browser created
+    without one. Omit to leave the list unchanged; an empty list is invalid.
+  - --clear-allowed-hosts removes the allowlist and returns to unfiltered egress. Once removed,
+    an allowlist cannot be added back to that browser.
+  - Allowlist changes apply without restarting the browser. New requests to destinations no
+    longer allowed are normally refused within a few seconds, and open connections to them
+    are closed within about 30 seconds. Propagation can take up to 10 minutes during a deployment.
+    --start-url must be allowed by the new list. Requires a browser created with proxy v3;
+    not supported on pooled browsers. If the update fails, retry it: the new list may already
+    apply to some requests.
+  - Allowlists filter Kernel-managed egress only, not all browser VM traffic.`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			return fmt.Errorf("missing required argument: browser ID or name\n\nUsage: kernel browsers update <id-or-name> [flags]")
@@ -3028,8 +3034,8 @@ func init() {
 	browsersUpdateCmd.Flags().Bool("clear-name", false, "Clear the browser session name")
 	browsersUpdateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE (repeatable; up to 50 pairs). Replaces the entire tag set; mutually exclusive with --clear-tags")
 	browsersUpdateCmd.Flags().Bool("clear-tags", false, "Remove all tags from the browser session")
-	browsersUpdateCmd.Flags().StringSlice("allowed-host", nil, "Replace the egress allowlist (repeat or comma-separated, max 100), using the same entry rules as 'browsers create --allowed-host'. Applies without restarting the browser; --start-url must be allowed by the new list. Requires proxy v3; not supported on pooled browsers (mutually exclusive with --clear-allowed-hosts)")
-	browsersUpdateCmd.Flags().Bool("clear-allowed-hosts", false, "Remove the egress allowlist and return to unfiltered egress")
+	browsersUpdateCmd.Flags().StringSlice("allowed-host", nil, "Replace an existing egress allowlist (repeat or comma-separated, max 100), using the same entry rules as 'browsers create --allowed-host'. Cannot add one to a browser created without one or after removal. Omit to leave unchanged; an empty list is invalid. Applies without restarting the browser; --start-url must be allowed by the new list. Requires proxy v3; not supported on pooled browsers (mutually exclusive with --clear-allowed-hosts). See notes for propagation timing")
+	browsersUpdateCmd.Flags().Bool("clear-allowed-hosts", false, "Remove the egress allowlist and return to unfiltered egress; an allowlist cannot be added back to this browser")
 	browsersUpdateCmd.Flags().String("start-url", "", "Navigate the browser to this URL after applying the update. Overrides the restored tabs when a profile is loaded in the same update. Navigation is best-effort, so failures do not fail the update")
 
 	browsersCmd.AddCommand(browsersListCmd)
@@ -3322,7 +3328,7 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' for the browser default (Kernel's stealth proxy when --stealth is set, direct egress otherwise)")
 	browsersCreateCmd.Flags().String("region", "", "Geographic region for the session: 'us-east', 'us-west', 'eu-west', or 'ap-southeast'. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to us-east")
 	browsersCreateCmd.Flags().StringSlice("private-host", nil, "Destinations the browser reaches directly through its own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel the session joins (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Replaces the default private ranges (RFC1918, 100.64.0.0/10, fc00::/7); omit to keep them. Fixed once the session is created")
-	browsersCreateCmd.Flags().StringSlice("allowed-host", nil, "Egress allowlist: the only destinations the browser may reach through Kernel-managed egress (repeat or comma-separated, max 100); anything else is refused with a 403 (network_policy_denied). Accepts exact hostnames ('example.com'), a leading wildcard matching subdomains only ('*.example.com'), public IPs ('8.8.8.8', '[2001:4860:4860::8888]'), and public CIDRs ('8.8.4.0/24'). No ports, paths, or schemes. --start-url must be allowed. Omit for unfiltered egress. Requires proxy v3; not supported with pools. Change later with 'browsers update --allowed-host'")
+	browsersCreateCmd.Flags().StringSlice("allowed-host", nil, "Set an egress allowlist at creation: the only destinations the browser may reach through Kernel-managed egress (repeat or comma-separated, max 100); anything else is refused with a 403 (network_policy_denied). Filters Kernel-managed egress only, not all browser VM traffic. Accepts exact hostnames ('example.com'), a leading wildcard matching subdomains only ('*.example.com'), public IPs ('8.8.8.8', '[2001:4860:4860::8888]'), and public CIDRs ('8.8.4.0/24'). No ports, paths, or schemes. --start-url must be allowed. Omit for unfiltered egress; an empty list is invalid. Requires proxy v3; cannot be combined with --pool-id or --pool-name, even with --yes. An existing list can be replaced or removed with 'browsers update'; it cannot be added later if omitted at creation or removed")
 	browsersCreateCmd.Flags().StringArray("proxy-route", nil, "Route HOST[,HOST...]=PROXY through a proxy (repeatable, max 10 routes and 50 hosts per route). PROXY is an ID by default; use id:ID or name:NAME explicitly. Exact hosts beat wildcards (longer suffixes win); *.example.com excludes example.com. Unmatched hosts use --proxy-* or default egress. Routes also apply to start_url and other setup traffic. Create-only")
 	browsersCreateCmd.Flags().String("start-url", "", "Initial page to open on launch")
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
@@ -3493,6 +3499,10 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 
 	if (poolID != "" || poolName != "") && cmd.Flags().Changed("proxy-route") {
 		return fmt.Errorf("--proxy-route cannot be used with --pool-id or --pool-name; routes require a new browser")
+	}
+
+	if (poolID != "" || poolName != "") && cmd.Flags().Changed("allowed-host") {
+		return fmt.Errorf("--allowed-host cannot be used with --pool-id or --pool-name; browser pools do not support allowlists")
 	}
 
 	if poolID != "" && poolName != "" {
