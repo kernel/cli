@@ -50,8 +50,7 @@ func TestPlaywrightCommandWiring(t *testing.T) {
 	executor := execute.Flags().Lookup("executor")
 	require.NotNil(t, executor)
 	assert.Equal(t, "", executor.DefValue)
-	assert.Contains(t, executor.Usage, "default")
-	assert.Contains(t, executor.Usage, "8 named executors")
+	assert.Contains(t, execute.Long, "8 named executors")
 	assert.NotNil(t, execute.Flags().Lookup("timeout"))
 	assert.NotNil(t, execute.Flags().Lookup("output"))
 
@@ -120,10 +119,11 @@ func TestPlaywrightExecuteOutput(t *testing.T) {
 		name     string
 		response string
 		json     bool
+		wantTab  bool
 	}{
-		{"without tab", `{"success":false,"error":"boom"}`, false},
-		{"with tab", `{"success":true,"tab":{"target_id":"ABCDEF0123456789","created":false}}`, false},
-		{"json", `{"success":true,"result":42,"tab":{"target_id":"ABCDEF0123456789","created":true}}`, true},
+		{"without tab", `{"success":false,"error":"boom"}`, false, false},
+		{"with tab", `{"success":true,"tab":{"target_id":"ABCDEF0123456789","created":false}}`, false, true},
+		{"json", `{"success":true,"result":42,"tab":{"target_id":"ABCDEF0123456789","created":true}}`, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := []string{"execute", "session123", "return 1"}
@@ -144,7 +144,7 @@ func TestPlaywrightExecuteOutput(t *testing.T) {
 				assert.Empty(t, table)
 				return
 			}
-			if strings.Contains(tc.response, `"tab"`) {
+			if tc.wantTab {
 				assert.Contains(t, table, "Tab Target ID")
 				assert.Contains(t, table, "ABCDEF0123456789")
 				assert.Contains(t, table, "Tab Created")
@@ -164,30 +164,28 @@ func TestPlaywrightExecuteExecutorLimit(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusConflict)
-		fmt.Fprint(w, `{"message":"Browser already has 8 named Playwright executors",`+
-			`"executors":[{"name":"default","busy":false,"created_at":"2026-01-02T03:04:05Z","last_used_at":"2026-01-02T03:04:05Z"},`+
-			`{"name":"checkout","busy":true,"created_at":"2026-01-02T03:04:05Z","last_used_at":"2026-01-02T03:04:05Z","target_id":"T1","url":"https://example.com/cart"}]}`)
-	}, "execute", "session123", "return 1", "--executor", "ninth")
-	require.Error(t, err)
-	msg := err.Error()
-	assert.Contains(t, msg, "Browser already has 8 named Playwright executors")
-	assert.Contains(t, msg, "Current executors:")
-	assert.Contains(t, msg, "default")
-	assert.Contains(t, msg, "checkout (busy) https://example.com/cart")
-	assert.Contains(t, msg, "kernel browsers playwright executors delete")
+		fmt.Fprint(w, `{"message":"Browser already has 8 named Playwright executors.",`+
+			`"executors":[{"name":"default","busy":false,"created_at":"2026-01-02T03:04:05Z","last_used_at":"2026-01-02T03:04:05Z"}]}`)
+	}, "execute", "my-browser", "return 1", "--executor", "ninth")
+	require.EqualError(t, err, "Browser already has 8 named Playwright executors. "+
+		"See them with 'kernel browsers playwright executors list my-browser' and "+
+		"free one with 'kernel browsers playwright executors delete my-browser <executor>'")
+	assert.NotContains(t, err.Error(), "\n")
 	// The root error handler wraps command errors again before printing them.
-	assert.Equal(t, msg, util.CleanedUpSdkError{Err: err}.Error())
+	assert.Equal(t, err.Error(), util.CleanedUpSdkError{Err: err}.Error())
 }
 
 func TestPlaywrightExecuteOtherErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
+		flags  []string
 		status int
 		body   string
 		want   string
 	}{
-		{"not conflict", http.StatusBadRequest, `{"code":"invalid_request","message":"Invalid executor name"}`, "invalid_request: Invalid executor name"},
-		{"conflict without message", http.StatusConflict, `{"code":"conflict","message":""}`, "conflict: "},
+		{"not conflict", []string{"--executor", "bad name"}, http.StatusBadRequest, `{"code":"invalid_request","message":"Invalid executor name"}`, "invalid_request: Invalid executor name"},
+		{"conflict without message", []string{"--executor", "ninth"}, http.StatusConflict, `{"code":"conflict","message":""}`, "conflict: "},
+		{"conflict without executor", nil, http.StatusConflict, `{"code":"conflict","message":"Browser is busy"}`, "conflict: Browser is busy"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := executePlaywrightCommand(t, func(w http.ResponseWriter, r *http.Request) {
@@ -198,7 +196,7 @@ func TestPlaywrightExecuteOtherErrors(t *testing.T) {
 				}
 				w.WriteHeader(tc.status)
 				fmt.Fprint(w, tc.body)
-			}, "execute", "session123", "return 1", "--executor", "bad name")
+			}, append([]string{"execute", "session123", "return 1"}, tc.flags...)...)
 			require.EqualError(t, err, tc.want)
 		})
 	}
@@ -229,7 +227,8 @@ func TestPlaywrightExecutorsList(t *testing.T) {
 				rows := strings.Split(strings.TrimSpace(table), "\n")
 				require.Len(t, rows, 3)
 				assert.Contains(t, rows[1], "default")
-				assert.Equal(t, 2, strings.Count(rows[1], " - "), rows[1])
+				assert.NotContains(t, rows[1], "ABCDEF0123456789")
+				assert.Contains(t, rows[2], "checkout")
 			})
 		}
 	}

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -16,6 +18,11 @@ import (
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
+
+// BrowserPlaywrightService defines the subset we use for Playwright execution.
+type BrowserPlaywrightService interface {
+	Execute(ctx context.Context, idOrName string, body kernel.BrowserPlaywrightExecuteParams, opts ...option.RequestOption) (res *kernel.BrowserPlaywrightExecuteResponse, err error)
+}
 
 // BrowserPlaywrightExecutorService defines the subset we use for Playwright executors.
 type BrowserPlaywrightExecutorService interface {
@@ -40,6 +47,14 @@ count); a call that would create another fails with HTTP 409. Named executors
 are not removed automatically while the browser runs, so delete the ones you no
 longer need.`
 
+type BrowsersPlaywrightExecuteInput struct {
+	Identifier string
+	Code       string
+	Executor   string
+	Timeout    int64
+	Output     string
+}
+
 type BrowsersPlaywrightExecutorsListInput struct {
 	Identifier string
 	Output     string
@@ -51,11 +66,85 @@ type BrowsersPlaywrightExecutorsDeleteInput struct {
 	CloseTab   param.Opt[bool]
 }
 
+func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrightExecuteInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+
+	if b.playwright == nil {
+		pterm.Error.Println("playwright service not available")
+		return nil
+	}
+	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	params := kernel.BrowserPlaywrightExecuteParams{Code: in.Code}
+	if in.Executor != "" {
+		params.Executor = kernel.Opt(in.Executor)
+	}
+	if in.Timeout > 0 {
+		params.TimeoutSec = kernel.Opt(in.Timeout)
+	}
+	res, err := b.playwright.Execute(ctx, br.SessionID, params)
+	if err != nil {
+		return playwrightExecuteError(err, in)
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(res)
+	}
+
+	rows := pterm.TableData{{"Property", "Value"}, {"Success", fmt.Sprintf("%t", res.Success)}}
+	if res.JSON.Tab.Valid() {
+		rows = append(rows, []string{"Tab Target ID", res.Tab.TargetID}, []string{"Tab Created", fmt.Sprintf("%t", res.Tab.Created)})
+	}
+	PrintTableNoPad(rows, true)
+
+	if res.Stdout != "" {
+		pterm.Info.Println("stdout:")
+		fmt.Println(res.Stdout)
+	}
+	if res.Stderr != "" {
+		pterm.Info.Println("stderr:")
+		fmt.Fprintln(os.Stderr, res.Stderr)
+	}
+	if res.Result != nil {
+		bs, err := json.MarshalIndent(res.Result, "", "  ")
+		if err == nil {
+			pterm.Info.Println("result:")
+			fmt.Println(string(bs))
+		}
+	}
+	if !res.Success && res.Error != "" {
+		pterm.Error.Printf("error: %s\n", res.Error)
+	}
+	return nil
+}
+
+// playwrightExecuteError points at the executors commands when a named
+// executor call is rejected with 409 because the browser is at its executor limit.
+func playwrightExecuteError(err error, in BrowsersPlaywrightExecuteInput) error {
+	var apiErr *kernel.Error
+	if in.Executor == "" || !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusConflict {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	var body struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal([]byte(apiErr.RawJSON()), &body) != nil || body.Message == "" {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	// Not %w: the root handler re-renders any wrapped *kernel.Error as "code: message", dropping the hint.
+	return fmt.Errorf("%s. See them with 'kernel browsers playwright executors list %s' and free one with 'kernel browsers playwright executors delete %s <executor>'",
+		strings.TrimSuffix(body.Message, "."), in.Identifier, in.Identifier)
+}
+
 func (b BrowsersCmd) PlaywrightExecutorsList(ctx context.Context, in BrowsersPlaywrightExecutorsListInput) error {
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
 	}
-	res, err := b.executors.List(ctx, in.Identifier)
+	res, err := b.playwrightExecutors.List(ctx, in.Identifier)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -76,7 +165,7 @@ func (b BrowsersCmd) PlaywrightExecutorsList(ctx context.Context, in BrowsersPla
 
 func (b BrowsersCmd) PlaywrightExecutorsDelete(ctx context.Context, in BrowsersPlaywrightExecutorsDeleteInput) error {
 	params := kernel.BrowserPlaywrightExecutorDeleteParams{IDOrName: in.Identifier, CloseTab: in.CloseTab}
-	if err := b.executors.Delete(ctx, in.Name, params); err != nil {
+	if err := b.playwrightExecutors.Delete(ctx, in.Name, params); err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 	if in.Name == "default" {
@@ -85,38 +174,6 @@ func (b BrowsersCmd) PlaywrightExecutorsDelete(ctx context.Context, in BrowsersP
 		pterm.Success.Printf("Deleted Playwright executor %q\n", in.Name)
 	}
 	return nil
-}
-
-// playwrightExecuteError turns the 409 returned when a call would exceed the
-// named executor limit into an error that names the current executors.
-func playwrightExecuteError(err error) error {
-	var apiErr *kernel.Error
-	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusConflict {
-		return util.CleanedUpSdkError{Err: err}
-	}
-	var body struct {
-		Message   string            `json:"message"`
-		Executors []kernel.Executor `json:"executors"`
-	}
-	if json.Unmarshal([]byte(apiErr.RawJSON()), &body) != nil || body.Message == "" {
-		return util.CleanedUpSdkError{Err: err}
-	}
-	var sb strings.Builder
-	sb.WriteString(body.Message)
-	if len(body.Executors) > 0 {
-		sb.WriteString("\nCurrent executors:")
-		for _, e := range body.Executors {
-			fmt.Fprintf(&sb, "\n  %s", e.Name)
-			if e.Busy {
-				sb.WriteString(" (busy)")
-			}
-			if e.URL != "" {
-				fmt.Fprintf(&sb, " %s", e.URL)
-			}
-		}
-	}
-	sb.WriteString("\nDelete one with 'kernel browsers playwright executors delete <id-or-name> <executor>'")
-	return errors.New(sb.String())
 }
 
 func newBrowsersPlaywrightCommand() *cobra.Command {
@@ -130,7 +187,7 @@ func newBrowsersPlaywrightCommand() *cobra.Command {
 		Args: cobra.MinimumNArgs(1),
 		RunE: runBrowsersPlaywrightExecute,
 	}
-	execute.Flags().String("executor", "", "Executor to run the call in. Calls on different executors run concurrently in separate tabs of the same browser; calls on one executor run one at a time. Omit to use the always-present 'default' executor bound to the active tab. Any other name creates a named executor on first use that owns a background tab 'page' is bound to. At most 8 named executors per browser (409 when exceeded)")
+	execute.Flags().String("executor", "", "Named executor to run the call in; each owns its own tab (default: the active tab)")
 	execute.Flags().Int64("timeout", 0, "Maximum execution time in seconds (default per server)")
 	addJSONOutputFlag(execute)
 	root.AddCommand(execute, newBrowsersPlaywrightExecutorsCommand())
@@ -163,10 +220,38 @@ func newBrowsersPlaywrightExecutorsCommand() *cobra.Command {
 	return root
 }
 
+func runBrowsersPlaywrightExecute(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	svc := client.Browsers
+
+	var code string
+	if len(args) >= 2 {
+		code = strings.Join(args[1:], " ")
+	} else {
+		// Read code from stdin
+		stat, _ := os.Stdin.Stat()
+		if (stat.Mode() & os.ModeCharDevice) != 0 {
+			pterm.Error.Println("no code provided. Provide code as an argument or pipe via stdin")
+			return nil
+		}
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			pterm.Error.Printf("failed to read stdin: %v\n", err)
+			return nil
+		}
+		code = string(data)
+	}
+	executor, _ := cmd.Flags().GetString("executor")
+	timeout, _ := cmd.Flags().GetInt64("timeout")
+	output, _ := cmd.Flags().GetString("output")
+	b := BrowsersCmd{browsers: &svc, playwright: &svc.Playwright}
+	return b.PlaywrightExecute(cmd.Context(), BrowsersPlaywrightExecuteInput{Identifier: args[0], Code: strings.TrimSpace(code), Executor: executor, Timeout: timeout, Output: output})
+}
+
 func runBrowsersPlaywrightExecutorsList(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 	client := getKernelClient(cmd)
-	b := BrowsersCmd{executors: &client.Browsers.Playwright.Executors}
+	b := BrowsersCmd{playwrightExecutors: &client.Browsers.Playwright.Executors}
 	return b.PlaywrightExecutorsList(cmd.Context(), BrowsersPlaywrightExecutorsListInput{Identifier: args[0], Output: output})
 }
 
@@ -177,6 +262,6 @@ func runBrowsersPlaywrightExecutorsDelete(cmd *cobra.Command, args []string) err
 		closeTab = kernel.Opt(value)
 	}
 	client := getKernelClient(cmd)
-	b := BrowsersCmd{executors: &client.Browsers.Playwright.Executors}
+	b := BrowsersCmd{playwrightExecutors: &client.Browsers.Playwright.Executors}
 	return b.PlaywrightExecutorsDelete(cmd.Context(), BrowsersPlaywrightExecutorsDeleteInput{Identifier: args[0], Name: args[1], CloseTab: closeTab})
 }
