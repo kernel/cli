@@ -347,7 +347,7 @@ Present the returned collection URL to the user before waiting for `ready`. It i
 bearer credential: share it only with that user. Readiness means required values are
 populated, not that login succeeded. `fill` requires an already-open page and never
 navigates or submits it. Optional `page_url` selects the exact page; cards require it.
-Do not automatically retry failed/unknown fills or fall back to aliases.
+Fill is safe to retry after a failed/unknown outcome; do not fall back to aliases.
 Once ready, use `fill` for ordinary web forms. When the item advertises `webmcp_invoke`, use
 `items webmcp invoke` instead to bind credential fields to existing `null` inputs of a live
 WebMCP tool; the tool may submit or have other side effects, so never retry an uncertain
@@ -701,14 +701,14 @@ without appended error text. API/transport errors exit nonzero with a sanitized 
 stderr, not a fabricated execution result. No values, selectors, DOM content, or raw browser
 errors are printed in fill results. Pre-write API rejections (400/403/404/409) retain
 HTTP status, recognized error codes, and corrective guidance, and confirm that the
-request wrote no fields. Inspect and correct the cause before deciding on a new fill.
-Transport loss and other uncertain failures retain the no-retry warning.
+request wrote no fields. Correct the cause and retry. Transport loss and other uncertain
+failures note that fields may have been written and that fill is safe to retry.
 
 Fill is non-atomic: execution stops at the first failed/unknown field and earlier writes are
 not rolled back. `filled` does not mean the site retained or accepted the value; `completed`
-does not mean logged in or paid. Transport errors do not prove no writes occurred. Inspect the browser
-before deciding what to do next. The CLI never retries, explicitly submits website forms, or falls
-back to aliases. Link cards do not expose `state.aliases` or support egress substitution.
+does not mean logged in or paid. Transport errors do not prove no writes occurred. Fill never
+submits, so it is safe to run again. The CLI does not retry automatically, explicitly submit website
+forms, or fall back to aliases. Link cards do not expose `state.aliases` or support egress substitution.
 AgentCard-only checkout aliases are a separate integration, not a recovery path after a failed
 or indeterminate fill.
 

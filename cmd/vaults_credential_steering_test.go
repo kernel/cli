@@ -63,7 +63,7 @@ func TestCredentialHelpReadyOperations(t *testing.T) {
 	text := flat(create.Long)
 	assert.Contains(t, text, "Ordinary web forms: items invoke fill writes field values without submitting")
 	assert.Contains(t, text, "Live WebMCP tool: when webmcp_invoke is advertised, run browsers webmcp list, then items webmcp invoke")
-	assert.Contains(t, text, "Never automatically retry fill or webmcp_invoke")
+	assert.Contains(t, text, "fill never submits and is safe to retry. Never automatically retry webmcp_invoke")
 	assert.Contains(t, text, "approves each access request in the 1Password app")
 
 	vaults := flat(newVaultsCommand().Long)
