@@ -109,8 +109,7 @@ Poll items get --wait 60 until state.status is ready. Then choose an advertised 
   items webmcp invoke with the tool_ref, exact source.page_url, public input containing
   null slots, and --bind <field>=<json-pointer>. The tool may submit or have other
   side effects, and its output may include the supplied values.
-Never automatically retry fill or webmcp_invoke; after an uncertain outcome, inspect
-the browser and tell the user.
+fill never submits and is safe to retry.
 Ready means populated, not a successful login. An agent controlling the browser
 can read filled values. TOTP seeds must not be collected through the hosted form.
 Get/list output includes definitions, has_value, and explicitly non-sensitive text/email values.
