@@ -51,6 +51,14 @@ func (c VaultsCmd) Get(ctx context.Context, vault, output string) error {
 	return printVault(v, output)
 }
 
+func (c VaultsCmd) GetEncryptionKey(ctx context.Context, vault, output string) error {
+	k, err := c.vaults.GetEncryptionKey(ctx, vault, option.WithMaxRetries(0))
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	return printVaultEncryptionKey(k, output)
+}
+
 func (c VaultsCmd) List(ctx context.Context, limit, offset int64, query, project, output string) error {
 	if limit < 1 || limit > 100 || offset < 0 {
 		return fmt.Errorf("--limit must be between 1 and 100; --offset must be non-negative")

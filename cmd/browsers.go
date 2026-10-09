@@ -201,6 +201,26 @@ func parseMemoryFlag(memory string) (kernel.BrowserMemoryRequest, error) {
 	return "", fmt.Errorf("invalid --memory value: %s (must be one of %s)", memory, strings.Join(availableMemorySizes(), ", "))
 }
 
+// availableVideoMemorySizes returns the video memory (VRAM) sizes the API
+// accepts for a GPU browser session.
+func availableVideoMemorySizes() []string {
+	return []string{"2GiB", "4GiB"}
+}
+
+// parseVideoMemoryFlag validates a --video-memory value. An empty value means the
+// flag was not set, which lets the API apply its default (2GiB).
+func parseVideoMemoryFlag(videoMemory string) (kernel.BrowserVideoMemory, error) {
+	if videoMemory == "" {
+		return "", nil
+	}
+	for _, m := range availableVideoMemorySizes() {
+		if strings.EqualFold(videoMemory, m) {
+			return kernel.BrowserVideoMemory(m), nil
+		}
+	}
+	return "", fmt.Errorf("invalid --video-memory value: %s (must be one of %s)", videoMemory, strings.Join(availableVideoMemorySizes(), ", "))
+}
+
 // maxPrivateHosts mirrors the API's cap on network.private_hosts entries.
 const maxPrivateHosts = 32
 
@@ -468,6 +488,7 @@ type BrowsersCreateInput struct {
 	Headless            BoolFlag
 	GPU                 BoolFlag
 	Memory              string
+	VideoMemory         string
 	InvocationID        string
 	Kiosk               BoolFlag
 	ProfileID           string
@@ -704,6 +725,13 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 	if memory != "" {
 		params.Memory = memory
+	}
+	videoMemory, err := parseVideoMemoryFlag(in.VideoMemory)
+	if err != nil {
+		return err
+	}
+	if videoMemory != "" {
+		params.VideoMemory = videoMemory
 	}
 	if in.InvocationID != "" {
 		params.InvocationID = kernel.Opt(in.InvocationID)
@@ -972,6 +1000,9 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	tableData = append(tableData, []string{"Stealth", fmt.Sprintf("%t", browser.Stealth)})
 	tableData = append(tableData, []string{"GPU", fmt.Sprintf("%t", browser.GPU)})
 	tableData = append(tableData, []string{"Memory", util.OrDash(string(browser.Memory))})
+	if browser.VideoMemory != "" {
+		tableData = append(tableData, []string{"Video Memory", string(browser.VideoMemory)})
+	}
 	tableData = append(tableData, []string{"Kiosk Mode", fmt.Sprintf("%t", browser.KioskMode)})
 	if browser.Viewport.Width > 0 && browser.Viewport.Height > 0 {
 		viewportStr := fmt.Sprintf("%dx%d", browser.Viewport.Width, browser.Viewport.Height)
@@ -3247,6 +3278,7 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().BoolP("headless", "H", false, "Launch browser without GUI access")
 	browsersCreateCmd.Flags().Bool("gpu", false, "Launch browser with hardware-accelerated GPU rendering")
 	browsersCreateCmd.Flags().String("memory", "", "Memory for a headful, non-GPU browser session: '8GiB' (default) or '16GiB'")
+	browsersCreateCmd.Flags().String("video-memory", "", "Video memory (VRAM) for a GPU browser session (requires --gpu): '2GiB' (default, 4 vCPU/6GiB memory) or '4GiB' (8 vCPU/12GiB memory)")
 	browsersCreateCmd.Flags().String("invocation-id", "", "Associate the browser session with an invocation")
 	browsersCreateCmd.Flags().Bool("kiosk", false, "Launch browser in kiosk mode")
 	browsersCreateCmd.Flags().IntP("timeout", "t", 60, "Timeout in seconds for the browser session")
@@ -3387,6 +3419,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	headlessVal, _ := cmd.Flags().GetBool("headless")
 	gpuVal, _ := cmd.Flags().GetBool("gpu")
 	memory, _ := cmd.Flags().GetString("memory")
+	videoMemory, _ := cmd.Flags().GetString("video-memory")
 	invocationID, _ := cmd.Flags().GetString("invocation-id")
 	kioskVal, _ := cmd.Flags().GetBool("kiosk")
 	timeout, _ := cmd.Flags().GetInt("timeout")
@@ -3544,6 +3577,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		Headless:            BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headlessVal},
 		GPU:                 BoolFlag{Set: cmd.Flags().Changed("gpu"), Value: gpuVal},
 		Memory:              memory,
+		VideoMemory:         videoMemory,
 		InvocationID:        invocationID,
 		Kiosk:               BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kioskVal},
 		ProfileID:           profileID,
