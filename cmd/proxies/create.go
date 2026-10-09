@@ -21,8 +21,6 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 	// Validate proxy type
 	var proxyType kernel.ProxyNewParamsType
 	switch in.Type {
-	case "datacenter":
-		return fmt.Errorf("datacenter proxies are deprecated; use --type isp")
 	case "isp":
 		proxyType = kernel.ProxyNewParamsTypeIsp
 	case "residential":

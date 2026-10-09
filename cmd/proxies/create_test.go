@@ -57,12 +57,6 @@ func TestProxyCreate_ISP_BypassHosts(t *testing.T) {
 	assert.Contains(t, output, "internal.service.local")
 }
 
-func TestProxyCreate_DatacenterDeprecated(t *testing.T) {
-	p := ProxyCmd{proxies: &FakeProxyService{}}
-	err := p.Create(context.Background(), ProxyCreateInput{Name: "Legacy", Type: "datacenter"})
-	assert.EqualError(t, err, "datacenter proxies are deprecated; use --type isp")
-}
-
 func TestProxyCreate_Residential_Success(t *testing.T) {
 	buf := captureOutput(t)
 
@@ -328,7 +322,7 @@ func TestProxyCreate_Protocol_Valid(t *testing.T) {
 					return &kernel.ProxyNewResponse{
 						ID:   "test-proxy",
 						Name: "Test Proxy",
-						Type: "datacenter",
+						Type: kernel.ProxyNewResponseTypeIsp,
 					}, nil
 				},
 			}
@@ -366,7 +360,7 @@ func TestProxyCreate_BypassHosts_Normalized(t *testing.T) {
 			assert.Equal(t, []string{"localhost", "internal.service.local"}, body.BypassHosts)
 			return &kernel.ProxyNewResponse{
 				ID:   "test-proxy",
-				Type: "datacenter",
+				Type: kernel.ProxyNewResponseTypeIsp,
 			}, nil
 		},
 	}
