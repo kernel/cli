@@ -173,6 +173,8 @@ func TestOnePasswordOperationValidation(t *testing.T) {
 		{"1pw_create_access_request", `{"type":"1pw_create_access_request"}`, "must not contain type"},
 		{"1pw_access_request_status", `{"browser_id":"b"}`, "only supported"},
 		{"1pw_access_request_status", `{"timeout_seconds":121}`, "timeout_seconds"},
+		{"1pw_fill", "", "requires --params"},
+		{"1pw_fill", `{"browser_id":"","page_url":"https://github.com/login"}`, "browser_id"},
 		{"1pw_reconcile_access", `{"acknowledge_unconfirmed":true}`, "unsupported 1Password operation"},
 		{"1pw_fill", `{"browser_id":"b"}`, "page_url"},
 		{"1pw_fill", `{"browser_id":"b","page_url":"https://github.com/login","timeout_ms":0}`, "timeout_ms"},
