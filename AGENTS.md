@@ -25,4 +25,4 @@ Be mindful that these operations affect production resources.
 - The Makefile's `lint` target uses `|| true`, so it always exits 0 even when lint issues exist. Pre-existing lint warnings (errcheck, staticcheck) are present in the codebase and expected.
 - The `go-keyring` dependency requires D-Bus and `libsecret` on Linux. These are pre-installed in the Cloud VM.
 - `kernel create` works locally without authentication. Most other commands (`deploy`, `invoke`, `browsers`, etc.) require a `KERNEL_API_KEY` env var or `kernel login` OAuth flow.
-- Go module path is `github.com/kernel/cli`. The project requires Go 1.25.0 (specified in `go.mod`).
+- Go module path is `github.com/kernel/cli`. The project requires Go 1.27.2 (specified in `go.mod`).
