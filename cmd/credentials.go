@@ -173,10 +173,13 @@ func (c CredentialsCmd) Get(ctx context.Context, in CredentialsGetInput) error {
 		{"Name", cred.Name},
 		{"Domain", cred.Domain},
 		{"Has TOTP Secret", hasTOTP},
+	}
+	tableData = append(tableData, credentialTotpRows(cred)...)
+	tableData = append(tableData, pterm.TableData{
 		{"SSO Provider", ssoProvider},
 		{"Created At", util.FormatLocal(cred.CreatedAt)},
 		{"Updated At", util.FormatLocal(cred.UpdatedAt)},
-	}
+	}...)
 
 	PrintTableNoPad(tableData, true)
 	return nil
@@ -276,8 +279,9 @@ func (c CredentialsCmd) Create(ctx context.Context, in CredentialsCreateInput) e
 		{"Name", cred.Name},
 		{"Domain", cred.Domain},
 		{"Has TOTP Secret", hasTOTP},
-		{"SSO Provider", ssoProvider},
 	}
+	tableData = append(tableData, credentialTotpRows(cred)...)
+	tableData = append(tableData, []string{"SSO Provider", ssoProvider})
 
 	PrintTableNoPad(tableData, true)
 
@@ -287,6 +291,36 @@ func (c CredentialsCmd) Create(ctx context.Context, in CredentialsCreateInput) e
 	}
 
 	return nil
+}
+
+// normalizeTotpAlgorithm validates a TOTP HMAC algorithm and returns its
+// canonical upper-case form (SHA1, SHA256, or SHA512).
+func normalizeTotpAlgorithm(algorithm string) (string, error) {
+	normalized := strings.ToUpper(strings.TrimSpace(algorithm))
+	switch normalized {
+	case "SHA1", "SHA256", "SHA512":
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("invalid --totp-algorithm %q (must be one of SHA1, SHA256, SHA512)", algorithm)
+	}
+}
+
+// credentialTotpRows returns TOTP metadata rows for credentials with a TOTP secret.
+func credentialTotpRows(cred *kernel.Credential) pterm.TableData {
+	if !cred.HasTotpSecret {
+		return nil
+	}
+	rows := pterm.TableData{}
+	if cred.TotpAlgorithm != "" {
+		rows = append(rows, []string{"TOTP Algorithm", string(cred.TotpAlgorithm)})
+	}
+	if cred.TotpDigits > 0 {
+		rows = append(rows, []string{"TOTP Digits", fmt.Sprintf("%d", cred.TotpDigits)})
+	}
+	if cred.TotpPeriod > 0 {
+		rows = append(rows, []string{"TOTP Period", fmt.Sprintf("%ds", cred.TotpPeriod)})
+	}
+	return rows
 }
 
 func (c CredentialsCmd) Update(ctx context.Context, in CredentialsUpdateInput) error {
@@ -426,6 +460,9 @@ Examples:
 
   # Create a credential with TOTP for 2FA
   kernel credentials create --name "my-2fa-site" --domain "example.com" --value "username=myuser" --value "password=mypass" --totp-secret "JBSWY3DPEHPK3PXP"
+
+  # Create a credential with custom TOTP parameters
+  kernel credentials create --name "my-8digit-site" --domain "example.com" --value "username=myuser" --totp-secret "JBSWY3DPEHPK3PXP" --totp-algorithm SHA256 --totp-digits 8 --totp-period 60
 
   # Create a credential with SSO provider
   kernel credentials create --name "google-sso" --domain "example.com" --value "email=user@gmail.com" --value "password=mypass" --sso-provider google`,

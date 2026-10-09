@@ -81,6 +81,14 @@ and requests instead of account. Supply either account or both secrets, never bo
 or stdin; they are write-only and never displayed. Never ask an end user for them.
 Replace the token with items invoke 1pw_update_access_token --spec-file.`
 
+const vaultManagedAuthCredentialHelp = `Managed auth credentials (spec provider "managed_auth"): reference a managed auth
+connection in the vault's project that already has a saved Kernel credential, with
+connection_id (from auth connections list) and an optional description. The item
+stores no values; fill reads the connection's saved credential at fill time, so
+managed auth updates apply immediately. Items are created ready; state.fields lists
+fill binding names without values. No collection form is offered and update returns
+409. Deleting the item leaves the connection and its credential unchanged.`
+
 const vaultCredentialHelp = `Create credentials for a website.
 
 ` + vaultCredentialPathsHelp + `
@@ -120,7 +128,9 @@ Collection URLs are bearer credentials: share only with the intended user.
 
 ` + vaultOnePasswordCredentialHelp + `
 
-` + vaultOnePasswordStoredTokenHelp
+` + vaultOnePasswordStoredTokenHelp + `
+
+` + vaultManagedAuthCredentialHelp
 
 func newVaultCredentialsCommand() *cobra.Command {
 	group := &cobra.Command{Use: "credentials", Short: "Collect, update, and fill user credentials", Long: vaultCredentialHelp}
@@ -159,6 +169,11 @@ JSON
   # 1Password brokered approval (account is the connected credential_account key)
   kernel vaults credentials create user-vault github --spec-file - <<'JSON'
 {"provider":"1password","account":"onepassword","requests":{"version":2,"entries":[{"type":"login","parameters":{"website":"https://github.com"}}]}}
+JSON
+
+  # Managed auth connection with a saved credential
+  kernel vaults credentials create user-vault amazon --spec-file - <<'JSON'
+{"provider":"managed_auth","connection_id":"ma_abc123xyz","description":"Amazon"}
 JSON`
 		}
 		cmd.Flags().String("spec-file", "", "Credential spec JSON file (use '-' for stdin; maximum 128 KiB)")
@@ -294,8 +309,15 @@ func credentialSpecInput(data []byte) (kernel.CredentialVaultItemSpecInputUnionP
 			return kernel.CredentialVaultItemSpecInputUnionParam{}, fmt.Errorf("1Password credential spec requires requests with 1-5 login entries")
 		}
 		return kernel.CredentialVaultItemSpecInputUnionParam{Of1password: &spec}, nil
+	case "managed_auth":
+		var spec kernel.ManagedAuthCredentialVaultItemSpecInputParam
+		if json.Unmarshal(data, &spec) != nil || strings.TrimSpace(spec.ConnectionID) == "" {
+			return kernel.CredentialVaultItemSpecInputUnionParam{}, fmt.Errorf("managed auth credential spec requires connection_id")
+		}
+		spec.Provider = kernel.ManagedAuthCredentialVaultItemSpecInputProviderManagedAuth
+		return kernel.CredentialVaultItemSpecInputUnionParam{OfManagedAuth: &spec}, nil
 	default:
-		return kernel.CredentialVaultItemSpecInputUnionParam{}, fmt.Errorf("credential spec provider must be kernel or 1password")
+		return kernel.CredentialVaultItemSpecInputUnionParam{}, fmt.Errorf("credential spec provider must be kernel, 1password, or managed_auth")
 	}
 }
 

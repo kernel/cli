@@ -45,6 +45,16 @@ type AgentCardWalletSpec = {
   provider_config?: ProviderConfigReference; // omit for Kernel-managed credentials
   user_id?: string; // usr_...; enrolled in this organization under the SAME config
 };
+
+// One card stored with Kernel-managed credentials. Creation returns a card_enrollment
+// action: the cardholder enters the card on a Kernel-hosted page, and the wallet
+// connects once the card is stored. Kernel then enrolls it for an agentic network
+// token when the issuer supports it; until then payment-methods reports
+// capabilities.single_use_card.eligible=false and authorize returns 400.
+// The card number never reaches Kernel or the CLI. No provider config or tokens.
+type KernelWalletSpec = {
+  provider: "kernel";
+};
 `
 
 const vaultCardSpecHelp = `
@@ -71,6 +81,21 @@ type AgentCardCardSpec = {
   currency: string;           // three letters
   card_id?: string;           // opaque AgentCard ID, pass through unchanged; else chosen at approval
   checkout_origin?: string;   // top-level checkout origin for autopilot matching; update omission removes it
+};
+
+// One live purchase with a Kernel-enrolled card. Authorize obtains a network token and
+// one-time code for fill on merchant_url's origin until expires_at. Mastercard purchases
+// need no hosted approval. A Visa purchase returns a spend_approval action: the cardholder
+// approves it with a Visa passkey (the link expires after 30 minutes) before the code is
+// issued. Updates are not supported.
+type KernelCardSpec = {
+  provider: "kernel";
+  wallet: string;             // Kernel wallet item key
+  amount: number;             // integer minor units; 1..50000
+  currency: string;           // ISO 4217 three letters
+  merchant_name: string;      // 1..255 characters
+  merchant_url: string;       // HTTPS merchant checkout URL; fill is locked to its origin
+  merchant_country?: string;  // ISO 3166-1 alpha-2; required for Visa cards
 };
 
 type LinkLineItem = {

@@ -602,6 +602,11 @@ func TestBrowserPoolsUpdate_RejectsInvalidDurableInputs(t *testing.T) {
 			input:   BrowserPoolsUpdateInput{PrivateHosts: []string{"internal.example"}, ClearPrivateHosts: true},
 			wantErr: "cannot specify both --private-host and --clear-private-hosts",
 		},
+		{
+			name:    "conflicting proxy route modes",
+			input:   BrowserPoolsUpdateInput{ProxyRoutes: []string{"a.example=proxy-1"}, ClearProxyRoutes: true},
+			wantErr: "cannot specify both --proxy-route and --clear-proxy-routes",
+		},
 	}
 
 	for _, tt := range tests {
@@ -639,6 +644,48 @@ func TestBrowserPoolsCreate_WithPrivateHosts(t *testing.T) {
 	assert.Equal(t, []string{"*.example.ts.net", "100.64.0.0/10"}, captured.Network.PrivateHosts)
 }
 
+func TestBrowserPoolsCreate_WithProxyRoutes(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolNewParams
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: "pool-routes"}, nil
+		},
+	}
+	c := BrowserPoolsCmd{client: fake}
+
+	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{
+		Size:        1,
+		ProxyRoutes: []string{"api.ipify.org,*.ipify.org=name:my-dc-proxy", "other.example=proxy-456"},
+	}))
+	require.Len(t, captured.Network.ProxyRoutes, 2)
+	assert.Equal(t, []string{"api.ipify.org", "*.ipify.org"}, captured.Network.ProxyRoutes[0].Hosts)
+	assert.Equal(t, "my-dc-proxy", captured.Network.ProxyRoutes[0].Proxy.Name.Value)
+	assert.Equal(t, "proxy-456", captured.Network.ProxyRoutes[1].Proxy.ID.Value)
+	assert.Empty(t, captured.Network.PrivateHosts)
+
+	assert.Error(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, ProxyRoutes: []string{"host="}}))
+}
+
+func TestBrowserPoolsGet_ShowsProxyRoutes(t *testing.T) {
+	setupStdoutCapture(t)
+
+	fake := &FakeBrowserPoolsService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			var pool kernel.BrowserPool
+			err := json.Unmarshal([]byte(`{"id":"pool-1","browser_pool_config":{"size":1,"network":{"proxy_routes":[{"hosts":["*.ipify.org"],"proxy":{"name":"my-dc-proxy"}}]}}}`), &pool)
+			return &pool, err
+		},
+	}
+	require.NoError(t, (BrowserPoolsCmd{client: fake}).Get(context.Background(), BrowserPoolsGetInput{IDOrName: "pool-1"}))
+
+	out := outBuf.String()
+	assert.Contains(t, out, "Proxy Routes")
+	assert.Contains(t, out, "*.ipify.org = my-dc-proxy")
+}
+
 func TestBrowserPoolsUpdate_PrivateHostModes(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -654,6 +701,26 @@ func TestBrowserPoolsUpdate_PrivateHostModes(t *testing.T) {
 			name:     "restore defaults",
 			input:    BrowserPoolsUpdateInput{ClearPrivateHosts: true},
 			wantJSON: `"network":{}`,
+		},
+		{
+			name:     "replace proxy routes",
+			input:    BrowserPoolsUpdateInput{ProxyRoutes: []string{"*.ipify.org=name:dc"}},
+			wantJSON: `"network":{"proxy_routes":[{"hosts":["*.ipify.org"],"proxy":{"name":"dc"}}]}`,
+		},
+		{
+			name:     "routes with private hosts",
+			input:    BrowserPoolsUpdateInput{PrivateHosts: []string{"10.0.0.0/8"}, ProxyRoutes: []string{"a.example=proxy-1"}},
+			wantJSON: `"network":{"private_hosts":["10.0.0.0/8"],"proxy_routes":[{"hosts":["a.example"],"proxy":{"id":"proxy-1"}}]}`,
+		},
+		{
+			name:     "clear proxy routes",
+			input:    BrowserPoolsUpdateInput{ClearProxyRoutes: true},
+			wantJSON: `"network":{"proxy_routes":[]}`,
+		},
+		{
+			name:     "clear proxy routes keeps private hosts",
+			input:    BrowserPoolsUpdateInput{PrivateHosts: []string{"10.0.0.0/8"}, ClearProxyRoutes: true},
+			wantJSON: `"network":{"private_hosts":["10.0.0.0/8"],"proxy_routes":[]}`,
 		},
 	}
 

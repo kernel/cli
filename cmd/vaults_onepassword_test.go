@@ -79,7 +79,7 @@ func TestCredentialCreateOnePassword(t *testing.T) {
 		{`{"provider":"1password","account":"onepassword"}`, "1-5 login entries"},
 		{`{"provider":"1password","access_token":"token-secret","integration_key":"key-secret","website":"https://github.com"}`, "1-5 login entries"},
 		{`{"provider":"1password","account":"onepassword","requests":{"version":2,"entries":[` + strings.Repeat(entry+",", 5) + entry + `]}}`, "1-5 login entries"},
-		{`{"provider":"lastpass","fields":[{"name":"password","type":"password"}]}`, "kernel or 1password"},
+		{`{"provider":"lastpass","fields":[{"name":"password","type":"password"}]}`, "kernel, 1password, or managed_auth"},
 	} {
 		_, _, err := executeVaultCommand(t, client, "vaults", "credentials", "create", "user", "github", "--spec-file", credentialSpecFile(t, tc.spec))
 		require.ErrorContains(t, err, tc.err, tc.spec)
@@ -135,10 +135,12 @@ func TestOnePasswordOperationRequests(t *testing.T) {
 		operation, params, body, item string
 	}{
 		{"1pw_create_access_request", `{"goal":"Manage billing","reason":"Sign in","keywords":["personal"]}`, `{"type":"1pw_create_access_request","goal":"Manage billing","reason":"Sign in","keywords":["personal"]}`, onePasswordCredentialFixture},
+		{"1pw_create_access_request", "", `{"type":"1pw_create_access_request"}`, onePasswordCredentialFixture},
 		{"1pw_access_request_status", `{"timeout_seconds":60}`, `{"type":"1pw_access_request_status","timeout_seconds":60}`, onePasswordCredentialFixture},
+		{"1pw_access_request_status", "", `{"type":"1pw_access_request_status"}`, onePasswordCredentialFixture},
 		{"1pw_recover", "", `{"type":"1pw_recover"}`, onePasswordAccountFixture},
 	} {
-		t.Run(tc.operation, func(t *testing.T) {
+		t.Run(tc.operation+tc.params, func(t *testing.T) {
 			item := strings.Replace(tc.item, `"available_operations":[]`, `"available_operations":[{"type":"1pw_access_request_status","description":"x"}]`, 1)
 			item = strings.Replace(item, `"1pw_access_request_status"`, `"`+tc.operation+`"`, 1)
 			posts := 0
@@ -166,12 +168,13 @@ func TestOnePasswordOperationRequests(t *testing.T) {
 func TestOnePasswordOperationValidation(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
 	for _, tc := range []struct{ operation, params, err string }{
-		{"1pw_create_access_request", "", "requires --params"},
 		{"1pw_create_access_request", `{"browser_id":"b"}`, "only supported"},
 		{"1pw_create_access_request", `{"password":"x"}`, "only supported"},
 		{"1pw_create_access_request", `{"type":"1pw_create_access_request"}`, "must not contain type"},
 		{"1pw_access_request_status", `{"browser_id":"b"}`, "only supported"},
 		{"1pw_access_request_status", `{"timeout_seconds":121}`, "timeout_seconds"},
+		{"1pw_fill", "", "requires --params"},
+		{"1pw_fill", `{"browser_id":"","page_url":"https://github.com/login"}`, "browser_id"},
 		{"1pw_reconcile_access", `{"acknowledge_unconfirmed":true}`, "unsupported 1Password operation"},
 		{"1pw_fill", `{"browser_id":"b"}`, "page_url"},
 		{"1pw_fill", `{"browser_id":"b","page_url":"https://github.com/login","timeout_ms":0}`, "timeout_ms"},

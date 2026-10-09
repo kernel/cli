@@ -118,11 +118,13 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 		RunE: func(cmd *cobra.Command, args []string) error {
 			limit, _ := cmd.Flags().GetInt64("limit")
 			offset, _ := cmd.Flags().GetInt64("offset")
+			query, _ := cmd.Flags().GetString("query")
 			project, _ := cmd.Flags().GetString("project")
-			return getVaultsHandler(cmd).List(cmd.Context(), limit, offset, resolveProjectSelection(project), vaultOutput(cmd))
+			return getVaultsHandler(cmd).List(cmd.Context(), limit, offset, query, resolveProjectSelection(project), vaultOutput(cmd))
 		}}
 	list.Flags().Int64("limit", 20, "Maximum vaults to return (1-100)")
 	list.Flags().Int64("offset", 0, "Number of vaults to skip")
+	list.Flags().String("query", "", "Case-insensitive substring match against vault name; IDs match by exact value")
 	addVaultJSONOutputFlag(list)
 
 	get := &cobra.Command{Use: "get <vault>", Short: "Get a vault by ID or name", Args: cobra.ExactArgs(1), PreRunE: vaultPreRun,
@@ -213,8 +215,9 @@ and never retry automatically. 400/403/404/409 rejections mean the tool was not 
 
 1Password credentials (see credentials --help) use --params or --spec-file without type:
 1pw_create_access_request: no browser needed; optional goal (<=140), reason (<=100),
-  keywords (1-5 strings); reason and keywords only for single-entry credentials. Present the returned onepassword:// approval link and instructions to
-  the account owner unchanged; invoke it once per credential.
+  keywords (1-5 strings); reason and keywords only for single-entry credentials.
+  Present the returned onepassword:// approval link and instructions to the account
+  owner unchanged; invoke it once per credential.
 1pw_access_request_status: no browser needed; optional timeout_seconds 0-120 (default 10).
   Check status after the account owner has the approval link.
 1pw_fill: browser_id and the exact page_url of one open login page on a requested
@@ -272,7 +275,7 @@ JSON
 	items.AddCommand(itemList, itemGet, itemEvents, invoke, newVaultWebMCPCommand(), newVaultDeleteCommand(true))
 
 	wallets := &cobra.Command{Use: "wallets", Short: "Connect provider wallets and inspect funding methods"}
-	walletCreate := &cobra.Command{Use: "create <vault> <key> --provider <link|agentcard> --spec '<json>'", Short: "Create a wallet and display its connection or enrollment action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+	walletCreate := &cobra.Command{Use: "create <vault> <key> --provider <link|agentcard|kernel> --spec '<json>'", Short: "Create a wallet and display its connection or enrollment action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
 		Long: "Create a wallet at an immutable key and follow the returned provider action.\n" + vaultSpecHelp + vaultWalletSpecHelp,
 		Example: `  kernel vaults wallets create checkout wallet-1 \
     --provider link --spec '{
@@ -283,7 +286,10 @@ JSON
     }' --open
 
   kernel vaults wallets create checkout wallet-1 \
-    --provider agentcard --spec '{}'`,
+    --provider agentcard --spec '{}'
+
+  kernel vaults wallets create checkout wallet-2 \
+    --provider kernel --spec '{}' --open`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			spec, err := vaultWalletSpecFromFlags(cmd)
 			if err != nil {
@@ -337,13 +343,14 @@ func newVaultCardCommand(update bool) *cobra.Command {
 	if update {
 		use, short = "update", "Update a card spec when the API permits configuration"
 	}
-	cmd := &cobra.Command{Use: use + " <vault> <key> --provider <link|agentcard> --spec '<json>'", Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: short + `. Neither create nor update authorizes a Link card.
+	cmd := &cobra.Command{Use: use + " <vault> <key> --provider <link|agentcard|kernel> --spec '<json>'", Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+		Long: short + `. Neither create nor update authorizes a Link or Kernel card.
 Requested cards accept a replacement spec. Pending issuance updates preserve omitted
 optional fields; explicit empty lists clear them. The API restricts fields after
 authorization starts; wallet/provider bindings cannot change. An uncertain update
 enters recovery_required and must not be retried. Checkout cards can be edited
-between authorizations. Identical creates return existing state without resetting it.
+between authorizations. Kernel cards cannot be updated; delete and create a new item.
+Identical creates return existing state without resetting it.
 Never reconfigure the same item to retry a failed, timed-out, rejected, or indeterminate payment.
 A recovery item that permits abandonment must be deleted after explicit user confirmation before creating a replacement.
 ` + vaultSpecHelp + vaultCardSpecHelp,
@@ -359,6 +366,9 @@ A recovery item that permits abandonment must be deleted after explicit user con
 			if err != nil {
 				return err
 			}
+			if provider, _ := cmd.Flags().GetString("provider"); update && provider == "kernel" {
+				return fmt.Errorf("Kernel cards cannot be updated; delete the item and create a new one")
+			}
 			return getVaultsHandler(cmd).SaveCard(cmd.Context(), args[0], args[1], param.Override[kernel.CardVaultItemSpecUnionParam](spec), update, vaultOutput(cmd))
 		}}
 	addVaultSpecFlags(cmd)
@@ -367,7 +377,7 @@ A recovery item that permits abandonment must be deleted after explicit user con
 }
 
 func addVaultSpecFlags(cmd *cobra.Command) {
-	cmd.Flags().String("provider", "", "Provider: link or agentcard (required)")
+	cmd.Flags().String("provider", "", "Provider: link, agentcard, or kernel (required)")
 	cmd.Flags().String("spec", "", "Raw JSON specification object (required); see types and examples above")
 	_ = cmd.MarkFlagRequired("provider")
 	_ = cmd.MarkFlagRequired("spec")
@@ -375,8 +385,8 @@ func addVaultSpecFlags(cmd *cobra.Command) {
 
 func vaultSpecFromFlags(cmd *cobra.Command) (map[string]json.RawMessage, error) {
 	provider, _ := cmd.Flags().GetString("provider")
-	if provider != "link" && provider != "agentcard" {
-		return nil, fmt.Errorf("--provider must be link or agentcard")
+	if provider != "link" && provider != "agentcard" && provider != "kernel" {
+		return nil, fmt.Errorf("--provider must be link, agentcard, or kernel")
 	}
 	raw, _ := cmd.Flags().GetString("spec")
 	var spec map[string]json.RawMessage

@@ -44,8 +44,8 @@ var vaultItemFields = vaultOutputFields{
 	"expanded":             {"payment_methods": vaultMethodFields},
 	"spec": {
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil, "checkout_origin": nil,
-		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil,
-		"context": nil, "expires_at": nil, "description": nil, "account": nil,
+		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil, "merchant_country": nil,
+		"context": nil, "expires_at": nil, "description": nil, "account": nil, "connection_id": nil,
 		"requests":        onePasswordRequestFields,
 		"fields":          vaultFieldsOf("name label type required sensitive"),
 		"provider_config": vaultFieldsOf("id name"),
@@ -62,8 +62,8 @@ var vaultItemFields = vaultOutputFields{
 			"id": nil, "state": nil, "goal": nil, "createdAt": nil, "has_autofill_token": nil, "granted_count": nil,
 			"request": onePasswordRequestFields, "entries": onePasswordRequestEntryFields,
 		},
-		"fields":        {"*": vaultFieldsOf("has_value")},
-		"masks":         vaultFieldsOf("brand last4"),
+		"fields":        {"*": vaultFieldsOf("has_value type")},
+		"masks":         vaultFieldsOf("brand last4 token_last4"),
 		"aliases":       vaultFieldsOf("number cvc exp_month exp_year"),
 		"preparation":   vaultFieldsOf("id status browser_id merchant_origin environment psp created_at expires_at approval_url"),
 		"authorization": vaultFieldsOf("id status psp merchant amount amount_cents currency created_at expires_at approval_url browser_id reason psp_error_code expected_cents actual_cents amount_authority amount_verified charged_amount_cents charged_currency charged_kind replay_attempted replay_status replay_delivered"),
@@ -155,7 +155,8 @@ func preservePublicCredentialValues(source, result vaultJSON) error {
 		Sensitive *bool  `json:"sensitive"`
 	}
 	var spec struct {
-		Fields []definition `json:"fields"`
+		Provider string       `json:"provider"`
+		Fields   []definition `json:"fields"`
 	}
 	var values struct {
 		Fields map[string]struct {
@@ -164,6 +165,10 @@ func preservePublicCredentialValues(source, result vaultJSON) error {
 		} `json:"fields"`
 	}
 	if json.Unmarshal(source["spec"], &spec) != nil || json.Unmarshal(source["state"], &values) != nil || values.Fields == nil {
+		return nil
+	}
+	// Managed auth state lists binding names and types only; values are never returned.
+	if spec.Provider == "managed_auth" {
 		return nil
 	}
 	definitions := make(map[string]definition, len(spec.Fields))
@@ -339,6 +344,8 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 					}
 				}
 			}
+		} else if item.Spec.Provider == "managed_auth" {
+			rows = append(rows, []string{"Managed auth connection (immutable)", item.Spec.ConnectionID})
 		} else {
 			pterm.Info.Println("Use -o json for field definitions, presence, and non-sensitive values; sensitive values are omitted")
 		}
@@ -370,6 +377,18 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		}
 		if item.Spec.Provider == "agentcard" && item.Spec.CheckoutOrigin != "" {
 			rows = append(rows, []string{"Checkout origin", item.Spec.CheckoutOrigin})
+		}
+		if item.Spec.Provider == "kernel" && item.Spec.MerchantURL != "" {
+			rows = append(rows, []string{"Merchant URL", item.Spec.MerchantURL})
+		}
+		if item.Spec.Provider == "kernel" && item.Spec.MerchantCountry != "" {
+			rows = append(rows, []string{"Merchant country", item.Spec.MerchantCountry})
+		}
+		if masks := item.State.Masks; masks.Last4 != "" || masks.TokenLast4 != "" {
+			rows = append(rows, []string{"Card last4", util.OrDash(masks.Last4)})
+			if masks.TokenLast4 != "" {
+				rows = append(rows, []string{"Network token last4", masks.TokenLast4})
+			}
 		}
 	}
 	if item.State.JSON.Domains.Valid() {
@@ -445,6 +464,10 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 			pterm.Printf("Approval instructions:\n%s\n", item.Action.Instructions)
 		}
 		pterm.Info.Println("Ready means the account owner approved access, not that sign-in succeeded. 1pw_fill submits the form; inspect the page afterward. Never retry a request or fill automatically; after an uncertain outcome, do not delete and recreate the item.")
+		return
+	}
+	if item.Type == "credential" && item.Spec.Provider == "managed_auth" {
+		pterm.Info.Println("Fill reads the managed auth connection's saved credential at fill time; use -o json for fill binding names. Ready means a saved credential exists, not that login succeeded. Fill only when advertised; fill does not submit the form.")
 		return
 	}
 	if item.Type == "credential" {

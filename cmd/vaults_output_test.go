@@ -104,6 +104,26 @@ func TestVaultOutputLinkHasNoAliases(t *testing.T) {
 	}
 }
 
+func TestVaultOutputKernelCardMerchantCountry(t *testing.T) {
+	var item kernel.VaultItemUnion
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"id":"card-id","key":"order-1","type":"card",
+		"spec":{"provider":"kernel","wallet":"wallet-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://shop.example/checkout","merchant_country":"US"},
+		"state":{"provider":"kernel","status":"pending_authorization"},
+		"available_operations":[],"available_expansions":[]
+	}`), &item))
+	buf := capturePtermOutput(t)
+	require.NoError(t, printVaultItem(&item, ""))
+	assert.Contains(t, buf.String(), "Merchant country")
+	assert.Contains(t, buf.String(), "US")
+	out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
+	var decoded struct {
+		Spec vaultJSON `json:"spec"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &decoded))
+	assert.JSONEq(t, `"US"`, string(decoded.Spec["merchant_country"]))
+}
+
 func TestVaultOutputAgentCardAuthorizationIsNotPaymentSuccess(t *testing.T) {
 	var item kernel.VaultItemUnion
 	require.NoError(t, json.Unmarshal([]byte(`{

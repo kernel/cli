@@ -129,7 +129,7 @@ Commands with JSON output support:
 - **Proxies**: `create`, `list`, `get`, `update`, `check`
 - **API Keys**: `create`, `list`, `get`, `update`, `rotate`
 - **Auth Connections**: `timeline`
-- **Vaults**: `create`, `list`, `get`, `credentials create/update`, `items list/get/events/invoke` (including `collect`, `fill`, and `prepare_checkout`), `wallets create/payment-methods`, `cards create/update` (display-safe public fields only)
+- **Vaults**: `create`, `list`, `get`, `credentials create/update`, `items list/get/events/invoke` (including `collect`, `fill`, `webmcp_invoke`, and `prepare_checkout`), `wallets create/payment-methods`, `cards create/update` (display-safe public fields only)
 - **Projects**: `update`
 - **Org**: `limits get/set`
 - **Apps**: `list`, `history`
@@ -259,16 +259,17 @@ kernel search contents srch_01jsearchresult --limit 3 --content-source browser
 
 - `kernel browsers list` - List running browsers
   - `--query <q>` - Search by name, session ID, profile ID, proxy ID, or pool name
-  - `--region us-east|eu-west|ap-southeast` - Filter by geographic region; omit to list sessions in all regions
+  - `--region us-east|us-west|eu-west|ap-southeast` - Filter by geographic region; omit to list sessions in all regions
   - `--tag <KEY=VALUE>` - Filter by tag, repeatable; a session must match every pair
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel browsers create` - Create a new browser session
   - `-s, --stealth` - Launch browser in stealth mode to avoid detection
   - `-H, --headless` - Launch browser without GUI access
   - `--kiosk` - Launch browser in kiosk mode
-  - `--region us-east|eu-west|ap-southeast` - Geographic region for the session. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to `us-east`.
+  - `--region us-east|us-west|eu-west|ap-southeast` - Geographic region for the session. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to `us-east`.
   - `--private-host <host>` - Destination the browser reaches directly through the session's own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel the session joins (repeatable or comma-separated, max 32). Accepts hostname patterns (`*.example.ts.net`), IPs (`10.1.30.63`, `[fd00::1]`), and private CIDRs (`100.64.0.0/10`). Replaces the default private ranges (RFC1918, `100.64.0.0/10`, `fc00::/7`); omit to keep them. Fixed once the session is created. Unrelated to a proxy's `--bypass-host`, which only chooses between upstream proxy and Kernel-managed direct egress.
-  - `--proxy-route '<host>[,<host>...]=<proxy>'` - Route matching browser requests through a selected proxy (repeatable, max 10 routes with 1–50 hosts each). Example: `--proxy-route 'api.ipify.org,*.ipify.org=name:my-dc-proxy'`. The proxy is an ID by default; use `id:<id>` or `name:<name>` explicitly. Exact hostnames beat wildcards; longer wildcard suffixes beat shorter ones. `*.example.com` matches subdomains, not `example.com`. Matching ignores case and ports. Unmatched hosts use `--proxy-*` or default egress, while `--start-url` uses the top-level proxy during setup. Routes are create-only and are not available on pool sessions.
+  - `--allowed-host <host>` - Set an egress allowlist at creation: the only destinations the browser may reach through Kernel-managed egress (repeatable or comma-separated, max 100). Other destinations are refused with a 403 whose `X-Kernel-Proxy-Error` header is `network_policy_denied`. Filters Kernel-managed egress only, not all browser VM traffic. Accepts exact hostnames (`example.com`), a leading wildcard that matches subdomains but not the domain itself (`*.example.com`), public IPs (`8.8.8.8`, `[2001:4860:4860::8888]`), and public CIDRs (`8.8.4.0/24`); no ports, paths, or schemes. `--start-url` must be allowed. Omit for unfiltered egress; an empty list is invalid. Requires proxy v3; cannot be combined with `--pool-id` or `--pool-name`, even with `--yes`. An existing list can be replaced or removed later with `browsers update --allowed-host` / `--clear-allowed-hosts`, but cannot be added later if omitted at creation or removed.
+  - `--proxy-route '<host>[,<host>...]=<proxy>'` - Route matching browser requests through a selected proxy (repeatable, max 10 routes with 1–50 hosts each). Example: `--proxy-route 'api.ipify.org,*.ipify.org=name:my-dc-proxy'`. The proxy is an ID by default; use `id:<id>` or `name:<name>` explicitly. Exact hostnames beat wildcards; longer wildcard suffixes beat shorter ones. `*.example.com` matches subdomains, not `example.com`. Matching ignores case and ports. Unmatched hosts use `--proxy-*` or default egress. Routes apply from the start of the session, including to `--start-url`. Routes are create-only and cannot be combined with `--pool-id`/`--pool-name`; configure them on the pool instead.
   - `--start-url <url>` - Initial page to open on launch
   - `--proxy-id <id>` / `--proxy-name <name>` - Use that proxy for the session regardless of stealth (mutually exclusive with each other and with `--proxy-mode`)
   - `--proxy-mode direct|default` - Egress mode instead of a selected proxy: `direct` for no proxy regardless of stealth, `default` for the stealth-derived default (Kernel's stealth proxy with `--stealth`, direct egress otherwise). Omit all proxy flags to get the default.
@@ -303,6 +304,8 @@ kernel search contents srch_01jsearchresult --limit 3 --content-source browser
   - `--proxy-mode direct|default` - Change egress mode: `direct` for no proxy regardless of stealth, `default` to restore the browser default after using a selected proxy. Changing the proxy does not change stealth or CAPTCHA solver behavior.
   - `--clear-proxy` - Drop the selected proxy and restore the browser default (same as `--proxy-mode=default`)
   - `--disable-default-proxy` - Connect directly instead of through the default stealth proxy (same as `--proxy-mode=direct`); use `--disable-default-proxy=false` to restore the default
+  - `--allowed-host <host>` - Replace an existing egress allowlist only (repeatable or comma-separated, max 100), using the same entry rules as `browsers create --allowed-host`. PATCH cannot add an allowlist to a browser created without one or after removal. Omission leaves the existing list unchanged; an empty list is invalid. Applies without restarting the browser: new requests to destinations no longer allowed are normally refused within a few seconds and open connections to them are closed within about 30 seconds, but propagation can take up to 10 minutes during a deployment. Filters Kernel-managed egress only, not all browser VM traffic. `--start-url` in the same update must be allowed by the new list. Requires a browser created with proxy v3; not supported on pooled browsers. Mutually exclusive with `--clear-allowed-hosts`
+  - `--clear-allowed-hosts` - Remove the egress allowlist and return to unfiltered egress. Once removed, an allowlist cannot be added back to that browser
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers curl <id> <url>` - Make HTTP requests through a browser session's Chrome network stack
   - `-X, --request <method>` - HTTP method (default: GET; defaults to POST when `--data` is set)
@@ -383,6 +386,17 @@ text/email values, definitions, version, and `has_value`. Sensitive values and T
 seeds are omitted.
 Credential spec input is capped at 128 KiB; write errors are redacted.
 
+To reuse a managed auth connection's saved credential, create a credential with
+provider `managed_auth` and the connection ID from `kernel auth connections list`.
+The item stores no values and reads the connection's credential at fill time; it is
+created `ready`, `state.fields` lists fill binding names, and `update` returns 409:
+
+```sh
+kernel vaults credentials create user-vault amazon --spec-file - <<'JSON'
+{"provider":"managed_auth","connection_id":"<connection-id>","description":"Amazon"}
+JSON
+```
+
 Vault names, item keys, and project ownership are immutable. Optionally select a project with
 `--project <id-or-name>` or `KERNEL_PROJECT`; otherwise, the API resolves the project from your
 credentials and its defaults (the default project for org-wide credentials, not all projects).
@@ -394,7 +408,7 @@ cannot switch projects.
 | Command | Purpose / flags |
 | --- | --- |
 | `kernel vaults create --name <name>` | Create or retrieve the vault with that immutable name |
-| `kernel vaults list` | `--limit 1..100` (default 20), `--offset`; JSON includes `vaults` and optional `next_offset` |
+| `kernel vaults list` | `--limit 1..100` (default 20), `--offset`, `--query` (name substring or exact ID); JSON includes `vaults` and optional `next_offset` |
 | `kernel vaults get <vault>` | Get by ID or name |
 | `kernel vaults delete <vault>` | Invalidate the vault and all its items; `--yes` skips confirmation |
 | `kernel vaults wallets create <vault> <key> --provider link\|agentcard --spec '<json>'` | Connect/enroll a wallet using its provider's spec; `--open` opens a returned HTTPS action URL |
@@ -775,7 +789,7 @@ exists.
 ### Browser Pools
 
 - `kernel browser-pools list` - List browser pools
-  - `--region us-east|eu-west|ap-southeast` - Filter by geographic region; omit to list pools in all regions
+  - `--region us-east|us-west|eu-west|ap-southeast` - Filter by geographic region; omit to list pools in all regions
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel browser-pools create` - Create a browser pool
   - `--name <name>` - Optional unique name for the pool
@@ -785,14 +799,14 @@ exists.
   - `--stealth`, `--headless`, `--kiosk` - Default pool configuration
   - `--memory 8GiB|16GiB` - Memory for headful browsers in the pool (default 8GiB)
   - `--refresh-on-profile-update` - Flush idle browsers when the pool's profile is updated (requires a profile)
-  - `--profile-id`, `--profile-name`, `--proxy-id`, `--region`, `--start-url`, `--extension`, `--viewport`, `--private-host` - Same semantics as `kernel browsers create`
+  - `--profile-id`, `--profile-name`, `--proxy-id`, `--region`, `--start-url`, `--extension`, `--viewport`, `--private-host`, `--proxy-route` - Same semantics as `kernel browsers create` (proxy routes apply to every browser warmed into the pool)
   - `--chrome-policy <json>` / `--chrome-policy-file <path>` - Custom Chrome enterprise policy applied to every browser in the pool, as a JSON object or from a file (`-` for stdin). Same semantics as `kernel browsers create`.
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Telemetry applied to browsers warmed into the pool. Same semantics as `kernel browsers create`.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools get <id-or-name>` - Get pool details
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools update <id-or-name>` - Update pool configuration
-  - Same flags as create (except `--region`, which is fixed at creation and cannot be updated) plus `--clear-profile`, `--clear-proxy`, `--clear-start-url`, `--clear-extensions`, `--clear-chrome-policy`, and `--clear-private-hosts` for removing durable configuration. `--clear-private-hosts` restores the default private IP ranges. `--fill-rate 0` pauses automatic filling. `--discard-all-idle` discards all idle browsers and refills the pool. `--telemetry`, `--memory`, and private-host updates only apply to browsers warmed after the update.
+  - Same flags as create (except `--region`, which is fixed at creation and cannot be updated) plus `--clear-profile`, `--clear-proxy`, `--clear-start-url`, `--clear-extensions`, `--clear-chrome-policy`, `--clear-private-hosts`, and `--clear-proxy-routes` for removing durable configuration. `--clear-private-hosts` removes the whole network configuration (restoring the default private IP ranges and dropping proxy routes). `--private-host` and `--proxy-route` replace the pool's whole network configuration, so pass both to keep both. `--fill-rate 0` pauses automatic filling. `--discard-all-idle` discards all idle browsers and refills the pool. `--telemetry`, `--memory`, and network updates only apply to browsers warmed after the update.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools delete <id-or-name>` - Delete a pool
   - `--force` - Force delete even if browsers are leased
@@ -1173,21 +1187,21 @@ Managed auth connections (`kernel auth connections`). The commands below are new
   - `--per-page <n>` - Items per page (default: 20)
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel auth connections create` - New flags:
-  - `--region us-east|eu-west|ap-southeast` - Region for this connection's login, reauth, and health-check browser sessions. Defaults to `us-east`.
+  - `--region us-east|us-west|eu-west|ap-southeast` - Region for this connection's login, reauth, and health-check browser sessions. Defaults to `us-east`.
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy configuration for this connection's login, reauth, and health-check browser sessions (mutually exclusive). Omit to derive the default from stealth.
   - `--stealth` - Whether those browser sessions run in stealth mode (default: true); use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Default telemetry for this connection's browser sessions. Same semantics as `kernel browsers create`
   - `--telemetry-export-otlp <id-or-name>` - Export this connection's captured telemetry over OTLP to one of the org's configured destinations. Implies `--telemetry=all` when `--telemetry` is not set. Use `=off` to disable export.
   - `--telemetry-storage on|off` - Whether this connection's sessions persist captured telemetry to Kernel storage (default on). `off` requires `--telemetry-export-otlp <id-or-name>` in the same command.
 - `kernel auth connections update <id>` - New flags:
-  - `--region us-east|eu-west|ap-southeast` - Update the region for browser sessions created after this command. Active sessions don't move.
+  - `--region us-east|us-west|eu-west|ap-southeast` - Update the region for browser sessions created after this command. Active sessions don't move.
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy configuration for future browser sessions (mutually exclusive). Use `--proxy-mode=default` to drop a selected proxy rather than passing an empty value.
   - `--stealth` - Set whether future browser sessions run in stealth mode; use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Update telemetry for future browser sessions
   - `--telemetry-export-otlp <id-or-name>` - Update where future sessions export captured telemetry. Naming a destination requires passing `--telemetry` in the same command, since the API validates capture and export together and enabling capture here would replace the connection's current category selection. Use `=off` to disable export.
   - `--telemetry-storage on|off` - Update whether future sessions persist captured telemetry to Kernel storage. Requires `--telemetry` in the same command; `off` also requires an export destination.
 - `kernel auth connections login <id>` - New flags:
-  - `--region us-east|eu-west|ap-southeast` - Region override for this login only. Omit it to inherit the connection region.
+  - `--region us-east|us-west|eu-west|ap-southeast` - Region override for this login only. Omit it to inherit the connection region.
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy override for this login's browser session (mutually exclusive); omitted properties inherit the connection defaults
   - `--stealth` - Stealth override for this login's browser session; use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Telemetry override for this login only, merged onto the connection's config

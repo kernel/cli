@@ -41,7 +41,11 @@ func vaultWalletSpecFromFlags(cmd *cobra.Command) (kernel.VaultItemUpsertParamsB
 		return kernel.VaultItemUpsertParamsBodyWalletSpecUnion{}, err
 	}
 	provider, _ := cmd.Flags().GetString("provider")
-	if provider == "agentcard" {
+	if provider == "kernel" {
+		if reference != nil || cmd.Flags().Changed("tokens-file") {
+			return kernel.VaultItemUpsertParamsBodyWalletSpecUnion{}, fmt.Errorf("Kernel wallets use Kernel-managed credentials; omit provider config and --tokens-file")
+		}
+	} else if provider == "agentcard" {
 		if cmd.Flags().Changed("tokens-file") {
 			return kernel.VaultItemUpsertParamsBodyWalletSpecUnion{}, fmt.Errorf("--tokens-file is only for imported Link wallet grants")
 		}

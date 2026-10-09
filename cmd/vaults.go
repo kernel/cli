@@ -51,12 +51,16 @@ func (c VaultsCmd) Get(ctx context.Context, vault, output string) error {
 	return printVault(v, output)
 }
 
-func (c VaultsCmd) List(ctx context.Context, limit, offset int64, project, output string) error {
+func (c VaultsCmd) List(ctx context.Context, limit, offset int64, query, project, output string) error {
 	if limit < 1 || limit > 100 || offset < 0 {
 		return fmt.Errorf("--limit must be between 1 and 100; --offset must be non-negative")
 	}
 	var response *http.Response
-	page, err := c.vaults.List(ctx, kernel.VaultListParams{Limit: kernel.Opt(limit), Offset: kernel.Opt(offset)}, option.WithMaxRetries(0), option.WithResponseInto(&response))
+	params := kernel.VaultListParams{Limit: kernel.Opt(limit), Offset: kernel.Opt(offset)}
+	if query != "" {
+		params.Query = kernel.Opt(query)
+	}
+	page, err := c.vaults.List(ctx, params, option.WithMaxRetries(0), option.WithResponseInto(&response))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -88,7 +92,11 @@ func (c VaultsCmd) List(ctx context.Context, limit, offset int64, project, outpu
 		if project != "" {
 			projectFlag = fmt.Sprintf(" --project %q", project)
 		}
-		pterm.Printf("Next: kernel%s vaults list --limit %d --offset %d\n", projectFlag, limit, pagination.NextOffset)
+		queryFlag := ""
+		if query != "" {
+			queryFlag = fmt.Sprintf(" --query %q", query)
+		}
+		pterm.Printf("Next: kernel%s vaults list --limit %d --offset %d%s\n", projectFlag, limit, pagination.NextOffset, queryFlag)
 	}
 	return nil
 }

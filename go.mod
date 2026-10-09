@@ -1,6 +1,6 @@
 module github.com/kernel/cli
 
-go 1.25.0
+go 1.27.2
 
 require (
 	github.com/Masterminds/semver/v3 v3.4.0
@@ -9,7 +9,7 @@ require (
 	github.com/charmbracelet/lipgloss/v2 v2.0.0-beta.1
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/joho/godotenv v1.5.1
-	github.com/kernel/kernel-go-sdk v0.121.0
+	github.com/kernel/kernel-go-sdk v0.121.1-0.20261009121157-454206ab83bc
 	github.com/klauspost/compress v1.18.5
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/pterm/pterm v0.12.80
