@@ -222,7 +222,7 @@ and never retry automatically. 400/403/404/409 rejections mean the tool was not 
   origin; entry_id when several approved entries share that origin; optional
   timeout_ms 1-30000. The extension selects fields and submits. fill_submitted exits 0
   and does not confirm sign-in; inspect the page. fill_failed and fill_unknown exit
-  nonzero. After fill_unknown, do not retry in the same browser.
+  nonzero. After fill_unknown, inspect the page to see the result of the fill.
 1pw_update_access_token (stored-token credentials only): --spec-file, never --params,
   with access_token only.
 1pw_recover (credential accounts, no parameters): returns a new 1Password link that

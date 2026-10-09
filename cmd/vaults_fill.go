@@ -201,7 +201,7 @@ func parseVaultFillResult(raw json.RawMessage, count int) (*vaultFillResult, err
 	return &result, nil
 }
 
-const onePasswordFillUncertain = "the form may have been submitted; inspect the browser and do not retry in the same browser"
+const onePasswordFillUncertain = "the form may have been filled or submitted; inspect the page to see the result of the fill"
 
 const onePasswordFillNotSubmitted = "nothing was submitted by this request; inspect the item, browser, and page_url before deciding on a new fill; do not automatically retry"
 

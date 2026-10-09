@@ -62,8 +62,9 @@ const vaultOnePasswordCredentialHelp = `1Password flow:
    state.access_request entries in items get -o json. fill_submitted means the form
    was submitted, not that sign-in succeeded.
 Invoke only advertised operations. Never automatically retry an access request, fill,
-or recovery. After an uncertain outcome (timeout, HTTP 5xx, fill_unknown, or a pending
-item with no approval link or advertised operation), stop and tell the user; do not
+or recovery. After fill_unknown, inspect the page to see the result of the fill.
+After an uncertain access request (timeout, HTTP 5xx, or a pending item with no
+approval link or advertised operation), stop and tell the user; do not
 delete and recreate the item to reset it. Declined means the owner refused; do
 not ask again unless the user requests it. After a confirmed failed status, ask the
 user before deleting and recreating the credential for at most one new request.
