@@ -3342,7 +3342,7 @@ followed automatically by Chromium.`,
 	telemetryRoot := &cobra.Command{Use: "telemetry", Short: "Browser telemetry operations"}
 	telemetryStream := &cobra.Command{Use: "stream <id>", Short: "Stream live telemetry events", Args: cobra.ExactArgs(1), RunE: runBrowsersTelemetryStream}
 	telemetryStream.Flags().StringSlice("categories", []string{}, "Filter by event category (console,network,page,interaction,control,platform,connection,system,screenshot,captcha,monitor)")
-	telemetryStream.Flags().StringSlice("types", []string{}, "Filter by event type (e.g. network_response,console_error)")
+	telemetryStream.Flags().StringSlice("types", []string{}, "Deliver only these event types, filtered server-side (e.g. captcha_solve_started,captcha_challenge_result)")
 	telemetryStream.Flags().Int64("seq", -1, "Resume after sequence number N (Last-Event-ID); replays events with seq > N. Default -1 streams from now")
 	telemetryStream.Flags().StringP("output", "o", "", "Output format: json for newline-delimited JSON envelopes")
 	telemetryStream.Flags().String("replay", "", "Replay buffered events on connect: --replay=all starts from the oldest retained event")

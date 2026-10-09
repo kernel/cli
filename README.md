@@ -886,7 +886,7 @@ Destinations are the OTLP/HTTP endpoints sessions export to. They belong to the 
 
 - `kernel browsers telemetry stream <id>` - Stream live telemetry events (NDJSON with `-o json`)
   - `--categories <list>` - Filter by event category (`console`, `network`, `page`, `interaction`, `control`, `connection`, `system`, `screenshot`, `captcha`, `monitor`)
-  - `--types <list>` - Filter by event type (e.g. `network_response`, `console_error`)
+  - `--types <list>` - Deliver only these event types, filtered server-side (e.g. `captcha_solve_started`, `captcha_challenge_result`)
   - `--seq <n>` - Resume after sequence number N (Last-Event-ID); replays events with `seq > N`. Omit to stream from now.
   - `--replay all` - Replay buffered events on connect, starting from the oldest retained event (mutually exclusive with `--seq`)
   - `-o, --output json` - Output newline-delimited JSON envelopes
