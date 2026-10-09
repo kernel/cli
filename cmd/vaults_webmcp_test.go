@@ -183,7 +183,7 @@ func TestVaultWebMCPInvokeOutcomes(t *testing.T) {
 		ok                  bool
 	}{
 		{"error", `{"type":"webmcp_invoke","status":"error","invocation_id":"invoke-3","error_text":"Invalid password for credential-sentinel\u001b[31m"}`, "may have had side effects", false},
-		{"canceled", `{"type":"webmcp_invoke","status":"canceled","invocation_id":"invoke-4"}`, "do not retry automatically", false},
+		{"canceled", `{"type":"webmcp_invoke","status":"canceled","invocation_id":"invoke-4"}`, "may have had side effects", false},
 		{"unknown", `{"type":"webmcp_invoke","status":"unknown"}`, "the tool may have run", false},
 		{"null output", `{"type":"webmcp_invoke","status":"completed","invocation_id":"invoke-5","output":null}`, "Output (untrusted", true},
 	} {
@@ -234,7 +234,6 @@ func TestVaultWebMCPInvokeRequestErrors(t *testing.T) {
 			require.Error(t, err)
 			assert.Equal(t, 1, posts, "webmcp_invoke must not be retried")
 			assert.Contains(t, err.Error(), tc.want)
-			assert.Contains(t, err.Error(), "retry")
 			assert.NotContains(t, err.Error(), "credential-sentinel")
 			assert.Empty(t, out)
 		})

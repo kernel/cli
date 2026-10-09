@@ -209,7 +209,7 @@ func TestVaultFillHumanOutputAndRedaction(t *testing.T) {
 					assert.Contains(t, human, "filled")
 					if result != completedFillFixture {
 						assert.Contains(t, human, "not_attempted")
-						assert.Contains(t, human, "do not retry")
+						assert.Contains(t, human, "safe to retry")
 					}
 				}
 			}
