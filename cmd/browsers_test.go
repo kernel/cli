@@ -900,6 +900,35 @@ func TestBrowsersCreate_WithMemory(t *testing.T) {
 	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{Memory: "4GiB"}))
 }
 
+func TestBrowsersCreate_WithVideoMemory(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-video-memory"}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{GPU: BoolFlag{Set: true, Value: true}, VideoMemory: "4gib"})
+	require.NoError(t, err)
+	assert.Equal(t, kernel.BrowserVideoMemory4GiB, captured.VideoMemory)
+
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"video_memory":"4GiB"`)
+
+	// Omitting the flag sends nothing; the server defaults to 2GiB.
+	err = b.Create(context.Background(), BrowsersCreateInput{GPU: BoolFlag{Set: true, Value: true}})
+	require.NoError(t, err)
+	assert.Empty(t, captured.VideoMemory)
+
+	// An unsupported size is rejected before the request is made.
+	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{VideoMemory: "8GiB"}))
+}
+
 func TestBrowsersCreate_WithChromePolicy(t *testing.T) {
 	setupStdoutCapture(t)
 
