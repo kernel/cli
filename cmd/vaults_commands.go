@@ -132,7 +132,23 @@ JSON output preserves returned public fields but omits unknown/opaque provider d
 			return getVaultsHandler(cmd).Get(cmd.Context(), args[0], vaultOutput(cmd))
 		}}
 	addVaultJSONOutputFlag(get)
-	cmd.AddCommand(create, list, get, newVaultDeleteCommand(false))
+
+	encryptionKey := &cobra.Command{Use: "get-encryption-key <vault>", Short: "Get a vault's public key for browser-encrypted credential values", Args: cobra.ExactArgs(1), PreRunE: vaultPreRun,
+		Long: `Get the public key that custom credential collection web apps use to encrypt values in the browser.
+
+Use this only if you run your own credential collection web app and want values
+encrypted in the browser, sent to your backend still encrypted, and forwarded to
+Kernel's API still encrypted. In every other case, including server-side code that
+already holds the plaintext, use value. The page encrypts each value to this key as a
+compact JWE (alg ECDH-ES, enc A256GCM, kid in the protected header), and your backend
+forwards the ciphertext unchanged as encrypted_value in credentials create/update specs.
+Each vault has its own key; it is created on first request and may be cached.`,
+		Example: "  kernel vaults get-encryption-key user-vault -o json",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return getVaultsHandler(cmd).GetEncryptionKey(cmd.Context(), args[0], vaultOutput(cmd))
+		}}
+	addJSONOutputFlag(encryptionKey)
+	cmd.AddCommand(create, list, get, encryptionKey, newVaultDeleteCommand(false))
 
 	items := &cobra.Command{Use: "items", Short: "Inspect readiness and collection URLs, or invoke collect/fill/webmcp_invoke", Long: "Use get --wait 60 to observe readiness and get -o json for schema/version/presence.\nUse invoke collect to obtain a collection URL, or invoke fill --spec-file to fill a browser.\nUse webmcp invoke to call a live WebMCP tool with item fields bound to null input slots.\n1Password credentials use the advertised 1pw_* operations instead of collect/fill/webmcp_invoke.\nCreate and edit credentials with vaults credentials; payment items use wallets/cards."}
 	itemList := &cobra.Command{Use: "list <vault>", Short: "List items by vault ID or name", Args: cobra.ExactArgs(1), PreRunE: vaultPreRun,

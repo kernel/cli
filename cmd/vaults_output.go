@@ -235,6 +235,18 @@ func printVault(v *kernel.Vault, output string) error {
 	return nil
 }
 
+// The encryption key is public, so JSON output passes the API response through unchanged.
+func printVaultEncryptionKey(k *kernel.VaultEncryptionKey, output string) error {
+	if output == "json" {
+		return printVaultJSON(json.RawMessage(k.RawJSON()))
+	}
+	PrintTableNoPad(pterm.TableData{
+		{"Property", "Value"}, {"Key ID (kid)", k.Kid}, {"Algorithm (alg)", string(k.Alg)}, {"Encryption (enc)", string(k.Enc)},
+		{"JWK kty", k.Jwk.Kty}, {"JWK crv", k.Jwk.Crv}, {"JWK x", k.Jwk.X}, {"JWK y", k.Jwk.Y},
+	}, true)
+	return nil
+}
+
 func vaultDisplayURL(address string) bool {
 	u, err := url.Parse(address)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" || u.User != nil {

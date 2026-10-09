@@ -410,6 +410,7 @@ cannot switch projects.
 | `kernel vaults create --name <name>` | Create or retrieve the vault with that immutable name |
 | `kernel vaults list` | `--limit 1..100` (default 20), `--offset`, `--query` (name substring or exact ID); JSON includes `vaults` and optional `next_offset` |
 | `kernel vaults get <vault>` | Get by ID or name |
+| `kernel vaults get-encryption-key <vault>` | Get the public key custom collection apps use to send `encrypted_value` |
 | `kernel vaults delete <vault>` | Invalidate the vault and all its items; `--yes` skips confirmation |
 | `kernel vaults wallets create <vault> <key> --provider link\|agentcard --spec '<json>'` | Connect/enroll a wallet using its provider's spec; `--open` opens a returned HTTPS action URL |
 | `kernel vaults wallets payment-methods <vault> <key>` | Fetch advertised live payment methods; JSON is the item with `expanded.payment_methods` |

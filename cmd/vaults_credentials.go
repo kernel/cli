@@ -107,6 +107,8 @@ user-facing collection form renders that order unchanged. Definitions accept a s
 name and an optional non-secret human-readable label; forms fall back to name. Updates,
 state, and browser fills always use name. Field types are text, email, password, and
 totp; definitions also accept required, sensitive, and value.
+Custom collection web apps that encrypt in the browser may send encrypted_value (a
+compact JWE to the key from vaults get-encryption-key) instead of value; never both.
 Set description to the recognizable site name only, e.g. "Hacker News", not
 "Hacker News sign-in credentials". This text is the user-facing form title.
 Set sensitive:false explicitly for ordinary usernames and email addresses.
@@ -155,7 +157,7 @@ func newVaultCredentialsCommand() *cobra.Command {
 			},
 		}
 		if update {
-			cmd.Long += "\nUpdate applies to Kernel-hosted credentials only. Update spec fields are an object keyed by field name, not the ordered array used on create.\nUpdate preserves omitted fields, replaces nonempty string values, and clears supported values with null or an empty string. Clearing a required text/email/password field returns pending_collection; form submissions still require a nonempty value.\nField definitions are immutable. Do not automatically retry version conflicts."
+			cmd.Long += "\nUpdate applies to Kernel-hosted credentials only. Update spec fields are an object keyed by field name, not the ordered array used on create.\nUpdate preserves omitted fields, replaces nonempty string values (value, or encrypted_value from a browser-encrypting collection app), and clears supported values with null or an empty string. Clearing a required text/email/password field returns pending_collection; form submissions still require a nonempty value.\nField definitions are immutable. Do not automatically retry version conflicts."
 			cmd.Flags().Int64("version", 0, "Expected version from items get (required; never auto-refreshed)")
 			_ = cmd.MarkFlagRequired("version")
 			cmd.Flags().String("expected-item-id", "", "Immutable item ID from the original read; reject an update if the key now refers to a replacement item")
