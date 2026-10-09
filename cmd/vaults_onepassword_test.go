@@ -135,7 +135,9 @@ func TestOnePasswordOperationRequests(t *testing.T) {
 		operation, params, body, item string
 	}{
 		{"1pw_create_access_request", `{"goal":"Manage billing","reason":"Sign in","keywords":["personal"]}`, `{"type":"1pw_create_access_request","goal":"Manage billing","reason":"Sign in","keywords":["personal"]}`, onePasswordCredentialFixture},
+		{"1pw_create_access_request", "", `{"type":"1pw_create_access_request"}`, onePasswordCredentialFixture},
 		{"1pw_access_request_status", `{"timeout_seconds":60}`, `{"type":"1pw_access_request_status","timeout_seconds":60}`, onePasswordCredentialFixture},
+		{"1pw_access_request_status", "", `{"type":"1pw_access_request_status"}`, onePasswordCredentialFixture},
 		{"1pw_recover", "", `{"type":"1pw_recover"}`, onePasswordAccountFixture},
 	} {
 		t.Run(tc.operation+tc.params, func(t *testing.T) {
@@ -166,7 +168,6 @@ func TestOnePasswordOperationRequests(t *testing.T) {
 func TestOnePasswordOperationValidation(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
 	for _, tc := range []struct{ operation, params, err string }{
-		{"1pw_create_access_request", "", "requires --params"},
 		{"1pw_create_access_request", `{"browser_id":"b"}`, "only supported"},
 		{"1pw_create_access_request", `{"password":"x"}`, "only supported"},
 		{"1pw_create_access_request", `{"type":"1pw_create_access_request"}`, "must not contain type"},
