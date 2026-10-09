@@ -218,13 +218,13 @@ func TestOnePasswordFillOutcomes(t *testing.T) {
 	}{
 		{200, `{"type":"1pw_fill","status":"fill_submitted"}`, "", "does not confirm"},
 		{200, `{"type":"1pw_fill","status":"fill_failed","error_code":"fillFailed"}`, "fill fill_failed", "fillFailed"},
-		{200, `{"type":"1pw_fill","status":"fill_unknown"}`, "fill fill_unknown", "do not retry in the same browser"},
+		{200, `{"type":"1pw_fill","status":"fill_unknown"}`, "fill fill_unknown", "inspect the page to see the result of the fill"},
 		{200, `{"type":"fill","status":"completed","fields":[]}`, "invalid 1pw_fill result", ""},
 		{403, `{"code":"destination_denied","message":"page is outside the approved login origin"}`, "destination_denied (HTTP 403)", ""},
 		{409, `{"code":"conflict","message":"not ready"}`, "nothing was submitted", ""},
-		{429, `{"code":"rate_limited","message":"slow down"}`, "may have been submitted", ""},
+		{429, `{"code":"rate_limited","message":"slow down"}`, "may have been filled or submitted", ""},
 		{503, `{"code":"provider_unavailable","message":"unavailable"}`, "not available in this deployment", ""},
-		{500, `{"code":"internal_error","message":"secret-echo"}`, "may have been submitted", ""},
+		{500, `{"code":"internal_error","message":"secret-echo"}`, "may have been filled or submitted", ""},
 	} {
 		t.Run(fmt.Sprint(tc.status, tc.body), func(t *testing.T) {
 			posts := 0
