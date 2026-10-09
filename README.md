@@ -1009,8 +1009,12 @@ Destinations are the OTLP/HTTP endpoints sessions export to. They belong to the 
 ### Browser Playwright
 
 - `kernel browsers playwright execute <id> [code]` - Execute Playwright/TypeScript code against the browser
+  - `--executor <name>` - Executor to run the call in. Calls on different executors run concurrently in separate tabs of the same browser; calls on one executor run one at a time. Omit to use the always-present `default` executor bound to the active tab. Any other name creates a named executor on first use that owns a background tab `page` is bound to. At most 8 named executors per browser (409 when exceeded)
   - `--timeout <seconds>` - Maximum execution time in seconds (defaults server-side)
   - If `[code]` is omitted, code is read from stdin
+- `kernel browsers playwright executors list <id>` - List the browser's Playwright executors (default first) with busy state, timestamps, and the tab each named executor owns
+- `kernel browsers playwright executors delete <id> <executor>` - Delete a Playwright executor. Deleting `default` restarts it instead of removing it
+  - `--close-tab` - Close the tab owned by the executor (default: true)
 
 ### Browser REPL
 
@@ -1131,7 +1135,7 @@ anywhere a project ID does.
   - `--output json`, `-o json` - Output raw JSON object
 
   - `--name <name>` - Proxy configuration name (required)
-  - `--type <type>` - Proxy type: datacenter, isp, residential, mobile, custom (required)
+  - `--type <type>` - Proxy type: isp, residential, mobile, custom (required)
   - `--protocol <http|https>` - Protocol to use (default: https)
   - `--country <code>` - ISO 3166 country code or "EU" (location-based types)
   - `--city <name>` - City name (no spaces, e.g. sanfrancisco) (residential, mobile; requires `--country`)
@@ -1524,6 +1528,15 @@ TS
 # With a timeout in seconds
 kernel browsers playwright execute my-browser --timeout 30 'await (await context.newPage()).goto("https://example.com")'
 
+# Drive two tabs in parallel with named executors (each owns its own tab)
+kernel browsers playwright execute my-browser --executor docs 'await page.goto("https://example.com/docs"); return await page.title();' &
+kernel browsers playwright execute my-browser --executor pricing 'await page.goto("https://example.com/pricing"); return await page.title();' &
+wait
+
+# List executors and delete one (closes its tab unless --close-tab=false)
+kernel browsers playwright executors list my-browser
+kernel browsers playwright executors delete my-browser docs
+
 # Mini CDP connection load test (10s)
 cat <<'TS' | kernel browsers playwright execute my-browser
 const start = Date.now();
@@ -1589,11 +1602,11 @@ kernel browsers extensions upload my-browser ./extension1 ./extension2
 # List proxy configurations
 kernel proxies list
 
-# Create a datacenter proxy
-kernel proxies create --type datacenter --country US --name "US Datacenter"
+# Create an ISP proxy
+kernel proxies create --type isp --country US --name "US ISP"
 
-# Create a datacenter proxy using HTTP protocol
-kernel proxies create --type datacenter --country US --protocol http --name "US DC (HTTP)"
+# Create an ISP proxy using HTTP protocol
+kernel proxies create --type isp --country US --protocol http --name "US ISP (HTTP)"
 
 # Create a custom proxy
 kernel proxies create --type custom --host proxy.example.com --port 8080 --username myuser --password mypass --name "My Custom Proxy"

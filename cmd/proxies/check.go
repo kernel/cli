@@ -94,7 +94,7 @@ func getProxyCheckConfigRows(proxy *kernel.ProxyCheckResponse) [][]string {
 	config := &proxy.Config
 
 	switch proxy.Type {
-	case kernel.ProxyCheckResponseTypeDatacenter, kernel.ProxyCheckResponseTypeIsp:
+	case kernel.ProxyCheckResponseTypeIsp:
 		if config.Country != "" {
 			rows = append(rows, []string{"Country", config.Country})
 		}

@@ -72,7 +72,7 @@ func getProxyConfigRows(proxy *kernel.ProxyGetResponse) [][]string {
 	config := &proxy.Config
 
 	switch proxy.Type {
-	case kernel.ProxyGetResponseTypeDatacenter, kernel.ProxyGetResponseTypeIsp:
+	case kernel.ProxyGetResponseTypeIsp:
 		if config.Country != "" {
 			rows = append(rows, []string{"Country", config.Country})
 		}
