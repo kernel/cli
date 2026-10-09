@@ -90,11 +90,6 @@ type BrowserLogService interface {
 	StreamStreaming(ctx context.Context, idOrName string, query kernel.BrowserLogStreamParams, opts ...option.RequestOption) (stream *ssestream.Stream[shared.LogEvent])
 }
 
-// BrowserPlaywrightService defines the subset we use for Playwright execution.
-type BrowserPlaywrightService interface {
-	Execute(ctx context.Context, idOrName string, body kernel.BrowserPlaywrightExecuteParams, opts ...option.RequestOption) (res *kernel.BrowserPlaywrightExecuteResponse, err error)
-}
-
 // BrowserComputerService defines the subset we use for OS-level mouse & screen.
 type BrowserComputerService interface {
 	Batch(ctx context.Context, idOrName string, body kernel.BrowserComputerBatchParams, opts ...option.RequestOption) (err error)
@@ -517,16 +512,17 @@ type BrowsersUpdateInput struct {
 
 // BrowsersCmd is a cobra-independent command handler for browsers operations.
 type BrowsersCmd struct {
-	browsers   BrowsersService
-	replays    BrowserReplaysService
-	fs         BrowserFSService
-	fsWatch    BrowserFWatchService
-	process    BrowserProcessService
-	logs       BrowserLogService
-	computer   BrowserComputerService
-	playwright BrowserPlaywrightService
-	telemetry  BrowserTelemetryService
-	webmcp     BrowserWebMCPService
+	browsers            BrowsersService
+	replays             BrowserReplaysService
+	fs                  BrowserFSService
+	fsWatch             BrowserFWatchService
+	process             BrowserProcessService
+	logs                BrowserLogService
+	computer            BrowserComputerService
+	playwright          BrowserPlaywrightService
+	playwrightExecutors BrowserPlaywrightExecutorService
+	telemetry           BrowserTelemetryService
+	webmcp              BrowserWebMCPService
 }
 
 type BrowsersListInput struct {
@@ -1836,64 +1832,6 @@ type BrowsersFSWatchEventsInput struct {
 	WatchID    string
 }
 
-// Playwright
-type BrowsersPlaywrightExecuteInput struct {
-	Identifier string
-	Code       string
-	Timeout    int64
-	Output     string
-}
-
-func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrightExecuteInput) error {
-	if err := validateJSONOutput(in.Output); err != nil {
-		return err
-	}
-
-	if b.playwright == nil {
-		pterm.Error.Println("playwright service not available")
-		return nil
-	}
-	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-	params := kernel.BrowserPlaywrightExecuteParams{Code: in.Code}
-	if in.Timeout > 0 {
-		params.TimeoutSec = kernel.Opt(in.Timeout)
-	}
-	res, err := b.playwright.Execute(ctx, br.SessionID, params)
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-
-	if in.Output == "json" {
-		return util.PrintPrettyJSON(res)
-	}
-
-	rows := pterm.TableData{{"Property", "Value"}, {"Success", fmt.Sprintf("%t", res.Success)}}
-	PrintTableNoPad(rows, true)
-
-	if res.Stdout != "" {
-		pterm.Info.Println("stdout:")
-		fmt.Println(res.Stdout)
-	}
-	if res.Stderr != "" {
-		pterm.Info.Println("stderr:")
-		fmt.Fprintln(os.Stderr, res.Stderr)
-	}
-	if res.Result != nil {
-		bs, err := json.MarshalIndent(res.Result, "", "  ")
-		if err == nil {
-			pterm.Info.Println("result:")
-			fmt.Println(string(bs))
-		}
-	}
-	if !res.Success && res.Error != "" {
-		pterm.Error.Printf("error: %s\n", res.Error)
-	}
-	return nil
-}
-
 // REPL
 type BrowsersReplInput struct {
 	Identifier string
@@ -3201,13 +3139,7 @@ func init() {
 	computerRoot.AddCommand(computerClick, computerMove, computerScreenshot, computerType, computerPressKey, computerScroll, computerDrag, computerSetCursor, computerGetMousePosition, computerBatch, computerReadClipboard, computerWriteClipboard)
 	browsersCmd.AddCommand(computerRoot)
 
-	// playwright
-	playwrightRoot := &cobra.Command{Use: "playwright", Short: "Playwright operations"}
-	playwrightExecute := &cobra.Command{Use: "execute <id> [code]", Short: "Execute Playwright/TypeScript code against the browser", Args: cobra.MinimumNArgs(1), RunE: runBrowsersPlaywrightExecute}
-	playwrightExecute.Flags().Int64("timeout", 0, "Maximum execution time in seconds (default per server)")
-	addJSONOutputFlag(playwrightExecute)
-	playwrightRoot.AddCommand(playwrightExecute)
-	browsersCmd.AddCommand(playwrightRoot)
+	browsersCmd.AddCommand(newBrowsersPlaywrightCommand())
 
 	// repl
 	replCmd := &cobra.Command{
@@ -3826,33 +3758,6 @@ func runBrowsersFSWatchEvents(cmd *cobra.Command, args []string) error {
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc, fsWatch: &svc.Fs.Watch}
 	return b.FSWatchEvents(cmd.Context(), BrowsersFSWatchEventsInput{Identifier: args[0], WatchID: args[1]})
-}
-
-func runBrowsersPlaywrightExecute(cmd *cobra.Command, args []string) error {
-	client := getKernelClient(cmd)
-	svc := client.Browsers
-
-	var code string
-	if len(args) >= 2 {
-		code = strings.Join(args[1:], " ")
-	} else {
-		// Read code from stdin
-		stat, _ := os.Stdin.Stat()
-		if (stat.Mode() & os.ModeCharDevice) != 0 {
-			pterm.Error.Println("no code provided. Provide code as an argument or pipe via stdin")
-			return nil
-		}
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			pterm.Error.Printf("failed to read stdin: %v\n", err)
-			return nil
-		}
-		code = string(data)
-	}
-	timeout, _ := cmd.Flags().GetInt64("timeout")
-	output, _ := cmd.Flags().GetString("output")
-	b := BrowsersCmd{browsers: &svc, playwright: &svc.Playwright}
-	return b.PlaywrightExecute(cmd.Context(), BrowsersPlaywrightExecuteInput{Identifier: args[0], Code: strings.TrimSpace(code), Timeout: timeout, Output: output})
 }
 
 func runBrowsersRepl(cmd *cobra.Command, args []string) error {
