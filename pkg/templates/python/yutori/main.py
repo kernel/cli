@@ -8,7 +8,7 @@ from session import KernelBrowserSession
 
 class _QueryInputOptional(TypedDict, total=False):
     record_replay: Optional[bool]
-    kiosk: Optional[bool]
+    reasoning_effort: Optional[str]
     user_timezone: Optional[str]
     user_location: Optional[str]
 
@@ -35,14 +35,14 @@ async def cua_task(
     payload: QueryInput,
 ) -> QueryOutput:
     """
-    Process a user query using Yutori n1.5 Computer Use with Kernel's browser automation.
+    Process a user query using Yutori n2 Computer Use with Kernel's browser automation.
 
     Args:
         ctx: Kernel context containing invocation information
         payload: An object containing:
             - query: The task/query string to process
             - record_replay: Optional boolean to enable video replay recording
-            - kiosk: Optional boolean to launch in kiosk mode
+            - reasoning_effort: Optional "none" | "low" | "medium" | "xhigh"
             - user_timezone: Optional IANA tz (e.g. "America/New_York")
             - user_location: Optional free-text location for model context
 
@@ -54,27 +54,26 @@ async def cua_task(
     if not payload or not payload.get("query"):
         raise ValueError("Query is required")
 
-    record_replay = payload.get("record_replay", False)
-    kiosk_mode = payload.get("kiosk", False)
-
     async with KernelBrowserSession(
         invocation_id=ctx.invocation_id,
         stealth=True,
-        record_replay=record_replay,
-        kiosk_mode=kiosk_mode,
+        record_replay=payload.get("record_replay", False),
     ) as session:
         print("Kernel browser live view url:", session.live_view_url)
 
         loop_kwargs: dict = {
-            "model": "n1.5-latest",
+            "model": "n2",
             "task": payload["query"],
             "api_key": str(api_key),
             "kernel": session.kernel,
             "session_id": str(session.session_id),
-            "viewport_width": session.viewport_width,
-            "viewport_height": session.viewport_height,
-            "kiosk_mode": kiosk_mode,
+            # n2 sees the whole screen, browser chrome included — the Kernel
+            # viewport is the window size, so it is the screen size here.
+            "screen_width": session.viewport_width,
+            "screen_height": session.viewport_height,
         }
+        if payload.get("reasoning_effort"):
+            loop_kwargs["reasoning_effort"] = payload["reasoning_effort"]
         if payload.get("user_timezone"):
             loop_kwargs["user_timezone"] = payload["user_timezone"]
         if payload.get("user_location"):

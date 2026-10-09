@@ -22,8 +22,6 @@ export interface SessionOptions {
   viewportWidth?: number;
   /** Viewport height */
   viewportHeight?: number;
-  /** Launch browser in kiosk mode (hides address bar and tabs) */
-  kioskMode?: boolean;
 }
 
 export interface SessionInfo {
@@ -45,7 +43,6 @@ const DEFAULT_OPTIONS: Required<Omit<SessionOptions, 'invocationId'>> = {
   replayGracePeriod: 5.0,
   viewportWidth: 1280,
   viewportHeight: 800,
-  kioskMode: false,
 };
 
 /**
@@ -105,10 +102,6 @@ export class KernelBrowserSession {
     return this.options.viewportHeight;
   }
 
-  get kioskMode(): boolean {
-    return this.options.kioskMode;
-  }
-
   get info(): SessionInfo {
     return {
       sessionId: this.sessionId,
@@ -130,7 +123,6 @@ export class KernelBrowserSession {
         width: this.options.viewportWidth,
         height: this.options.viewportHeight,
       },
-      kiosk_mode: this.options.kioskMode,
     });
 
     this._sessionId = browser.session_id ?? null;
