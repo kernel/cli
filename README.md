@@ -1131,7 +1131,7 @@ anywhere a project ID does.
   - `--output json`, `-o json` - Output raw JSON object
 
   - `--name <name>` - Proxy configuration name (required)
-  - `--type <type>` - Proxy type: datacenter, isp, residential, mobile, custom (required)
+  - `--type <type>` - Proxy type: isp, residential, mobile, custom (required)
   - `--protocol <http|https>` - Protocol to use (default: https)
   - `--country <code>` - ISO 3166 country code or "EU" (location-based types)
   - `--city <name>` - City name (no spaces, e.g. sanfrancisco) (residential, mobile; requires `--country`)
@@ -1589,11 +1589,11 @@ kernel browsers extensions upload my-browser ./extension1 ./extension2
 # List proxy configurations
 kernel proxies list
 
-# Create a datacenter proxy
-kernel proxies create --type datacenter --country US --name "US Datacenter"
+# Create an ISP proxy
+kernel proxies create --type isp --country US --name "US ISP"
 
-# Create a datacenter proxy using HTTP protocol
-kernel proxies create --type datacenter --country US --protocol http --name "US DC (HTTP)"
+# Create an ISP proxy using HTTP protocol
+kernel proxies create --type isp --country US --protocol http --name "US ISP (HTTP)"
 
 # Create a custom proxy
 kernel proxies create --type custom --host proxy.example.com --port 8080 --username myuser --password mypass --name "My Custom Proxy"
