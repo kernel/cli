@@ -159,6 +159,7 @@ type BrowserPoolsCreateInput struct {
 	PrivateHosts           []string
 	ProxyRoutes            []string
 	AllowedHosts           []string
+	AllowedHostsProvided   bool
 	StartURL               string
 	Extensions             []string
 	Viewport               string
@@ -249,7 +250,7 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 	if len(routes) > 0 {
 		network.ProxyRoutes = routes
 	}
-	allowedHosts, err := normalizeAllowedHosts(in.AllowedHosts)
+	allowedHosts, err := normalizeAllowedHosts(in.AllowedHosts, in.AllowedHostsProvided, "omit --allowed-host for unfiltered egress")
 	if err != nil {
 		return err
 	}
@@ -421,14 +422,12 @@ func validateBrowserPoolUpdateInput(in BrowserPoolsUpdateInput) error {
 	if len(in.ProxyRoutes) > 0 && in.ClearProxyRoutes {
 		return fmt.Errorf("cannot specify both --proxy-route and --clear-proxy-routes")
 	}
-	if in.AllowedHostsProvided && in.ClearAllowedHosts {
+	allowedHostsSet := in.AllowedHostsProvided || len(in.AllowedHosts) > 0
+	if allowedHostsSet && in.ClearAllowedHosts {
 		return fmt.Errorf("cannot specify both --allowed-host and --clear-allowed-hosts")
 	}
-	if in.AllowedHostsProvided && in.ClearPrivateHosts {
+	if allowedHostsSet && in.ClearPrivateHosts {
 		return fmt.Errorf("cannot specify both --allowed-host and --clear-private-hosts")
-	}
-	if in.AllowedHostsProvided && len(normalizePrivateHosts(in.AllowedHosts)) == 0 {
-		return fmt.Errorf("at least one --allowed-host entry is required; use --clear-allowed-hosts to remove the pool's allowlist")
 	}
 	return nil
 }
@@ -441,6 +440,10 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 		return err
 	}
 	if err := validateBrowserPoolUpdateInput(in); err != nil {
+		return err
+	}
+	allowedHosts, err := normalizeAllowedHosts(in.AllowedHosts, in.AllowedHostsProvided, "use --clear-allowed-hosts to remove the pool's allowlist")
+	if err != nil {
 		return err
 	}
 
@@ -535,10 +538,6 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 	}
 	if len(routes) > 0 {
 		network.ProxyRoutes = routes
-	}
-	allowedHosts, err := normalizeAllowedHosts(in.AllowedHosts)
-	if err != nil {
-		return err
 	}
 	if len(allowedHosts) > 0 {
 		network.AllowedHosts = allowedHosts
@@ -908,12 +907,12 @@ func init() {
 	browserPoolsUpdateCmd.Flags().Bool("clear-start-url", false, "Clear the pool start URL")
 	browserPoolsUpdateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
 	browserPoolsUpdateCmd.Flags().Bool("clear-extensions", false, "Remove all pool extensions")
-	browserPoolsUpdateCmd.Flags().StringSlice("private-host", nil, "Replace the destinations browsers in the pool reach directly through their own network instead of Kernel-managed egress (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Only applies to browsers created after the update")
-	browserPoolsUpdateCmd.Flags().Bool("clear-private-hosts", false, "Remove the pool's network configuration (private-host override and proxy routes) and restore the default private ranges")
-	browserPoolsUpdateCmd.Flags().StringArray("proxy-route", nil, "Replace the pool's proxy routes with HOST[,HOST...]=PROXY (repeatable, max 10 routes and 50 hosts per route). PROXY is an ID by default; use id:ID or name:NAME explicitly. Network flags replace the pool's whole network configuration, so pass --private-host too to keep a private-host override. Only applies to browsers created after the update. Requires proxy v3")
-	browserPoolsUpdateCmd.Flags().Bool("clear-proxy-routes", false, "Remove the pool's proxy routes (combine with --private-host to keep a private-host override)")
-	browserPoolsUpdateCmd.Flags().StringSlice("allowed-host", nil, "Replace the pool's egress allowlist (repeat or comma-separated, max 100), using the same entry rules as 'browsers create --allowed-host'. An empty list is invalid. Changing the allowlist automatically replaces idle browsers; leased browsers keep theirs until release, when it is reset to the new list or the browser is replaced. Network flags replace the pool's whole network configuration, so pass --private-host and --proxy-route too to keep them. Requires proxy v3")
-	browserPoolsUpdateCmd.Flags().Bool("clear-allowed-hosts", false, "Remove the pool's egress allowlist (combine with --private-host or --proxy-route to keep those settings)")
+	browserPoolsUpdateCmd.Flags().StringSlice("private-host", nil, "Replace the destinations browsers in the pool reach directly through their own network instead of Kernel-managed egress (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Network flags replace the pool's whole network configuration, so pass --proxy-route and --allowed-host too to keep them; an omitted --allowed-host removes the pool's allowlist. Only applies to browsers created after the update")
+	browserPoolsUpdateCmd.Flags().Bool("clear-private-hosts", false, "Remove the pool's network configuration (private-host override, proxy routes, and egress allowlist) and restore the default private ranges")
+	browserPoolsUpdateCmd.Flags().StringArray("proxy-route", nil, "Replace the pool's proxy routes with HOST[,HOST...]=PROXY (repeatable, max 10 routes and 50 hosts per route). PROXY is an ID by default; use id:ID or name:NAME explicitly. Network flags replace the pool's whole network configuration, so pass --private-host and --allowed-host too to keep them; an omitted --allowed-host removes the pool's allowlist. Only applies to browsers created after the update. Requires proxy v3")
+	browserPoolsUpdateCmd.Flags().Bool("clear-proxy-routes", false, "Remove the pool's proxy routes (combine with --private-host or --allowed-host to keep those settings; an omitted --allowed-host removes the pool's allowlist)")
+	browserPoolsUpdateCmd.Flags().StringSlice("allowed-host", nil, "Set or replace the pool's egress allowlist (repeat or comma-separated, max 100), using the same entry rules as 'browsers create --allowed-host'. An empty list is invalid. Changing the allowlist automatically replaces idle browsers; leased browsers keep theirs until release, when it is reset to the new list or the browser is replaced. Network flags replace the pool's whole network configuration, so pass --private-host and --proxy-route too to keep them. Requires proxy v3")
+	browserPoolsUpdateCmd.Flags().Bool("clear-allowed-hosts", false, "Remove the pool's egress allowlist and replace idle browsers (combine with --private-host or --proxy-route to keep those settings)")
 	browserPoolsUpdateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
 	browserPoolsUpdateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
 	browserPoolsUpdateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
@@ -1020,6 +1019,7 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 		PrivateHosts:           privateHosts,
 		ProxyRoutes:            proxyRoutes,
 		AllowedHosts:           allowedHosts,
+		AllowedHostsProvided:   cmd.Flags().Changed("allowed-host"),
 		StartURL:               startURL,
 		Extensions:             extensions,
 		Viewport:               viewport,

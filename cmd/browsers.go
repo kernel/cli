@@ -256,9 +256,14 @@ func buildNetworkParam(privateHosts []string) (kernel.BrowserNetworkConfigParam,
 const maxAllowedHosts = 100
 
 // normalizeAllowedHosts trims --allowed-host values, drops empty ones, and
-// enforces the API's entry cap. Entry syntax is validated by the API.
-func normalizeAllowedHosts(hosts []string) ([]string, error) {
+// enforces the API's entry cap. Entry syntax is validated by the API. A flag
+// passed with no entries is an error ending in emptyHint, so it never falls
+// back to unfiltered egress.
+func normalizeAllowedHosts(hosts []string, provided bool, emptyHint string) ([]string, error) {
 	out := normalizePrivateHosts(hosts)
+	if (provided || len(hosts) > 0) && len(out) == 0 {
+		return nil, fmt.Errorf("at least one --allowed-host entry is required; %s", emptyHint)
+	}
 	if len(out) > maxAllowedHosts {
 		return nil, fmt.Errorf("too many --allowed-host entries: %d (maximum %d)", len(out), maxAllowedHosts)
 	}
@@ -329,8 +334,8 @@ func formatProxyRoutes(network kernel.BrowserNetworkConfig) string {
 	return strings.Join(routes, "; ")
 }
 
-// formatAllowedHosts renders a session's egress allowlist for table output. A
-// missing allowed_hosts list means egress is unfiltered.
+// formatAllowedHosts renders a session or pool egress allowlist for table
+// output. A missing allowed_hosts list means egress is unfiltered.
 func formatAllowedHosts(network kernel.BrowserNetworkConfig) string {
 	if len(network.AllowedHosts) == 0 {
 		return "-"
@@ -483,37 +488,38 @@ func formatTags(tags kernel.Tags) string {
 
 // Inputs for each command
 type BrowsersCreateInput struct {
-	TimeoutSeconds      int
-	Stealth             BoolFlag
-	Headless            BoolFlag
-	GPU                 BoolFlag
-	Memory              string
-	VideoMemory         string
-	InvocationID        string
-	Kiosk               BoolFlag
-	ProfileID           string
-	ProfileName         string
-	ProfileSaveChanges  BoolFlag
-	ProxyID             string
-	ProxyName           string
-	ProxyMode           string
-	Region              string
-	PrivateHosts        []string
-	AllowedHosts        []string
-	ProxyRoutes         []string
-	StartURL            string
-	Extensions          []string
-	Vaults              []string
-	Viewport            string
-	Telemetry           string
-	TelemetryCdpExclude string
-	TelemetryExport     string
-	TelemetryStorage    string
-	ChromePolicy        string
-	ChromePolicyFile    string
-	Name                string
-	Tags                map[string]string
-	Output              string
+	TimeoutSeconds       int
+	Stealth              BoolFlag
+	Headless             BoolFlag
+	GPU                  BoolFlag
+	Memory               string
+	VideoMemory          string
+	InvocationID         string
+	Kiosk                BoolFlag
+	ProfileID            string
+	ProfileName          string
+	ProfileSaveChanges   BoolFlag
+	ProxyID              string
+	ProxyName            string
+	ProxyMode            string
+	Region               string
+	PrivateHosts         []string
+	AllowedHosts         []string
+	AllowedHostsProvided bool
+	ProxyRoutes          []string
+	StartURL             string
+	Extensions           []string
+	Vaults               []string
+	Viewport             string
+	Telemetry            string
+	TelemetryCdpExclude  string
+	TelemetryExport      string
+	TelemetryStorage     string
+	ChromePolicy         string
+	ChromePolicyFile     string
+	Name                 string
+	Tags                 map[string]string
+	Output               string
 }
 
 type BrowsersDeleteInput struct {
@@ -785,12 +791,14 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	if err != nil {
 		return err
 	}
-	network.ProxyRoutes = routes
-	allowedHosts, err := normalizeAllowedHosts(in.AllowedHosts)
+	// The SDK sends a non-nil empty slice as [], so leave empty lists off.
+	if len(routes) > 0 {
+		network.ProxyRoutes = routes
+	}
+	allowedHosts, err := normalizeAllowedHosts(in.AllowedHosts, in.AllowedHostsProvided, "omit --allowed-host for unfiltered egress")
 	if err != nil {
 		return err
 	}
-	// An empty allowed_hosts list is invalid, so leave it off unless set.
 	if len(allowedHosts) > 0 {
 		network.AllowedHosts = allowedHosts
 	}
@@ -1126,15 +1134,12 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 
 	// The API replaces the allowlist with the given entries, or removes it when
 	// sent null. An empty list is rejected, so require at least one entry.
-	if in.AllowedHostsProvided && in.ClearAllowedHosts {
+	if (in.AllowedHostsProvided || len(in.AllowedHosts) > 0) && in.ClearAllowedHosts {
 		return fmt.Errorf("cannot specify both --allowed-host and --clear-allowed-hosts")
 	}
-	allowedHosts, err := normalizeAllowedHosts(in.AllowedHosts)
+	allowedHosts, err := normalizeAllowedHosts(in.AllowedHosts, in.AllowedHostsProvided, "use --clear-allowed-hosts to remove the allowlist")
 	if err != nil {
 		return err
-	}
-	if in.AllowedHostsProvided && len(allowedHosts) == 0 {
-		return fmt.Errorf("at least one --allowed-host entry is required; use --clear-allowed-hosts to remove the allowlist")
 	}
 	hasAllowedHostsChange := len(allowedHosts) > 0 || in.ClearAllowedHosts
 
@@ -3576,37 +3581,38 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	in := BrowsersCreateInput{
-		TimeoutSeconds:      timeout,
-		Stealth:             BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealthVal},
-		Headless:            BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headlessVal},
-		GPU:                 BoolFlag{Set: cmd.Flags().Changed("gpu"), Value: gpuVal},
-		Memory:              memory,
-		VideoMemory:         videoMemory,
-		InvocationID:        invocationID,
-		Kiosk:               BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kioskVal},
-		ProfileID:           profileID,
-		ProfileName:         profileName,
-		ProfileSaveChanges:  BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
-		ProxyID:             proxyID,
-		ProxyName:           proxyName,
-		ProxyMode:           proxyMode,
-		Region:              region,
-		PrivateHosts:        privateHosts,
-		AllowedHosts:        allowedHosts,
-		ProxyRoutes:         proxyRoutes,
-		StartURL:            startURL,
-		Extensions:          extensions,
-		Vaults:              vaults,
-		Viewport:            viewport,
-		Telemetry:           telemetry,
-		TelemetryCdpExclude: telemetryCdpExclude,
-		TelemetryExport:     telemetryExport,
-		TelemetryStorage:    telemetryStorage,
-		ChromePolicy:        chromePolicy,
-		ChromePolicyFile:    chromePolicyFile,
-		Name:                name,
-		Tags:                tags,
-		Output:              output,
+		TimeoutSeconds:       timeout,
+		Stealth:              BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealthVal},
+		Headless:             BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headlessVal},
+		GPU:                  BoolFlag{Set: cmd.Flags().Changed("gpu"), Value: gpuVal},
+		Memory:               memory,
+		VideoMemory:          videoMemory,
+		InvocationID:         invocationID,
+		Kiosk:                BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kioskVal},
+		ProfileID:            profileID,
+		ProfileName:          profileName,
+		ProfileSaveChanges:   BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
+		ProxyID:              proxyID,
+		ProxyName:            proxyName,
+		ProxyMode:            proxyMode,
+		Region:               region,
+		PrivateHosts:         privateHosts,
+		AllowedHosts:         allowedHosts,
+		AllowedHostsProvided: cmd.Flags().Changed("allowed-host"),
+		ProxyRoutes:          proxyRoutes,
+		StartURL:             startURL,
+		Extensions:           extensions,
+		Vaults:               vaults,
+		Viewport:             viewport,
+		Telemetry:            telemetry,
+		TelemetryCdpExclude:  telemetryCdpExclude,
+		TelemetryExport:      telemetryExport,
+		TelemetryStorage:     telemetryStorage,
+		ChromePolicy:         chromePolicy,
+		ChromePolicyFile:     chromePolicyFile,
+		Name:                 name,
+		Tags:                 tags,
+		Output:               output,
 	}
 
 	svc := client.Browsers

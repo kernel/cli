@@ -268,6 +268,10 @@ func TestTelemetryStream_TypesSentToServer(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"captcha_solve_started", "captcha_challenge_result"}, fakeTelemetry.LastStreamQuery.Type)
+	// The stream endpoint accepts comma-joined types, which is how the SDK sends them.
+	query, err := fakeTelemetry.LastStreamQuery.URLQuery()
+	assert.NoError(t, err)
+	assert.Equal(t, "captcha_solve_started,captcha_challenge_result", query.Get("type"))
 }
 
 func TestTelemetryStream_SeqZeroErrors(t *testing.T) {
