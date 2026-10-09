@@ -63,3 +63,37 @@ func TestVaultImportedAuthorizationPreservesRawFields(t *testing.T) {
 		})
 	}
 }
+
+func TestVaultKernelWalletSendsProviderOnly(t *testing.T) {
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Type string                     `json:"type"`
+			Spec map[string]json.RawMessage `json:"spec"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.Equal(t, "wallet", body.Type)
+		raw, err := json.Marshal(body.Spec)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"provider":"kernel"}`, string(raw))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, connectedWalletFixture)
+	})
+	_, _, err := executeVaultInputCommand(t, client, "", "vaults", "wallets", "create", "checkout", "wallet-1", "--provider", "kernel", "--spec", "{}", "-o", "json")
+	require.NoError(t, err)
+}
+
+func TestVaultKernelProviderRejectsUnsupportedInputs(t *testing.T) {
+	for name, args := range map[string][]string{
+		"provider config": {"wallets", "create", "checkout", "wallet-1", "--provider", "kernel", "--spec", "{}", "--provider-config-name", "cfg"},
+		"tokens file":     {"wallets", "create", "checkout", "wallet-1", "--provider", "kernel", "--spec", "{}", "--tokens-file", "-"},
+		"card update":     {"cards", "update", "checkout", "card-1", "--provider", "kernel", "--spec", "{}"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+			})
+			_, _, err := executeVaultInputCommand(t, client, "", append([]string{"vaults"}, args...)...)
+			require.Error(t, err)
+		})
+	}
+}

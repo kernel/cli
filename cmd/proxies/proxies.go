@@ -37,7 +37,7 @@ var proxiesCreateCmd = &cobra.Command{
 Proxy types (from best to worst for bot detection):
 - mobile: Mobile carrier proxies
 - residential: Residential IP proxies  
-- isp: ISP proxies (supported countries: US, GB, FR, DE, SG)
+- isp: ISP proxies (supported countries: US, GB, FR, DE, SG, KR)
 - custom: Your own proxy server
 
 Country targeting:
@@ -111,7 +111,7 @@ func init() {
 	proxiesCreateCmd.Flags().String("protocol", "https", "Protocol to use for the proxy connection (http|https)")
 
 	// Location flags (isp, residential, mobile)
-	proxiesCreateCmd.Flags().String("country", "", "ISO 3166 country code or EU (isp proxies support US, GB, FR, DE, SG; isp defaults to US, residential and mobile use the global pool without country targeting)")
+	proxiesCreateCmd.Flags().String("country", "", "ISO 3166 country code or EU (isp proxies support US, GB, FR, DE, SG, KR; isp defaults to US, residential and mobile use the global pool without country targeting)")
 	proxiesCreateCmd.Flags().String("city", "", "City name (no spaces, e.g. sanfrancisco)")
 	proxiesCreateCmd.Flags().String("state", "", "Two-letter state code")
 	proxiesCreateCmd.Flags().String("zip", "", "US ZIP code")

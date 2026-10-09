@@ -99,7 +99,11 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 			return &vaultOperationParams{OnePassword: &kernel.VaultItemPerformOperationParams{Of1pwRecover: &kernel.OnePasswordRecoverVaultItemOperationRequestParam{Type: kernel.OnePasswordRecoverVaultItemOperationRequestType1pwRecover}}}, nil
 		}
 		if !paramsSet {
-			return nil, fmt.Errorf("%s requires --params or --spec-file", operation)
+			// Access request operations have only optional parameters.
+			if operation != "1pw_create_access_request" && operation != "1pw_access_request_status" {
+				return nil, fmt.Errorf("%s requires --params or --spec-file", operation)
+			}
+			raw = "{}"
 		}
 		request, err := parseOnePasswordOperationParams(operation, raw)
 		if err != nil {
