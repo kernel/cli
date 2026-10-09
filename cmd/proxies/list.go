@@ -109,7 +109,7 @@ func (p ProxyCmd) List(ctx context.Context, in ProxyListInput) error {
 func formatProxyConfig(proxy *kernel.ProxyListResponse) string {
 	config := &proxy.Config
 	switch proxy.Type {
-	case kernel.ProxyListResponseType(proxyTypeDatacenter), kernel.ProxyListResponseTypeIsp:
+	case kernel.ProxyListResponseTypeIsp:
 		if config.Country != "" {
 			return fmt.Sprintf("Country: %s", config.Country)
 		}

@@ -11,15 +11,15 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestProxyGet_Datacenter(t *testing.T) {
+func TestProxyGet_ISP(t *testing.T) {
 	buf := captureOutput(t)
 
 	fake := &FakeProxyService{
 		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.ProxyGetResponse, error) {
 			return &kernel.ProxyGetResponse{
-				ID:          "dc-1",
-				Name:        "US Datacenter",
-				Type:        kernel.ProxyGetResponseType(proxyTypeDatacenter),
+				ID:          "isp-us",
+				Name:        "US ISP",
+				Type:        kernel.ProxyGetResponseTypeIsp,
 				BypassHosts: []string{"localhost", "internal.service.local"},
 				Config: kernel.ProxyGetResponseConfigUnion{
 					Country: "US",
@@ -29,18 +29,18 @@ func TestProxyGet_Datacenter(t *testing.T) {
 	}
 
 	p := ProxyCmd{proxies: fake}
-	err := p.Get(context.Background(), ProxyGetInput{ID: "dc-1"})
+	err := p.Get(context.Background(), ProxyGetInput{ID: "isp-us"})
 
 	assert.NoError(t, err)
 	output := buf.String()
 
 	// Check all fields are displayed
 	assert.Contains(t, output, "ID")
-	assert.Contains(t, output, "dc-1")
+	assert.Contains(t, output, "isp-us")
 	assert.Contains(t, output, "Name")
-	assert.Contains(t, output, "US Datacenter")
+	assert.Contains(t, output, "US ISP")
 	assert.Contains(t, output, "Type")
-	assert.Contains(t, output, "datacenter")
+	assert.Contains(t, output, "isp")
 	assert.Contains(t, output, "Bypass Hosts")
 	assert.Contains(t, output, "localhost")
 	assert.Contains(t, output, "internal.service.local")

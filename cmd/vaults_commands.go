@@ -215,10 +215,9 @@ and never retry automatically. 400/403/404/409 rejections mean the tool was not 
 
 1Password credentials (see credentials --help) use --params or --spec-file without type:
 1pw_create_access_request: no browser needed; optional goal (<=140), reason (<=100),
-  keywords (1-5 strings); reason and keywords only for single-entry credentials.
-  Present the returned onepassword:// approval link and instructions to the account
-  owner unchanged; invoke it once per credential.
-1pw_access_request_status: optional timeout_seconds 0-120 (default 10).
+  keywords (1-5 strings); reason and keywords only for single-entry credentials. Present the returned onepassword:// approval link and instructions to
+  the account owner unchanged; invoke it once per credential.
+1pw_access_request_status: no browser needed; optional timeout_seconds 0-120 (default 10).
   Check status after the account owner has the approval link.
 1pw_fill: browser_id and the exact page_url of one open login page on a requested
   origin; entry_id when several approved entries share that origin; optional

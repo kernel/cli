@@ -49,7 +49,7 @@ type ProxyCreateInput struct {
 	Protocol string
 	// Hostnames that should bypass the parent proxy and connect directly.
 	BypassHosts []string
-	// ISP (and deprecated datacenter) config
+	// ISP config
 	Country string
 	// Residential/Mobile config
 	City  string
