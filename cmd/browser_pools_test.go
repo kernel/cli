@@ -722,6 +722,26 @@ func TestBrowserPoolsUpdate_PrivateHostModes(t *testing.T) {
 			input:    BrowserPoolsUpdateInput{PrivateHosts: []string{"10.0.0.0/8"}, ClearProxyRoutes: true},
 			wantJSON: `"network":{"private_hosts":["10.0.0.0/8"],"proxy_routes":[]}`,
 		},
+		{
+			name:     "replace allowed hosts",
+			input:    BrowserPoolsUpdateInput{AllowedHosts: []string{" example.com ", "", "*.example.com"}, AllowedHostsProvided: true},
+			wantJSON: `"network":{"allowed_hosts":["example.com","*.example.com"]}`,
+		},
+		{
+			name:     "clear allowed hosts",
+			input:    BrowserPoolsUpdateInput{ClearAllowedHosts: true},
+			wantJSON: `"network":{}`,
+		},
+		{
+			name:     "clear allowed hosts keeps private hosts",
+			input:    BrowserPoolsUpdateInput{PrivateHosts: []string{"10.0.0.0/8"}, ClearAllowedHosts: true},
+			wantJSON: `"network":{"private_hosts":["10.0.0.0/8"]}`,
+		},
+		{
+			name:     "clear proxy routes keeps allowed hosts",
+			input:    BrowserPoolsUpdateInput{AllowedHosts: []string{"example.com"}, AllowedHostsProvided: true, ClearProxyRoutes: true},
+			wantJSON: `"network":{"allowed_hosts":["example.com"],"proxy_routes":[]}`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -838,4 +858,61 @@ func TestBrowserPoolsAcquire_WithTelemetryOverride(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.True(t, captured.Telemetry.Browser.Page.Enabled.Value)
+}
+
+func TestBrowserPoolsCreate_WithAllowedHosts(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolNewParams
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: "pool-allow"}, nil
+		},
+	}
+	c := BrowserPoolsCmd{client: fake}
+
+	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{
+		Size:         1,
+		AllowedHosts: []string{" example.com ", "", "*.example.com"},
+	}))
+	assert.Equal(t, []string{"example.com", "*.example.com"}, captured.Network.AllowedHosts)
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"network":{"allowed_hosts":["example.com","*.example.com"]}`)
+
+	tooMany := make([]string, maxAllowedHosts+1)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("h%d.example.com", i)
+	}
+	assert.Error(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, AllowedHosts: tooMany}))
+}
+
+func TestBrowserPoolsGet_ShowsAllowedHosts(t *testing.T) {
+	setupStdoutCapture(t)
+
+	fake := &FakeBrowserPoolsService{
+		GetFunc: func(ctx context.Context, id string, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			var pool kernel.BrowserPool
+			err := json.Unmarshal([]byte(`{"id":"pool-1","browser_pool_config":{"size":1,"network":{"allowed_hosts":["example.com","*.example.com"]}}}`), &pool)
+			return &pool, err
+		},
+	}
+	require.NoError(t, (BrowserPoolsCmd{client: fake}).Get(context.Background(), BrowserPoolsGetInput{IDOrName: "pool-1"}))
+
+	out := outBuf.String()
+	assert.Contains(t, out, "Allowed Hosts")
+	assert.Contains(t, out, "example.com, *.example.com")
+}
+
+func TestBrowserPoolsUpdate_AllowedHostsValidation(t *testing.T) {
+	c := BrowserPoolsCmd{client: &FakeBrowserPoolsService{}}
+	for _, in := range []BrowserPoolsUpdateInput{
+		{AllowedHosts: []string{"example.com"}, AllowedHostsProvided: true, ClearAllowedHosts: true},
+		{AllowedHosts: []string{"example.com"}, AllowedHostsProvided: true, ClearPrivateHosts: true},
+		{AllowedHosts: []string{" ", ""}, AllowedHostsProvided: true},
+	} {
+		in.IDOrName = "pool-1"
+		assert.Error(t, c.Update(context.Background(), in))
+	}
 }
