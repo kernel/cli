@@ -30,7 +30,7 @@ func TestProxyList_WithProxies(t *testing.T) {
 	buf := captureOutput(t)
 
 	proxies := []kernel.ProxyListResponse{
-		createDatacenterProxy("dc-1", "US Datacenter", "US"),
+		createISPProxy("isp-us", "US ISP", "US"),
 		createResidentialProxy("res-1", "SF Residential", "US", "sanfrancisco", "CA"),
 		createCustomProxy("custom-1", "My Proxy", "proxy.example.com", 8080),
 		{
@@ -73,9 +73,9 @@ func TestProxyList_WithProxies(t *testing.T) {
 	assert.Contains(t, output, "Status")
 
 	// Check proxy data - verify IDs and short columns are fully visible
-	assert.Contains(t, output, "dc-1")
+	assert.Contains(t, output, "isp-us")
 	assert.Contains(t, output, "https") // Protocol is shown
-	assert.Contains(t, output, "datacenter")
+	assert.Contains(t, output, "isp")
 
 	assert.Contains(t, output, "res-1")
 	assert.Contains(t, output, "residential")

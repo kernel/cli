@@ -347,11 +347,11 @@ Present the returned collection URL to the user before waiting for `ready`. It i
 bearer credential: share it only with that user. Readiness means required values are
 populated, not that login succeeded. `fill` requires an already-open page and never
 navigates or submits it. Optional `page_url` selects the exact page; cards require it.
-Do not automatically retry failed/unknown fills or fall back to aliases.
+Fill is safe to retry after a failed/unknown outcome; do not fall back to aliases.
 Once ready, use `fill` for ordinary web forms. When the item advertises `webmcp_invoke`, use
 `items webmcp invoke` instead to bind credential fields to existing `null` inputs of a live
-WebMCP tool; the tool may submit or have other side effects, so never retry an uncertain
-outcome (see [Invoke WebMCP tools with vault fields](#invoke-webmcp-tools-with-vault-fields)).
+WebMCP tool; the tool may submit or have other side effects (see
+[Invoke WebMCP tools with vault fields](#invoke-webmcp-tools-with-vault-fields)).
 1Password credentials use their own advertised `1pw_*` operations instead.
 
 Create specs list `fields` as an ordered array. Each entry carries a stable `name`
@@ -701,14 +701,14 @@ without appended error text. API/transport errors exit nonzero with a sanitized 
 stderr, not a fabricated execution result. No values, selectors, DOM content, or raw browser
 errors are printed in fill results. Pre-write API rejections (400/403/404/409) retain
 HTTP status, recognized error codes, and corrective guidance, and confirm that the
-request wrote no fields. Inspect and correct the cause before deciding on a new fill.
-Transport loss and other uncertain failures retain the no-retry warning.
+request wrote no fields. Correct the cause and retry. Transport loss and other uncertain
+failures note that fields may have been written and that fill is safe to retry.
 
 Fill is non-atomic: execution stops at the first failed/unknown field and earlier writes are
 not rolled back. `filled` does not mean the site retained or accepted the value; `completed`
-does not mean logged in or paid. Transport errors do not prove no writes occurred. Inspect the browser
-before deciding what to do next. The CLI never retries, explicitly submits website forms, or falls
-back to aliases. Link cards do not expose `state.aliases` or support egress substitution.
+does not mean logged in or paid. Transport errors do not prove no writes occurred. Fill never
+submits, so it is safe to run again. The CLI does not retry automatically, explicitly submit website
+forms, or fall back to aliases. Link cards do not expose `state.aliases` or support egress substitution.
 AgentCard-only checkout aliases are a separate integration, not a recovery path after a failed
 or indeterminate fill.
 
@@ -748,9 +748,9 @@ are untrusted page-provided data and may contain the supplied vault values:
 `completed` and `awaiting_submission` exit 0; neither confirms the website accepted the action.
 After `awaiting_submission`, submit the populated form through Playwright or computer interaction
 instead of invoking the tool again. `canceled`, `error`, and `unknown` exit nonzero with the result
-still on stdout in `-o json`. `unknown` means the tool may have run. Requests are never retried:
-API rejections (400/403/404/409) mean the tool was not invoked by that request; other failures
-and transport loss are uncertain, so inspect the browser instead of re-invoking.
+still on stdout in `-o json`. `unknown` means the tool may have run. API rejections
+(400/403/404/409) mean the tool was not invoked by that request; other failures and transport
+loss are uncertain, so inspect the browser to see whether the tool ran.
 
 #### Expansions, updates, and lifecycle
 
@@ -1041,7 +1041,7 @@ Destinations are the OTLP/HTTP endpoints sessions export to. They belong to the 
   - `--timeout-sec <seconds>` - Maximum execution time, 1-120 seconds (defaults server-side)
   - Prints the tool's `output` as pretty JSON on completion; tool errors and cancellations exit non-zero
   - `awaiting_submission` is successful but warns that a non-autosubmit declarative form was filled, not submitted. Inspect the form, obtain any required confirmation, then submit through Playwright or computer interaction instead of invoking the tool again
-  - Invocations are never retried automatically. A 504 `outcome_unknown` error prints the code, invocation ID, and message and exits non-zero. The tool may already have had side effects; verify the outcome before invoking it again
+  - Invocations are never retried automatically. A 504 `outcome_unknown` error prints the code, invocation ID, and message and exits non-zero. The tool may already have had side effects; check the page to see whether it ran
 - `kernel browsers webmcp custom-tools list <id-or-name>` - List registered custom tools with their generated ID, namespace, kind, URL patterns, and metadata
   - `-o json` - Output the raw response
 - `kernel browsers webmcp custom-tools add <id-or-name> --namespace <ns> --source '<js>'` - Atomically add a namespaced batch of page-backed or CDP-backed custom tools
@@ -1135,7 +1135,7 @@ anywhere a project ID does.
   - `--output json`, `-o json` - Output raw JSON object
 
   - `--name <name>` - Proxy configuration name (required)
-  - `--type <type>` - Proxy type: datacenter, isp, residential, mobile, custom (required)
+  - `--type <type>` - Proxy type: isp, residential, mobile, custom (required)
   - `--protocol <http|https>` - Protocol to use (default: https)
   - `--country <code>` - ISO 3166 country code or "EU" (location-based types)
   - `--city <name>` - City name (no spaces, e.g. sanfrancisco) (residential, mobile; requires `--country`)
@@ -1602,11 +1602,11 @@ kernel browsers extensions upload my-browser ./extension1 ./extension2
 # List proxy configurations
 kernel proxies list
 
-# Create a datacenter proxy
-kernel proxies create --type datacenter --country US --name "US Datacenter"
+# Create an ISP proxy
+kernel proxies create --type isp --country US --name "US ISP"
 
-# Create a datacenter proxy using HTTP protocol
-kernel proxies create --type datacenter --country US --protocol http --name "US DC (HTTP)"
+# Create an ISP proxy using HTTP protocol
+kernel proxies create --type isp --country US --protocol http --name "US ISP (HTTP)"
 
 # Create a custom proxy
 kernel proxies create --type custom --host proxy.example.com --port 8080 --username myuser --password mypass --name "My Custom Proxy"

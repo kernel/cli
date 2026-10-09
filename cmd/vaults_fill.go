@@ -29,7 +29,7 @@ var vaultFillResultFields = vaultOutputFields{
 	"fields": vaultFieldsOf("index status error_code"),
 }
 
-const vaultFillUncertain = "browser fields may have been written; inspect the browser and do not retry or fall back to aliases"
+const vaultFillUncertain = "browser fields may have been written; fill never submits, so it is safe to retry; do not fall back to aliases"
 
 var vaultFillErrorMessages = map[string]string{
 	"invalid_request":      "check field names, formats, and browser parameters",
@@ -92,7 +92,7 @@ func vaultOperationRequestError(err error, operation string, messages map[string
 	return fmt.Errorf("%s request failed (HTTP %d); %s", operation, apiErr.StatusCode, guidance)
 }
 
-const vaultFillNotWritten = "no fields were written by this request; inspect and correct the cause before deciding on a new fill; do not automatically retry"
+const vaultFillNotWritten = "no fields were written by this request; correct the cause and retry"
 
 var vaultFillRejected = map[int]string{400: vaultFillNotWritten, 403: vaultFillNotWritten, 404: vaultFillNotWritten, 409: vaultFillNotWritten}
 

@@ -22,7 +22,7 @@ func TestProxyUpdate_RenamesProxy(t *testing.T) {
 			return &kernel.ProxyUpdateResponse{
 				ID:     id,
 				Name:   body.Name,
-				Type:   kernel.ProxyUpdateResponseTypeDatacenter,
+				Type:   kernel.ProxyUpdateResponseTypeIsp,
 				Status: kernel.ProxyUpdateResponseStatusAvailable,
 			}, nil
 		},
@@ -37,7 +37,7 @@ func TestProxyUpdate_RenamesProxy(t *testing.T) {
 
 	out := buf.String()
 	assert.Contains(t, out, "Renamed proxy proxy-1 to New Name")
-	assert.Contains(t, out, "datacenter")
+	assert.Contains(t, out, "isp")
 }
 
 func TestProxyUpdate_RequiresName(t *testing.T) {

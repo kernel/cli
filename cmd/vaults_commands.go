@@ -67,7 +67,7 @@ Kernel-hosted credential flow (fill never submits website forms; WebMCP tools ma
    browser_id and field selectors (writes fields without submitting). When the item
    advertises webmcp_invoke, items webmcp invoke instead binds credential fields to existing
    null inputs of a live WebMCP tool (the tool may submit or have side effects).
-   Never automatically retry either; inspect the browser after an uncertain outcome.
+   fill is safe to retry.
 Use credentials update --version for edits, or items invoke collect to reopen the form.
 Credential values belong in protected files/stdin, never command-line arguments.
 See credentials --help, items invoke --help, and items webmcp invoke --help for examples.
@@ -212,11 +212,10 @@ exit nonzero with JSON retained on stdout. unknown means the tool may have run: 
 and never retry automatically. 400/403/404/409 rejections mean the tool was not invoked.
 
 1Password credentials (see credentials --help) use --params or --spec-file without type:
-1pw_create_access_request: browser_id (vault-bound session ID); optional goal (<=140),
-  reason (<=100), keywords (1-5 strings); reason and keywords only for single-entry
-  credentials. Present the returned onepassword:// approval link and instructions to
+1pw_create_access_request: no browser needed; optional goal (<=140), reason (<=100),
+  keywords (1-5 strings); reason and keywords only for single-entry credentials. Present the returned onepassword:// approval link and instructions to
   the account owner unchanged; invoke it once per credential.
-1pw_access_request_status: browser_id; optional timeout_seconds 0-120 (default 10).
+1pw_access_request_status: no browser needed; optional timeout_seconds 0-120 (default 10).
   Check status after the account owner has the approval link.
 1pw_fill: browser_id and the exact page_url of one open login page on a requested
   origin; entry_id when several approved entries share that origin; optional
@@ -237,8 +236,8 @@ JSON
   kernel vaults items invoke user-vault login webmcp_invoke --spec-file - <<'JSON'
 {"browser_id":"<browser-id>","tool_ref":"<tool-ref>","page_url":"https://example.com/login","input":{"email":null,"password":null},"bindings":[{"field":"email","input_path":"/email"},{"field":"password","input_path":"/password"}]}
 JSON
-  kernel vaults items invoke user-vault github 1pw_create_access_request --params '{"browser_id":"<browser-id>","reason":"Sign in to GitHub"}'
-  kernel vaults items invoke user-vault github 1pw_access_request_status --params '{"browser_id":"<browser-id>","timeout_seconds":60}'
+  kernel vaults items invoke user-vault github 1pw_create_access_request --params '{"reason":"Sign in to GitHub"}'
+  kernel vaults items invoke user-vault github 1pw_access_request_status --params '{"timeout_seconds":60}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login"}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login","entry_id":"<entry-id>"}'
   kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browser-session-id","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#card-number"}]}' -o json`,
