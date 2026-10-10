@@ -592,6 +592,8 @@ func TestBrowsersCreate_WithPrivateHosts(t *testing.T) {
 	raw, err := captured.MarshalJSON()
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"private_hosts":["*.example.ts.net","100.64.0.0/10"]`)
+	assert.NotContains(t, string(raw), "allowed_hosts")
+	assert.NotContains(t, string(raw), "proxy_routes")
 
 	// Blank entries from a trailing comma are dropped rather than sent through.
 	require.NoError(t, (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
@@ -645,6 +647,59 @@ func TestBrowsersCreate_WithAllowedHosts(t *testing.T) {
 	assert.Error(t, (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
 		AllowedHosts: tooMany,
 	}))
+}
+
+func TestBrowsersCreate_EmptyAllowedHostsRejected(t *testing.T) {
+	for name, in := range map[string]BrowsersCreateInput{
+		"no entries":                              {AllowedHosts: []string{}, AllowedHostsProvided: true},
+		"blank entries with private host":         {AllowedHosts: []string{" ", ""}, AllowedHostsProvided: true, PrivateHosts: []string{"10.0.0.0/8"}},
+		"blank entries without the provided flag": {AllowedHosts: []string{" "}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := &FakeBrowsersService{
+				NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+					t.Fatal("New should not be called for an empty allowlist")
+					return nil, nil
+				},
+			}
+			assert.ErrorContains(t, (BrowsersCmd{browsers: fake}).Create(context.Background(), in), "at least one --allowed-host entry is required")
+		})
+	}
+}
+
+// An empty allowlist is only rejected when cobra reports that --allowed-host
+// was passed, so exercise the flag wiring through each command's run function.
+func TestAllowedHostCommands_EmptyFlagRejected(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	tests := []struct {
+		name    string
+		run     func(*cobra.Command, []string) error
+		args    []string
+		wantErr string
+	}{
+		{"browsers create", runBrowsersCreate, nil, "at least one --allowed-host entry is required; omit --allowed-host for unfiltered egress"},
+		{"browser-pools create", runBrowserPoolsCreate, nil, "at least one --allowed-host entry is required; omit --allowed-host for unfiltered egress"},
+		{"browsers update", runBrowsersUpdate, []string{"sess-1"}, "at least one --allowed-host entry is required; use --clear-allowed-hosts to remove the allowlist"},
+		{"browser-pools update", runBrowserPoolsUpdate, []string{"pool-1"}, "at least one --allowed-host entry is required; use --clear-allowed-hosts to remove the pool's allowlist"},
+	}
+	for _, tt := range tests {
+		for _, value := range []string{"", " , "} {
+			t.Run(fmt.Sprintf("%s/%q", tt.name, value), func(t *testing.T) {
+				setupStdoutCapture(t)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+				}))
+				t.Cleanup(server.Close)
+				client := kernel.NewClient(option.WithBaseURL(server.URL), option.WithAPIKey("test"))
+				cmd := &cobra.Command{Use: "test"}
+				cmd.SetContext(context.WithValue(context.Background(), util.KernelClientKey, client))
+				cmd.Flags().StringSlice("allowed-host", nil, "")
+				require.NoError(t, cmd.ParseFlags([]string{"--allowed-host=" + value}))
+
+				require.EqualError(t, tt.run(cmd, tt.args), tt.wantErr)
+			})
+		}
+	}
 }
 
 func TestBrowsersCreate_AllowedHostsRejectsPools(t *testing.T) {
@@ -3223,6 +3278,11 @@ func TestBrowsersUpdate_AllowedHostsValidation(t *testing.T) {
 		{
 			name:    "both set and clear",
 			in:      BrowsersUpdateInput{Identifier: "s", AllowedHosts: []string{"example.com"}, AllowedHostsProvided: true, ClearAllowedHosts: true},
+			wantErr: "cannot specify both --allowed-host and --clear-allowed-hosts",
+		},
+		{
+			name:    "entries without the provided flag and clear",
+			in:      BrowsersUpdateInput{Identifier: "s", AllowedHosts: []string{"example.com"}, ClearAllowedHosts: true},
 			wantErr: "cannot specify both --allowed-host and --clear-allowed-hosts",
 		},
 		{

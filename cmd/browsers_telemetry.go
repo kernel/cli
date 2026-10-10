@@ -544,6 +544,11 @@ func (b BrowsersCmd) TelemetryStream(ctx context.Context, in BrowsersTelemetrySt
 	if in.Replay != "" {
 		params.Replay = kernel.Opt(in.Replay)
 	}
+	// Filter types server-side so skipped events are never sent. The client-side
+	// shouldEmit check below still applies, and is the only filter for categories.
+	if len(in.Types) > 0 {
+		params.Type = in.Types
+	}
 	stream := b.telemetry.StreamStreaming(ctx, br.SessionID, params)
 	defer stream.Close()
 	for stream.Next() {
