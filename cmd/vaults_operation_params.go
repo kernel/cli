@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 
 	kernel "github.com/kernel/kernel-go-sdk"
 )
@@ -15,6 +16,8 @@ type vaultOperationParams struct {
 	Fill     *vaultFillParams
 	WebMCP   *kernel.WebmcpInvokeVaultItemOperationRequestParam
 	Checkout *kernel.VaultCheckoutContextParam
+	// ConfirmTransaction reports an observed Kernel Visa merchant outcome.
+	ConfirmTransaction *kernel.ConfirmTransactionVaultItemOperationRequestParam
 	// OnePassword is a complete 1pw_* request body; Invoke supplies the vault.
 	OnePassword *kernel.VaultItemPerformOperationParams
 }
@@ -25,7 +28,7 @@ func isOnePasswordOperation(operation string) bool {
 
 // vaultOperationTakesParams reports whether an operation accepts --params or --spec-file.
 func vaultOperationTakesParams(operation string) bool {
-	return operation == "fill" || operation == "webmcp_invoke" || operation == "prepare_checkout" || (isOnePasswordOperation(operation) && operation != "1pw_recover")
+	return operation == "fill" || operation == "webmcp_invoke" || operation == "prepare_checkout" || operation == "confirm_transaction" || (isOnePasswordOperation(operation) && operation != "1pw_recover")
 }
 
 type vaultFillParams struct {
@@ -121,6 +124,16 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 		}
 		return &vaultOperationParams{Checkout: checkout}, nil
 	}
+	if operation == "confirm_transaction" {
+		if !paramsSet {
+			return nil, fmt.Errorf("confirm_transaction requires --params or --spec-file with status, transaction_type, amount, currency, and occurred_at")
+		}
+		confirm, err := parseVaultConfirmTransactionParams(raw)
+		if err != nil {
+			return nil, err
+		}
+		return &vaultOperationParams{ConfirmTransaction: confirm}, nil
+	}
 	if operation == "webmcp_invoke" {
 		if !paramsSet {
 			return nil, fmt.Errorf("webmcp_invoke requires --params or --spec-file with browser_id, tool_ref, page_url, input, and bindings; or use items webmcp invoke")
@@ -133,7 +146,7 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 	}
 	if operation != "fill" {
 		if paramsSet {
-			return nil, fmt.Errorf("--params is only supported for fill, webmcp_invoke, prepare_checkout, and 1Password operations; authorize takes no parameters")
+			return nil, fmt.Errorf("--params is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, and 1Password operations; authorize takes no parameters")
 		}
 		return nil, nil
 	}
@@ -195,6 +208,40 @@ func parseVaultFillParams(raw string) (*vaultFillParams, error) {
 		params.Fields = append(params.Fields, binding)
 	}
 	return &params, nil
+}
+
+func parseVaultConfirmTransactionParams(raw string) (*kernel.ConfirmTransactionVaultItemOperationRequestParam, error) {
+	object, err := vaultParamsObject(raw, "status transaction_type amount currency occurred_at")
+	if err != nil {
+		return nil, err
+	}
+	request := kernel.ConfirmTransactionVaultItemOperationRequestParam{Type: kernel.ConfirmTransactionVaultItemOperationRequestTypeConfirmTransaction}
+	var status string
+	if json.Unmarshal(object["status"], &status) != nil || !slices.Contains([]string{"APPROVED", "DECLINED", "PENDING", "ERROR", "CANCELLED"}, status) {
+		return nil, fmt.Errorf("status must be APPROVED, DECLINED, PENDING, ERROR, or CANCELLED")
+	}
+	request.Status = kernel.ConfirmTransactionVaultItemOperationRequestStatus(status)
+	var transactionType string
+	if json.Unmarshal(object["transaction_type"], &transactionType) != nil || !slices.Contains([]string{"PURCHASE", "AUTHORIZATION", "CAPTURE", "REFUND", "REVERSAL", "VERIFICATION", "CHARGEBACK", "FRAUD"}, transactionType) {
+		return nil, fmt.Errorf("transaction_type must be PURCHASE, AUTHORIZATION, CAPTURE, REFUND, REVERSAL, VERIFICATION, CHARGEBACK, or FRAUD")
+	}
+	request.TransactionType = kernel.ConfirmTransactionVaultItemOperationRequestTransactionType(transactionType)
+	var amount *int64
+	if json.Unmarshal(object["amount"], &amount) != nil || amount == nil || *amount < 0 {
+		return nil, fmt.Errorf("amount must be a non-negative integer in minor units")
+	}
+	request.Amount = *amount
+	if json.Unmarshal(object["currency"], &request.Currency) != nil || strings.TrimSpace(request.Currency) == "" {
+		return nil, fmt.Errorf("currency must be the approved purchase currency")
+	}
+	var occurredAt string
+	if json.Unmarshal(object["occurred_at"], &occurredAt) != nil {
+		return nil, fmt.Errorf("occurred_at must be an ISO 8601 timestamp such as 2026-10-10T12:00:00Z")
+	}
+	if request.OccurredAt, err = time.Parse(time.RFC3339, occurredAt); err != nil {
+		return nil, fmt.Errorf("occurred_at must be an ISO 8601 timestamp such as 2026-10-10T12:00:00Z")
+	}
+	return &request, nil
 }
 
 func parseOnePasswordOperationParams(operation, raw string) (*kernel.VaultItemPerformOperationParams, error) {

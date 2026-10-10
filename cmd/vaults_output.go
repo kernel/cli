@@ -45,6 +45,7 @@ var vaultItemFields = vaultOutputFields{
 	"spec": {
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil, "checkout_origin": nil,
 		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil, "merchant_country": nil,
+		"merchant_category": nil, "merchant_category_code": nil,
 		"context": nil, "expires_at": nil, "description": nil, "account": nil, "connection_id": nil,
 		"requests":        onePasswordRequestFields,
 		"fields":          vaultFieldsOf("name label type required sensitive"),

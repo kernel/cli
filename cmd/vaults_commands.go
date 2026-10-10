@@ -182,6 +182,13 @@ Each vault has its own key; it is created on first request and may be cached.`,
 		Long: `Retrieve the item and invoke only an operation listed in available_operations.
 collect returns a time-scoped URL for the full credential form without clearing values.
 authorize sends {"type":"authorize"} for payment authorization.
+confirm_transaction (Kernel Visa cards when advertised) reports a real merchant outcome with
+--params or --spec-file: status (APPROVED, DECLINED, PENDING, ERROR, CANCELLED), transaction_type
+(PURCHASE, AUTHORIZATION, CAPTURE, REFUND, REVERSAL, VERIFICATION, CHARGEBACK, FRAUD), amount
+(actual minor units, no greater than the approved limit), currency (approved purchase currency),
+and occurred_at (ISO 8601 time the outcome was observed). Never infer success from filling
+checkout or receiving a credential. Unknown outcomes require manual reconciliation, not retry.
+Each purchase accepts one report.
 Read the operation description and follow any approval requirements before invoking.
 fill requires --params JSON or --spec-file <path|-> with browser_id (session ID, not name)
 and 1-32 ordered fields (field, selector). Do not include type, values, or frame IDs.
@@ -259,6 +266,7 @@ JSON
   kernel vaults items invoke user-vault github 1pw_access_request_status --params '{"timeout_seconds":60}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login"}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login","entry_id":"<entry-id>"}'
+  kernel vaults items invoke checkout visa-order confirm_transaction --params '{"status":"APPROVED","transaction_type":"PURCHASE","amount":1234,"currency":"USD","occurred_at":"2026-10-10T12:00:00Z"}'
   kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browser-session-id","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#card-number"}]}' -o json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			open, _ := cmd.Flags().GetBool("open")
@@ -269,7 +277,7 @@ JSON
 			}
 			if cmd.Flags().Changed("spec-file") {
 				if !vaultOperationTakesParams(args[2]) {
-					return fmt.Errorf("--spec-file is only supported for fill, webmcp_invoke, prepare_checkout, and 1Password operations with parameters")
+					return fmt.Errorf("--spec-file is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, and 1Password operations with parameters")
 				}
 				data, err := readVaultJSONFile(cmd, "spec-file")
 				if err != nil {
@@ -283,7 +291,7 @@ JSON
 			}
 			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], params, vaultOutput(cmd), open)
 		}}
-	invoke.Flags().String("params", "", "Operation parameters JSON for fill, webmcp_invoke, prepare_checkout, or 1pw_* (maximum 128 KiB); omit type and credential values; 1pw_update_access_token requires --spec-file")
+	invoke.Flags().String("params", "", "Operation parameters JSON for fill, webmcp_invoke, prepare_checkout, confirm_transaction, or 1pw_* (maximum 128 KiB); omit type and credential values; 1pw_update_access_token requires --spec-file")
 	invoke.Flags().String("spec-file", "", "Operation parameters JSON file (use '-' for stdin; maximum 128 KiB)")
 	invoke.MarkFlagsMutuallyExclusive("params", "spec-file")
 	invoke.Flags().Bool("open", false, "Open a returned HTTPS action URL in your browser")

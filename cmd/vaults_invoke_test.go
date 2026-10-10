@@ -184,3 +184,39 @@ func TestVaultGetOperationHints(t *testing.T) {
 		}
 	}
 }
+
+func TestVaultInvokeConfirmTransactionSendsObservedOutcome(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	fixture := strings.ReplaceAll(requestedCardFixture, `[{"type":"authorize","description":"Use only after explicit user approval."}]`, `[{"type":"confirm_transaction","description":"Report the observed merchant outcome."}]`)
+	calls := 0
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 2 {
+			assert.Equal(t, http.MethodPost, r.Method)
+			body, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"type":"confirm_transaction","status":"APPROVED","transaction_type":"PURCHASE","amount":1234,"currency":"USD","occurred_at":"2026-10-10T12:00:00Z"}`, string(body))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, fixture)
+	})
+	_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "confirm_transaction",
+		"--params", `{"status":"APPROVED","transaction_type":"PURCHASE","amount":1234,"currency":"USD","occurred_at":"2026-10-10T12:00:00Z"}`, "-o", "json")
+	require.NoError(t, err)
+	assert.Equal(t, 2, calls)
+}
+
+func TestParseVaultConfirmTransactionParamsValidates(t *testing.T) {
+	_, err := parseVaultOperationParams("confirm_transaction", "", false, false)
+	require.ErrorContains(t, err, "confirm_transaction requires --params")
+	for raw, message := range map[string]string{
+		`{"status":"OK","transaction_type":"PURCHASE","amount":1,"currency":"USD","occurred_at":"2026-10-10T12:00:00Z"}`:                 "status must be",
+		`{"status":"APPROVED","transaction_type":"SALE","amount":1,"currency":"USD","occurred_at":"2026-10-10T12:00:00Z"}`:               "transaction_type must be",
+		`{"status":"APPROVED","transaction_type":"PURCHASE","amount":1.5,"currency":"USD","occurred_at":"2026-10-10T12:00:00Z"}`:         "amount must be",
+		`{"status":"APPROVED","transaction_type":"PURCHASE","amount":1,"currency":"USD","occurred_at":"yesterday"}`:                      "occurred_at must be",
+		`{"status":"APPROVED","transaction_type":"PURCHASE","amount":1,"currency":"USD","occurred_at":"2026-10-10T12:00:00Z","extra":1}`: "supported, non-duplicate",
+	} {
+		_, err := parseVaultOperationParams("confirm_transaction", raw, true, false)
+		require.ErrorContains(t, err, message, raw)
+	}
+}

@@ -309,6 +309,8 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 			return fmt.Errorf("prepare_checkout requires an AgentCard card")
 		}
 		request.OfPrepareCheckout = &kernel.PrepareCheckoutVaultItemOperationRequestParam{Type: "prepare_checkout", Checkout: *params.Checkout}
+	} else if operation == "confirm_transaction" {
+		request.OfConfirmTransaction = params.ConfirmTransaction
 	} else if operation == "collect" {
 		request.OfCollect = &kernel.CollectVaultItemOperationRequestParam{Type: "collect"}
 	} else {

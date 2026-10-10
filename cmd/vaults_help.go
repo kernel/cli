@@ -96,6 +96,8 @@ type KernelCardSpec = {
   merchant_name: string;      // 1..255 characters
   merchant_url: string;       // HTTPS merchant checkout URL; fill is locked to its origin
   merchant_country?: string;  // ISO 3166-1 alpha-2; required for Visa cards
+  merchant_category?: string; // actual merchant category when known; omit rather than invent
+  merchant_category_code?: string; // actual MCC when known; omit rather than invent; 0000 is rejected
 };
 
 type LinkLineItem = {
