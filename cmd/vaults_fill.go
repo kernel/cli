@@ -29,7 +29,7 @@ var vaultFillResultFields = vaultOutputFields{
 	"fields": vaultFieldsOf("index status error_code"),
 }
 
-const vaultFillUncertain = "browser fields may have been written; fill never submits, so it is safe to retry; do not fall back to aliases"
+const vaultFillUncertain = "browser fields may have been written; fill never submits, so a retry is safe. retry only after checking the page, and never in an automatic loop. Do not fall back to aliases."
 
 var vaultFillErrorMessages = map[string]string{
 	"invalid_request":      "check field names, formats, and browser parameters",
@@ -201,14 +201,14 @@ func parseVaultFillResult(raw json.RawMessage, count int) (*vaultFillResult, err
 	return &result, nil
 }
 
-const onePasswordFillUncertain = "the form may have been filled or submitted; inspect the page to see the result of the fill"
+const onePasswordFillUncertain = "the form may have been filled or submitted; 1pw_fill can submit the form, so never retry automatically. check the page first before retrying."
 
-const onePasswordFillNotSubmitted = "nothing was submitted by this request; inspect the item, browser, and page_url before deciding on a new fill; do not automatically retry"
+const onePasswordFillNotSubmitted = "nothing was submitted by this request; inspect the item, browser, and page_url. 1pw_fill can submit the form, so never retry automatically. check the page first before retrying."
 
 // Only these statuses are returned before the extension is invoked.
 var onePasswordFillRejected = map[int]string{
 	400: onePasswordFillNotSubmitted, 403: onePasswordFillNotSubmitted, 404: onePasswordFillNotSubmitted,
-	409: "nothing was submitted by this request; if several approved entries match this page, pass entry_id from items get -o json; do not automatically retry",
+	409: "nothing was submitted by this request; if several approved entries match this page, pass entry_id from items get -o json. 1pw_fill can submit the form, so never retry automatically. check the page first before retrying.",
 }
 
 var onePasswordFillResultFields = vaultFieldsOf("type status error_code")
@@ -257,7 +257,7 @@ func (c VaultsCmd) onePasswordFill(ctx context.Context, vault, key string, reque
 		case "fill_submitted":
 			pterm.Println("The extension filled and submitted the form; this does not confirm the website accepted the login.")
 		case "fill_failed":
-			pterm.Println("The extension reported a failure. Inspect the page before deciding on a new fill; do not retry automatically.")
+			pterm.Println("The extension reported a failure. 1pw_fill can submit the form, so never retry automatically. check the page first before retrying.")
 		default:
 			pterm.Println(onePasswordFillUncertain)
 		}

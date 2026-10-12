@@ -57,13 +57,13 @@ func TestCredentialHelpReadyOperations(t *testing.T) {
 			assert.Contains(t, paths, "Once ready, items invoke fill writes them into ordinary web form fields in a vault-bound browser without submitting")
 			assert.Contains(t, paths, "When the item advertises webmcp_invoke, items webmcp invoke instead binds credential fields to existing null inputs of a live WebMCP tool; the tool may submit or have other side effects")
 			assert.Contains(t, paths, "1pw_fill fills and submits through the 1Password extension")
-			assert.Contains(t, text, "Never automatically retry")
+			assert.Contains(t, text, "fill never submits, so a retry is safe. retry only after checking the page, and never in an automatic loop.")
 		})
 	}
 	text := flat(create.Long)
 	assert.Contains(t, text, "Ordinary web forms: items invoke fill writes field values without submitting")
 	assert.Contains(t, text, "Live WebMCP tool: when webmcp_invoke is advertised, run browsers webmcp list, then items webmcp invoke")
-	assert.Contains(t, text, "fill never submits and is safe to retry.")
+	assert.Contains(t, text, "fill never submits, so a retry is safe. retry only after checking the page, and never in an automatic loop.")
 	assert.Contains(t, text, "approves each access request in the 1Password app")
 
 	vaults := flat(newVaultsCommand().Long)
@@ -75,5 +75,6 @@ func TestCredentialHelpReadyOperations(t *testing.T) {
 	// The 1Password path keeps its own operations and does not advertise webmcp_invoke.
 	onePassword := flat(vaultOnePasswordCredentialHelp)
 	assert.NotContains(t, onePassword, "webmcp")
-	assert.Contains(t, onePassword, "Never automatically retry an access request, fill, or recovery")
+	assert.Contains(t, onePassword, "1pw_fill can submit the form, so never retry automatically. check the page first before retrying.")
+	assert.Contains(t, onePassword, "never automatically retry an access request or recovery")
 }

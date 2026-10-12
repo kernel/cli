@@ -67,7 +67,8 @@ Kernel-hosted credential flow (fill never submits website forms; WebMCP tools ma
    browser_id and field selectors (writes fields without submitting). When the item
    advertises webmcp_invoke, items webmcp invoke instead binds credential fields to existing
    null inputs of a live WebMCP tool (the tool may submit or have side effects).
-   fill is safe to retry.
+   fill never submits, so a retry is safe. retry only after checking the page, and
+   never in an automatic loop.
 Use credentials update --version for edits, or items invoke collect to reopen the form.
 Credential values belong in protected files/stdin, never command-line arguments.
 See credentials --help, items invoke --help, and items webmcp invoke --help for examples.
@@ -198,8 +199,9 @@ Link cards do not expose aliases or support egress substitution.
 Fill writes real values into the browser; unrestricted browser/CDP access can read them.
 Fill never explicitly submits forms or clicks buttons, but input/change events may trigger site behavior.
 completed means fields were filled, not website acceptance, login, or payment success.
-failed may leave partial writes; unknown quarantines the browser. Never automatically
-retry or fall back to aliases. Requests are not automatically retried.
+failed may leave partial writes; unknown quarantines the browser. fill never submits,
+so a retry is safe. retry only after checking the page, and never in an automatic loop.
+Never fall back to aliases. Requests are not automatically retried.
 API validation errors (400/403/404/409) include HTTP status, recognized error codes,
 and corrective guidance; no fields were written by that request. Inspect and correct
 the cause before deciding on a new fill. Transport loss remains an uncertain outcome.
@@ -240,14 +242,15 @@ and never retry automatically. 400/403/404/409 rejections mean the tool was not 
   origin; entry_id when several approved entries share that origin; optional
   timeout_ms 1-30000. The extension selects fields and submits. fill_submitted exits 0
   and does not confirm sign-in; inspect the page. fill_failed and fill_unknown exit
-  nonzero. After fill_unknown, inspect the page to see the result of the fill.
+  nonzero. 1pw_fill can submit the form, so never retry automatically. check the page
+  first before retrying.
 1pw_update_access_token (stored-token credentials only): --spec-file, never --params,
   with access_token only.
 1pw_recover (credential accounts, no parameters): returns a new 1Password link that
   recovers a failed account connection. Share it with the account owner, then run
   credentials connect again with the same key; never delete the item to recover.
-Never retry 1Password operations after failures or uncertain outcomes, and never delete
-and recreate an item to reset an uncertain outcome; stop and tell the user instead.`,
+never automatically retry an access request or recovery, and never delete and recreate
+an item to reset an uncertain outcome; stop and tell the user instead.`,
 		Example: `  kernel vaults items invoke user-vault login collect
   kernel vaults items invoke user-vault login fill --spec-file - <<'JSON'
 {"browser_id":"<browser-id>","fields":[{"field":"username","selector":"#username"},{"field":"password","selector":"#password"}]}
