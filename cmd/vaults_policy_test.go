@@ -46,10 +46,10 @@ func TestVaultRecoveryActionDisplayPolicy(t *testing.T) {
 						assert.Empty(t, human)
 					} else if status == "recovery_required" {
 						assert.NotContains(t, human, "spend_approval")
-						assert.NotContains(t, human, "Required action")
+						assert.NotContains(t, human, "required action")
 						assert.NotContains(t, human, "https://example.test/approve")
-						assert.NotContains(t, human, "Available operation:")
-						assert.NotContains(t, human, "Invoke:")
+						assert.NotContains(t, human, "available operation:")
+						assert.NotContains(t, human, "invoke:")
 					} else {
 						assert.Contains(t, human, "spend_approval")
 					}

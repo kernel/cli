@@ -42,6 +42,6 @@ func TestCredentialCreateManagedAuth(t *testing.T) {
 
 	out, text, err := executeVaultInputCommand(t, client, spec, "vaults", "credentials", "create", "user", "amazon", "--spec-file", "-")
 	require.NoError(t, err)
-	assert.Contains(t, out+text, "Managed auth connection (immutable)")
+	assert.Contains(t, out+text, "managed auth connection (immutable)")
 	assert.Contains(t, out+text, "ma_abc123xyz")
 }

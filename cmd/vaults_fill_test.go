@@ -205,7 +205,7 @@ func TestVaultFillHumanOutputAndRedaction(t *testing.T) {
 					assert.JSONEq(t, result, out)
 					assert.Empty(t, human)
 				} else {
-					assert.Contains(t, human, "Field index")
+					assert.Contains(t, human, "field index")
 					assert.Contains(t, human, "filled")
 					if result != completedFillFixture {
 						assert.Contains(t, human, "not_attempted")
@@ -373,7 +373,7 @@ func TestVaultFillSingleFieldAndHint(t *testing.T) {
 	assert.JSONEq(t, result, out)
 	_, human, err := executeVaultCommand(t, client, "vaults", "items", "get", "checkout", "order-1", "--project", "chosen-project")
 	require.NoError(t, err)
-	assert.Contains(t, human, "Invoke: kernel vaults items invoke --project=chosen-project --params '<json>' -- checkout order-1 fill")
+	assert.Contains(t, human, "invoke: kernel vaults items invoke --project=chosen-project --params '<json>' -- checkout order-1 fill")
 }
 
 func TestVaultAuthorizeRejectsFillResponse(t *testing.T) {

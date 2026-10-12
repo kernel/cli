@@ -89,7 +89,7 @@ func TestVaultRequiredAndInvalidFlags(t *testing.T) {
 		{"vaults create --name=bad/name", "--name"},
 		{"vaults create --name=..", "--name"},
 		{"vaults get", "accepts 1 arg"},
-		{"vaults get bad%2Fname", "vault ID or name"},
+		{"vaults get bad%2Fname", "vault id or name"},
 		{"vaults items get checkout bad/key", "item key"},
 		{"vaults list --limit 0", "--limit"},
 		{"vaults list --limit 101", "--limit"},
@@ -202,7 +202,7 @@ func TestVaultCreateScopeAndImmutableName(t *testing.T) {
 	project = "flag-project"
 	_, human, err = executeVaultCommand(t, client, "--project", project, "vaults", "create", "--name", "checkout")
 	require.NoError(t, err)
-	assert.Contains(t, human, "Name (immutable)")
+	assert.Contains(t, human, "name (immutable)")
 	assert.Contains(t, human, "checkout")
 }
 
@@ -433,7 +433,7 @@ func TestVaultInvalidProjectErrors(t *testing.T) {
 				out, human, err := executeVaultCommand(t, client, append([]string{"--project", project, "vaults"}, args...)...)
 				require.Error(t, err)
 				if args[0] == "wallets" && args[1] == "create" {
-					assert.Equal(t, "vault resource not found (HTTP 404)", err.Error())
+					assert.Equal(t, "vault resource not found (http 404)", err.Error())
 				} else {
 					assert.Equal(t, "project_not_found: Project not found or inactive", util.CleanedUpSdkError{Err: err}.Error())
 				}
