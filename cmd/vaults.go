@@ -273,7 +273,13 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		return fmt.Errorf("invalid vault item operations; operation was not invoked")
 	}
 	if actions.RecoveryRequired {
-		return fmt.Errorf("recovery_required: reconcile the original operation with the provider or support; do not retry, delete, or replace it")
+		if operation != "restart_verification" || actions.RestartVerification == nil {
+			if actions.RestartVerification != nil {
+				return fmt.Errorf("recovery_required: only restart_verification is available; it prepares a fresh verification link and never approves spending. Do not retry, delete, or replace the item")
+			}
+			return fmt.Errorf("recovery_required: reconcile the original operation with the provider or support; do not retry, delete, or replace it")
+		}
+		actions.Operations = []vaultItemOperation{*actions.RestartVerification}
 	}
 	available := false
 	for _, op := range actions.Operations {
@@ -311,6 +317,8 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		request.OfPrepareCheckout = &kernel.PrepareCheckoutVaultItemOperationRequestParam{Type: "prepare_checkout", Checkout: *params.Checkout}
 	} else if operation == "confirm_transaction" {
 		request.OfConfirmTransaction = params.ConfirmTransaction
+	} else if operation == "restart_verification" {
+		request.OfRestartVerification = &kernel.RestartVerificationVaultItemOperationRequestParam{Type: kernel.RestartVerificationVaultItemOperationRequestTypeRestartVerification}
 	} else if operation == "collect" {
 		request.OfCollect = &kernel.CollectVaultItemOperationRequestParam{Type: "collect"}
 	} else {

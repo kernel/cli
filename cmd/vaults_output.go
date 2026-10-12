@@ -449,6 +449,11 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 
 func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemActions) {
 	if actions.RecoveryRequired {
+		if op := actions.RestartVerification; op != nil {
+			pterm.Warning.Println("recovery_required: verification failed before the purchase intent was sent. Do not retry, delete, or replace the item. restart_verification prepares a fresh verification link; it does not approve spending, and the cardholder must verify and approve again. Run it once, only with the user's consent.")
+			pterm.Printf("Available operation: %s — %s\n", op.Type, op.Description)
+			return
+		}
 		pterm.Warning.Println("recovery_required: the original operation is unresolved, not declined or expired. Do not retry, delete, or replace it. Reconcile with the provider or support; no reset operation exists.")
 		return
 	}

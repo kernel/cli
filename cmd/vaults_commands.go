@@ -224,7 +224,11 @@ approval and browser Authorised responses are not capture or fulfillment evidenc
 Use only when advertised for an AgentCard card. Keep the returned approval page open,
 poll until ready_to_submit, then submit native Pay before preparation.expires_at.
 Preparations are single-use, including after failure or expiry; never retry automatically.
-collect/authorize/prepare_checkout/1pw_recover may use --open. Fill returns value-free per-field outcomes;
+restart_verification (Kernel Visa cards in recovery_required, only when advertised) takes no
+parameters. It prepares a fresh local verification link after an initial attestation failure;
+it never approves spending or replays a provider request. The cardholder must open the new
+link, verify again and approve the purchase. Never retry it automatically.
+collect/authorize/restart_verification/prepare_checkout/1pw_recover may use --open. Fill returns value-free per-field outcomes;
 completed exits 0, failed/unknown exit nonzero with valid JSON retained on stdout in -o json.
 
 webmcp_invoke (credential items and ready Link cards when advertised; see items webmcp invoke --help
@@ -269,6 +273,7 @@ JSON
   kernel vaults items invoke user-vault github 1pw_access_request_status --params '{"timeout_seconds":60}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login"}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login","entry_id":"<entry-id>"}'
+  kernel vaults items invoke checkout visa-order restart_verification --open
   kernel vaults items invoke checkout visa-order confirm_transaction --params '{"status":"APPROVED","transaction_type":"PURCHASE","amount":1234,"currency":"USD","occurred_at":"2026-10-10T12:00:00Z"}'
   kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browser-session-id","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#card-number"}]}' -o json`,
 		RunE: func(cmd *cobra.Command, args []string) error {

@@ -88,8 +88,8 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 	if strings.TrimSpace(operation) == "" {
 		return nil, fmt.Errorf("operation must not be empty")
 	}
-	if openSet && operation != "authorize" && operation != "collect" && operation != "prepare_checkout" && operation != "1pw_recover" {
-		return nil, fmt.Errorf("--open is only supported for authorize, collect, prepare_checkout, and 1pw_recover")
+	if openSet && operation != "authorize" && operation != "restart_verification" && operation != "collect" && operation != "prepare_checkout" && operation != "1pw_recover" {
+		return nil, fmt.Errorf("--open is only supported for authorize, restart_verification, collect, prepare_checkout, and 1pw_recover")
 	}
 	if len(raw) > 128*1024 {
 		return nil, fmt.Errorf("operation parameters exceed 128 KiB")
