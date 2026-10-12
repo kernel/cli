@@ -49,7 +49,7 @@ func TestKernelWalletRejectsExternalCredentials(t *testing.T) {
 	for _, flag := range [][]string{{"--tokens-file", "-"}, {"--provider-config-id", "config-1"}, {"--provider-config-name", "config-1"}} {
 		args := append([]string{"vaults", "wallets", "create", "checkout", "cardholder", "--provider", "kernel", "--spec", "{}"}, flag...)
 		_, _, err := executeVaultCommand(t, client, args...)
-		require.ErrorContains(t, err, "Kernel wallets do not use provider configurations or tokens")
+		require.ErrorContains(t, err, "kernel wallets do not use provider configurations or tokens")
 	}
 }
 
@@ -145,17 +145,31 @@ func TestKernelReadyCardUsesAdvertisedFill(t *testing.T) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
-		assert.JSONEq(t, `{"type":"fill","browser_id":"browser-1","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#card-number"}]}`, string(body))
+		assert.JSONEq(t, `{"type":"fill","browser_id":"browser-1","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#cardNumber"},{"field":"expiration","format":"MM/YY","selector":"#cardExpiry"},{"field":"cvc","selector":"#cardCvc"}]}`, string(body))
 		_, _ = io.WriteString(w, `{"type":"fill","status":"completed","fields":[{"index":0,"status":"filled"}]}`)
 	})
-	out, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "fill", "--params", `{"browser_id":"browser-1","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#card-number"}]}`, "-o", "json")
+	out, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "fill", "--params", `{"browser_id":"browser-1","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#cardNumber"},{"field":"expiration","format":"MM/YY","selector":"#cardExpiry"},{"field":"cvc","selector":"#cardCvc"}]}`, "-o", "json")
 	require.NoError(t, err)
 	assert.Contains(t, out, `"completed"`)
 	assert.Equal(t, 2, calls)
 }
 
+func TestKernelCardGuidance(t *testing.T) {
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, kernelCardFixture)
+	})
+	_, human, err := executeVaultCommand(t, client, "vaults", "items", "get", "checkout", "order-1")
+	require.NoError(t, err)
+	for _, want := range []string{"report the observed outcome once with confirm_transaction", "do not report or retry unknown outcomes", "no stored billing fields", "billing_* returns field_unavailable", "enter billing details on the merchant page"} {
+		assert.Contains(t, human, want)
+	}
+	assert.NotContains(t, human, "does not observe merchant charges")
+	assert.NotContains(t, human, "never replace an item in recovery_required")
+}
+
 func TestKernelCardUpdateRejectedLocally(t *testing.T) {
 	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Fatal("Kernel update reached API") })
 	_, _, err := executeVaultCommand(t, client, "vaults", "cards", "update", "checkout", "order-1", "--provider", "kernel", "--spec", `{}`)
-	require.ErrorContains(t, err, "Kernel card updates are not supported")
+	require.ErrorContains(t, err, "kernel card updates are not supported")
 }

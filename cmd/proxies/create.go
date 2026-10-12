@@ -21,8 +21,6 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 	// Validate proxy type
 	var proxyType kernel.ProxyNewParamsType
 	switch in.Type {
-	case "datacenter":
-		proxyType = kernel.ProxyNewParamsTypeDatacenter
 	case "isp":
 		proxyType = kernel.ProxyNewParamsTypeIsp
 	case "residential":
@@ -48,15 +46,6 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 
 	// Build config based on type
 	switch proxyType {
-	case kernel.ProxyNewParamsTypeDatacenter:
-		config := kernel.ProxyNewParamsConfigDatacenter{}
-		if in.Country != "" {
-			config.Country = kernel.Opt(in.Country)
-		}
-		params.Config = kernel.ProxyNewParamsConfigUnion{
-			OfDatacenter: &config,
-		}
-
 	case kernel.ProxyNewParamsTypeIsp:
 		config := kernel.ProxyNewParamsConfigIsp{}
 		if in.Country != "" {

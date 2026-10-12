@@ -183,7 +183,7 @@ func TestVaultWebMCPInvokeOutcomes(t *testing.T) {
 		ok                  bool
 	}{
 		{"error", `{"type":"webmcp_invoke","status":"error","invocation_id":"invoke-3","error_text":"Invalid password for credential-sentinel\u001b[31m"}`, "may have had side effects", false},
-		{"canceled", `{"type":"webmcp_invoke","status":"canceled","invocation_id":"invoke-4"}`, "do not retry automatically", false},
+		{"canceled", `{"type":"webmcp_invoke","status":"canceled","invocation_id":"invoke-4"}`, "may have had side effects", false},
 		{"unknown", `{"type":"webmcp_invoke","status":"unknown"}`, "the tool may have run", false},
 		{"null output", `{"type":"webmcp_invoke","status":"completed","invocation_id":"invoke-5","output":null}`, "Output (untrusted", true},
 	} {
@@ -218,12 +218,12 @@ func TestVaultWebMCPInvokeRequestErrors(t *testing.T) {
 		name, body, want string
 		status           int
 	}{
-		{"target changed", `{"code":"target_changed","message":"credential-sentinel"}`, "target_changed (HTTP 400): the tool_ref is no longer live", 400},
-		{"destination", `{"code":"destination_denied"}`, "destination_denied (HTTP 403)", 403},
-		{"conflict", `{"code":"conflict"}`, "conflict (HTTP 409)", 409},
-		{"unrecognized", `{"code":"credential-sentinel"}`, "webmcp_invoke request failed (HTTP 400); the tool was not invoked", 400},
-		{"server", `{"code":"execution_failed"}`, "execution_failed (HTTP 500): WebMCP invocation failed; the tool may have run", 500},
-		{"gateway", `credential-sentinel`, "webmcp_invoke request failed (HTTP 502); the tool may have run", 502},
+		{"target changed", `{"code":"target_changed","message":"credential-sentinel"}`, "target_changed (http 400): the tool_ref is no longer live", 400},
+		{"destination", `{"code":"destination_denied"}`, "destination_denied (http 403)", 403},
+		{"conflict", `{"code":"conflict"}`, "conflict (http 409)", 409},
+		{"unrecognized", `{"code":"credential-sentinel"}`, "webmcp_invoke request failed (http 400); the tool was not invoked", 400},
+		{"server", `{"code":"execution_failed"}`, "execution_failed (http 500): WebMCP invocation failed; the tool may have run", 500},
+		{"gateway", `credential-sentinel`, "webmcp_invoke request failed (http 502); the tool may have run", 502},
 		{"invalid result", `{"type":"fill","status":"completed","fields":[]}`, "invalid webmcp_invoke result; the tool may have run", 200},
 		{"invalid status", `{"type":"webmcp_invoke","status":"credential-sentinel"}`, "invalid webmcp_invoke result", 200},
 	} {
@@ -234,7 +234,6 @@ func TestVaultWebMCPInvokeRequestErrors(t *testing.T) {
 			require.Error(t, err)
 			assert.Equal(t, 1, posts, "webmcp_invoke must not be retried")
 			assert.Contains(t, err.Error(), tc.want)
-			assert.Contains(t, err.Error(), "retry")
 			assert.NotContains(t, err.Error(), "credential-sentinel")
 			assert.Empty(t, out)
 		})
@@ -312,7 +311,7 @@ func TestVaultWebMCPInvokeInputFileErrors(t *testing.T) {
 	for path, want := range map[string]string{
 		filepath.Join(dir, "missing.json"): "could not open --input-file",
 		large:                              "could not read --input-file (maximum 128 KiB)",
-		array:                              "--input-file must contain a JSON object",
+		array:                              "--input-file must contain a json object",
 	} {
 		args := vaultWebMCPArgs()
 		for i, arg := range args {

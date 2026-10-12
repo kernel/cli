@@ -218,5 +218,5 @@ func TestCredentialSpecInputProvider(t *testing.T) {
 	assert.EqualValues(t, "kernel", spec.OfKernel.Provider)
 
 	_, err = credentialSpecInput([]byte(`{"provider":"bitwarden","fields":[{"name":"password","type":"password"}]}`))
-	assert.EqualError(t, err, "credential spec provider must be kernel or 1password")
+	assert.EqualError(t, err, "credential spec provider must be kernel, 1password, or managed_auth")
 }

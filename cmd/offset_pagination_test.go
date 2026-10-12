@@ -72,7 +72,7 @@ func TestOffsetPaginationListCommands(t *testing.T) {
 					case "projects":
 						err = (ProjectsCmd{projects: &client.Projects}).List(context.Background(), ProjectsListInput{Limit: 20, Offset: 20, Output: "json"})
 					case "vaults":
-						err = (VaultsCmd{vaults: &client.Vaults}).List(context.Background(), 20, 20, "", "json")
+						err = (VaultsCmd{vaults: &client.Vaults}).List(context.Background(), 20, 20, "", "", "json")
 					case "vault-provider-configs":
 						err = (VaultProviderConfigsCmd{configs: &client.VaultProviderConfigs}).List(context.Background(), 20, 20, "json")
 					}
@@ -86,4 +86,17 @@ func TestOffsetPaginationListCommands(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestVaultsListQuery(t *testing.T) {
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "my vault", r.URL.Query().Get("query"))
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Has-More", "true")
+		w.Header().Set("X-Next-Offset", "20")
+		_, _ = io.WriteString(w, "[]")
+	})
+	setupStdoutCapture(t)
+	require.NoError(t, (VaultsCmd{vaults: &client.Vaults}).List(context.Background(), 20, 0, "my vault", "", "table"))
+	assert.Contains(t, outBuf.String(), `--query "my vault"`)
 }

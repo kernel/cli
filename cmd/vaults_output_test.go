@@ -39,10 +39,10 @@ func TestVaultOutputAgentCardAliasesPresenceAndRedaction(t *testing.T) {
 		assert.Contains(t, human, value)
 	}
 	for _, field := range []string{"number", "cvc", "exp_month", "exp_year"} {
-		assert.Contains(t, human, "Checkout alias: "+field)
+		assert.Contains(t, human, "checkout alias: "+field)
 	}
 	assert.Contains(t, human, "ready does not mean paid")
-	assert.Contains(t, human, "Never retry automatically")
+	assert.Contains(t, human, "never retry automatically")
 	assert.Contains(t, human, "explicit user confirmation")
 	assert.NotContains(t, human, "SECRET")
 	out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
@@ -59,7 +59,7 @@ func TestVaultOutputAgentCardAliasesPresenceAndRedaction(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(withoutAliases), &item))
 	buf.Reset()
 	require.NoError(t, printVaultItem(&item, ""))
-	assert.NotContains(t, buf.String(), "Checkout alias")
+	assert.NotContains(t, buf.String(), "checkout alias")
 	out = captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
 	assert.NotContains(t, out, "aliases")
 
@@ -67,7 +67,7 @@ func TestVaultOutputAgentCardAliasesPresenceAndRedaction(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(nullAliases), &item))
 	buf.Reset()
 	require.NoError(t, printVaultItem(&item, ""))
-	assert.NotContains(t, buf.String(), "Checkout alias")
+	assert.NotContains(t, buf.String(), "checkout alias")
 	out = captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
 	assert.Contains(t, out, `"aliases": null`)
 }
@@ -84,10 +84,10 @@ func TestVaultOutputLinkHasNoAliases(t *testing.T) {
 			operation := "authorize"
 			if item.State.Status == "ready" {
 				operation = "fill"
-				assert.Contains(t, buf.String(), "Permitted domains (provider-assigned)")
+				assert.Contains(t, buf.String(), "permitted domains (provider-assigned)")
 				assert.Contains(t, buf.String(), "shop.example")
 			}
-			assert.Contains(t, buf.String(), "Available operation: "+operation)
+			assert.Contains(t, buf.String(), "available operation: "+operation)
 			out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
 			assert.NotContains(t, out, "aliases")
 			assert.NotContains(t, out, "SECRET")
@@ -104,6 +104,26 @@ func TestVaultOutputLinkHasNoAliases(t *testing.T) {
 	}
 }
 
+func TestVaultOutputKernelCardMerchantCountry(t *testing.T) {
+	var item kernel.VaultItemUnion
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"id":"card-id","key":"order-1","type":"card",
+		"spec":{"provider":"kernel","wallet":"wallet-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://shop.example/checkout","merchant_country":"US"},
+		"state":{"provider":"kernel","status":"pending_authorization"},
+		"available_operations":[],"available_expansions":[]
+	}`), &item))
+	buf := capturePtermOutput(t)
+	require.NoError(t, printVaultItem(&item, ""))
+	assert.Contains(t, buf.String(), "merchant country")
+	assert.Contains(t, buf.String(), "US")
+	out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
+	var decoded struct {
+		Spec vaultJSON `json:"spec"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &decoded))
+	assert.JSONEq(t, `"US"`, string(decoded.Spec["merchant_country"]))
+}
+
 func TestVaultOutputAgentCardAuthorizationIsNotPaymentSuccess(t *testing.T) {
 	var item kernel.VaultItemUnion
 	require.NoError(t, json.Unmarshal([]byte(`{
@@ -114,7 +134,7 @@ func TestVaultOutputAgentCardAuthorizationIsNotPaymentSuccess(t *testing.T) {
 	}`), &item))
 	buf := capturePtermOutput(t)
 	require.NoError(t, printVaultItem(&item, ""))
-	for _, text := range []string{"Authorization status", "declined", "expired", "Charged kind", "none", "Processor response delivered", "false"} {
+	for _, text := range []string{"authorization status", "declined", "expired", "charged kind", "none", "processor response delivered", "false"} {
 		assert.Contains(t, buf.String(), text)
 	}
 	assert.NotContains(t, buf.String(), "SECRET_RESPONSE")
@@ -149,7 +169,7 @@ func TestVaultOutputPaymentMethodsAdvisoryUnknownVsFalse(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &item))
 	buf := capturePtermOutput(t)
 	require.NoError(t, printVaultItem(&item, ""))
-	for _, text := range []string{"Payment method ID", "pm-unknown", "unknown", "pm-ineligible", "false", "not_supported", "payment_method_id", "--spec JSON", "advisory"} {
+	for _, text := range []string{"payment method id", "pm-unknown", "unknown", "pm-ineligible", "false", "not_supported", "payment_method_id", "--spec json", "advisory"} {
 		assert.Contains(t, buf.String(), text)
 	}
 	out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
@@ -178,7 +198,7 @@ func TestVaultActionOutputNoInventedURLs(t *testing.T) {
 			if action.url != "" {
 				assert.Contains(t, buf.String(), action.url)
 			} else {
-				assert.NotContains(t, buf.String(), "Action URL")
+				assert.NotContains(t, buf.String(), "action url")
 			}
 		})
 	}
@@ -190,8 +210,8 @@ func TestVaultLongURLsPrintedOutsideTable(t *testing.T) {
 	for _, tt := range []struct {
 		name, body, label, url string
 	}{
-		{"action", strings.TrimSuffix(connectedWalletFixture, "}") + fmt.Sprintf(`,"action":{"name":"link_oauth","url":%q}}`, actionURL), "Action URL", actionURL},
-		{"approval", fmt.Sprintf(`{"key":"order-1","type":"card","spec":{"provider":"agentcard"},"state":{"provider":"agentcard","status":"ready","authorization":{"status":"pending","approval_url":%q}}}`, approvalURL), "Approval URL", approvalURL},
+		{"action", strings.TrimSuffix(connectedWalletFixture, "}") + fmt.Sprintf(`,"action":{"name":"link_oauth","url":%q}}`, actionURL), "action url", actionURL},
+		{"approval", fmt.Sprintf(`{"key":"order-1","type":"card","spec":{"provider":"agentcard"},"state":{"provider":"agentcard","status":"ready","authorization":{"status":"pending","approval_url":%q}}}`, approvalURL), "approval url", approvalURL},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var item kernel.VaultItemUnion

@@ -74,7 +74,7 @@ func TestVaultPrepareCheckoutProcessor(t *testing.T) {
 
 	_, text, err := executeVaultCommand(t, client, "vaults", "items", "get", "user-123", "order-1")
 	require.NoError(t, err)
-	assert.Contains(t, text, "Processor")
+	assert.Contains(t, text, "processor")
 	assert.Contains(t, text, "bambora")
 }
 
@@ -155,7 +155,7 @@ func TestVaultPrepareCheckoutChecksAvailabilityAndNeverRetries(t *testing.T) {
 	}
 	for _, fixture := range []string{
 		strings.Replace(preparationCardFixture, `"type":"prepare_checkout"`, `"type":"other"`, 1),
-		strings.Replace(preparationCardFixture, `"status":"preparing"`, `"status":"recovery_required"`, 1),
+		strings.Replace(strings.Replace(preparationCardFixture, `"status":"preparing"`, `"status":"recovery_required"`, 1), `"type":"prepare_checkout"`, `"type":"other"`, 1),
 		strings.ReplaceAll(preparationCardFixture, `"agentcard"`, `"link"`),
 	} {
 		posts := 0
@@ -193,7 +193,7 @@ func TestVaultPreparationOpenAndGuidance(t *testing.T) {
 		})
 		_, text, err := executeVaultCommand(t, client, "vaults", "items", "get", "user-123", "order-1")
 		require.NoError(t, err)
-		assert.Contains(t, text, "Preparation ID")
+		assert.Contains(t, text, "preparation id")
 		assert.Contains(t, text, "single-use")
 		assert.NotContains(t, text, "never-print")
 		if status == "ready_to_submit" {

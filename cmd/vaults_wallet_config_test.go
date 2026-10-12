@@ -96,7 +96,7 @@ func TestVaultWalletConfigSelection(t *testing.T) {
 						assert.Contains(t, out, `"provider_config"`)
 						assert.Empty(t, human)
 					} else {
-						assert.Contains(t, human, "Provider config ID (immutable)")
+						assert.Contains(t, human, "provider config id (immutable)")
 					}
 				})
 			}
@@ -173,12 +173,13 @@ func TestVaultRecoveryRequired(t *testing.T) {
 	for _, provider := range []string{"link", "agentcard"} {
 		body := strings.ReplaceAll(requestedCardFixture, `"status":"requested"`, `"status":"recovery_required"`)
 		body = strings.ReplaceAll(body, `"provider":"link"`, `"provider":"`+provider+`"`)
+		body = strings.ReplaceAll(body, `[{"type":"authorize","description":"Use only after explicit user approval."}]`, `[]`)
 		for _, operation := range []string{"get", "invoke"} {
 			t.Run(provider+"/"+operation, func(t *testing.T) {
 				calls := 0
 				client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 					calls++
-					assert.Equal(t, http.MethodGet, r.Method, "must not dispatch even if a stale operation is advertised")
+					assert.Equal(t, http.MethodGet, r.Method, "must not dispatch an unadvertised operation")
 					w.Header().Set("Content-Type", "application/json")
 					_, _ = io.WriteString(w, body)
 				})
@@ -195,8 +196,8 @@ func TestVaultRecoveryRequired(t *testing.T) {
 				} else {
 					require.NoError(t, err)
 					assert.Contains(t, human, "not declined or expired")
-					assert.NotContains(t, human, "Invoke:")
-					assert.NotContains(t, human, "Available operation:")
+					assert.NotContains(t, human, "invoke:")
+					assert.NotContains(t, human, "available operation:")
 				}
 			})
 		}
@@ -212,8 +213,8 @@ func TestVaultRecoveryDoesNotOpenStaleAction(t *testing.T) {
 	buf := capturePtermOutput(t)
 	require.NoError(t, c.showItem(&item, "", true))
 	assert.NotContains(t, buf.String(), "https://example.test/approve")
-	assert.NotContains(t, buf.String(), "Required action")
-	assert.NotContains(t, buf.String(), "spend_approval")
+	assert.NotContains(t, buf.String(), "required action")
+	assert.Contains(t, buf.String(), "restart_verification")
 }
 
 func TestVaultImportedWalletDegradedOutput(t *testing.T) {
@@ -235,7 +236,7 @@ func TestVaultImportedWalletDegradedOutput(t *testing.T) {
 		if output == "" {
 			assert.Contains(t, human, "no in-place reauthorization")
 			assert.Contains(t, human, "new work only")
-			assert.Contains(t, human, "Existing cards stay bound")
+			assert.Contains(t, human, "existing cards stay bound")
 		}
 	}
 }

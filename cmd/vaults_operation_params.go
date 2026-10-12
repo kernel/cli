@@ -12,9 +12,10 @@ import (
 )
 
 type vaultOperationParams struct {
-	Fill     *vaultFillParams
-	WebMCP   *kernel.WebmcpInvokeVaultItemOperationRequestParam
-	Checkout *kernel.VaultCheckoutContextParam
+	Fill               *vaultFillParams
+	WebMCP             *kernel.WebmcpInvokeVaultItemOperationRequestParam
+	Checkout           *kernel.VaultCheckoutContextParam
+	ConfirmTransaction *vaultConfirmTransactionParams
 	// OnePassword is a complete 1pw_* request body; Invoke supplies the vault.
 	OnePassword *kernel.VaultItemPerformOperationParams
 }
@@ -25,7 +26,7 @@ func isOnePasswordOperation(operation string) bool {
 
 // vaultOperationTakesParams reports whether an operation accepts --params or --spec-file.
 func vaultOperationTakesParams(operation string) bool {
-	return operation == "fill" || operation == "webmcp_invoke" || operation == "prepare_checkout" || (isOnePasswordOperation(operation) && operation != "1pw_recover")
+	return operation == "fill" || operation == "webmcp_invoke" || operation == "prepare_checkout" || operation == "confirm_transaction" || (isOnePasswordOperation(operation) && operation != "1pw_recover")
 }
 
 type vaultFillParams struct {
@@ -85,8 +86,8 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 	if strings.TrimSpace(operation) == "" {
 		return nil, fmt.Errorf("operation must not be empty")
 	}
-	if openSet && operation != "authorize" && operation != "collect" && operation != "prepare_checkout" && operation != "1pw_recover" {
-		return nil, fmt.Errorf("--open is only supported for authorize, collect, prepare_checkout, and 1pw_recover")
+	if openSet && operation != "authorize" && operation != "collect" && operation != "prepare_checkout" && operation != "1pw_recover" && operation != "restart_verification" {
+		return nil, fmt.Errorf("--open is only supported for authorize, collect, prepare_checkout, 1pw_recover, and restart_verification")
 	}
 	if len(raw) > 128*1024 {
 		return nil, fmt.Errorf("operation parameters exceed 128 KiB")
@@ -99,13 +100,27 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 			return &vaultOperationParams{OnePassword: &kernel.VaultItemPerformOperationParams{Of1pwRecover: &kernel.OnePasswordRecoverVaultItemOperationRequestParam{Type: kernel.OnePasswordRecoverVaultItemOperationRequestType1pwRecover}}}, nil
 		}
 		if !paramsSet {
-			return nil, fmt.Errorf("%s requires --params or --spec-file", operation)
+			// Access request operations have only optional parameters.
+			if operation != "1pw_create_access_request" && operation != "1pw_access_request_status" {
+				return nil, fmt.Errorf("%s requires --params or --spec-file", operation)
+			}
+			raw = "{}"
 		}
 		request, err := parseOnePasswordOperationParams(operation, raw)
 		if err != nil {
 			return nil, err
 		}
 		return &vaultOperationParams{OnePassword: request}, nil
+	}
+	if operation == "confirm_transaction" {
+		if !paramsSet {
+			return nil, fmt.Errorf("confirm_transaction requires --params or --spec-file")
+		}
+		confirmation, err := parseVaultConfirmTransactionParams(raw)
+		if err != nil {
+			return nil, err
+		}
+		return &vaultOperationParams{ConfirmTransaction: confirmation}, nil
 	}
 	if operation == "prepare_checkout" {
 		if !paramsSet {
@@ -129,7 +144,7 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 	}
 	if operation != "fill" {
 		if paramsSet {
-			return nil, fmt.Errorf("--params is only supported for fill, webmcp_invoke, prepare_checkout, and 1Password operations; authorize takes no parameters")
+			return nil, fmt.Errorf("--params is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, and 1Password operations; authorize and restart_verification take no parameters")
 		}
 		return nil, nil
 	}
@@ -195,8 +210,8 @@ func parseVaultFillParams(raw string) (*vaultFillParams, error) {
 
 func parseOnePasswordOperationParams(operation, raw string) (*kernel.VaultItemPerformOperationParams, error) {
 	allowed := map[string]string{
-		"1pw_create_access_request": "browser_id goal reason keywords",
-		"1pw_access_request_status": "browser_id timeout_seconds",
+		"1pw_create_access_request": "goal reason keywords",
+		"1pw_access_request_status": "timeout_seconds",
 		"1pw_fill":                  "browser_id page_url entry_id timeout_ms",
 		"1pw_update_access_token":   "access_token",
 	}[operation]
@@ -214,13 +229,9 @@ func parseOnePasswordOperationParams(operation, raw string) (*kernel.VaultItemPe
 		}
 		return &kernel.VaultItemPerformOperationParams{Of1pwUpdateAccessToken: &request}, nil
 	}
-	var browserID string
-	if json.Unmarshal(object["browser_id"], &browserID) != nil || strings.TrimSpace(browserID) == "" {
-		return nil, fmt.Errorf("browser_id must be a non-empty browser session ID, not a name")
-	}
 	switch operation {
 	case "1pw_create_access_request":
-		request := kernel.OnePasswordRequestAccessVaultItemOperationRequestParam{BrowserID: browserID, Type: kernel.OnePasswordRequestAccessVaultItemOperationRequestType1pwCreateAccessRequest}
+		request := kernel.OnePasswordRequestAccessVaultItemOperationRequestParam{Type: kernel.OnePasswordRequestAccessVaultItemOperationRequestType1pwCreateAccessRequest}
 		for _, name := range []string{"goal", "reason"} {
 			if value, ok := object[name]; ok {
 				var text string
@@ -239,7 +250,7 @@ func parseOnePasswordOperationParams(operation, raw string) (*kernel.VaultItemPe
 		}
 		return &kernel.VaultItemPerformOperationParams{Of1pwCreateAccessRequest: &request}, nil
 	case "1pw_access_request_status":
-		request := kernel.VaultItemPerformOperationParamsBody1pwAccessRequestStatus{BrowserID: browserID}
+		request := kernel.VaultItemPerformOperationParamsBody1pwAccessRequestStatus{}
 		if value, ok := object["timeout_seconds"]; ok {
 			var timeout *int64
 			if json.Unmarshal(value, &timeout) != nil || timeout == nil || *timeout < 0 || *timeout > 120 {
@@ -249,6 +260,10 @@ func parseOnePasswordOperationParams(operation, raw string) (*kernel.VaultItemPe
 		}
 		return &kernel.VaultItemPerformOperationParams{Of1pwAccessRequestStatus: &request}, nil
 	default:
+		var browserID string
+		if json.Unmarshal(object["browser_id"], &browserID) != nil || strings.TrimSpace(browserID) == "" {
+			return nil, fmt.Errorf("browser_id must be a non-empty browser session ID, not a name")
+		}
 		request := kernel.OnePasswordFillVaultItemOperationRequestParam{BrowserID: browserID, Type: kernel.OnePasswordFillVaultItemOperationRequestType1pwFill}
 		if json.Unmarshal(object["page_url"], &request.PageURL) != nil {
 			return nil, fmt.Errorf("page_url must be the exact absolute URL of the open login page")

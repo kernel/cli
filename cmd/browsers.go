@@ -23,6 +23,7 @@ import (
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
+	"github.com/kernel/kernel-go-sdk/packages/param"
 	"github.com/kernel/kernel-go-sdk/packages/ssestream"
 	"github.com/kernel/kernel-go-sdk/shared"
 	"github.com/pterm/pterm"
@@ -88,11 +89,6 @@ type BrowserFWatchService interface {
 // BrowserLogService defines the subset we use for browser log APIs.
 type BrowserLogService interface {
 	StreamStreaming(ctx context.Context, idOrName string, query kernel.BrowserLogStreamParams, opts ...option.RequestOption) (stream *ssestream.Stream[shared.LogEvent])
-}
-
-// BrowserPlaywrightService defines the subset we use for Playwright execution.
-type BrowserPlaywrightService interface {
-	Execute(ctx context.Context, idOrName string, body kernel.BrowserPlaywrightExecuteParams, opts ...option.RequestOption) (res *kernel.BrowserPlaywrightExecuteResponse, err error)
 }
 
 // BrowserComputerService defines the subset we use for OS-level mouse & screen.
@@ -166,7 +162,7 @@ func parseViewport(viewport string) (width, height, refreshRate int64, err error
 // availableRegions returns the geographic regions the API accepts for browser
 // sessions and pools.
 func availableRegions() []string {
-	return []string{"us-east", "eu-west", "ap-southeast"}
+	return []string{"us-east", "us-west", "eu-west", "ap-southeast"}
 }
 
 // parseRegionFlag validates a --region value. An empty value means the flag was
@@ -205,6 +201,26 @@ func parseMemoryFlag(memory string) (kernel.BrowserMemoryRequest, error) {
 	return "", fmt.Errorf("invalid --memory value: %s (must be one of %s)", memory, strings.Join(availableMemorySizes(), ", "))
 }
 
+// availableVideoMemorySizes returns the video memory (VRAM) sizes the API
+// accepts for a GPU browser session.
+func availableVideoMemorySizes() []string {
+	return []string{"2GiB", "4GiB"}
+}
+
+// parseVideoMemoryFlag validates a --video-memory value. An empty value means the
+// flag was not set, which lets the API apply its default (2GiB).
+func parseVideoMemoryFlag(videoMemory string) (kernel.BrowserVideoMemory, error) {
+	if videoMemory == "" {
+		return "", nil
+	}
+	for _, m := range availableVideoMemorySizes() {
+		if strings.EqualFold(videoMemory, m) {
+			return kernel.BrowserVideoMemory(m), nil
+		}
+	}
+	return "", fmt.Errorf("invalid --video-memory value: %s (must be one of %s)", videoMemory, strings.Join(availableVideoMemorySizes(), ", "))
+}
+
 // maxPrivateHosts mirrors the API's cap on network.private_hosts entries.
 const maxPrivateHosts = 32
 
@@ -234,6 +250,19 @@ func buildNetworkParam(privateHosts []string) (kernel.BrowserNetworkConfigParam,
 		network.PrivateHosts = hosts
 	}
 	return network, nil
+}
+
+// maxAllowedHosts mirrors the API's cap on network.allowed_hosts entries.
+const maxAllowedHosts = 100
+
+// normalizeAllowedHosts trims --allowed-host values, drops empty ones, and
+// enforces the API's entry cap. Entry syntax is validated by the API.
+func normalizeAllowedHosts(hosts []string) ([]string, error) {
+	out := normalizePrivateHosts(hosts)
+	if len(out) > maxAllowedHosts {
+		return nil, fmt.Errorf("too many --allowed-host entries: %d (maximum %d)", len(out), maxAllowedHosts)
+	}
+	return out, nil
 }
 
 const (
@@ -298,6 +327,15 @@ func formatProxyRoutes(network kernel.BrowserNetworkConfig) string {
 		routes = append(routes, strings.Join(route.Hosts, ", ")+" = "+proxy)
 	}
 	return strings.Join(routes, "; ")
+}
+
+// formatAllowedHosts renders a session's egress allowlist for table output. A
+// missing allowed_hosts list means egress is unfiltered.
+func formatAllowedHosts(network kernel.BrowserNetworkConfig) string {
+	if len(network.AllowedHosts) == 0 {
+		return "-"
+	}
+	return strings.Join(network.AllowedHosts, ", ")
 }
 
 // formatPrivateHosts renders a network configuration for table output. A missing
@@ -450,6 +488,7 @@ type BrowsersCreateInput struct {
 	Headless            BoolFlag
 	GPU                 BoolFlag
 	Memory              string
+	VideoMemory         string
 	InvocationID        string
 	Kiosk               BoolFlag
 	ProfileID           string
@@ -460,6 +499,7 @@ type BrowsersCreateInput struct {
 	ProxyMode           string
 	Region              string
 	PrivateHosts        []string
+	AllowedHosts        []string
 	ProxyRoutes         []string
 	StartURL            string
 	Extensions          []string
@@ -512,21 +552,27 @@ type BrowsersUpdateInput struct {
 	TagsProvided        bool
 	ClearTags           bool
 	StartURL            string
-	Output              string
+	// AllowedHosts replaces the session's egress allowlist when
+	// AllowedHostsProvided is set; ClearAllowedHosts removes it.
+	AllowedHosts         []string
+	AllowedHostsProvided bool
+	ClearAllowedHosts    bool
+	Output               string
 }
 
 // BrowsersCmd is a cobra-independent command handler for browsers operations.
 type BrowsersCmd struct {
-	browsers   BrowsersService
-	replays    BrowserReplaysService
-	fs         BrowserFSService
-	fsWatch    BrowserFWatchService
-	process    BrowserProcessService
-	logs       BrowserLogService
-	computer   BrowserComputerService
-	playwright BrowserPlaywrightService
-	telemetry  BrowserTelemetryService
-	webmcp     BrowserWebMCPService
+	browsers            BrowsersService
+	replays             BrowserReplaysService
+	fs                  BrowserFSService
+	fsWatch             BrowserFWatchService
+	process             BrowserProcessService
+	logs                BrowserLogService
+	computer            BrowserComputerService
+	playwright          BrowserPlaywrightService
+	playwrightExecutors BrowserPlaywrightExecutorService
+	telemetry           BrowserTelemetryService
+	webmcp              BrowserWebMCPService
 }
 
 type BrowsersListInput struct {
@@ -680,6 +726,13 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	if memory != "" {
 		params.Memory = memory
 	}
+	videoMemory, err := parseVideoMemoryFlag(in.VideoMemory)
+	if err != nil {
+		return err
+	}
+	if videoMemory != "" {
+		params.VideoMemory = videoMemory
+	}
 	if in.InvocationID != "" {
 		params.InvocationID = kernel.Opt(in.InvocationID)
 	}
@@ -733,7 +786,12 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		return err
 	}
 	network.ProxyRoutes = routes
-	if len(network.PrivateHosts) > 0 || len(network.ProxyRoutes) > 0 {
+	allowedHosts, err := normalizeAllowedHosts(in.AllowedHosts)
+	if err != nil {
+		return err
+	}
+	network.AllowedHosts = allowedHosts
+	if len(network.PrivateHosts) > 0 || len(network.ProxyRoutes) > 0 || len(network.AllowedHosts) > 0 {
 		params.Network = network
 	}
 
@@ -811,7 +869,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 
 	tableData := buildBrowserTableData(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.ProfileSaveChanges, browser.StartURL, browser.Name, browser.Tags)
-	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)}, []string{"Proxy Routes", formatProxyRoutes(browser.Network)})
+	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)}, []string{"Allowed Hosts", formatAllowedHosts(browser.Network)}, []string{"Proxy Routes", formatProxyRoutes(browser.Network)})
 	PrintTableNoPad(tableData, true)
 	if len(browser.Vaults) > 0 {
 		rows := pterm.TableData{{"Attached vault ID", "Name"}}
@@ -942,6 +1000,9 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	tableData = append(tableData, []string{"Stealth", fmt.Sprintf("%t", browser.Stealth)})
 	tableData = append(tableData, []string{"GPU", fmt.Sprintf("%t", browser.GPU)})
 	tableData = append(tableData, []string{"Memory", util.OrDash(string(browser.Memory))})
+	if browser.VideoMemory != "" {
+		tableData = append(tableData, []string{"Video Memory", string(browser.VideoMemory)})
+	}
 	tableData = append(tableData, []string{"Kiosk Mode", fmt.Sprintf("%t", browser.KioskMode)})
 	if browser.Viewport.Width > 0 && browser.Viewport.Height > 0 {
 		viewportStr := fmt.Sprintf("%dx%d", browser.Viewport.Width, browser.Viewport.Height)
@@ -954,6 +1015,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 		tableData = append(tableData, []string{"Proxy", proxy})
 	}
 	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)})
+	tableData = append(tableData, []string{"Allowed Hosts", formatAllowedHosts(browser.Network)})
 	tableData = append(tableData, []string{"Proxy Routes", formatProxyRoutes(browser.Network)})
 	if vaults := formatVaultReferences(browser.Vaults); vaults != "" {
 		tableData = append(tableData, []string{"Vaults", vaults})
@@ -1059,6 +1121,20 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	hasTagsChange := len(in.Tags) > 0 || in.ClearTags
 	hasStartURLChange := in.StartURL != ""
 
+	// The API replaces the allowlist with the given entries, or removes it when
+	// sent null. An empty list is rejected, so require at least one entry.
+	if in.AllowedHostsProvided && in.ClearAllowedHosts {
+		return fmt.Errorf("cannot specify both --allowed-host and --clear-allowed-hosts")
+	}
+	allowedHosts, err := normalizeAllowedHosts(in.AllowedHosts)
+	if err != nil {
+		return err
+	}
+	if in.AllowedHostsProvided && len(allowedHosts) == 0 {
+		return fmt.Errorf("at least one --allowed-host entry is required; use --clear-allowed-hosts to remove the allowlist")
+	}
+	hasAllowedHostsChange := len(allowedHosts) > 0 || in.ClearAllowedHosts
+
 	// Validate --save-changes is only used with a profile
 	if in.ProfileSaveChanges.Set && !hasProfileChange {
 		return fmt.Errorf("--save-changes requires --profile-id or --profile-name")
@@ -1070,8 +1146,8 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	// Validate that at least one update option is provided
-	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && in.TelemetryCdpExclude == "" && !hasNameChange && !hasTagsChange && !hasStartURLChange {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --telemetry-cdp-exclude, --name, --clear-name, --tag, --clear-tags, or --start-url")
+	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && in.TelemetryCdpExclude == "" && !hasNameChange && !hasTagsChange && !hasStartURLChange && !hasAllowedHostsChange {
+		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --telemetry-cdp-exclude, --name, --clear-name, --tag, --clear-tags, --start-url, --allowed-host, or --clear-allowed-hosts")
 	}
 
 	params := kernel.BrowserUpdateParams{}
@@ -1095,6 +1171,13 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	// rather than treated as a request to blank the current page.
 	if hasStartURLChange {
 		params.StartURL = kernel.String(in.StartURL)
+	}
+
+	// Handle egress allowlist changes. Null removes the allowlist.
+	if in.ClearAllowedHosts {
+		params.Network.AllowedHosts = param.NullSlice[[]string]()
+	} else if len(allowedHosts) > 0 {
+		params.Network.AllowedHosts = allowedHosts
 	}
 
 	// Handle proxy changes
@@ -1173,6 +1256,9 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 	if hasStartURLChange {
 		pterm.Info.Printf("Start URL: %s\n", util.OrDash(browser.StartURL))
+	}
+	if hasAllowedHostsChange {
+		pterm.Info.Printf("Allowed Hosts: %s\n", formatAllowedHosts(browser.Network))
 	}
 	if in.Telemetry != "" || in.TelemetryCdpExclude != "" {
 		printTelemetrySummary(browser.Telemetry)
@@ -1834,64 +1920,6 @@ type BrowsersFSWatchStopInput struct {
 type BrowsersFSWatchEventsInput struct {
 	Identifier string
 	WatchID    string
-}
-
-// Playwright
-type BrowsersPlaywrightExecuteInput struct {
-	Identifier string
-	Code       string
-	Timeout    int64
-	Output     string
-}
-
-func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrightExecuteInput) error {
-	if err := validateJSONOutput(in.Output); err != nil {
-		return err
-	}
-
-	if b.playwright == nil {
-		pterm.Error.Println("playwright service not available")
-		return nil
-	}
-	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-	params := kernel.BrowserPlaywrightExecuteParams{Code: in.Code}
-	if in.Timeout > 0 {
-		params.TimeoutSec = kernel.Opt(in.Timeout)
-	}
-	res, err := b.playwright.Execute(ctx, br.SessionID, params)
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
-
-	if in.Output == "json" {
-		return util.PrintPrettyJSON(res)
-	}
-
-	rows := pterm.TableData{{"Property", "Value"}, {"Success", fmt.Sprintf("%t", res.Success)}}
-	PrintTableNoPad(rows, true)
-
-	if res.Stdout != "" {
-		pterm.Info.Println("stdout:")
-		fmt.Println(res.Stdout)
-	}
-	if res.Stderr != "" {
-		pterm.Info.Println("stderr:")
-		fmt.Fprintln(os.Stderr, res.Stderr)
-	}
-	if res.Result != nil {
-		bs, err := json.MarshalIndent(res.Result, "", "  ")
-		if err == nil {
-			pterm.Info.Println("result:")
-			fmt.Println(string(bs))
-		}
-	}
-	if !res.Success && res.Error != "" {
-		pterm.Error.Printf("error: %s\n", res.Error)
-	}
-	return nil
 }
 
 // REPL
@@ -2901,12 +2929,24 @@ Supported operations:
   - Rename or clear the session name (--name or --clear-name)
   - Replace or clear the session tags (--tag or --clear-tags)
   - Navigate the session to a URL (--start-url)
+  - Replace or remove the egress allowlist (--allowed-host or --clear-allowed-hosts)
 
 Notes:
   - Profiles can only be loaded into sessions that don't already have a profile.
   - --start-url navigation is best-effort: the update succeeds even if the page fails to load.
   - --start-url combined with --profile-id/--profile-name overrides the profile's restored tabs.
-  - --tag replaces the entire tag set (it is not merged with existing tags).`,
+  - --tag replaces the entire tag set (it is not merged with existing tags).
+  - --allowed-host replaces an existing allowlist only; it cannot add one to a browser created
+    without one. Omit to leave the list unchanged; an empty list is invalid.
+  - --clear-allowed-hosts removes the allowlist and returns to unfiltered egress. Once removed,
+    an allowlist cannot be added back to that browser.
+  - Allowlist changes apply without restarting the browser. New requests to destinations no
+    longer allowed are normally refused within a few seconds, and open connections to them
+    are closed within about 30 seconds. Propagation can take up to 10 minutes during a deployment.
+    --start-url must be allowed by the new list. Requires a browser created with proxy v3;
+    not supported on pooled browsers. If the update fails, retry it: the new list may already
+    apply to some requests.
+  - Allowlists filter Kernel-managed egress only, not all browser VM traffic.`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			return fmt.Errorf("missing required argument: browser ID or name\n\nUsage: kernel browsers update <id-or-name> [flags]")
@@ -2927,7 +2967,7 @@ func init() {
 	browsersListCmd.Flags().Int("limit", 0, "Maximum number of results to return (default 20, max 100)")
 	browsersListCmd.Flags().Int("offset", 0, "Number of results to skip (for pagination)")
 	browsersListCmd.Flags().String("query", "", "Search browsers by name, session ID, profile ID, proxy ID, or pool name")
-	browsersListCmd.Flags().String("region", "", "Filter by geographic region: 'us-east', 'eu-west', or 'ap-southeast' (omit to list sessions in all regions)")
+	browsersListCmd.Flags().String("region", "", "Filter by geographic region: 'us-east', 'us-west', 'eu-west', or 'ap-southeast' (omit to list sessions in all regions)")
 	browsersListCmd.Flags().StringArray("tag", nil, "Filter by tag KEY=VALUE (repeatable; a session must match every pair)")
 
 	// get flags
@@ -2955,6 +2995,8 @@ func init() {
 	browsersUpdateCmd.Flags().Bool("clear-name", false, "Clear the browser session name")
 	browsersUpdateCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE (repeatable; up to 50 pairs). Replaces the entire tag set; mutually exclusive with --clear-tags")
 	browsersUpdateCmd.Flags().Bool("clear-tags", false, "Remove all tags from the browser session")
+	browsersUpdateCmd.Flags().StringSlice("allowed-host", nil, "Replace an existing egress allowlist (repeat or comma-separated, max 100), using the same entry rules as 'browsers create --allowed-host'. Cannot add one to a browser created without one or after removal. Omit to leave unchanged; an empty list is invalid. Applies without restarting the browser; --start-url must be allowed by the new list. Requires proxy v3; not supported on pooled browsers (mutually exclusive with --clear-allowed-hosts). See notes for propagation timing")
+	browsersUpdateCmd.Flags().Bool("clear-allowed-hosts", false, "Remove the egress allowlist and return to unfiltered egress; an allowlist cannot be added back to this browser")
 	browsersUpdateCmd.Flags().String("start-url", "", "Navigate the browser to this URL after applying the update. Overrides the restored tabs when a profile is loaded in the same update. Navigation is best-effort, so failures do not fail the update")
 
 	browsersCmd.AddCommand(browsersListCmd)
@@ -3201,13 +3243,7 @@ func init() {
 	computerRoot.AddCommand(computerClick, computerMove, computerScreenshot, computerType, computerPressKey, computerScroll, computerDrag, computerSetCursor, computerGetMousePosition, computerBatch, computerReadClipboard, computerWriteClipboard)
 	browsersCmd.AddCommand(computerRoot)
 
-	// playwright
-	playwrightRoot := &cobra.Command{Use: "playwright", Short: "Playwright operations"}
-	playwrightExecute := &cobra.Command{Use: "execute <id> [code]", Short: "Execute Playwright/TypeScript code against the browser", Args: cobra.MinimumNArgs(1), RunE: runBrowsersPlaywrightExecute}
-	playwrightExecute.Flags().Int64("timeout", 0, "Maximum execution time in seconds (default per server)")
-	addJSONOutputFlag(playwrightExecute)
-	playwrightRoot.AddCommand(playwrightExecute)
-	browsersCmd.AddCommand(playwrightRoot)
+	browsersCmd.AddCommand(newBrowsersPlaywrightCommand())
 
 	// repl
 	replCmd := &cobra.Command{
@@ -3242,6 +3278,7 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().BoolP("headless", "H", false, "Launch browser without GUI access")
 	browsersCreateCmd.Flags().Bool("gpu", false, "Launch browser with hardware-accelerated GPU rendering")
 	browsersCreateCmd.Flags().String("memory", "", "Memory for a headful, non-GPU browser session: '8GiB' (default) or '16GiB'")
+	browsersCreateCmd.Flags().String("video-memory", "", "Video memory (VRAM) for a GPU browser session (requires --gpu): '2GiB' (default, 4 vCPU/6GiB memory) or '4GiB' (8 vCPU/12GiB memory)")
 	browsersCreateCmd.Flags().String("invocation-id", "", "Associate the browser session with an invocation")
 	browsersCreateCmd.Flags().Bool("kiosk", false, "Launch browser in kiosk mode")
 	browsersCreateCmd.Flags().IntP("timeout", "t", 60, "Timeout in seconds for the browser session")
@@ -3251,9 +3288,10 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().String("proxy-id", "", "Proxy ID to use for the browser session (mutually exclusive with --proxy-name and --proxy-mode)")
 	browsersCreateCmd.Flags().String("proxy-name", "", "Proxy name to use for the browser session; must match exactly one active proxy in the project (mutually exclusive with --proxy-id and --proxy-mode)")
 	browsersCreateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' for the browser default (Kernel's stealth proxy when --stealth is set, direct egress otherwise)")
-	browsersCreateCmd.Flags().String("region", "", "Geographic region for the session: 'us-east', 'eu-west', or 'ap-southeast'. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to us-east")
+	browsersCreateCmd.Flags().String("region", "", "Geographic region for the session: 'us-east', 'us-west', 'eu-west', or 'ap-southeast'. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to us-east")
 	browsersCreateCmd.Flags().StringSlice("private-host", nil, "Destinations the browser reaches directly through its own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel the session joins (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Replaces the default private ranges (RFC1918, 100.64.0.0/10, fc00::/7); omit to keep them. Fixed once the session is created")
-	browsersCreateCmd.Flags().StringArray("proxy-route", nil, "Route HOST[,HOST...]=PROXY through a proxy (repeatable, max 10 routes and 50 hosts per route). PROXY is an ID by default; use id:ID or name:NAME explicitly. Exact hosts beat wildcards (longer suffixes win); *.example.com excludes example.com. Unmatched hosts use --proxy-* or default egress; start_url uses the top-level proxy. Create-only")
+	browsersCreateCmd.Flags().StringSlice("allowed-host", nil, "Set an egress allowlist at creation: the only destinations the browser may reach through Kernel-managed egress (repeat or comma-separated, max 100); anything else is refused with a 403 (network_policy_denied). Filters Kernel-managed egress only, not all browser VM traffic. Accepts exact hostnames ('example.com'), a leading wildcard matching subdomains only ('*.example.com'), public IPs ('8.8.8.8', '[2001:4860:4860::8888]'), and public CIDRs ('8.8.4.0/24'). No ports, paths, or schemes. --start-url must be allowed. Omit for unfiltered egress; an empty list is invalid. Requires proxy v3; cannot be combined with --pool-id or --pool-name, even with --yes. An existing list can be replaced or removed with 'browsers update'; it cannot be added later if omitted at creation or removed")
+	browsersCreateCmd.Flags().StringArray("proxy-route", nil, "Route HOST[,HOST...]=PROXY through a proxy (repeatable, max 10 routes and 50 hosts per route). PROXY is an ID by default; use id:ID or name:NAME explicitly. Exact hosts beat wildcards (longer suffixes win); *.example.com excludes example.com. Unmatched hosts use --proxy-* or default egress. Routes also apply to start_url and other setup traffic. Create-only")
 	browsersCreateCmd.Flags().String("start-url", "", "Initial page to open on launch")
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
 	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
@@ -3381,6 +3419,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	headlessVal, _ := cmd.Flags().GetBool("headless")
 	gpuVal, _ := cmd.Flags().GetBool("gpu")
 	memory, _ := cmd.Flags().GetString("memory")
+	videoMemory, _ := cmd.Flags().GetString("video-memory")
 	invocationID, _ := cmd.Flags().GetString("invocation-id")
 	kioskVal, _ := cmd.Flags().GetBool("kiosk")
 	timeout, _ := cmd.Flags().GetInt("timeout")
@@ -3392,6 +3431,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	proxyMode, _ := cmd.Flags().GetString("proxy-mode")
 	region, _ := cmd.Flags().GetString("region")
 	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
+	allowedHosts, _ := cmd.Flags().GetStringSlice("allowed-host")
 	proxyRoutes, _ := cmd.Flags().GetStringArray("proxy-route")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
@@ -3422,6 +3462,10 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 
 	if (poolID != "" || poolName != "") && cmd.Flags().Changed("proxy-route") {
 		return fmt.Errorf("--proxy-route cannot be used with --pool-id or --pool-name; routes require a new browser")
+	}
+
+	if (poolID != "" || poolName != "") && cmd.Flags().Changed("allowed-host") {
+		return fmt.Errorf("--allowed-host cannot be used with --pool-id or --pool-name; browser pools do not support allowlists")
 	}
 
 	if poolID != "" && poolName != "" {
@@ -3533,6 +3577,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		Headless:            BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headlessVal},
 		GPU:                 BoolFlag{Set: cmd.Flags().Changed("gpu"), Value: gpuVal},
 		Memory:              memory,
+		VideoMemory:         videoMemory,
 		InvocationID:        invocationID,
 		Kiosk:               BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kioskVal},
 		ProfileID:           profileID,
@@ -3543,6 +3588,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		ProxyMode:           proxyMode,
 		Region:              region,
 		PrivateHosts:        privateHosts,
+		AllowedHosts:        allowedHosts,
 		ProxyRoutes:         proxyRoutes,
 		StartURL:            startURL,
 		Extensions:          extensions,
@@ -3624,31 +3670,36 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	tags, tagsProvided := tagsFromFlag(cmd, "tag")
 	clearTags, _ := cmd.Flags().GetBool("clear-tags")
 	startURL, _ := cmd.Flags().GetString("start-url")
+	allowedHosts, _ := cmd.Flags().GetStringSlice("allowed-host")
+	clearAllowedHosts, _ := cmd.Flags().GetBool("clear-allowed-hosts")
 
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
 	return b.Update(cmd.Context(), BrowsersUpdateInput{
-		Identifier:          args[0],
-		ProxyID:             proxyID,
-		ProxyName:           proxyName,
-		ProxyMode:           proxyMode,
-		ClearProxy:          clearProxy,
-		DisableDefaultProxy: BoolFlag{Set: cmd.Flags().Changed("disable-default-proxy"), Value: disableDefaultProxy},
-		ProfileID:           profileID,
-		ProfileName:         profileName,
-		ProfileSaveChanges:  BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
-		Viewport:            viewport,
-		Force:               force,
-		Telemetry:           telemetry,
-		TelemetryCdpExclude: telemetryCdpExclude,
-		Name:                name,
-		SetName:             cmd.Flags().Changed("name"),
-		ClearName:           clearName,
-		Tags:                tags,
-		TagsProvided:        tagsProvided,
-		ClearTags:           clearTags,
-		StartURL:            startURL,
-		Output:              out,
+		Identifier:           args[0],
+		ProxyID:              proxyID,
+		ProxyName:            proxyName,
+		ProxyMode:            proxyMode,
+		ClearProxy:           clearProxy,
+		DisableDefaultProxy:  BoolFlag{Set: cmd.Flags().Changed("disable-default-proxy"), Value: disableDefaultProxy},
+		ProfileID:            profileID,
+		ProfileName:          profileName,
+		ProfileSaveChanges:   BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
+		Viewport:             viewport,
+		Force:                force,
+		Telemetry:            telemetry,
+		TelemetryCdpExclude:  telemetryCdpExclude,
+		Name:                 name,
+		SetName:              cmd.Flags().Changed("name"),
+		ClearName:            clearName,
+		Tags:                 tags,
+		TagsProvided:         tagsProvided,
+		ClearTags:            clearTags,
+		StartURL:             startURL,
+		AllowedHosts:         allowedHosts,
+		AllowedHostsProvided: cmd.Flags().Changed("allowed-host"),
+		ClearAllowedHosts:    clearAllowedHosts,
+		Output:               out,
 	})
 }
 
@@ -3826,33 +3877,6 @@ func runBrowsersFSWatchEvents(cmd *cobra.Command, args []string) error {
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc, fsWatch: &svc.Fs.Watch}
 	return b.FSWatchEvents(cmd.Context(), BrowsersFSWatchEventsInput{Identifier: args[0], WatchID: args[1]})
-}
-
-func runBrowsersPlaywrightExecute(cmd *cobra.Command, args []string) error {
-	client := getKernelClient(cmd)
-	svc := client.Browsers
-
-	var code string
-	if len(args) >= 2 {
-		code = strings.Join(args[1:], " ")
-	} else {
-		// Read code from stdin
-		stat, _ := os.Stdin.Stat()
-		if (stat.Mode() & os.ModeCharDevice) != 0 {
-			pterm.Error.Println("no code provided. Provide code as an argument or pipe via stdin")
-			return nil
-		}
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			pterm.Error.Printf("failed to read stdin: %v\n", err)
-			return nil
-		}
-		code = string(data)
-	}
-	timeout, _ := cmd.Flags().GetInt64("timeout")
-	output, _ := cmd.Flags().GetString("output")
-	b := BrowsersCmd{browsers: &svc, playwright: &svc.Playwright}
-	return b.PlaywrightExecute(cmd.Context(), BrowsersPlaywrightExecuteInput{Identifier: args[0], Code: strings.TrimSpace(code), Timeout: timeout, Output: output})
 }
 
 func runBrowsersRepl(cmd *cobra.Command, args []string) error {

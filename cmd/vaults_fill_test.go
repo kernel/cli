@@ -156,11 +156,11 @@ func TestVaultFillBindingsSerialization(t *testing.T) {
 
 func TestVaultFillAdvertisedAvailability(t *testing.T) {
 	for name, fixture := range map[string]string{
-		"requested":                requestedCardFixture,
-		"wallet":                   connectedWalletFixture,
-		"agentcard":                strings.ReplaceAll(strings.ReplaceAll(readyFillCardFixture, "link", "agentcard"), `[{"type":"fill","description":"Fill checkout fields."}]`, `[]`),
-		"ready unadvertised":       strings.ReplaceAll(readyFillCardFixture, `[{"type":"fill","description":"Fill checkout fields."}]`, `[]`),
-		"recovery stale operation": strings.ReplaceAll(readyFillCardFixture, `"ready"`, `"recovery_required"`),
+		"requested":             requestedCardFixture,
+		"wallet":                connectedWalletFixture,
+		"agentcard":             strings.ReplaceAll(strings.ReplaceAll(readyFillCardFixture, "link", "agentcard"), `[{"type":"fill","description":"Fill checkout fields."}]`, `[]`),
+		"ready unadvertised":    strings.ReplaceAll(readyFillCardFixture, `[{"type":"fill","description":"Fill checkout fields."}]`, `[]`),
+		"recovery unadvertised": strings.ReplaceAll(strings.ReplaceAll(readyFillCardFixture, `"ready"`, `"recovery_required"`), `[{"type":"fill","description":"Fill checkout fields."}]`, `[]`),
 	} {
 		t.Run(name, func(t *testing.T) {
 			calls := 0
@@ -205,11 +205,11 @@ func TestVaultFillHumanOutputAndRedaction(t *testing.T) {
 					assert.JSONEq(t, result, out)
 					assert.Empty(t, human)
 				} else {
-					assert.Contains(t, human, "Field index")
+					assert.Contains(t, human, "field index")
 					assert.Contains(t, human, "filled")
 					if result != completedFillFixture {
 						assert.Contains(t, human, "not_attempted")
-						assert.Contains(t, human, "do not retry")
+						assert.Contains(t, human, "a retry is safe")
 					}
 				}
 			}
@@ -373,7 +373,7 @@ func TestVaultFillSingleFieldAndHint(t *testing.T) {
 	assert.JSONEq(t, result, out)
 	_, human, err := executeVaultCommand(t, client, "vaults", "items", "get", "checkout", "order-1", "--project", "chosen-project")
 	require.NoError(t, err)
-	assert.Contains(t, human, "Invoke: kernel vaults items invoke --project=chosen-project --params '<json>' -- checkout order-1 fill")
+	assert.Contains(t, human, "invoke: kernel vaults items invoke --project=chosen-project --params '<json>' -- checkout order-1 fill")
 }
 
 func TestVaultAuthorizeRejectsFillResponse(t *testing.T) {

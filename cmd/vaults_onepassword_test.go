@@ -40,7 +40,7 @@ func TestCredentialConnectOnePassword(t *testing.T) {
 
 	_, text, err := executeVaultCommand(t, client, "vaults", "credentials", "connect", "user", "onepassword", "--provider", "1password")
 	require.NoError(t, err)
-	assert.Contains(t, text, "Share the 1Password authorization URL with the account owner")
+	assert.Contains(t, text, "share the 1Password authorization url with the account owner")
 
 	_, _, err = executeVaultCommand(t, client, "vaults", "credentials", "connect", "user", "onepassword", "--provider", "kernel")
 	require.ErrorContains(t, err, "--provider must be 1password")
@@ -79,7 +79,7 @@ func TestCredentialCreateOnePassword(t *testing.T) {
 		{`{"provider":"1password","account":"onepassword"}`, "1-5 login entries"},
 		{`{"provider":"1password","access_token":"token-secret","integration_key":"key-secret","website":"https://github.com"}`, "1-5 login entries"},
 		{`{"provider":"1password","account":"onepassword","requests":{"version":2,"entries":[` + strings.Repeat(entry+",", 5) + entry + `]}}`, "1-5 login entries"},
-		{`{"provider":"lastpass","fields":[{"name":"password","type":"password"}]}`, "kernel or 1password"},
+		{`{"provider":"lastpass","fields":[{"name":"password","type":"password"}]}`, "kernel, 1password, or managed_auth"},
 	} {
 		_, _, err := executeVaultCommand(t, client, "vaults", "credentials", "create", "user", "github", "--spec-file", credentialSpecFile(t, tc.spec))
 		require.ErrorContains(t, err, tc.err, tc.spec)
@@ -110,7 +110,7 @@ func TestOnePasswordCredentialOutput(t *testing.T) {
 	assert.Contains(t, output, "onepassword")
 	assert.Contains(t, output, "entry-1 https://github.com")
 	assert.NotContains(t, output, "stored token")
-	assert.Contains(t, output, "Invoke: kernel vaults items invoke --params '<json>' -- user github 1pw_access_request_status")
+	assert.Contains(t, output, "invoke: kernel vaults items invoke --params '<json>' -- user github 1pw_access_request_status")
 	assert.NotContains(t, output, "field definitions")
 	assert.NotContains(t, output, "never-print")
 
@@ -134,11 +134,13 @@ func TestOnePasswordOperationRequests(t *testing.T) {
 	for _, tc := range []struct {
 		operation, params, body, item string
 	}{
-		{"1pw_create_access_request", `{"browser_id":"browser-1","goal":"Manage billing","reason":"Sign in","keywords":["personal"]}`, `{"type":"1pw_create_access_request","browser_id":"browser-1","goal":"Manage billing","reason":"Sign in","keywords":["personal"]}`, onePasswordCredentialFixture},
-		{"1pw_access_request_status", `{"browser_id":"browser-1","timeout_seconds":60}`, `{"type":"1pw_access_request_status","browser_id":"browser-1","timeout_seconds":60}`, onePasswordCredentialFixture},
+		{"1pw_create_access_request", `{"goal":"Manage billing","reason":"Sign in","keywords":["personal"]}`, `{"type":"1pw_create_access_request","goal":"Manage billing","reason":"Sign in","keywords":["personal"]}`, onePasswordCredentialFixture},
+		{"1pw_create_access_request", "", `{"type":"1pw_create_access_request"}`, onePasswordCredentialFixture},
+		{"1pw_access_request_status", `{"timeout_seconds":60}`, `{"type":"1pw_access_request_status","timeout_seconds":60}`, onePasswordCredentialFixture},
+		{"1pw_access_request_status", "", `{"type":"1pw_access_request_status"}`, onePasswordCredentialFixture},
 		{"1pw_recover", "", `{"type":"1pw_recover"}`, onePasswordAccountFixture},
 	} {
-		t.Run(tc.operation, func(t *testing.T) {
+		t.Run(tc.operation+tc.params, func(t *testing.T) {
 			item := strings.Replace(tc.item, `"available_operations":[]`, `"available_operations":[{"type":"1pw_access_request_status","description":"x"}]`, 1)
 			item = strings.Replace(item, `"1pw_access_request_status"`, `"`+tc.operation+`"`, 1)
 			posts := 0
@@ -166,11 +168,13 @@ func TestOnePasswordOperationRequests(t *testing.T) {
 func TestOnePasswordOperationValidation(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
 	for _, tc := range []struct{ operation, params, err string }{
-		{"1pw_create_access_request", "", "requires --params"},
-		{"1pw_create_access_request", `{"browser_id":""}`, "browser_id"},
-		{"1pw_create_access_request", `{"browser_id":"b","password":"x"}`, "only supported"},
-		{"1pw_create_access_request", `{"type":"1pw_create_access_request","browser_id":"b"}`, "must not contain type"},
-		{"1pw_access_request_status", `{"browser_id":"b","timeout_seconds":121}`, "timeout_seconds"},
+		{"1pw_create_access_request", `{"browser_id":"b"}`, "only supported"},
+		{"1pw_create_access_request", `{"password":"x"}`, "only supported"},
+		{"1pw_create_access_request", `{"type":"1pw_create_access_request"}`, "must not contain type"},
+		{"1pw_access_request_status", `{"browser_id":"b"}`, "only supported"},
+		{"1pw_access_request_status", `{"timeout_seconds":121}`, "timeout_seconds"},
+		{"1pw_fill", "", "requires --params"},
+		{"1pw_fill", `{"browser_id":"","page_url":"https://github.com/login"}`, "browser_id"},
 		{"1pw_reconcile_access", `{"acknowledge_unconfirmed":true}`, "unsupported 1Password operation"},
 		{"1pw_fill", `{"browser_id":"b"}`, "page_url"},
 		{"1pw_fill", `{"browser_id":"b","page_url":"https://github.com/login","timeout_ms":0}`, "timeout_ms"},
@@ -214,13 +218,13 @@ func TestOnePasswordFillOutcomes(t *testing.T) {
 	}{
 		{200, `{"type":"1pw_fill","status":"fill_submitted"}`, "", "does not confirm"},
 		{200, `{"type":"1pw_fill","status":"fill_failed","error_code":"fillFailed"}`, "fill fill_failed", "fillFailed"},
-		{200, `{"type":"1pw_fill","status":"fill_unknown"}`, "fill fill_unknown", "do not retry in the same browser"},
+		{200, `{"type":"1pw_fill","status":"fill_unknown"}`, "fill fill_unknown", "1pw_fill can submit the form, so never retry automatically. check the page first before retrying."},
 		{200, `{"type":"fill","status":"completed","fields":[]}`, "invalid 1pw_fill result", ""},
-		{403, `{"code":"destination_denied","message":"page is outside the approved login origin"}`, "destination_denied (HTTP 403)", ""},
+		{403, `{"code":"destination_denied","message":"page is outside the approved login origin"}`, "destination_denied (http 403)", ""},
 		{409, `{"code":"conflict","message":"not ready"}`, "nothing was submitted", ""},
-		{429, `{"code":"rate_limited","message":"slow down"}`, "may have been submitted", ""},
+		{429, `{"code":"rate_limited","message":"slow down"}`, "may have been filled or submitted", ""},
 		{503, `{"code":"provider_unavailable","message":"unavailable"}`, "not available in this deployment", ""},
-		{500, `{"code":"internal_error","message":"secret-echo"}`, "may have been submitted", ""},
+		{500, `{"code":"internal_error","message":"secret-echo"}`, "may have been filled or submitted", ""},
 	} {
 		t.Run(fmt.Sprint(tc.status, tc.body), func(t *testing.T) {
 			posts := 0
@@ -262,35 +266,35 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 			"items list <vault> -o json",
 			"ask the user where this login lives",
 			"do not\n   choose for them",
-			"Kernel-hosted collection",
+			"KERNEL-hosted collection",
 			"1Password brokered approval",
 			"non-shared 1Password vault",
-			"State this requirement when asking",
+			"state this requirement when asking",
 			"as plain text rather than code so they stay clickable",
 			"passkeys",
-			"offer Kernel-hosted collection",
-			"Never ask the user to paste",
+			"offer KERNEL-hosted collection",
+			"never ask the user to paste",
 			"not proof of sign-in",
 		} {
 			assert.Contains(t, long, want)
 		}
 	}
 	for _, want := range []string{
-		"Ask whose 1Password account holds the login and confirm it is in a non-shared vault",
+		"ask whose 1Password account holds the login and confirm it is in a non-shared vault",
 		"1-5 login entries",
-		"Invoke 1pw_create_access_request once",
+		"invoke 1pw_create_access_request once",
 		"pass entry_id",
 		"not that sign-in succeeded",
 		"do not\ndelete and recreate the item to reset it",
-		"After a confirmed failed status, ask the\nuser",
+		"after a confirmed failed status, ask the\nuser",
 		"credentials connect again with the same key",
 	} {
 		assert.Contains(t, credentials.Long, want)
 		assert.Contains(t, connect.Long, want)
 	}
-	assert.Contains(t, credentials.Long, "Stored-token 1Password credentials (developer integrations only")
-	assert.Contains(t, credentials.Long, "Never ask an end user for them")
-	assert.NotContains(t, connect.Long, "Stored-token")
+	assert.Contains(t, credentials.Long, "stored-token 1Password credentials (developer integrations only")
+	assert.Contains(t, credentials.Long, "never ask an end user for them")
+	assert.NotContains(t, connect.Long, "stored-token")
 	assert.Contains(t, connect.Long, "credential_account")
 	assert.Contains(t, credentials.Example, `"provider":"1password","account":"onepassword"`)
 	for _, operation := range []string{"1pw_create_access_request", "1pw_access_request_status", "1pw_fill", "1pw_update_access_token", "1pw_recover"} {
@@ -299,7 +303,7 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 	assert.Contains(t, invoke.Long, "--spec-file, never --params")
 	assert.Contains(t, invoke.Example, `"entry_id":"<entry-id>"`)
 	for _, help := range []string{invoke.Long, invoke.Example, credentials.Long, credentials.Example, connect.Long} {
-		for _, removed := range []string{"1pw_request_access", "1pw_poll_access", "reconcile", "account_id", "Family", "customer_managed", "access_token_expires_at", "RFC 3339"} {
+		for _, removed := range []string{"1pw_request_access", "1pw_poll_access", "1pw_reconcile", "account_id", "Family", "customer_managed", "access_token_expires_at", "RFC 3339"} {
 			assert.NotContains(t, help, removed)
 		}
 	}
@@ -315,8 +319,8 @@ func TestOnePasswordFillLookupErrorKeepsStatus(t *testing.T) {
 		body   string
 		want   string
 	}{
-		{404, `{"code":"not_found","message":"item not found"}`, "not_found (HTTP 404); 1pw_fill was not invoked"},
-		{403, `{"code":"other","message":"secret-echo"}`, "(HTTP 403); 1pw_fill was not invoked"},
+		{404, `{"code":"not_found","message":"item not found"}`, "not_found (http 404); 1pw_fill was not invoked"},
+		{403, `{"code":"other","message":"secret-echo"}`, "(http 403); 1pw_fill was not invoked"},
 	} {
 		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
 			posts := 0
@@ -382,9 +386,9 @@ func TestOnePasswordOperationErrorGuidance(t *testing.T) {
 		body   string
 		want   string
 	}{
-		{400, `{"code":"invalid_request","message":"secret-echo"}`, "rejected (HTTP 400)"},
+		{400, `{"code":"invalid_request","message":"secret-echo"}`, "rejected (http 400)"},
 		{409, `{"code":"conflict","message":"operation is not currently available"}`, "do not retry, delete, or recreate the item to reset it"},
-		{503, `{"code":"provider_unavailable","message":"secret-echo"}`, "offer Kernel-hosted collection"},
+		{503, `{"code":"provider_unavailable","message":"secret-echo"}`, "offer KERNEL-hosted collection"},
 		{500, `{"code":"internal_error","message":"secret-echo"}`, "outcome is unknown"},
 		{502, `{"code":"bad_gateway","message":"secret-echo"}`, "do not retry, delete, or recreate the item"},
 	} {
@@ -400,7 +404,7 @@ func TestOnePasswordOperationErrorGuidance(t *testing.T) {
 				w.WriteHeader(tc.status)
 				io.WriteString(w, tc.body)
 			})
-			_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "user", "github", "1pw_create_access_request", "--params", `{"browser_id":"browser-1"}`)
+			_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "user", "github", "1pw_create_access_request", "--params", `{}`)
 			require.ErrorContains(t, err, tc.want)
 			assert.NotContains(t, err.Error(), "secret-echo")
 			assert.NotContains(t, err.Error(), "before retrying")
@@ -412,7 +416,7 @@ func TestOnePasswordOperationErrorGuidance(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, onePasswordCredentialFixture)
 	})
-	_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "user", "github", "1pw_create_access_request", "--params", `{"browser_id":"browser-1"}`)
+	_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "user", "github", "1pw_create_access_request", "--params", `{}`)
 	require.ErrorContains(t, err, "check that the linked credential_account is connected")
 	assert.Contains(t, err.Error(), "do not delete or recreate the item")
 }
@@ -425,8 +429,8 @@ func TestCredentialConnectOnePasswordUnavailable(t *testing.T) {
 		io.WriteString(w, `{"code":"provider_unavailable","message":"1Password OAuth is not configured"}`)
 	})
 	_, _, err := executeVaultCommand(t, client, "vaults", "credentials", "connect", "user", "onepassword", "--provider", "1password")
-	require.ErrorContains(t, err, "1Password account linking unavailable (HTTP 500)")
-	assert.Contains(t, err.Error(), "offer Kernel-hosted collection")
+	require.ErrorContains(t, err, "1Password account linking unavailable (http 500)")
+	assert.Contains(t, err.Error(), "offer KERNEL-hosted collection")
 }
 
 func TestVaultItemsListShowsCredentialSite(t *testing.T) {

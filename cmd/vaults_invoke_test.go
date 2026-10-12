@@ -141,7 +141,7 @@ func TestVaultGetOperationHintUsesExplicitProject(t *testing.T) {
 	})
 	_, human, err := executeVaultCommand(t, client, "vaults", "items", "get", "checkout", "order-1", "--project", "chosen-project")
 	require.NoError(t, err)
-	assert.Contains(t, human, "Invoke: kernel vaults items invoke --project=chosen-project -- checkout order-1 authorize")
+	assert.Contains(t, human, "invoke: kernel vaults items invoke --project=chosen-project -- checkout order-1 authorize")
 	assert.NotContains(t, human, "other-project")
 }
 
@@ -165,8 +165,8 @@ func TestVaultGetOperationHints(t *testing.T) {
 				if wallet {
 					op = "refresh"
 				}
-				assert.Contains(t, human, "Available operation: "+op)
-				assert.Contains(t, human, "Invoke: kernel vaults items invoke")
+				assert.Contains(t, human, "available operation: "+op)
+				assert.Contains(t, human, "invoke: kernel vaults items invoke")
 				assert.Contains(t, human, " -- checkout item-1 "+op)
 				switch project {
 				case "":

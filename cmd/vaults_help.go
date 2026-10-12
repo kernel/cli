@@ -3,40 +3,40 @@ package cmd
 // Keep these help types in sync with https://api.onkernel.com/spec.yaml.
 const vaultSpecHelp = `
 --spec takes the specification object, not the {type, spec} request envelope.
---provider supplies spec.provider; omit it from JSON or supply the same value.
-The API validates provider-specific fields. Values are forwarded without defaults
-or normalization. Never include card data, OAuth tokens, or provider secrets in --spec.
+--provider supplies spec.provider; omit it from json or supply the same value.
+the api validates provider-specific fields. values are forwarded without defaults
+or normalization. never include card data, OAuth tokens, or provider secrets in --spec.
 
-// Keep these types in sync with https://api.onkernel.com/spec.yaml.
-// TypeScript notation: ? means optional. Other fields are required.
-// The provider field below is supplied by --provider.
+// keep these types in sync with https://api.onkernel.com/spec.yaml.
+// TypeScript notation: ? means optional. other fields are required.
+// the provider field below is supplied by --provider.
 `
 
-const vaultWalletSpecHelp = `
-For --provider kernel, use --spec '{}'. Share the returned card_enrollment URL
-with the cardholder; never enter card details in the CLI. Use wallets get --wait 60
-to observe connection, then wallets payment-methods to inspect token eligibility.
-A connected wallet may still be ineligible while network token enrollment runs.
-Kernel wallets accept neither provider configuration flags nor --tokens-file.
-For Link and AgentCard, omit config selection to preserve managed defaults.
---provider-config-id and --provider-config-name are mutually exclusive.
-For Link with selection flags, use --spec '{}' and --tokens-file <path|->.
-Alternatively, set the customer_managed client and provider_config in --spec,
-with tokens still supplied ONLY through --tokens-file. Its JSON object must have
-access_token and refresh_token strings from the same currently valid grant.
-Config client credentials belong in vault-provider-configs, not in a wallet.
+const vaultRecoveryHelp = "if restart_verification is advertised in available_operations, invoke it once to get a fresh spend_approval link. otherwise do not retry, delete, or replace the item; reconcile with the provider or support."
 
-Your backend completes OAuth before import and must stop refreshing the grant
-after import: Kernel owns subsequent rotation. Duplicate creation never replaces
-tokens. Bindings are immutable; renaming a config preserves the resolved ID.
-If an imported wallet becomes degraded, obtain a fresh grant in your backend and
-import it under a NEW wallet key for NEW work. This does not rebind existing cards
-or resolve uncertain payments. Retain old items for reconciliation; do not repeat
-an uncertain payment through the new wallet. There is no in-place reauthorization.
+const vaultWalletSpecHelp = `
+for --provider kernel, use --spec '{}'. share the returned card_enrollment url
+with the cardholder; never enter card details in the cli. use wallets get --wait 60
+to observe connection, then wallets payment-methods to inspect token eligibility.
+a connected wallet may still be ineligible while network token enrollment runs.
+kernel wallets accept neither provider configuration flags nor --tokens-file.
+for Link and AgentCard, omit config selection to preserve managed defaults.
+--provider-config-id and --provider-config-name are mutually exclusive.
+for Link with selection flags, use --spec '{}' and --tokens-file <path|->.
+alternatively, set the customer_managed client and provider_config in --spec,
+with tokens still supplied only through --tokens-file. its json object must have
+access_token and refresh_token strings from the same currently valid grant.
+config client credentials belong in vault-provider-configs, not in a wallet.
+
+your backend completes OAuth before import and must stop refreshing the grant
+after import: KERNEL owns subsequent rotation. duplicate creation never replaces
+tokens. bindings are immutable; renaming a config preserves the resolved id.
+if an imported wallet becomes degraded, obtain a fresh grant in your backend and
+import it under a new wallet key for new work. this does not rebind existing cards
+or resolve uncertain payments. retain old items for reconciliation; do not repeat
+an uncertain payment through the new wallet. there is no in-place reauthorization.
 
 type ProviderConfigReference = { id: string } | { name: string };
-
-type KernelWalletSpec = { provider: "kernel" };
 
 type LinkWalletSpec = {
   provider: "link";
@@ -49,22 +49,22 @@ type LinkWalletSpec = {
 
 type AgentCardWalletSpec = {
   provider: "agentcard";
-  provider_config?: ProviderConfigReference; // omit for Kernel-managed credentials
-  user_id?: string; // usr_...; enrolled in this organization under the SAME config
+  provider_config?: ProviderConfigReference; // omit for KERNEL-managed credentials
+  user_id?: string; // usr_...; enrolled in this organization under the same config
+};
+
+// one card stored with KERNEL-managed credentials. creation returns a card_enrollment
+// action: the cardholder enters the card on a KERNEL-hosted page, and the wallet
+// connects once the card is stored. KERNEL then enrolls it for an agentic network
+// token when the issuer supports it; until then payment-methods reports
+// capabilities.single_use_card.eligible=false and authorize returns 400.
+// the card number never reaches KERNEL or the cli. no provider config or tokens.
+type KernelWalletSpec = {
+  provider: "kernel";
 };
 `
 
 const vaultCardSpecHelp = `
-type KernelCardSpec = {
-  provider: "kernel";
-  wallet: string;             // enrolled Kernel wallet item key
-  amount: number;             // integer minor units; 1..50000
-  currency: string;           // ISO 4217 three-letter code
-  merchant_name: string;      // 1..255 characters
-  merchant_url: string;       // HTTPS checkout URL; fill locked to its exact origin
-  merchant_country?: string;  // ISO 3166-1 alpha-2; required for Visa
-};
-
 type LinkCardSpec = {
   provider: "link";
   wallet: string;             // wallet item key
@@ -72,7 +72,7 @@ type LinkCardSpec = {
   amount: number;             // integer minor units; 1..500000
   currency: string;           // three letters
   merchant_name: string;      // 1..255 characters
-  merchant_url: string;       // URI
+  merchant_url: string;       // uri
   context: string;            // at least 100 characters
   line_items?: LinkLineItem[];
   totals?: LinkTotal[];
@@ -86,8 +86,23 @@ type AgentCardCardSpec = {
   merchant: string;           // approval-screen name; 1..120 characters
   amount: number;             // integer minor units; 1..9007199254740991
   currency: string;           // three letters
-  card_id?: string;           // opaque AgentCard ID, pass through unchanged; else chosen at approval
+  card_id?: string;           // opaque AgentCard id, pass through unchanged; else chosen at approval
   checkout_origin?: string;   // top-level checkout origin for autopilot matching; update omission removes it
+};
+
+// one live purchase with a KERNEL-enrolled card. authorize obtains a network token and
+// one-time code for fill on merchant_url's origin until expires_at. Mastercard purchases
+// need no hosted approval. a Visa purchase returns a spend_approval action: the cardholder
+// approves it with a Visa passkey (the link expires after 30 minutes) before the code is
+// issued. updates are not supported.
+type KernelCardSpec = {
+  provider: "kernel";
+  wallet: string;             // KERNEL wallet item key
+  amount: number;             // integer minor units; 1..50000
+  currency: string;           // iso 4217 three letters
+  merchant_name: string;      // 1..255 characters
+  merchant_url: string;       // https merchant checkout url; fill is locked to its origin
+  merchant_country?: string;  // iso 3166-1 alpha-2; required for Visa cards
 };
 
 type LinkLineItem = {
@@ -108,21 +123,25 @@ type LinkTotal = {
   amount: number;             // integer minor units
 };
 
-Kernel cards cannot be updated. Create a new card item for a new purchase, but
-never retry an uncertain authorization or replace an item in recovery_required.
-Invoke authorize only when advertised. For Visa, present the returned
-spend_approval URL to the cardholder and poll items get --wait 60 until ready.
-Mastercard may become ready without hosted approval. Neither ready nor fill
-confirms merchant payment. Fill and submit before expires_at; never pass PAN to CLI.
+kernel cards cannot be updated. create a new card item for a new purchase, but
+never retry an uncertain authorization. in recovery_required, ` + vaultRecoveryHelp + `
+invoke authorize only when advertised. for Visa, present the returned
+spend_approval url to the cardholder and poll items get --wait 60 until ready.
+Mastercard may become ready without hosted approval. neither ready nor fill
+confirms merchant payment. fill and submit before expires_at; never pass PAN to cli.
+after the user submits checkout, report the observed outcome once with confirm_transaction
+when advertised; never infer success from fill. do not report or retry unknown outcomes.
+kernel cards have no stored billing fields; billing_* returns field_unavailable before
+any write. enter billing details on the merchant page.
 
-Card updates replace the whole spec, so omitting checkout_origin from an update removes
-its existing value. For non-prepared authorization, checkout_origin is forwarded to
-AgentCard for eligible autopilot rule matching. Use a canonical HTTPS origin (lowercase
-host, omit the default port, and include no path), or localhost HTTP for test pages.
-Kernel does not validate this declaration against the page open in the browser. Omitting
+card updates replace the whole spec, so omitting checkout_origin from an update removes
+its existing value. for non-prepared authorization, checkout_origin is forwarded to
+AgentCard for eligible autopilot rule matching. use a canonical https origin (lowercase
+host, omit the default port, and include no path), or localhost http for test pages.
+KERNEL does not validate this declaration against the page open in the browser. omitting
 it retains the current approval flow; even when supplied, autopilot may not apply and
-user approval may still be required. This field does not guarantee payment success.
-Prepared checkout uses preparation merchant_origin instead.
+user approval may still be required. this field does not guarantee payment success.
+prepared checkout uses preparation merchant_origin instead.
 
-Permitted domains are provider-assigned, not configurable in the spec.
+permitted domains are provider-assigned, not configurable in the spec.
 `

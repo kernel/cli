@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
@@ -479,6 +480,10 @@ func TestBrowsersList_WithRegion_PassesParam(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, kernel.BrowserListParamsRegionApSoutheast, captured.Region)
 
+	err = b.List(context.Background(), BrowsersListInput{Region: "us-west"})
+	assert.NoError(t, err)
+	assert.Equal(t, kernel.BrowserListParamsRegionUsWest, captured.Region)
+
 	// Omitting the flag leaves the param unset, so all regions are listed.
 	captured = kernel.BrowserListParams{}
 	err = b.List(context.Background(), BrowsersListInput{})
@@ -610,6 +615,75 @@ func TestBrowsersCreate_WithPrivateHosts(t *testing.T) {
 	}))
 }
 
+func TestBrowsersCreate_WithAllowedHosts(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-allowlist"}, nil
+		},
+	}
+
+	err := (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
+		AllowedHosts: []string{" example.com ", "*.example.com", ""},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"example.com", "*.example.com"}, captured.Network.AllowedHosts)
+
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"allowed_hosts":["example.com","*.example.com"]`)
+	assert.NotContains(t, string(raw), "private_hosts")
+
+	// The API's 100-entry cap is enforced client-side.
+	tooMany := make([]string, maxAllowedHosts+1)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("host-%d.example.com", i)
+	}
+	assert.Error(t, (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
+		AllowedHosts: tooMany,
+	}))
+}
+
+func TestBrowsersCreate_AllowedHostsRejectsPools(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	for _, selector := range []string{"pool-id", "pool-name"} {
+		for _, yes := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/yes=%t", selector, yes), func(t *testing.T) {
+				setupStdoutCapture(t)
+				calls := 0
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, `{"session_id":"pool-browser"}`)
+				}))
+				t.Cleanup(server.Close)
+				client := kernel.NewClient(option.WithBaseURL(server.URL), option.WithAPIKey("test"))
+				cmd := &cobra.Command{Use: "create"}
+				cmd.SetContext(context.WithValue(context.Background(), util.KernelClientKey, client))
+				cmd.Flags().String("pool-id", "", "")
+				cmd.Flags().String("pool-name", "", "")
+				cmd.Flags().StringSlice("allowed-host", nil, "")
+				cmd.Flags().Bool("yes", false, "")
+				flags := []string{"--" + selector, "pool", "--allowed-host", "example.com"}
+				if yes {
+					flags = append(flags, "--yes")
+				}
+				require.NoError(t, cmd.ParseFlags(flags))
+
+				err := runBrowsersCreate(cmd, nil)
+
+				require.ErrorContains(t, err, "--allowed-host cannot be used with --pool-id or --pool-name")
+				assert.Zero(t, calls)
+				assert.NotContains(t, outBuf.String(), "The conflicting flags will be ignored")
+			})
+		}
+	}
+}
+
 func TestParseProxyRoutes(t *testing.T) {
 	routes, err := parseProxyRoutes([]string{" api.ipify.org , *.ipify.org =name:my-dc-proxy", "other.example=id:proxy-123", "fallback.example=proxy-456"})
 	require.NoError(t, err)
@@ -714,14 +788,14 @@ func TestBrowsersGet_ProxyRoutes(t *testing.T) {
 }
 
 func TestProxyRouteFlagIsCreateOnly(t *testing.T) {
-	create, _, err := rootCmd.Find([]string{"browsers", "create"})
-	require.NoError(t, err)
-	assert.NotNil(t, create.Flags().Lookup("proxy-route"))
-	for _, path := range [][]string{{"browsers", "update"}, {"browser-pools", "create"}, {"browser-pools", "update"}} {
+	for _, path := range [][]string{{"browsers", "create"}, {"browser-pools", "create"}, {"browser-pools", "update"}} {
 		cmd, _, err := rootCmd.Find(path)
 		require.NoError(t, err)
-		assert.Nil(t, cmd.Flags().Lookup("proxy-route"))
+		assert.NotNil(t, cmd.Flags().Lookup("proxy-route"))
 	}
+	update, _, err := rootCmd.Find([]string{"browsers", "update"})
+	require.NoError(t, err)
+	assert.Nil(t, update.Flags().Lookup("proxy-route"))
 	assert.False(t, poolLeaseAllowedFlags()["proxy-route"])
 }
 
@@ -745,6 +819,13 @@ func TestBrowsersCreate_WithRegion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"region":"ap-southeast"`)
 
+	err = b.Create(context.Background(), BrowsersCreateInput{Region: "us-west"})
+	require.NoError(t, err)
+	assert.Equal(t, kernel.BrowserNewParamsRegionUsWest, captured.Region)
+	raw, err = captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"region":"us-west"`)
+
 	// Omitting the flag sends nothing; the server defaults to us-east.
 	err = b.Create(context.Background(), BrowsersCreateInput{})
 	require.NoError(t, err)
@@ -756,6 +837,29 @@ func TestBrowsersCreate_WithRegion(t *testing.T) {
 
 	// An unknown region is rejected before the request is made.
 	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{Region: "emea"}))
+}
+
+func TestBrowsersCreate_DisabledRegion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/browsers", r.URL.Path)
+		var body struct {
+			Region string `json:"region"`
+		}
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.Equal(t, "us-west", body.Region)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"code":"region_not_enabled","message":"region \"us-west\" is not enabled for your organization"}`)
+	}))
+	defer server.Close()
+	client := kernel.NewClient(option.WithBaseURL(server.URL), option.WithAPIKey("test-key"))
+	b := BrowsersCmd{browsers: &client.Browsers}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{Region: "us-west"})
+	require.EqualError(t, err, `region_not_enabled: region "us-west" is not enabled for your organization`)
+	var apiErr *kernel.Error
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, http.StatusForbidden, apiErr.StatusCode)
 }
 
 func TestBrowsersCreate_WithMemory(t *testing.T) {
@@ -794,6 +898,35 @@ func TestBrowsersCreate_WithMemory(t *testing.T) {
 
 	// An unsupported size is rejected before the request is made.
 	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{Memory: "4GiB"}))
+}
+
+func TestBrowsersCreate_WithVideoMemory(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-video-memory"}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{GPU: BoolFlag{Set: true, Value: true}, VideoMemory: "4gib"})
+	require.NoError(t, err)
+	assert.Equal(t, kernel.BrowserVideoMemory4GiB, captured.VideoMemory)
+
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"video_memory":"4GiB"`)
+
+	// Omitting the flag sends nothing; the server defaults to 2GiB.
+	err = b.Create(context.Background(), BrowsersCreateInput{GPU: BoolFlag{Set: true, Value: true}})
+	require.NoError(t, err)
+	assert.Empty(t, captured.VideoMemory)
+
+	// An unsupported size is rejected before the request is made.
+	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{VideoMemory: "8GiB"}))
 }
 
 func TestBrowsersCreate_WithChromePolicy(t *testing.T) {
@@ -3023,4 +3156,101 @@ func TestBrowsersRepl_ReportsFailureAndTermination(t *testing.T) {
 	assert.Contains(t, out, "boom")
 	assert.Contains(t, out, "truncated")
 	assert.Contains(t, out, "terminated")
+}
+
+func TestBrowsersUpdate_WithAllowedHosts_ForwardsParam(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier:           "session123",
+		AllowedHosts:         []string{" example.com ", "", "*.example.com"},
+		AllowedHostsProvided: true,
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"example.com", "*.example.com"}, captured.Network.AllowedHosts)
+	raw, marshalErr := json.Marshal(*captured)
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(raw), `"network":{"allowed_hosts":["example.com","*.example.com"]}`)
+}
+
+func TestBrowsersUpdate_ClearAllowedHosts_SendsNull(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier:        "session123",
+		ClearAllowedHosts: true,
+	})
+
+	assert.NoError(t, err)
+	raw, marshalErr := json.Marshal(*captured)
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(raw), `"network":{"allowed_hosts":null}`)
+}
+
+// An unrelated update must not touch the allowlist.
+func TestBrowsersUpdate_OmitAllowedHosts_NotSent(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Name:       "new-name",
+		SetName:    true,
+	})
+
+	assert.NoError(t, err)
+	raw, marshalErr := json.Marshal(*captured)
+	require.NoError(t, marshalErr)
+	assert.NotContains(t, string(raw), "network")
+}
+
+func TestBrowsersUpdate_AllowedHostsValidation(t *testing.T) {
+	tooMany := make([]string, maxAllowedHosts+1)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("host%d.example.com", i)
+	}
+	tests := []struct {
+		name    string
+		in      BrowsersUpdateInput
+		wantErr string
+	}{
+		{
+			name:    "both set and clear",
+			in:      BrowsersUpdateInput{Identifier: "s", AllowedHosts: []string{"example.com"}, AllowedHostsProvided: true, ClearAllowedHosts: true},
+			wantErr: "cannot specify both --allowed-host and --clear-allowed-hosts",
+		},
+		{
+			name:    "only empty entries",
+			in:      BrowsersUpdateInput{Identifier: "s", AllowedHosts: []string{" ", ""}, AllowedHostsProvided: true},
+			wantErr: "at least one --allowed-host entry is required",
+		},
+		{
+			name:    "too many entries",
+			in:      BrowsersUpdateInput{Identifier: "s", AllowedHosts: tooMany, AllowedHostsProvided: true},
+			wantErr: "too many --allowed-host entries",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupStdoutCapture(t)
+			called := false
+			fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, idOrName string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+				called = true
+				return &kernel.BrowserUpdateResponse{}, nil
+			}}
+			b := BrowsersCmd{browsers: fake}
+
+			err := b.Update(context.Background(), tt.in)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+			assert.False(t, called)
+		})
+	}
 }

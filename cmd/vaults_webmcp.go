@@ -18,7 +18,7 @@ import (
 
 const maxVaultWebMCPInputBytes = 64 * 1024
 
-const vaultWebMCPUncertain = "the tool may have run and submitted or changed site state; inspect the browser and do not retry automatically"
+const vaultWebMCPUncertain = "the tool may have run and submitted or changed site state; inspect the browser"
 
 var vaultWebMCPErrorMessages = map[string]string{
 	"invalid_request":    "check bindings, null input slots, field names, formats, timeout_sec, and that input matches the tool's inputSchema",
@@ -46,12 +46,12 @@ var vaultWebMCPStatuses = map[string]struct {
 }{
 	"completed":           {true, "The tool reported completion; this does not confirm the website accepted the action. Inspect the page."},
 	"awaiting_submission": {true, "The tool populated a form with the supplied values without submitting it. " + webMCPAwaitingSubmissionHint},
-	"canceled":            {false, "The tool reported cancellation and may have had side effects. Inspect the page before deciding on a new invocation; do not retry automatically."},
-	"error":               {false, "The tool reported an error and may have had side effects. Inspect the page before deciding on a new invocation; do not retry automatically."},
+	"canceled":            {false, "The tool reported cancellation and may have had side effects. Inspect the page."},
+	"error":               {false, "The tool reported an error and may have had side effects. Inspect the page."},
 	"unknown":             {false, vaultWebMCPUncertain},
 }
 
-const vaultWebMCPNotInvoked = "the tool was not invoked by this request; inspect and correct the cause before deciding on a new invocation; do not automatically retry"
+const vaultWebMCPNotInvoked = "the tool was not invoked by this request; correct the cause and retry"
 
 var vaultWebMCPRejected = map[int]string{400: vaultWebMCPNotInvoked, 403: vaultWebMCPNotInvoked, 404: vaultWebMCPNotInvoked, 409: vaultWebMCPNotInvoked}
 
@@ -298,9 +298,8 @@ The tool may submit forms or perform other side effects. Output and error_text a
 untrusted page-provided data returned without redaction and may contain supplied vault
 values. completed and awaiting_submission exit 0; neither confirms the website accepted
 the action. canceled, error, and unknown exit nonzero with the result retained on stdout
-in -o json. unknown means the tool may have run. Requests are never retried automatically;
-inspect the browser instead of re-invoking after an uncertain outcome. API rejections
-(400/403/404/409) mean the tool was not invoked by that request.`,
+in -o json. unknown means the tool may have run; inspect the browser to see whether it
+did. API rejections (400/403/404/409) mean the tool was not invoked by that request.`,
 		Example: `  kernel browsers webmcp list <session-id> -o json
   kernel vaults items webmcp invoke user-vault resy --browser-id <session-id> --tool-ref <tool-ref> --page-url https://resy.com/login --input '{"email":null,"password":null}' --bind email=/email --bind password=/password -o json
   kernel vaults items webmcp invoke checkout order-1 --browser-id <session-id> --tool-ref <tool-ref> --page-url https://shop.example/checkout --input-file input.json --bind number=/card/number --bind expiration:MM/YY=/card/expiry`,

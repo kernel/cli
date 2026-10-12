@@ -129,7 +129,7 @@ Commands with JSON output support:
 - **Proxies**: `create`, `list`, `get`, `update`, `check`
 - **API Keys**: `create`, `list`, `get`, `update`, `rotate`
 - **Auth Connections**: `timeline`
-- **Vaults**: `create`, `list`, `get`, `credentials create/update`, `items list/get/events/invoke` (including `collect`, `fill`, and `prepare_checkout`), `wallets create/payment-methods`, `cards create/update` (display-safe public fields only)
+- **Vaults**: `create`, `list`, `get`, `credentials create/update`, `items list/get/events/invoke` (including `collect`, `fill`, `webmcp_invoke`, and `prepare_checkout`), `wallets create/payment-methods`, `cards create/update` (display-safe public fields only)
 - **Projects**: `update`
 - **Org**: `limits get/set`
 - **Apps**: `list`, `history`
@@ -259,16 +259,17 @@ kernel search contents srch_01jsearchresult --limit 3 --content-source browser
 
 - `kernel browsers list` - List running browsers
   - `--query <q>` - Search by name, session ID, profile ID, proxy ID, or pool name
-  - `--region us-east|eu-west|ap-southeast` - Filter by geographic region; omit to list sessions in all regions
+  - `--region us-east|us-west|eu-west|ap-southeast` - Filter by geographic region; omit to list sessions in all regions
   - `--tag <KEY=VALUE>` - Filter by tag, repeatable; a session must match every pair
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel browsers create` - Create a new browser session
   - `-s, --stealth` - Launch browser in stealth mode to avoid detection
   - `-H, --headless` - Launch browser without GUI access
   - `--kiosk` - Launch browser in kiosk mode
-  - `--region us-east|eu-west|ap-southeast` - Geographic region for the session. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to `us-east`.
+  - `--region us-east|us-west|eu-west|ap-southeast` - Geographic region for the session. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to `us-east`.
   - `--private-host <host>` - Destination the browser reaches directly through the session's own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel the session joins (repeatable or comma-separated, max 32). Accepts hostname patterns (`*.example.ts.net`), IPs (`10.1.30.63`, `[fd00::1]`), and private CIDRs (`100.64.0.0/10`). Replaces the default private ranges (RFC1918, `100.64.0.0/10`, `fc00::/7`); omit to keep them. Fixed once the session is created. Unrelated to a proxy's `--bypass-host`, which only chooses between upstream proxy and Kernel-managed direct egress.
-  - `--proxy-route '<host>[,<host>...]=<proxy>'` - Route matching browser requests through a selected proxy (repeatable, max 10 routes with 1–50 hosts each). Example: `--proxy-route 'api.ipify.org,*.ipify.org=name:my-dc-proxy'`. The proxy is an ID by default; use `id:<id>` or `name:<name>` explicitly. Exact hostnames beat wildcards; longer wildcard suffixes beat shorter ones. `*.example.com` matches subdomains, not `example.com`. Matching ignores case and ports. Unmatched hosts use `--proxy-*` or default egress, while `--start-url` uses the top-level proxy during setup. Routes are create-only and are not available on pool sessions.
+  - `--allowed-host <host>` - Set an egress allowlist at creation: the only destinations the browser may reach through Kernel-managed egress (repeatable or comma-separated, max 100). Other destinations are refused with a 403 whose `X-Kernel-Proxy-Error` header is `network_policy_denied`. Filters Kernel-managed egress only, not all browser VM traffic. Accepts exact hostnames (`example.com`), a leading wildcard that matches subdomains but not the domain itself (`*.example.com`), public IPs (`8.8.8.8`, `[2001:4860:4860::8888]`), and public CIDRs (`8.8.4.0/24`); no ports, paths, or schemes. `--start-url` must be allowed. Omit for unfiltered egress; an empty list is invalid. Requires proxy v3; cannot be combined with `--pool-id` or `--pool-name`, even with `--yes`. An existing list can be replaced or removed later with `browsers update --allowed-host` / `--clear-allowed-hosts`, but cannot be added later if omitted at creation or removed.
+  - `--proxy-route '<host>[,<host>...]=<proxy>'` - Route matching browser requests through a selected proxy (repeatable, max 10 routes with 1–50 hosts each). Example: `--proxy-route 'api.ipify.org,*.ipify.org=name:my-dc-proxy'`. The proxy is an ID by default; use `id:<id>` or `name:<name>` explicitly. Exact hostnames beat wildcards; longer wildcard suffixes beat shorter ones. `*.example.com` matches subdomains, not `example.com`. Matching ignores case and ports. Unmatched hosts use `--proxy-*` or default egress. Routes apply from the start of the session, including to `--start-url`. Routes are create-only and cannot be combined with `--pool-id`/`--pool-name`; configure them on the pool instead.
   - `--start-url <url>` - Initial page to open on launch
   - `--proxy-id <id>` / `--proxy-name <name>` - Use that proxy for the session regardless of stealth (mutually exclusive with each other and with `--proxy-mode`)
   - `--proxy-mode direct|default` - Egress mode instead of a selected proxy: `direct` for no proxy regardless of stealth, `default` for the stealth-derived default (Kernel's stealth proxy with `--stealth`, direct egress otherwise). Omit all proxy flags to get the default.
@@ -303,6 +304,8 @@ kernel search contents srch_01jsearchresult --limit 3 --content-source browser
   - `--proxy-mode direct|default` - Change egress mode: `direct` for no proxy regardless of stealth, `default` to restore the browser default after using a selected proxy. Changing the proxy does not change stealth or CAPTCHA solver behavior.
   - `--clear-proxy` - Drop the selected proxy and restore the browser default (same as `--proxy-mode=default`)
   - `--disable-default-proxy` - Connect directly instead of through the default stealth proxy (same as `--proxy-mode=direct`); use `--disable-default-proxy=false` to restore the default
+  - `--allowed-host <host>` - Replace an existing egress allowlist only (repeatable or comma-separated, max 100), using the same entry rules as `browsers create --allowed-host`. PATCH cannot add an allowlist to a browser created without one or after removal. Omission leaves the existing list unchanged; an empty list is invalid. Applies without restarting the browser: new requests to destinations no longer allowed are normally refused within a few seconds and open connections to them are closed within about 30 seconds, but propagation can take up to 10 minutes during a deployment. Filters Kernel-managed egress only, not all browser VM traffic. `--start-url` in the same update must be allowed by the new list. Requires a browser created with proxy v3; not supported on pooled browsers. Mutually exclusive with `--clear-allowed-hosts`
+  - `--clear-allowed-hosts` - Remove the egress allowlist and return to unfiltered egress. Once removed, an allowlist cannot be added back to that browser
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers curl <id> <url>` - Make HTTP requests through a browser session's Chrome network stack
   - `-X, --request <method>` - HTTP method (default: GET; defaults to POST when `--data` is set)
@@ -347,11 +350,11 @@ Present the returned collection URL to the user before waiting for `ready`. It i
 bearer credential: share it only with that user. Readiness means required values are
 populated, not that login succeeded. `fill` requires an already-open page and never
 navigates or submits it. Optional `page_url` selects the exact page; cards require it.
-Do not automatically retry failed/unknown fills or fall back to aliases.
+Fill is safe to retry after a failed/unknown outcome; do not fall back to aliases.
 Once ready, use `fill` for ordinary web forms. When the item advertises `webmcp_invoke`, use
 `items webmcp invoke` instead to bind credential fields to existing `null` inputs of a live
-WebMCP tool; the tool may submit or have other side effects, so never retry an uncertain
-outcome (see [Invoke WebMCP tools with vault fields](#invoke-webmcp-tools-with-vault-fields)).
+WebMCP tool; the tool may submit or have other side effects (see
+[Invoke WebMCP tools with vault fields](#invoke-webmcp-tools-with-vault-fields)).
 1Password credentials use their own advertised `1pw_*` operations instead.
 
 Create specs list `fields` as an ordered array. Each entry carries a stable `name`
@@ -383,6 +386,17 @@ text/email values, definitions, version, and `has_value`. Sensitive values and T
 seeds are omitted.
 Credential spec input is capped at 128 KiB; write errors are redacted.
 
+To reuse a managed auth connection's saved credential, create a credential with
+provider `managed_auth` and the connection ID from `kernel auth connections list`.
+The item stores no values and reads the connection's credential at fill time; it is
+created `ready`, `state.fields` lists fill binding names, and `update` returns 409:
+
+```sh
+kernel vaults credentials create user-vault amazon --spec-file - <<'JSON'
+{"provider":"managed_auth","connection_id":"<connection-id>","description":"Amazon"}
+JSON
+```
+
 Vault names, item keys, and project ownership are immutable. Optionally select a project with
 `--project <id-or-name>` or `KERNEL_PROJECT`; otherwise, the API resolves the project from your
 credentials and its defaults (the default project for org-wide credentials, not all projects).
@@ -394,8 +408,9 @@ cannot switch projects.
 | Command | Purpose / flags |
 | --- | --- |
 | `kernel vaults create --name <name>` | Create or retrieve the vault with that immutable name |
-| `kernel vaults list` | `--limit 1..100` (default 20), `--offset`; JSON includes `vaults` and optional `next_offset` |
+| `kernel vaults list` | `--limit 1..100` (default 20), `--offset`, `--query` (name substring or exact ID); JSON includes `vaults` and optional `next_offset` |
 | `kernel vaults get <vault>` | Get by ID or name |
+| `kernel vaults get-encryption-key <vault>` | Get the public key custom collection apps use to send `encrypted_value` |
 | `kernel vaults delete <vault>` | Invalidate the vault and all its items; `--yes` skips confirmation |
 | `kernel vaults wallets create <vault> <key> --provider link\|agentcard\|kernel --spec '<json>'` | Connect/enroll a wallet using its provider's spec; `--open` opens a returned HTTPS action URL |
 | `kernel vaults wallets get <vault> <key>` | Observe wallet state and its hosted action; `--wait 0..60`, `--open` |
@@ -511,9 +526,10 @@ payments; do not repeat an uncertain payment through the new wallet. There is no
 imported-wallet reauthorization.
 
 **`recovery_required` means unresolved, not declined or expired.** It stops server-side waiting.
-Do not retry, delete, or replace the original operation. Reconcile with the provider or support;
-there is no reset or caller-asserted reconciliation endpoint. Unresolved child cards can block
-wallet and vault deletion. Time passing or deletion is not evidence of non-execution.
+If `restart_verification` is advertised in `available_operations`, invoke it once to get a
+fresh `spend_approval` link. Otherwise do not retry, delete, or replace the item; reconcile
+with the provider or support. Unresolved child cards can block wallet and vault deletion.
+Time passing or deletion is not evidence of non-execution.
 
 #### Kernel-managed card checkout
 
@@ -540,14 +556,59 @@ kernel vaults items invoke checkout order-1 authorize --open
 kernel vaults items get checkout order-1 --wait 60
 ```
 
-Only invoke `authorize` when advertised. Visa may return a `spend_approval` URL for the
-cardholder; Mastercard may become ready without one. An unresolved `recovery_required` item
-must not be retried, deleted, or replaced. When ready, create a browser with `--vault checkout`
-and invoke the advertised `fill` operation with the browser ID, an HTTPS `page_url` on the
-exact origin of `merchant_url`, and the checkout field selectors (see `items invoke --help`).
-Fill types the one-time network token and code but does not submit the merchant form.
-Submit before `expires_at`; neither ready nor fill proves that the merchant charged the card.
-Never put PAN, CVC, or enrollment credentials in CLI arguments or logs.
+Only invoke `authorize` when advertised. Visa returns a `spend_approval` URL for the
+cardholder to verify and approve; Mastercard may become ready without one. In
+`recovery_required`, invoke `restart_verification` once **only if advertised**:
+
+```bash
+kernel vaults items invoke checkout order-1 restart_verification --open
+```
+
+This rotates the approval link locally without a provider call, only after a classified
+initial attestation failure with proof no intent was dispatched. Otherwise do not retry,
+delete, or replace the item. Always check `available_operations` rather than assuming
+the API supports this operation.
+
+When ready, create a browser with the vault attached, navigate to checkout, then fill:
+
+```bash
+kernel browsers create --vault checkout
+kernel vaults items invoke checkout order-1 fill --params '{
+  "browser_id":"<returned-browser-session-id>",
+  "page_url":"https://shop.example/checkout",
+  "fields":[
+    {"field":"number","selector":"#cardNumber"},
+    {"field":"expiration","format":"MM/YY","selector":"#cardExpiry"},
+    {"field":"cvc","selector":"#cardCvc"}
+  ]
+}' -o json
+```
+
+Use the **exact current HTTPS top-level URL** on `merchant_url`'s origin and selectors
+matching that page. Kernel cards have **no stored billing fields**: requesting `billing_*`
+returns 400 `field_unavailable` before any write. Enter billing details (such as name and
+ZIP) directly on the merchant page. Fill types the one-time network token and code but
+never submits checkout. Submit before `expires_at`; neither ready nor fill proves payment.
+
+After the user submits checkout, report the **observed merchant outcome exactly once**,
+only when `confirm_transaction` is advertised. For example, after observing approval:
+
+```bash
+kernel vaults items invoke checkout order-1 confirm_transaction --params '{
+  "status":"APPROVED", "transaction_type":"PURCHASE", "amount":1200,
+  "currency":"USD", "occurred_at":"2026-09-01T12:00:00Z"
+}'
+```
+
+`--spec-file <path|->` accepts the same JSON. All five fields are required; do not include
+`type` or any extra properties. `status` must be `APPROVED`, `DECLINED`, `PENDING`, `ERROR`,
+or `CANCELLED`. `transaction_type` must be `PURCHASE`, `AUTHORIZATION`, `CAPTURE`, `REFUND`,
+`REVERSAL`, `VERIFICATION`, `CHARGEBACK`, or `FRAUD`. `amount` is an integer in minor units,
+0..50000 and no greater than the approved amount; `currency` is three uppercase letters;
+`occurred_at` is the observed outcome's RFC3339 timestamp. The operation is no longer
+advertised after reporting. Never infer success from fill. Unknown outcomes, including
+transport loss while reporting, must not be reported or retried.
+Never put PAN, CVC, expiry, or enrollment credentials in CLI arguments or logs.
 
 #### Link checkout preparation
 
@@ -644,20 +705,23 @@ A reusable card being `ready` does not mean the last payment succeeded.
 #### Invoking item operations
 
 `items get` displays every `available_operations` entry's type and description, plus
-an `items invoke` command retaining the selected project (replace `<json>` for fill or prepare_checkout).
+an `items invoke` command retaining the selected project (replace `<json>` for operations with parameters).
 Read the description and follow its approval requirements before invoking. Required user actions
 (OAuth, enrollment, MFA, spend approval) appear separately; they are not operations to invoke
 through this endpoint.
 
 `items invoke` fetches the item again and calls
 `POST /vaults/{id_or_name}/items/{key}/operations` only if the requested operation is still
-advertised. The API controls availability. The CLI additionally refuses invocation and opening
-actions in `recovery_required`, even if a stale action or operation was returned.
+advertised, including in `recovery_required`. The API controls availability. In recovery,
+`restart_verification` may be invoked once if advertised; otherwise do not retry, delete,
+or replace the item. Stale action URLs in recovery are not opened; a successful restart
+returns a fresh approval action.
 
 `authorize` sends `{"type":"authorize"}` without `--params` and returns the updated item,
 possibly with a required user action. `collect` is also parameterless and returns a credential
-collection URL. `--open` is supported for authorize, collect, and prepare_checkout.
-The [API spec](https://api.onkernel.com/spec.yaml) also accepts `fill` and `prepare_checkout`, with their inputs in
+collection URL. `restart_verification` is parameterless and sends `{"type":"restart_verification"}`.
+`--open` is supported for authorize, collect, prepare_checkout, 1pw_recover, and restart_verification.
+`fill`, `prepare_checkout`, and `confirm_transaction` accept inputs in
 `--params` or `--spec-file <path|->` (mutually exclusive, maximum 128 KiB). The positional
 operation supplies `type`; including `type` in either input is rejected.
 Parameters must be a JSON object without unknown or duplicate properties. There is no
@@ -703,8 +767,8 @@ Do not automatically retry or switch checkout paths after an uncertain result.
 
 ##### Fill browser fields
 
-Fill supports credential items and ready Link cards when advertised by the API, not AgentCard.
-Both use the same execution and outcome handling. Credential bindings use declared field names,
+Fill supports credential items and ready Link or Kernel cards when advertised by the API, not AgentCard.
+All use the same execution and outcome handling. Credential bindings use declared field names,
 including TOTP fields, and must omit `format`. Credentials may omit `page_url` only when the API
 can resolve a unique page. Card bindings require an exact HTTPS `page_url` and the card fields
 listed below. The vault must already be attached to the browser for fill authorization.
@@ -724,10 +788,13 @@ kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browse
 - `fields` contains 1-32 bindings in write order. Each has `field` and a nonempty CSS
   `selector` targeting an editable input/select or its container. The API searches the selected
   page and descendants, including payment iframes. Do not supply frame IDs or literal values.
-- Stored card fields: `number`, `cvc`, `exp_month` (MM), `exp_year` (YYYY), `billing_name`,
+- Link stored card fields: `number`, `cvc`, `exp_month` (MM), `exp_year` (YYYY), `billing_name`,
   `billing_line1`, `billing_line2`, `billing_city`, `billing_state`, `billing_postal_code`,
   `billing_country`. Billing fields use the stored address without reformatting; request only
   needed fields. Missing requested billing data fails validation before browser writes.
+- Kernel cards support `number`, `expiration`, `cvc`, `exp_month`, and `exp_year`, with no
+  stored billing fields. `billing_*` returns 400 `field_unavailable` before any write;
+  enter billing details on the merchant page. Fill is restricted to `merchant_url`'s origin.
 - Combined card `expiration` requires `format: "MM/YY"` or `"MM/YYYY"`. Other fields reject `format`.
 - Optional `timeout_ms` is an integer from 1 to 30000 (default 10000), for the whole operation.
 
@@ -743,14 +810,14 @@ without appended error text. API/transport errors exit nonzero with a sanitized 
 stderr, not a fabricated execution result. No values, selectors, DOM content, or raw browser
 errors are printed in fill results. Pre-write API rejections (400/403/404/409) retain
 HTTP status, recognized error codes, and corrective guidance, and confirm that the
-request wrote no fields. Inspect and correct the cause before deciding on a new fill.
-Transport loss and other uncertain failures retain the no-retry warning.
+request wrote no fields. Correct the cause and retry. Transport loss and other uncertain
+failures note that fields may have been written and that fill is safe to retry.
 
 Fill is non-atomic: execution stops at the first failed/unknown field and earlier writes are
 not rolled back. `filled` does not mean the site retained or accepted the value; `completed`
-does not mean logged in or paid. Transport errors do not prove no writes occurred. Inspect the browser
-before deciding what to do next. The CLI never retries, explicitly submits website forms, or falls
-back to aliases. Link cards do not expose `state.aliases` or support egress substitution.
+does not mean logged in or paid. Transport errors do not prove no writes occurred. Fill never
+submits, so it is safe to run again. The CLI does not retry automatically, explicitly submit website
+forms, or fall back to aliases. Link and Kernel cards do not expose `state.aliases` or support egress substitution.
 AgentCard-only checkout aliases are a separate integration, not a recovery path after a failed
 or indeterminate fill.
 
@@ -790,9 +857,9 @@ are untrusted page-provided data and may contain the supplied vault values:
 `completed` and `awaiting_submission` exit 0; neither confirms the website accepted the action.
 After `awaiting_submission`, submit the populated form through Playwright or computer interaction
 instead of invoking the tool again. `canceled`, `error`, and `unknown` exit nonzero with the result
-still on stdout in `-o json`. `unknown` means the tool may have run. Requests are never retried:
-API rejections (400/403/404/409) mean the tool was not invoked by that request; other failures
-and transport loss are uncertain, so inspect the browser instead of re-invoking.
+still on stdout in `-o json`. `unknown` means the tool may have run. API rejections
+(400/403/404/409) mean the tool was not invoked by that request; other failures and transport
+loss are uncertain, so inspect the browser to see whether the tool ran.
 
 #### Expansions, updates, and lifecycle
 
@@ -817,7 +884,7 @@ exists.
 ### Browser Pools
 
 - `kernel browser-pools list` - List browser pools
-  - `--region us-east|eu-west|ap-southeast` - Filter by geographic region; omit to list pools in all regions
+  - `--region us-east|us-west|eu-west|ap-southeast` - Filter by geographic region; omit to list pools in all regions
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel browser-pools create` - Create a browser pool
   - `--name <name>` - Optional unique name for the pool
@@ -827,14 +894,14 @@ exists.
   - `--stealth`, `--headless`, `--kiosk` - Default pool configuration
   - `--memory 8GiB|16GiB` - Memory for headful browsers in the pool (default 8GiB)
   - `--refresh-on-profile-update` - Flush idle browsers when the pool's profile is updated (requires a profile)
-  - `--profile-id`, `--profile-name`, `--proxy-id`, `--region`, `--start-url`, `--extension`, `--viewport`, `--private-host` - Same semantics as `kernel browsers create`
+  - `--profile-id`, `--profile-name`, `--proxy-id`, `--region`, `--start-url`, `--extension`, `--viewport`, `--private-host`, `--proxy-route` - Same semantics as `kernel browsers create` (proxy routes apply to every browser warmed into the pool)
   - `--chrome-policy <json>` / `--chrome-policy-file <path>` - Custom Chrome enterprise policy applied to every browser in the pool, as a JSON object or from a file (`-` for stdin). Same semantics as `kernel browsers create`.
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Telemetry applied to browsers warmed into the pool. Same semantics as `kernel browsers create`.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools get <id-or-name>` - Get pool details
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools update <id-or-name>` - Update pool configuration
-  - Same flags as create (except `--region`, which is fixed at creation and cannot be updated) plus `--clear-profile`, `--clear-proxy`, `--clear-start-url`, `--clear-extensions`, `--clear-chrome-policy`, and `--clear-private-hosts` for removing durable configuration. `--clear-private-hosts` restores the default private IP ranges. `--fill-rate 0` pauses automatic filling. `--discard-all-idle` discards all idle browsers and refills the pool. `--telemetry`, `--memory`, and private-host updates only apply to browsers warmed after the update.
+  - Same flags as create (except `--region`, which is fixed at creation and cannot be updated) plus `--clear-profile`, `--clear-proxy`, `--clear-start-url`, `--clear-extensions`, `--clear-chrome-policy`, `--clear-private-hosts`, and `--clear-proxy-routes` for removing durable configuration. `--clear-private-hosts` removes the whole network configuration (restoring the default private IP ranges and dropping proxy routes). `--private-host` and `--proxy-route` replace the pool's whole network configuration, so pass both to keep both. `--fill-rate 0` pauses automatic filling. `--discard-all-idle` discards all idle browsers and refills the pool. `--telemetry`, `--memory`, and network updates only apply to browsers warmed after the update.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools delete <id-or-name>` - Delete a pool
   - `--force` - Force delete even if browsers are leased
@@ -1051,8 +1118,12 @@ Destinations are the OTLP/HTTP endpoints sessions export to. They belong to the 
 ### Browser Playwright
 
 - `kernel browsers playwright execute <id> [code]` - Execute Playwright/TypeScript code against the browser
+  - `--executor <name>` - Executor to run the call in. Calls on different executors run concurrently in separate tabs of the same browser; calls on one executor run one at a time. Omit to use the always-present `default` executor bound to the active tab. Any other name creates a named executor on first use that owns a background tab `page` is bound to. At most 8 named executors per browser (409 when exceeded)
   - `--timeout <seconds>` - Maximum execution time in seconds (defaults server-side)
   - If `[code]` is omitted, code is read from stdin
+- `kernel browsers playwright executors list <id>` - List the browser's Playwright executors (default first) with busy state, timestamps, and the tab each named executor owns
+- `kernel browsers playwright executors delete <id> <executor>` - Delete a Playwright executor. Deleting `default` restarts it instead of removing it
+  - `--close-tab` - Close the tab owned by the executor (default: true)
 
 ### Browser REPL
 
@@ -1079,7 +1150,7 @@ Destinations are the OTLP/HTTP endpoints sessions export to. They belong to the 
   - `--timeout-sec <seconds>` - Maximum execution time, 1-120 seconds (defaults server-side)
   - Prints the tool's `output` as pretty JSON on completion; tool errors and cancellations exit non-zero
   - `awaiting_submission` is successful but warns that a non-autosubmit declarative form was filled, not submitted. Inspect the form, obtain any required confirmation, then submit through Playwright or computer interaction instead of invoking the tool again
-  - Invocations are never retried automatically. A 504 `outcome_unknown` error prints the code, invocation ID, and message and exits non-zero. The tool may already have had side effects; verify the outcome before invoking it again
+  - Invocations are never retried automatically. A 504 `outcome_unknown` error prints the code, invocation ID, and message and exits non-zero. The tool may already have had side effects; check the page to see whether it ran
 - `kernel browsers webmcp custom-tools list <id-or-name>` - List registered custom tools with their generated ID, namespace, kind, URL patterns, and metadata
   - `-o json` - Output the raw response
 - `kernel browsers webmcp custom-tools add <id-or-name> --namespace <ns> --source '<js>'` - Atomically add a namespaced batch of page-backed or CDP-backed custom tools
@@ -1173,7 +1244,7 @@ anywhere a project ID does.
   - `--output json`, `-o json` - Output raw JSON object
 
   - `--name <name>` - Proxy configuration name (required)
-  - `--type <type>` - Proxy type: datacenter, isp, residential, mobile, custom (required)
+  - `--type <type>` - Proxy type: isp, residential, mobile, custom (required)
   - `--protocol <http|https>` - Protocol to use (default: https)
   - `--country <code>` - ISO 3166 country code or "EU" (location-based types)
   - `--city <name>` - City name (no spaces, e.g. sanfrancisco) (residential, mobile; requires `--country`)
@@ -1211,21 +1282,21 @@ Managed auth connections (`kernel auth connections`). The commands below are new
   - `--per-page <n>` - Items per page (default: 20)
   - `--output json`, `-o json` - Output raw JSON array
 - `kernel auth connections create` - New flags:
-  - `--region us-east|eu-west|ap-southeast` - Region for this connection's login, reauth, and health-check browser sessions. Defaults to `us-east`.
+  - `--region us-east|us-west|eu-west|ap-southeast` - Region for this connection's login, reauth, and health-check browser sessions. Defaults to `us-east`.
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy configuration for this connection's login, reauth, and health-check browser sessions (mutually exclusive). Omit to derive the default from stealth.
   - `--stealth` - Whether those browser sessions run in stealth mode (default: true); use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Default telemetry for this connection's browser sessions. Same semantics as `kernel browsers create`
   - `--telemetry-export-otlp <id-or-name>` - Export this connection's captured telemetry over OTLP to one of the org's configured destinations. Implies `--telemetry=all` when `--telemetry` is not set. Use `=off` to disable export.
   - `--telemetry-storage on|off` - Whether this connection's sessions persist captured telemetry to Kernel storage (default on). `off` requires `--telemetry-export-otlp <id-or-name>` in the same command.
 - `kernel auth connections update <id>` - New flags:
-  - `--region us-east|eu-west|ap-southeast` - Update the region for browser sessions created after this command. Active sessions don't move.
+  - `--region us-east|us-west|eu-west|ap-southeast` - Update the region for browser sessions created after this command. Active sessions don't move.
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy configuration for future browser sessions (mutually exclusive). Use `--proxy-mode=default` to drop a selected proxy rather than passing an empty value.
   - `--stealth` - Set whether future browser sessions run in stealth mode; use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Update telemetry for future browser sessions
   - `--telemetry-export-otlp <id-or-name>` - Update where future sessions export captured telemetry. Naming a destination requires passing `--telemetry` in the same command, since the API validates capture and export together and enabling capture here would replace the connection's current category selection. Use `=off` to disable export.
   - `--telemetry-storage on|off` - Update whether future sessions persist captured telemetry to Kernel storage. Requires `--telemetry` in the same command; `off` also requires an export destination.
 - `kernel auth connections login <id>` - New flags:
-  - `--region us-east|eu-west|ap-southeast` - Region override for this login only. Omit it to inherit the connection region.
+  - `--region us-east|us-west|eu-west|ap-southeast` - Region override for this login only. Omit it to inherit the connection region.
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy override for this login's browser session (mutually exclusive); omitted properties inherit the connection defaults
   - `--stealth` - Stealth override for this login's browser session; use `--stealth=false` to disable
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Telemetry override for this login only, merged onto the connection's config
@@ -1566,6 +1637,15 @@ TS
 # With a timeout in seconds
 kernel browsers playwright execute my-browser --timeout 30 'await (await context.newPage()).goto("https://example.com")'
 
+# Drive two tabs in parallel with named executors (each owns its own tab)
+kernel browsers playwright execute my-browser --executor docs 'await page.goto("https://example.com/docs"); return await page.title();' &
+kernel browsers playwright execute my-browser --executor pricing 'await page.goto("https://example.com/pricing"); return await page.title();' &
+wait
+
+# List executors and delete one (closes its tab unless --close-tab=false)
+kernel browsers playwright executors list my-browser
+kernel browsers playwright executors delete my-browser docs
+
 # Mini CDP connection load test (10s)
 cat <<'TS' | kernel browsers playwright execute my-browser
 const start = Date.now();
@@ -1631,11 +1711,11 @@ kernel browsers extensions upload my-browser ./extension1 ./extension2
 # List proxy configurations
 kernel proxies list
 
-# Create a datacenter proxy
-kernel proxies create --type datacenter --country US --name "US Datacenter"
+# Create an ISP proxy
+kernel proxies create --type isp --country US --name "US ISP"
 
-# Create a datacenter proxy using HTTP protocol
-kernel proxies create --type datacenter --country US --protocol http --name "US DC (HTTP)"
+# Create an ISP proxy using HTTP protocol
+kernel proxies create --type isp --country US --protocol http --name "US ISP (HTTP)"
 
 # Create a custom proxy
 kernel proxies create --type custom --host proxy.example.com --port 8080 --username myuser --password mypass --name "My Custom Proxy"

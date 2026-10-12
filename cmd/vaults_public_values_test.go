@@ -111,7 +111,7 @@ func TestVaultFillActionableErrors(t *testing.T) {
 			})
 			out, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "user-123", "login", "fill", "--params", `{"browser_id":"browser-1","fields":[{"field":"missing","selector":"#field"}]}`, "-o", "json")
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), fmt.Sprintf("HTTP %d", tc.status))
+			assert.Contains(t, err.Error(), fmt.Sprintf("http %d", tc.status))
 			assert.Contains(t, err.Error(), tc.message)
 			assert.Contains(t, err.Error(), "no fields were written")
 			assert.NotContains(t, err.Error(), "may have been written")
