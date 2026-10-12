@@ -103,7 +103,7 @@ func vaultSpecHasCardData(value json.RawMessage) bool {
 	if json.Unmarshal(value, &object) == nil {
 		for key, child := range object {
 			switch strings.ToLower(key) {
-			case "pan", "card_number", "cardnumber", "number", "cvc", "cvv", "security_code", "expiry", "expiration":
+			case "pan", "card_number", "cardnumber", "number", "cvc", "cvv", "security_code", "expiry", "expiration", "exp_month", "exp_year", "expiration_month", "expiration_year":
 				return true
 			}
 			if vaultSpecHasCardData(child) {

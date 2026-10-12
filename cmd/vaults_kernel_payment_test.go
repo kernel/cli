@@ -59,6 +59,9 @@ func TestKernelSpecRejectsCardDetails(t *testing.T) {
 		`{"pan":"4111111111111111"}`,
 		`{"metadata":{"card_number":"4111111111111111"}}`,
 		`{"cards":[{"cvc":"123"}]}`,
+		`{"expiry":"12/30"}`,
+		`{"exp_month":"12","exp_year":"2030"}`,
+		`{"expiration_month":"12","expiration_year":"2030"}`,
 	} {
 		for _, path := range [][]string{{"wallets", "create"}, {"cards", "create"}} {
 			args := append([]string{"vaults"}, path...)
@@ -146,7 +149,7 @@ func TestKernelReadyCardUsesAdvertisedFill(t *testing.T) {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
 		assert.JSONEq(t, `{"type":"fill","browser_id":"browser-1","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#cardNumber"},{"field":"expiration","format":"MM/YY","selector":"#cardExpiry"},{"field":"cvc","selector":"#cardCvc"}]}`, string(body))
-		_, _ = io.WriteString(w, `{"type":"fill","status":"completed","fields":[{"index":0,"status":"filled"}]}`)
+		_, _ = io.WriteString(w, `{"type":"fill","status":"completed","fields":[{"index":0,"status":"filled"},{"index":1,"status":"filled"},{"index":2,"status":"filled"}]}`)
 	})
 	out, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "fill", "--params", `{"browser_id":"browser-1","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#cardNumber"},{"field":"expiration","format":"MM/YY","selector":"#cardExpiry"},{"field":"cvc","selector":"#cardCvc"}]}`, "-o", "json")
 	require.NoError(t, err)
