@@ -476,7 +476,7 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		if item.Action.Instructions != "" {
 			pterm.Printf("Approval instructions:\n%s\n", item.Action.Instructions)
 		}
-		pterm.Info.Println("Ready means the account owner approved access, not that sign-in succeeded. 1pw_fill submits the form; inspect the page afterward. Never retry a request or fill automatically; after an uncertain outcome, do not delete and recreate the item.")
+		pterm.Info.Println("Ready means the account owner approved access, not that sign-in succeeded. 1pw_fill can submit the form, so never retry automatically. check the page first before retrying. never retry an access request automatically; after an uncertain outcome, do not delete and recreate the item.")
 		return
 	}
 	if item.Type == "credential" && item.Spec.Provider == "managed_auth" {

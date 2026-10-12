@@ -62,8 +62,9 @@ const vaultOnePasswordCredentialHelp = `1Password flow:
    several approved entries share that page's origin, pass entry_id from the
    state.access_request entries in items get -o json. fill_submitted means the form
    was submitted, not that sign-in succeeded.
-Invoke only advertised operations. Never automatically retry an access request, fill,
-or recovery. After fill_unknown, inspect the page to see the result of the fill.
+Invoke only advertised operations. 1pw_fill can submit the form, so never retry
+automatically. check the page first before retrying. never automatically retry an
+access request or recovery.
 After an uncertain access request (timeout, HTTP 5xx, or a pending item with no
 approval link or advertised operation), stop and tell the user; do not
 delete and recreate the item to reset it. Declined means the owner refused; do
@@ -121,7 +122,7 @@ Poll items get --wait 60 until state.status is ready. Then choose an advertised 
   items webmcp invoke with the tool_ref, exact source.page_url, public input containing
   null slots, and --bind <field>=<json-pointer>. The tool may submit or have other
   side effects, and its output may include the supplied values.
-fill never submits and is safe to retry.
+fill never submits, so a retry is safe. retry only after checking the page, and never in an automatic loop.
 Ready means populated, not a successful login. An agent controlling the browser
 can read filled values. TOTP seeds must not be collected through the hosted form.
 Get/list output includes definitions, has_value, and explicitly non-sensitive text/email values.
