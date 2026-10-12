@@ -40,7 +40,7 @@ func TestCredentialConnectOnePassword(t *testing.T) {
 
 	_, text, err := executeVaultCommand(t, client, "vaults", "credentials", "connect", "user", "onepassword", "--provider", "1password")
 	require.NoError(t, err)
-	assert.Contains(t, text, "Share the 1Password authorization URL with the account owner")
+	assert.Contains(t, text, "share the 1Password authorization url with the account owner")
 
 	_, _, err = executeVaultCommand(t, client, "vaults", "credentials", "connect", "user", "onepassword", "--provider", "kernel")
 	require.ErrorContains(t, err, "--provider must be 1password")
@@ -110,7 +110,7 @@ func TestOnePasswordCredentialOutput(t *testing.T) {
 	assert.Contains(t, output, "onepassword")
 	assert.Contains(t, output, "entry-1 https://github.com")
 	assert.NotContains(t, output, "stored token")
-	assert.Contains(t, output, "Invoke: kernel vaults items invoke --params '<json>' -- user github 1pw_access_request_status")
+	assert.Contains(t, output, "invoke: kernel vaults items invoke --params '<json>' -- user github 1pw_access_request_status")
 	assert.NotContains(t, output, "field definitions")
 	assert.NotContains(t, output, "never-print")
 
@@ -220,7 +220,7 @@ func TestOnePasswordFillOutcomes(t *testing.T) {
 		{200, `{"type":"1pw_fill","status":"fill_failed","error_code":"fillFailed"}`, "fill fill_failed", "fillFailed"},
 		{200, `{"type":"1pw_fill","status":"fill_unknown"}`, "fill fill_unknown", "1pw_fill can submit the form, so never retry automatically. check the page first before retrying."},
 		{200, `{"type":"fill","status":"completed","fields":[]}`, "invalid 1pw_fill result", ""},
-		{403, `{"code":"destination_denied","message":"page is outside the approved login origin"}`, "destination_denied (HTTP 403)", ""},
+		{403, `{"code":"destination_denied","message":"page is outside the approved login origin"}`, "destination_denied (http 403)", ""},
 		{409, `{"code":"conflict","message":"not ready"}`, "nothing was submitted", ""},
 		{429, `{"code":"rate_limited","message":"slow down"}`, "may have been filled or submitted", ""},
 		{503, `{"code":"provider_unavailable","message":"unavailable"}`, "not available in this deployment", ""},
@@ -266,35 +266,35 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 			"items list <vault> -o json",
 			"ask the user where this login lives",
 			"do not\n   choose for them",
-			"Kernel-hosted collection",
+			"KERNEL-hosted collection",
 			"1Password brokered approval",
 			"non-shared 1Password vault",
-			"State this requirement when asking",
+			"state this requirement when asking",
 			"as plain text rather than code so they stay clickable",
 			"passkeys",
-			"offer Kernel-hosted collection",
-			"Never ask the user to paste",
+			"offer KERNEL-hosted collection",
+			"never ask the user to paste",
 			"not proof of sign-in",
 		} {
 			assert.Contains(t, long, want)
 		}
 	}
 	for _, want := range []string{
-		"Ask whose 1Password account holds the login and confirm it is in a non-shared vault",
+		"ask whose 1Password account holds the login and confirm it is in a non-shared vault",
 		"1-5 login entries",
-		"Invoke 1pw_create_access_request once",
+		"invoke 1pw_create_access_request once",
 		"pass entry_id",
 		"not that sign-in succeeded",
 		"do not\ndelete and recreate the item to reset it",
-		"After a confirmed failed status, ask the\nuser",
+		"after a confirmed failed status, ask the\nuser",
 		"credentials connect again with the same key",
 	} {
 		assert.Contains(t, credentials.Long, want)
 		assert.Contains(t, connect.Long, want)
 	}
-	assert.Contains(t, credentials.Long, "Stored-token 1Password credentials (developer integrations only")
-	assert.Contains(t, credentials.Long, "Never ask an end user for them")
-	assert.NotContains(t, connect.Long, "Stored-token")
+	assert.Contains(t, credentials.Long, "stored-token 1Password credentials (developer integrations only")
+	assert.Contains(t, credentials.Long, "never ask an end user for them")
+	assert.NotContains(t, connect.Long, "stored-token")
 	assert.Contains(t, connect.Long, "credential_account")
 	assert.Contains(t, credentials.Example, `"provider":"1password","account":"onepassword"`)
 	for _, operation := range []string{"1pw_create_access_request", "1pw_access_request_status", "1pw_fill", "1pw_update_access_token", "1pw_recover"} {
@@ -319,8 +319,8 @@ func TestOnePasswordFillLookupErrorKeepsStatus(t *testing.T) {
 		body   string
 		want   string
 	}{
-		{404, `{"code":"not_found","message":"item not found"}`, "not_found (HTTP 404); 1pw_fill was not invoked"},
-		{403, `{"code":"other","message":"secret-echo"}`, "(HTTP 403); 1pw_fill was not invoked"},
+		{404, `{"code":"not_found","message":"item not found"}`, "not_found (http 404); 1pw_fill was not invoked"},
+		{403, `{"code":"other","message":"secret-echo"}`, "(http 403); 1pw_fill was not invoked"},
 	} {
 		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
 			posts := 0
@@ -386,9 +386,9 @@ func TestOnePasswordOperationErrorGuidance(t *testing.T) {
 		body   string
 		want   string
 	}{
-		{400, `{"code":"invalid_request","message":"secret-echo"}`, "rejected (HTTP 400)"},
+		{400, `{"code":"invalid_request","message":"secret-echo"}`, "rejected (http 400)"},
 		{409, `{"code":"conflict","message":"operation is not currently available"}`, "do not retry, delete, or recreate the item to reset it"},
-		{503, `{"code":"provider_unavailable","message":"secret-echo"}`, "offer Kernel-hosted collection"},
+		{503, `{"code":"provider_unavailable","message":"secret-echo"}`, "offer KERNEL-hosted collection"},
 		{500, `{"code":"internal_error","message":"secret-echo"}`, "outcome is unknown"},
 		{502, `{"code":"bad_gateway","message":"secret-echo"}`, "do not retry, delete, or recreate the item"},
 	} {
@@ -429,8 +429,8 @@ func TestCredentialConnectOnePasswordUnavailable(t *testing.T) {
 		io.WriteString(w, `{"code":"provider_unavailable","message":"1Password OAuth is not configured"}`)
 	})
 	_, _, err := executeVaultCommand(t, client, "vaults", "credentials", "connect", "user", "onepassword", "--provider", "1password")
-	require.ErrorContains(t, err, "1Password account linking unavailable (HTTP 500)")
-	assert.Contains(t, err.Error(), "offer Kernel-hosted collection")
+	require.ErrorContains(t, err, "1Password account linking unavailable (http 500)")
+	assert.Contains(t, err.Error(), "offer KERNEL-hosted collection")
 }
 
 func TestVaultItemsListShowsCredentialSite(t *testing.T) {

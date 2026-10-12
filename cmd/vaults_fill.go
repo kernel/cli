@@ -29,7 +29,7 @@ var vaultFillResultFields = vaultOutputFields{
 	"fields": vaultFieldsOf("index status error_code"),
 }
 
-const vaultFillUncertain = "browser fields may have been written; fill never submits, so a retry is safe. retry only after checking the page, and never in an automatic loop. Do not fall back to aliases."
+const vaultFillUncertain = "browser fields may have been written; fill never submits, so a retry is safe. retry only after checking the page, and never in an automatic loop. do not fall back to aliases."
 
 var vaultFillErrorMessages = map[string]string{
 	"invalid_request":      "check field names, formats, and browser parameters",
@@ -37,7 +37,7 @@ var vaultFillErrorMessages = map[string]string{
 	"duplicate_target":     "multiple bindings resolve to the same element; use distinct targets",
 	"timeout":              "the fill deadline elapsed",
 	"target_changed":       "the page or target changed; inspect the current page",
-	"page_not_found":       "no open page matches page_url; use the exact current URL",
+	"page_not_found":       "no open page matches page_url; use the exact current url",
 	"ambiguous_page":       "more than one page matches; identify exactly one open page",
 	"element_not_found":    "no editable target matches a selector; inspect the page and correct the binding",
 	"ambiguous_selector":   "a selector matches multiple targets across frames; use a unique selector",
@@ -59,10 +59,10 @@ func vaultFillLookupError(err error, operation string) error {
 		}
 		if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
 			if _, ok := vaultFillErrorMessages[body.Code]; ok {
-				return fmt.Errorf("could not retrieve vault item: %s (HTTP %d); %s was not invoked", body.Code, apiErr.StatusCode, operation)
+				return fmt.Errorf("could not retrieve vault item: %s (http %d); %s was not invoked", body.Code, apiErr.StatusCode, operation)
 			}
 		}
-		return fmt.Errorf("could not retrieve vault item (HTTP %d); %s was not invoked", apiErr.StatusCode, operation)
+		return fmt.Errorf("could not retrieve vault item (http %d); %s was not invoked", apiErr.StatusCode, operation)
 	}
 	return fmt.Errorf("could not retrieve vault item; %s was not invoked", operation)
 }
@@ -86,10 +86,10 @@ func vaultOperationRequestError(err error, operation string, messages map[string
 	}
 	if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil {
 		if message, ok := messages[body.Code]; ok {
-			return fmt.Errorf("%s failed: %s (HTTP %d): %s; %s", operation, body.Code, apiErr.StatusCode, message, guidance)
+			return fmt.Errorf("%s failed: %s (http %d): %s; %s", operation, body.Code, apiErr.StatusCode, message, guidance)
 		}
 	}
-	return fmt.Errorf("%s request failed (HTTP %d); %s", operation, apiErr.StatusCode, guidance)
+	return fmt.Errorf("%s request failed (http %d); %s", operation, apiErr.StatusCode, guidance)
 }
 
 const vaultFillNotWritten = "no fields were written by this request; correct the cause and retry"
@@ -131,14 +131,14 @@ func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFil
 			return err
 		}
 	} else {
-		pterm.Printf("Fill: %s\n", result.Status)
-		rows := pterm.TableData{{"Field index", "Status", "Error code"}}
+		pterm.Printf("fill: %s\n", result.Status)
+		rows := pterm.TableData{{"field index", "status", "error code"}}
 		for _, field := range result.Fields {
 			rows = append(rows, []string{strconv.Itoa(*field.Index), field.Status, field.ErrorCode})
 		}
 		PrintTableNoPad(rows, true)
 		if result.Status == "completed" {
-			pterm.Println("Fields filled; this does not confirm website acceptance or form submission.")
+			pterm.Println("fields filled; this does not confirm website acceptance or form submission.")
 		} else {
 			pterm.Println(vaultFillUncertain)
 		}
@@ -220,7 +220,7 @@ func (c VaultsCmd) onePasswordFill(ctx context.Context, vault, key string, reque
 	if err != nil {
 		var apiErr *kernel.Error
 		if errors.As(err, &apiErr) && apiErr.StatusCode == 503 {
-			return fmt.Errorf("1pw_fill unavailable (HTTP 503): %s", onePasswordUnavailable)
+			return fmt.Errorf("1pw_fill unavailable (http 503): %s", onePasswordUnavailable)
 		}
 		return vaultOperationRequestError(err, "1pw_fill", vaultFillErrorMessages, onePasswordFillRejected, onePasswordFillUncertain)
 	}
@@ -251,13 +251,13 @@ func (c VaultsCmd) onePasswordFill(ctx context.Context, vault, key string, reque
 	} else {
 		pterm.Printf("1Password fill: %s\n", result.Status)
 		if result.ErrorCode != "" {
-			pterm.Printf("Error code: %s\n", result.ErrorCode)
+			pterm.Printf("error code: %s\n", result.ErrorCode)
 		}
 		switch result.Status {
 		case "fill_submitted":
-			pterm.Println("The extension filled and submitted the form; this does not confirm the website accepted the login.")
+			pterm.Println("the extension filled and submitted the form; this does not confirm the website accepted the login.")
 		case "fill_failed":
-			pterm.Println("The extension reported a failure. 1pw_fill can submit the form, so never retry automatically. check the page first before retrying.")
+			pterm.Println("the extension reported a failure. 1pw_fill can submit the form, so never retry automatically. check the page first before retrying.")
 		default:
 			pterm.Println(onePasswordFillUncertain)
 		}

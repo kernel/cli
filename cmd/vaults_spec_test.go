@@ -82,7 +82,7 @@ func TestVaultSpecHelpAndFlags(t *testing.T) {
 			for _, removed := range []string{"wallet", "amount", "currency", "merchant", "merchant-url", "payment-method-id", "context", "test", "live", "card-id", "user-id"} {
 				assert.Nil(t, cmd.Flags().Lookup(removed), removed)
 			}
-			assert.Contains(t, cmd.Long, "Keep these types in sync with https://api.onkernel.com/spec.yaml")
+			assert.Contains(t, cmd.Long, "keep these types in sync with https://api.onkernel.com/spec.yaml")
 			assert.Contains(t, cmd.Long, "TypeScript notation")
 			assert.Contains(t, cmd.Long, "provider: \"link\"")
 			assert.Contains(t, cmd.Long, "provider: \"agentcard\"")
@@ -93,7 +93,7 @@ func TestVaultSpecHelpAndFlags(t *testing.T) {
 				for _, field := range []string{"merchant_name:", "merchant:", "line_items?:", "metadata?:", "expires_at?:", "checkout_origin?:", "type LinkLineItem", "type LinkTotal"} {
 					assert.Contains(t, cmd.Long, field)
 				}
-				for _, guidance := range []string{"eligible", "autopilot may not apply", "user approval may", "does not guarantee payment success", "Kernel does not validate this declaration against the page open in the browser.", "preparation merchant_origin instead", "Card updates replace the whole spec", "omitting checkout_origin from an update removes"} {
+				for _, guidance := range []string{"eligible", "autopilot may not apply", "user approval may", "does not guarantee payment success", "KERNEL does not validate this declaration against the page open in the browser.", "preparation merchant_origin instead", "card updates replace the whole spec", "omitting checkout_origin from an update removes"} {
 					assert.Contains(t, cmd.Long, guidance)
 				}
 			} else {
