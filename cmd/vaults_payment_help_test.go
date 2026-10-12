@@ -41,7 +41,7 @@ func TestVaultPaymentHelpProviderBoundaries(t *testing.T) {
 				"input/change events may trigger site behavior",
 				"not website acceptance, login, or payment success",
 				"failed may leave partial writes; unknown quarantines the browser",
-				"Never automatically retry or fall back to aliases",
+				"never in an automatic loop. Never fall back to aliases",
 				"Requests are not automatically retried",
 				"Use only when advertised for an AgentCard card",
 			},

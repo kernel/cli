@@ -218,7 +218,7 @@ func TestOnePasswordFillOutcomes(t *testing.T) {
 	}{
 		{200, `{"type":"1pw_fill","status":"fill_submitted"}`, "", "does not confirm"},
 		{200, `{"type":"1pw_fill","status":"fill_failed","error_code":"fillFailed"}`, "fill fill_failed", "fillFailed"},
-		{200, `{"type":"1pw_fill","status":"fill_unknown"}`, "fill fill_unknown", "inspect the page to see the result of the fill"},
+		{200, `{"type":"1pw_fill","status":"fill_unknown"}`, "fill fill_unknown", "1pw_fill can submit the form, so never retry automatically. check the page first before retrying."},
 		{200, `{"type":"fill","status":"completed","fields":[]}`, "invalid 1pw_fill result", ""},
 		{403, `{"code":"destination_denied","message":"page is outside the approved login origin"}`, "destination_denied (HTTP 403)", ""},
 		{409, `{"code":"conflict","message":"not ready"}`, "nothing was submitted", ""},
