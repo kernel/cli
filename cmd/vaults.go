@@ -287,7 +287,11 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	}
 	if !available {
 		if actions.RecoveryRequired {
-			return fmt.Errorf("recovery_required: reconcile the original operation with the provider or support; do not retry, delete, or replace it. invoke restart_verification once only if advertised in available_operations")
+			message := "recovery_required: reconcile the original operation with the provider or support; do not retry, delete, or replace it"
+			if len(actions.Operations) > 0 {
+				message += ". invoke the advertised restart_verification once to get a fresh approval link"
+			}
+			return fmt.Errorf("%s", message)
 		}
 		if isOnePasswordOperation(operation) {
 			return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item with items get -o json. For 1Password credentials, check that the linked credential_account is connected and the credential state; do not delete or recreate the item to reset it", operation)

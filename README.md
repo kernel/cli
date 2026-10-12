@@ -712,9 +712,10 @@ through this endpoint.
 
 `items invoke` fetches the item again and calls
 `POST /vaults/{id_or_name}/items/{key}/operations` only if the requested operation is still
-advertised, including in `recovery_required`. The API controls availability. In recovery,
-`restart_verification` may be invoked once if advertised; otherwise do not retry, delete,
-or replace the item. Stale action URLs in recovery are not opened; a successful restart
+advertised. In `recovery_required`, the CLI hides and refuses every operation except
+an advertised `restart_verification`, which may be invoked once. Even other advertised
+operations remain blocked; otherwise do not retry, delete, or replace the item.
+Stale action URLs in recovery are not opened; a successful restart
 returns a fresh approval action.
 
 `authorize` sends `{"type":"authorize"}` without `--params` and returns the updated item,

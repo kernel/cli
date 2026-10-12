@@ -155,7 +155,7 @@ func TestVaultPrepareCheckoutChecksAvailabilityAndNeverRetries(t *testing.T) {
 	}
 	for _, fixture := range []string{
 		strings.Replace(preparationCardFixture, `"type":"prepare_checkout"`, `"type":"other"`, 1),
-		strings.Replace(strings.Replace(preparationCardFixture, `"status":"preparing"`, `"status":"recovery_required"`, 1), `"type":"prepare_checkout"`, `"type":"other"`, 1),
+		strings.Replace(preparationCardFixture, `"status":"preparing"`, `"status":"recovery_required"`, 1),
 		strings.ReplaceAll(preparationCardFixture, `"agentcard"`, `"link"`),
 	} {
 		posts := 0

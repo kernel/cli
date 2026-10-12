@@ -448,7 +448,11 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 
 func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemActions) {
 	if actions.RecoveryRequired {
-		pterm.Warning.Println("recovery_required: the original operation is unresolved, not declined or expired. " + vaultRecoveryHelp)
+		guidance := "do not retry, delete, or replace it. reconcile with the provider or support; no reset operation exists."
+		if len(actions.Operations) > 0 {
+			guidance = vaultRecoveryHelp
+		}
+		pterm.Warning.Println("recovery_required: the original operation is unresolved, not declined or expired. " + guidance)
 		for _, op := range actions.Operations {
 			pterm.Printf("available operation: %s — %s\n", op.Type, op.Description)
 		}

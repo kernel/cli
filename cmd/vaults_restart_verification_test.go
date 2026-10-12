@@ -52,7 +52,7 @@ func TestVaultRestartVerificationRecovery(t *testing.T) {
 				})
 				if !advertised {
 					require.ErrorContains(t, err, "recovery_required")
-					assert.Contains(t, err.Error(), "do not retry, delete, or replace")
+					assert.EqualError(t, err, "recovery_required: reconcile the original operation with the provider or support; do not retry, delete, or replace it")
 					assert.Zero(t, posts)
 					assert.Empty(t, opened)
 					assert.Empty(t, out)
@@ -71,6 +71,41 @@ func TestVaultRestartVerificationRecovery(t *testing.T) {
 	}
 }
 
+func TestVaultRecoveryRejectsOtherAdvertisedOperations(t *testing.T) {
+	for _, operation := range []string{"authorize", "fill"} {
+		for _, restartAdvertised := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/restart=%t", operation, restartAdvertised), func(t *testing.T) {
+				operations := fmt.Sprintf(`[{"type":%q,"description":"must stay hidden"}]`, operation)
+				if restartAdvertised {
+					operations = strings.TrimSuffix(operations, "]") + `,{"type":"restart_verification","description":"restart verification"}]`
+				}
+				fixture := strings.Replace(kernelCardFixture, `"status":"requested"`, `"status":"recovery_required"`, 1)
+				fixture = strings.Replace(fixture, `[{"type":"authorize","description":"Authorize this purchase"}]`, operations, 1)
+				calls := 0
+				client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					assert.Equal(t, http.MethodGet, r.Method, "recovery must not dispatch this operation")
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, fixture)
+				})
+				args := []string{"vaults", "items", "invoke", "checkout", "order-1", operation}
+				if operation == "fill" {
+					args = append(args, "--params", fillParamsFixture)
+				}
+				out, human, err := executeVaultCommand(t, client, args...)
+				message := "recovery_required: reconcile the original operation with the provider or support; do not retry, delete, or replace it"
+				if restartAdvertised {
+					message += ". invoke the advertised restart_verification once to get a fresh approval link"
+				}
+				assert.EqualError(t, err, message)
+				assert.Equal(t, 1, calls)
+				assert.Empty(t, out)
+				assert.NotContains(t, human, "must stay hidden")
+			})
+		}
+	}
+}
+
 func TestVaultRestartVerificationRejectsParams(t *testing.T) {
 	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Error("parameterized restart reached API") })
 	for _, input := range []string{"--params", "--spec-file"} {
@@ -81,7 +116,7 @@ func TestVaultRestartVerificationRejectsParams(t *testing.T) {
 
 func TestVaultRecoveryDisplaysAdvertisedRestart(t *testing.T) {
 	fixture := strings.Replace(kernelCardFixture, `"status":"requested"`, `"status":"recovery_required"`, 1)
-	fixture = strings.Replace(fixture, `"type":"authorize"`, `"type":"restart_verification"`, 1)
+	fixture = strings.Replace(fixture, `[{"type":"authorize","description":"Authorize this purchase"}]`, `[{"type":"authorize","description":"must stay hidden"},{"type":"fill","description":"must stay hidden"},{"type":"restart_verification","description":"restart verification"}]`, 1)
 	fixture = strings.TrimSuffix(fixture, "}") + `,"action":{"name":"spend_approval","url":"https://vault.example/stale"}}`
 	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -92,5 +127,8 @@ func TestVaultRecoveryDisplaysAdvertisedRestart(t *testing.T) {
 	assert.Contains(t, human, "available operation: restart_verification")
 	assert.Contains(t, human, "invoke: kernel vaults items invoke -- checkout order-1 restart_verification")
 	assert.Contains(t, human, "invoke it once")
+	assert.NotContains(t, human, "available operation: authorize")
+	assert.NotContains(t, human, "available operation: fill")
+	assert.NotContains(t, human, "must stay hidden")
 	assert.NotContains(t, human, "https://vault.example/stale")
 }

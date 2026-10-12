@@ -30,7 +30,13 @@ func effectiveVaultItemActions(item *kernel.VaultItemUnion) (vaultItemActions, e
 		return vaultItemActions{}, fmt.Errorf("invalid vault item operations: %w", err)
 	}
 	if item.State.Status == "recovery_required" {
-		return vaultItemActions{RecoveryRequired: true, Operations: fields.Operations}, nil
+		actions := vaultItemActions{RecoveryRequired: true}
+		for _, op := range fields.Operations {
+			if op.Type == "restart_verification" {
+				actions.Operations = append(actions.Operations, op)
+			}
+		}
+		return actions, nil
 	}
 	approvalURL := item.State.Authorization.ApprovalURL
 	if item.State.Status == "preparing" && item.State.Preparation.ApprovalURL != "" {

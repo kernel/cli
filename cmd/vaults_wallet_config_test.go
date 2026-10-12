@@ -173,13 +173,12 @@ func TestVaultRecoveryRequired(t *testing.T) {
 	for _, provider := range []string{"link", "agentcard"} {
 		body := strings.ReplaceAll(requestedCardFixture, `"status":"requested"`, `"status":"recovery_required"`)
 		body = strings.ReplaceAll(body, `"provider":"link"`, `"provider":"`+provider+`"`)
-		body = strings.ReplaceAll(body, `[{"type":"authorize","description":"Use only after explicit user approval."}]`, `[]`)
 		for _, operation := range []string{"get", "invoke"} {
 			t.Run(provider+"/"+operation, func(t *testing.T) {
 				calls := 0
 				client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 					calls++
-					assert.Equal(t, http.MethodGet, r.Method, "must not dispatch an unadvertised operation")
+					assert.Equal(t, http.MethodGet, r.Method, "must not dispatch even if a stale operation is advertised")
 					w.Header().Set("Content-Type", "application/json")
 					_, _ = io.WriteString(w, body)
 				})
@@ -214,7 +213,8 @@ func TestVaultRecoveryDoesNotOpenStaleAction(t *testing.T) {
 	require.NoError(t, c.showItem(&item, "", true))
 	assert.NotContains(t, buf.String(), "https://example.test/approve")
 	assert.NotContains(t, buf.String(), "required action")
-	assert.Contains(t, buf.String(), "restart_verification")
+	assert.NotContains(t, buf.String(), "spend_approval")
+	assert.NotContains(t, buf.String(), "restart_verification")
 }
 
 func TestVaultImportedWalletDegradedOutput(t *testing.T) {

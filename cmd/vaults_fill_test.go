@@ -156,11 +156,11 @@ func TestVaultFillBindingsSerialization(t *testing.T) {
 
 func TestVaultFillAdvertisedAvailability(t *testing.T) {
 	for name, fixture := range map[string]string{
-		"requested":             requestedCardFixture,
-		"wallet":                connectedWalletFixture,
-		"agentcard":             strings.ReplaceAll(strings.ReplaceAll(readyFillCardFixture, "link", "agentcard"), `[{"type":"fill","description":"Fill checkout fields."}]`, `[]`),
-		"ready unadvertised":    strings.ReplaceAll(readyFillCardFixture, `[{"type":"fill","description":"Fill checkout fields."}]`, `[]`),
-		"recovery unadvertised": strings.ReplaceAll(strings.ReplaceAll(readyFillCardFixture, `"ready"`, `"recovery_required"`), `[{"type":"fill","description":"Fill checkout fields."}]`, `[]`),
+		"requested":                requestedCardFixture,
+		"wallet":                   connectedWalletFixture,
+		"agentcard":                strings.ReplaceAll(strings.ReplaceAll(readyFillCardFixture, "link", "agentcard"), `[{"type":"fill","description":"Fill checkout fields."}]`, `[]`),
+		"ready unadvertised":       strings.ReplaceAll(readyFillCardFixture, `[{"type":"fill","description":"Fill checkout fields."}]`, `[]`),
+		"recovery stale operation": strings.ReplaceAll(readyFillCardFixture, `"ready"`, `"recovery_required"`),
 	} {
 		t.Run(name, func(t *testing.T) {
 			calls := 0
