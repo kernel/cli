@@ -14,17 +14,22 @@ type vaultItemOperation struct {
 
 type vaultItemActions struct {
 	RecoveryRequired bool
-	// RestartVerification is set only for a recovery_required item whose API
-	// advertises restart_verification; no other operation is honored in recovery.
-	RestartVerification *vaultItemOperation
-	RequiredAction      string
-	ActionURL           string
-	ApprovalURL         string
-	Operations          []vaultItemOperation
+	RequiredAction   string
+	ActionURL        string
+	ApprovalURL      string
+	Operations       []vaultItemOperation
 }
 
-// Execution and human output use this policy; JSON preserves the API-advertised
-// fields through the separate display-safe projection.
+func (a vaultItemActions) advertises(operation string) bool {
+	for _, op := range a.Operations {
+		if op.Type == operation {
+			return true
+		}
+	}
+	return false
+}
+
+// Recovery exposes only the explicitly supported restart operation on every surface.
 func effectiveVaultItemActions(item *kernel.VaultItemUnion) (vaultItemActions, error) {
 	var fields struct {
 		Operations []vaultItemOperation `json:"available_operations"`
@@ -36,8 +41,7 @@ func effectiveVaultItemActions(item *kernel.VaultItemUnion) (vaultItemActions, e
 		actions := vaultItemActions{RecoveryRequired: true}
 		for _, op := range fields.Operations {
 			if op.Type == "restart_verification" {
-				actions.RestartVerification = &op
-				break
+				actions.Operations = append(actions.Operations, op)
 			}
 		}
 		return actions, nil

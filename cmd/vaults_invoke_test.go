@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -199,7 +198,7 @@ func TestVaultInvokeConfirmTransactionSendsObservedOutcome(t *testing.T) {
 			raw := fmt.Sprintf(`{"status":"APPROVED","transaction_type":"PURCHASE","amount":1234,"currency":"USD","occurred_at":%q}`, occurredAt)
 			params, err := parseVaultOperationParams("confirm_transaction", raw, true, false)
 			require.NoError(t, err)
-			assert.Equal(t, occurredAt, params.ConfirmTransaction.OccurredAt.Format(time.RFC3339Nano))
+			assert.Equal(t, occurredAt, params.ConfirmTransaction.OccurredAt)
 
 			calls := 0
 			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -208,7 +207,7 @@ func TestVaultInvokeConfirmTransactionSendsObservedOutcome(t *testing.T) {
 					assert.Equal(t, http.MethodPost, r.Method)
 					body, err := io.ReadAll(r.Body)
 					require.NoError(t, err)
-					assert.JSONEq(t, fmt.Sprintf(`{"type":"confirm_transaction","status":"APPROVED","transaction_type":"PURCHASE","amount":1234,"currency":"USD","occurred_at":%q}`, params.ConfirmTransaction.OccurredAt.Format(time.RFC3339)), string(body))
+					assert.JSONEq(t, fmt.Sprintf(`{"type":"confirm_transaction","status":"APPROVED","transaction_type":"PURCHASE","amount":1234,"currency":"USD","occurred_at":%q}`, occurredAt), string(body))
 				}
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = io.WriteString(w, fixture)

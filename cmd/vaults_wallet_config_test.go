@@ -214,6 +214,7 @@ func TestVaultRecoveryDoesNotOpenStaleAction(t *testing.T) {
 	assert.NotContains(t, buf.String(), "https://example.test/approve")
 	assert.NotContains(t, buf.String(), "required action")
 	assert.NotContains(t, buf.String(), "spend_approval")
+	assert.NotContains(t, buf.String(), "restart_verification")
 }
 
 func TestVaultImportedWalletDegradedOutput(t *testing.T) {

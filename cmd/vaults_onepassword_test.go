@@ -303,7 +303,7 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 	assert.Contains(t, invoke.Long, "--spec-file, never --params")
 	assert.Contains(t, invoke.Example, `"entry_id":"<entry-id>"`)
 	for _, help := range []string{invoke.Long, invoke.Example, credentials.Long, credentials.Example, connect.Long} {
-		for _, removed := range []string{"1pw_request_access", "1pw_poll_access", "reconcile", "account_id", "Family", "customer_managed", "access_token_expires_at", "RFC 3339"} {
+		for _, removed := range []string{"1pw_request_access", "1pw_poll_access", "1pw_reconcile", "account_id", "Family", "customer_managed", "access_token_expires_at", "RFC 3339"} {
 			assert.NotContains(t, help, removed)
 		}
 	}
