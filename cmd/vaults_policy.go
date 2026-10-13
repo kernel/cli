@@ -20,17 +20,31 @@ type vaultItemActions struct {
 	Operations       []vaultItemOperation
 }
 
-// Execution and human output use this policy; JSON preserves the API-advertised
-// fields through the separate display-safe projection.
-func effectiveVaultItemActions(item *kernel.VaultItemUnion) (vaultItemActions, error) {
-	if item.State.Status == "recovery_required" {
-		return vaultItemActions{RecoveryRequired: true}, nil
+func (a vaultItemActions) advertises(operation string) bool {
+	for _, op := range a.Operations {
+		if op.Type == operation {
+			return true
+		}
 	}
+	return false
+}
+
+// Recovery exposes only the explicitly supported restart operation on every surface.
+func effectiveVaultItemActions(item *kernel.VaultItemUnion) (vaultItemActions, error) {
 	var fields struct {
 		Operations []vaultItemOperation `json:"available_operations"`
 	}
 	if err := json.Unmarshal([]byte(item.RawJSON()), &fields); err != nil {
 		return vaultItemActions{}, fmt.Errorf("invalid vault item operations: %w", err)
+	}
+	if item.State.Status == "recovery_required" {
+		actions := vaultItemActions{RecoveryRequired: true}
+		for _, op := range fields.Operations {
+			if op.Type == "restart_verification" {
+				actions.Operations = append(actions.Operations, op)
+			}
+		}
+		return actions, nil
 	}
 	approvalURL := item.State.Authorization.ApprovalURL
 	if item.State.Status == "preparing" && item.State.Preparation.ApprovalURL != "" {

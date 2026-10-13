@@ -18,8 +18,8 @@ func TestVaultPaymentHelpProviderBoundaries(t *testing.T) {
 			name: "vaults",
 			want: []string{
 				"attachment is required for fill",
-				"ready Link cards use only advertised fill",
-				"Link cards do not expose aliases or support egress substitution",
+				"ready Link and kernel cards use only advertised fill",
+				"neither exposes aliases or supports egress substitution",
 				"AgentCard-only checkout aliases support egress substitution with checkout hold, approval, and replay",
 				"not a fallback after fill",
 			},
@@ -34,8 +34,8 @@ func TestVaultPaymentHelpProviderBoundaries(t *testing.T) {
 			path: []string{"items", "invoke"},
 			want: []string{
 				"the vault must already be attached to the browser",
-				"fill is available for credential items and ready Link cards when advertised, not AgentCard",
-				"Link cards do not expose aliases or support egress substitution",
+				"fill is available for credential items and ready Link or kernel cards when advertised, not AgentCard",
+				"Link and kernel cards do not expose aliases or support egress substitution",
 				"fill writes real values into the browser; unrestricted browser/cdp access can read them",
 				"fill never explicitly submits forms or clicks buttons",
 				"input/change events may trigger site behavior",
@@ -44,6 +44,12 @@ func TestVaultPaymentHelpProviderBoundaries(t *testing.T) {
 				"never in an automatic loop. never fall back to aliases",
 				"requests are not automatically retried",
 				"use only when advertised for an AgentCard card",
+				"report one observed merchant outcome",
+				"unknown means no reliable merchant outcome",
+				"restart_verification takes no parameters",
+				"kernel cards have no stored billing fields",
+				"billing_* returns field_unavailable (400) before any write",
+				"enter billing details on the merchant page",
 			},
 		},
 	} {
@@ -54,6 +60,13 @@ func TestVaultPaymentHelpProviderBoundaries(t *testing.T) {
 			for _, want := range tt.want {
 				assert.Contains(t, text, want)
 			}
+			if tt.name == "items invoke" {
+				for _, want := range []string{"confirm_transaction --params", "restart_verification --open", `"field":"number","selector":"#cardNumber"`, `"field":"expiration","format":"MM/YY","selector":"#cardExpiry"`, `"field":"cvc","selector":"#cardCvc"`} {
+					assert.Contains(t, cmd.Example, want)
+				}
+			}
+			assert.NotContains(t, text, "does not observe merchant charges")
+			assert.NotContains(t, text, "never replace an item in recovery_required")
 			assert.NotContains(t, text, "aliases are an alternative")
 			assert.NotContains(t, text, "explicitly chosen egress-substitution")
 		})

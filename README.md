@@ -412,9 +412,10 @@ cannot switch projects.
 | `kernel vaults get <vault>` | Get by ID or name |
 | `kernel vaults get-encryption-key <vault>` | Get the public key custom collection apps use to send `encrypted_value` |
 | `kernel vaults delete <vault>` | Invalidate the vault and all its items; `--yes` skips confirmation |
-| `kernel vaults wallets create <vault> <key> --provider link\|agentcard --spec '<json>'` | Connect/enroll a wallet using its provider's spec; `--open` opens a returned HTTPS action URL |
+| `kernel vaults wallets create <vault> <key> --provider link\|agentcard\|kernel --spec '<json>'` | Connect/enroll a wallet using its provider's spec; `--open` opens a returned HTTPS action URL |
+| `kernel vaults wallets get <vault> <key>` | Observe wallet state and its hosted action; `--wait 0..60`, `--open` |
 | `kernel vaults wallets payment-methods <vault> <key>` | Fetch advertised live payment methods; JSON is the item with `expanded.payment_methods` |
-| `kernel vaults cards create <vault> <key> --provider link\|agentcard --spec '<json>'` | Create a card request; never implicitly authorize Link |
+| `kernel vaults cards create <vault> <key> --provider link\|agentcard\|kernel --spec '<json>'` | Create a card request without authorizing it |
 | `kernel vaults cards update <vault> <key> --provider link\|agentcard --spec '<json>'` | Update a card spec; pending issuance preserves omitted optional fields, and the API enforces state/provider constraints |
 | `kernel vaults items list <vault>` | List item keys, types, providers, status, and required actions |
 | `kernel vaults items get <vault> <key>` | Inspect state/actions/returned AgentCard aliases and copyable operation commands; `--wait 0..60`, `--expand payment_methods`, `--open` |
@@ -429,7 +430,8 @@ its generated item ID. Names and keys use letters, digits, dots, underscores, an
 JSON preserves field presence and API-returned AgentCard aliases, while omitting unknown fields,
 opaque metadata, and unrecognized event data. Human output labels aliases as non-secret
 checkout values and distinguishes card readiness from checkout authorization/payment outcomes.
-Link cards do not expose aliases or support egress substitution; browser checkout uses only `fill`.
+Link and Kernel cards do not expose aliases or support egress substitution; browser checkout
+uses only advertised `fill`.
 Action and approval URLs print in full on separate lines, without table truncation.
 Most API failures use the CLI's standard error formatter. Wallet creation and provider config
 commands withhold response/transport details to prevent credential echoes; HTTP status remains visible.
@@ -440,23 +442,29 @@ Other API errors still return a nonzero exit status.
 **Provider specifications:** wallet creation and card creation/update require `--provider`
 and `--spec '<json>'`. Supply only the spec object, not a `{type, spec}` envelope. The command
 sets the item type and injects `provider`; if JSON also contains `provider`, it must match.
-Other values are forwarded unchanged, including optional fields, without defaults or normalization.
-The API validates the provider-specific schema. Each command's `--help` includes its raw
+Other non-secret values are forwarded unchanged, including optional fields, without defaults
+or normalization. The API validates the provider-specific schema. Each command's `--help` includes its raw
 TypeScript-style types, which must stay in sync with the [API spec](https://api.onkernel.com/spec.yaml).
 
+- **Kernel wallet:** use `{}`; no provider configuration or token file is accepted. The hosted
+  `card_enrollment` action collects card details from the cardholder, never from the CLI.
 - **Link wallet:** supply `authorization: {method: "oauth", client: {type: "kernel_managed"}}`.
 - **AgentCard wallet:** use `{}` to enroll, or supply `user_id` for a user enrolled in the same organization and provider configuration.
+- **Kernel card:** supply `wallet`, `amount` (minor units, at most 50000), `currency`,
+  `merchant_name`, and HTTPS `merchant_url`. Supply two-letter `merchant_country` for Visa.
+  Kernel card updates are unsupported.
 - **Link card:** include the required fields shown in help. Optional `line_items`, `totals`,
   `metadata`, and `expires_at` are supported through JSON.
 - **AgentCard card:** uses `merchant`, not Link's `merchant_name`. Its optional `card_id` selects
   a vaulted card; otherwise the cardholder selects one at approval.
 
-`cards update` replaces the spec for requested cards. Pending issuance updates preserve omitted
-optional fields; explicit empty lists clear them. Wallet/provider bindings and unsupported fields
+`cards update` replaces the spec for supported providers' requested cards; Kernel cards
+cannot be updated. Pending issuance updates preserve omitted optional fields; explicit empty lists clear them. Wallet/provider bindings and unsupported fields
 cannot change after authorization starts. Checkout cards can be edited between authorizations.
 An uncertain update enters `recovery_required` and must not be retried. Identical card creation
-returns its existing state without polling, reauthorizing, or resetting recovery. Permitted
-checkout domains remain provider-assigned. Neither command submits a merchant payment.
+returns its existing state without polling, reauthorizing, or resetting recovery. Link and
+AgentCard checkout domains remain provider-assigned; Kernel fill is locked to the exact origin
+of `merchant_url`. Neither command submits a merchant payment.
 
 #### Provider configurations and imported grants
 
@@ -518,9 +526,130 @@ payments; do not repeat an uncertain payment through the new wallet. There is no
 imported-wallet reauthorization.
 
 **`recovery_required` means unresolved, not declined or expired.** It stops server-side waiting.
-Do not retry, delete, or replace the original operation. Reconcile with the provider or support;
-there is no reset or caller-asserted reconciliation endpoint. Unresolved child cards can block
-wallet and vault deletion. Time passing or deletion is not evidence of non-execution.
+If `restart_verification` is advertised in `available_operations`, invoke with explicit
+user approval each time to get a fresh `spend_approval` link. The cardholder must verify
+and approve spending again; restart grants no spend consent. If the response is unclear,
+re-get and share any new action; invoke once more only if still advertised with renewed
+user approval. Otherwise do not retry payment, delete or replace the item. Contact
+support@kernel.sh privately with project, vault, key, status_reason and relevant event
+timestamps (never card data, API keys or capability URLs) to reconcile the original
+operation and establish whether a new purchase is safe; never assume a new card is safe.
+Unresolved child cards can block wallet and vault deletion.
+Time passing or deletion is not evidence of non-execution.
+
+#### Kernel-managed card checkout
+
+```bash
+kernel vaults create --name checkout
+kernel vaults wallets create checkout cardholder --provider kernel --spec '{}' --open
+kernel vaults wallets get checkout cardholder --wait 60
+kernel vaults wallets payment-methods checkout cardholder
+```
+
+Share the returned `card_enrollment` URL with the cardholder. A connected wallet may still
+report `single_use_card.eligible: false` with a `network_token_*` reason while network token
+enrollment is pending or unsupported. Re-check `network_token_pending` later at most once
+in this attempt; `network_token_unsupported`, `network_token_failed`, or persistent
+ineligibility requires a different card, enrolled under a new wallet key after user
+confirmation. Missing eligibility is unknown. Never poll indefinitely.
+For `reconnect_required`, share the new enrollment action. For `degraded`, obtain user
+confirmation and delete only if the API permits it before a new wallet/enrollment;
+reconcile unresolved child cards first. This wallet uses its enrolled card, not a
+`payment_method_id` in the card spec.
+
+```bash
+kernel vaults cards create checkout order-1 --provider kernel --spec '{
+  "wallet":"cardholder", "amount":1200, "currency":"USD",
+  "merchant_name":"Example Shop", "merchant_url":"https://shop.example/checkout",
+  "merchant_country":"US"
+}'
+kernel vaults items get checkout order-1
+kernel vaults items invoke checkout order-1 authorize --open
+kernel vaults items get checkout order-1 --wait 60
+```
+
+Only invoke `authorize` when advertised. Visa returns a `spend_approval` URL for the
+cardholder to verify and approve; Mastercard may become ready without one. In
+`recovery_required`, invoke `restart_verification` **only if advertised**, with explicit
+user approval each time:
+
+```bash
+kernel vaults items invoke checkout order-1 restart_verification --open
+```
+
+This rotates the approval link locally without a provider call, only after a classified
+initial attestation failure with proof no intent was dispatched. Otherwise do not retry,
+delete, or replace the item. Always check `available_operations` rather than assuming
+the API supports this operation. Human output, JSON output and execution expose only
+advertised restart_verification during recovery; other operations and stale action URLs
+are suppressed.
+
+`--open` on enrollment or spend-approval URLs is only for a human cardholder using their
+own machine. Agents must omit it and share the capability URL privately; never open it
+for the cardholder. The examples with `--open` are for human use.
+Optional `merchant_category` and `merchant_category_code` (actual four-digit MCC other
+than `0000`) are accepted; omit rather than invent them. Kernel cards cannot be updated:
+with user confirmation, delete only if permitted and create a new item under a new key;
+reconcile unresolved outcomes first.
+
+When ready, create a browser with the vault attached, navigate to checkout, then fill:
+
+```bash
+kernel browsers create --vault checkout
+kernel vaults items invoke checkout order-1 fill --params '{
+  "browser_id":"<returned-browser-session-id>",
+  "page_url":"https://shop.example/checkout",
+  "fields":[
+    {"field":"number","selector":"#cardNumber"},
+    {"field":"expiration","format":"MM/YY","selector":"#cardExpiry"},
+    {"field":"cvc","selector":"#cardCvc"}
+  ]
+}' -o json
+```
+
+Use the **exact current HTTPS top-level URL** on `merchant_url`'s origin and selectors
+matching that page. Supported fields are `number`, `expiration` (format `MM/YY` or
+`MM/YYYY`), `cvc`, `exp_month` and `exp_year`. Kernel cards have **no stored billing
+fields**: requesting `billing_*` returns 400 `field_unavailable` before any write. Enter billing details (such as name and
+ZIP) directly on the merchant page. Fill types the one-time network token and code but
+never submits checkout. Submit before `expires_at`; neither ready nor fill proves payment.
+
+After the user submits checkout, report the **observed merchant outcome exactly once**,
+only when `confirm_transaction` is advertised. For example, after observing approval:
+
+```bash
+kernel vaults items invoke checkout order-1 confirm_transaction --params '{
+  "status":"APPROVED", "transaction_type":"PURCHASE", "amount":1200,
+  "currency":"USD", "occurred_at":"2026-09-01T12:00:00Z"
+}'
+```
+
+`--spec-file <path|->` accepts the same JSON. All five fields are required; do not include
+`type` or any extra properties. `status` must be `APPROVED`, `DECLINED`, `PENDING`, `ERROR`,
+or `CANCELLED`. `transaction_type` must be `PURCHASE`, `AUTHORIZATION`, `CAPTURE`, `REFUND`,
+`REVERSAL`, `VERIFICATION`, `CHARGEBACK`, or `FRAUD`. `amount` is an integer in minor units,
+0..50000 and no greater than the approved amount; `currency` is three uppercase letters
+matching the approved purchase currency;
+`occurred_at` is the observed outcome's RFC3339 timestamp. The operation is no longer
+advertised after reporting. Never infer success from fill. `PENDING` means explicit
+merchant evidence of an accepted pending transaction; `ERROR` means an explicit merchant
+transaction error, not transport loss or an ambiguous processing page. These are final
+reports, not polling states. Unknown outcomes need the user to check merchant orders,
+email or statements, then report the confirmed outcome even after card expiry.
+If a report response is lost, re-get and send the identical observed report once more
+only if freshly advertised; otherwise observe state/events (recorded, in flight or recovery).
+Never repeat checkout. After a confirmed merchant decline, report DECLINED when advertised;
+if the user wants another purchase, ask for a different card or merchant, delete only if
+permitted and create one new card under a new key. Expired approval/code before checkout:
+do not submit; with user confirmation delete only if permitted and create one new card.
+If checkout was submitted, reconcile and report the observed outcome first.
+
+Kernel request errors retain actionable API messages while scrubbing HTTP(S) URLs.
+After create transport/5xx failure, retry once with the identical key and spec, never a
+new key to recover a lost response. After authorize/report failures re-get and invoke
+once more only if freshly advertised. Authorize 409 requires state inspection, not input
+changes. For 429 wait for Retry-After before re-checking availability. No automatic retries.
+Never put PAN, CVC, expiry, or enrollment credentials in CLI arguments or logs.
 
 #### Link checkout preparation
 
@@ -617,20 +746,27 @@ A reusable card being `ready` does not mean the last payment succeeded.
 #### Invoking item operations
 
 `items get` displays every `available_operations` entry's type and description, plus
-an `items invoke` command retaining the selected project (replace `<json>` for fill or prepare_checkout).
+an `items invoke` command retaining the selected project (replace `<json>` for operations with parameters).
 Read the description and follow its approval requirements before invoking. Required user actions
 (OAuth, enrollment, MFA, spend approval) appear separately; they are not operations to invoke
 through this endpoint.
 
 `items invoke` fetches the item again and calls
 `POST /vaults/{id_or_name}/items/{key}/operations` only if the requested operation is still
-advertised. The API controls availability. The CLI additionally refuses invocation and opening
-actions in `recovery_required`, even if a stale action or operation was returned.
+advertised. In `recovery_required`, the CLI hides and refuses every operation except
+an advertised `restart_verification`, invoked with explicit user approval each time and
+new cardholder spend consent. Human and JSON output use the same recovery filtering.
+Other operations remain blocked; otherwise contact support@kernel.sh with project,
+vault, key, status_reason and event timestamps (no card data, API keys or capability URLs).
+Do not delete or replace unresolved items.
+Stale action URLs in recovery are not opened; a successful restart
+returns a fresh approval action.
 
 `authorize` sends `{"type":"authorize"}` without `--params` and returns the updated item,
 possibly with a required user action. `collect` is also parameterless and returns a credential
-collection URL. `--open` is supported for authorize, collect, and prepare_checkout.
-The [API spec](https://api.onkernel.com/spec.yaml) also accepts `fill` and `prepare_checkout`, with their inputs in
+collection URL. `restart_verification` is parameterless and sends `{"type":"restart_verification"}`.
+`--open` is supported for authorize, collect, prepare_checkout, 1pw_recover, and restart_verification.
+`fill`, `prepare_checkout`, and `confirm_transaction` accept inputs in
 `--params` or `--spec-file <path|->` (mutually exclusive, maximum 128 KiB). The positional
 operation supplies `type`; including `type` in either input is rejected.
 Parameters must be a JSON object without unknown or duplicate properties. There is no
@@ -676,8 +812,8 @@ Do not automatically retry or switch checkout paths after an uncertain result.
 
 ##### Fill browser fields
 
-Fill supports credential items and ready Link cards when advertised by the API, not AgentCard.
-Both use the same execution and outcome handling. Credential bindings use declared field names,
+Fill supports credential items and ready Link or Kernel cards when advertised by the API, not AgentCard.
+All use the same execution and outcome handling. Credential bindings use declared field names,
 including TOTP fields, and must omit `format`. Credentials may omit `page_url` only when the API
 can resolve a unique page. Card bindings require an exact HTTPS `page_url` and the card fields
 listed below. The vault must already be attached to the browser for fill authorization.
@@ -697,10 +833,13 @@ kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browse
 - `fields` contains 1-32 bindings in write order. Each has `field` and a nonempty CSS
   `selector` targeting an editable input/select or its container. The API searches the selected
   page and descendants, including payment iframes. Do not supply frame IDs or literal values.
-- Stored card fields: `number`, `cvc`, `exp_month` (MM), `exp_year` (YYYY), `billing_name`,
+- Link stored card fields: `number`, `cvc`, `exp_month` (MM), `exp_year` (YYYY), `billing_name`,
   `billing_line1`, `billing_line2`, `billing_city`, `billing_state`, `billing_postal_code`,
   `billing_country`. Billing fields use the stored address without reformatting; request only
   needed fields. Missing requested billing data fails validation before browser writes.
+- Kernel cards support `number`, `expiration`, `cvc`, `exp_month`, and `exp_year`, with no
+  stored billing fields. `billing_*` returns 400 `field_unavailable` before any write;
+  enter billing details on the merchant page. Fill is restricted to `merchant_url`'s origin.
 - Combined card `expiration` requires `format: "MM/YY"` or `"MM/YYYY"`. Other fields reject `format`.
 - Optional `timeout_ms` is an integer from 1 to 30000 (default 10000), for the whole operation.
 
@@ -723,7 +862,7 @@ Fill is non-atomic: execution stops at the first failed/unknown field and earlie
 not rolled back. `filled` does not mean the site retained or accepted the value; `completed`
 does not mean logged in or paid. Transport errors do not prove no writes occurred. Fill never
 submits, so it is safe to run again. The CLI does not retry automatically, explicitly submit website
-forms, or fall back to aliases. Link cards do not expose `state.aliases` or support egress substitution.
+forms, or fall back to aliases. Link and Kernel cards do not expose `state.aliases` or support egress substitution.
 AgentCard-only checkout aliases are a separate integration, not a recovery path after a failed
 or indeterminate fill.
 

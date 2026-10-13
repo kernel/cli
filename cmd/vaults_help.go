@@ -12,8 +12,16 @@ or normalization. never include card data, OAuth tokens, or provider secrets in 
 // the provider field below is supplied by --provider.
 `
 
+const vaultRecoveryHelp = "only if restart_verification is advertised in available_operations, invoke it with explicit user approval each time to get a fresh spend_approval link. restart grants no spend consent: the cardholder must verify and explicitly approve spending again on the new link. if the result is unclear, re-get and share the new action if present; invoke once more only if restart_verification is still advertised and the user approves again. otherwise " + kernelSupportGuidance
+
 const vaultWalletSpecHelp = `
-omit config selection to preserve KERNEL-managed defaults.
+for --provider kernel, use --spec '{}'. share the returned card_enrollment url
+with the cardholder; never enter card details in the cli. use wallets get --wait 60
+to observe connection, then wallets payment-methods to inspect token eligibility.
+a connected wallet may still be ineligible while network token enrollment runs.
+` + kernelWalletHelp + `. ` + kernelEligibilityHelp + `.
+kernel wallets accept neither provider configuration flags nor --tokens-file.
+for Link and AgentCard, omit config selection to preserve managed defaults.
 --provider-config-id and --provider-config-name are mutually exclusive.
 for Link with selection flags, use --spec '{}' and --tokens-file <path|->.
 alternatively, set the customer_managed client and provider_config in --spec,
@@ -96,6 +104,8 @@ type KernelCardSpec = {
   merchant_name: string;      // 1..255 characters
   merchant_url: string;       // https merchant checkout url; fill is locked to its origin
   merchant_country?: string;  // iso 3166-1 alpha-2; required for Visa cards
+  merchant_category?: string; // actual category, 1..255 characters; omit rather than invent
+  merchant_category_code?: string; // actual four-digit MCC, not 0000; omit rather than invent
 };
 
 type LinkLineItem = {
@@ -115,6 +125,17 @@ type LinkTotal = {
   display_text: string;
   amount: number;             // integer minor units
 };
+
+kernel cards cannot be updated. ` + kernelReplacementHelp + `.
+in recovery_required, ` + vaultRecoveryHelp + `
+invoke authorize only when advertised. for Visa, present the returned
+spend_approval url to the cardholder and poll items get --wait 60 until ready.
+Mastercard may become ready without hosted approval. neither ready nor fill
+confirms merchant payment. fill and submit before expires_at; never pass PAN to cli.
+after the user submits checkout, report the observed outcome once with confirm_transaction
+when advertised. ` + kernelTransactionHelp + `. ` + kernelTerminalHelp + `.
+kernel cards have no stored billing fields; billing_* returns field_unavailable before
+any write. enter billing details on the merchant page.
 
 card updates replace the whole spec, so omitting checkout_origin from an update removes
 its existing value. for non-prepared authorization, checkout_origin is forwarded to

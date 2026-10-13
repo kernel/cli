@@ -12,9 +12,10 @@ import (
 )
 
 type vaultOperationParams struct {
-	Fill     *vaultFillParams
-	WebMCP   *kernel.WebmcpInvokeVaultItemOperationRequestParam
-	Checkout *kernel.VaultCheckoutContextParam
+	Fill               *vaultFillParams
+	WebMCP             *kernel.WebmcpInvokeVaultItemOperationRequestParam
+	Checkout           *kernel.VaultCheckoutContextParam
+	ConfirmTransaction *vaultConfirmTransactionParams
 	// OnePassword is a complete 1pw_* request body; Invoke supplies the vault.
 	OnePassword *kernel.VaultItemPerformOperationParams
 }
@@ -25,7 +26,7 @@ func isOnePasswordOperation(operation string) bool {
 
 // vaultOperationTakesParams reports whether an operation accepts --params or --spec-file.
 func vaultOperationTakesParams(operation string) bool {
-	return operation == "fill" || operation == "webmcp_invoke" || operation == "prepare_checkout" || (isOnePasswordOperation(operation) && operation != "1pw_recover")
+	return operation == "fill" || operation == "webmcp_invoke" || operation == "prepare_checkout" || operation == "confirm_transaction" || (isOnePasswordOperation(operation) && operation != "1pw_recover")
 }
 
 type vaultFillParams struct {
@@ -85,8 +86,8 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 	if strings.TrimSpace(operation) == "" {
 		return nil, fmt.Errorf("operation must not be empty")
 	}
-	if openSet && operation != "authorize" && operation != "collect" && operation != "prepare_checkout" && operation != "1pw_recover" {
-		return nil, fmt.Errorf("--open is only supported for authorize, collect, prepare_checkout, and 1pw_recover")
+	if openSet && operation != "authorize" && operation != "collect" && operation != "prepare_checkout" && operation != "1pw_recover" && operation != "restart_verification" {
+		return nil, fmt.Errorf("--open is only supported for authorize, collect, prepare_checkout, 1pw_recover, and restart_verification")
 	}
 	if len(raw) > 128*1024 {
 		return nil, fmt.Errorf("operation parameters exceed 128 KiB")
@@ -111,6 +112,16 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 		}
 		return &vaultOperationParams{OnePassword: request}, nil
 	}
+	if operation == "confirm_transaction" {
+		if !paramsSet {
+			return nil, fmt.Errorf("confirm_transaction requires --params or --spec-file")
+		}
+		confirmation, err := parseVaultConfirmTransactionParams(raw)
+		if err != nil {
+			return nil, err
+		}
+		return &vaultOperationParams{ConfirmTransaction: confirmation}, nil
+	}
 	if operation == "prepare_checkout" {
 		if !paramsSet {
 			return nil, fmt.Errorf("prepare_checkout requires --params or --spec-file with checkout")
@@ -133,7 +144,7 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 	}
 	if operation != "fill" {
 		if paramsSet {
-			return nil, fmt.Errorf("--params is only supported for fill, webmcp_invoke, prepare_checkout, and 1Password operations; authorize takes no parameters")
+			return nil, fmt.Errorf("--params is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, and 1Password operations; authorize and restart_verification take no parameters")
 		}
 		return nil, nil
 	}
