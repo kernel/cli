@@ -1428,8 +1428,10 @@ Automated authentication for web services. The `run` command orchestrates the fu
 
 - `kernel api-keys create` - Create a new API key
   - `--name <name>` - API key name (required)
-  - `--days-to-expire <days>` - Number of days until expiry (1-3650); omit for never
+  - `--days-to-expire <days>` - Number of days until expiry (1-3650); omit for never. Cannot be combined with `--expires-at`
+  - `--expires-at <timestamp>` - Exact expiry time as an RFC 3339 timestamp (e.g. `2026-01-15T09:00:00Z`); must be in the future. Cannot be combined with `--days-to-expire`
   - `--project-id <project_id>` - Create a project-scoped API key for this project ID; omit for org-wide. This is different from global `--project`, which scopes the CLI request to a project ID.
+  - `--policy-statement <action=resource>` - Issue a scoped key allowed only the listed actions on the listed resources (repeatable), e.g. `browsers:use=projects/proj_abc123/*`. Everything not listed is denied.
   - `--output json`, `-o json` - Output raw JSON object, including the one-time plaintext key
 
 - `kernel api-keys list` - List API keys
