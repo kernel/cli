@@ -98,8 +98,8 @@ func TestVaultPreparationApprovalURLIsPrintedInFull(t *testing.T) {
 	})
 	_, text, err := executeVaultCommand(t, client, "vaults", "items", "get", "user-123", "order-1")
 	require.NoError(t, err)
-	assert.Contains(t, text, "Approval URL:\n"+approvalURL+"\n")
-	assert.NotContains(t, text, "Preparation approval URL")
+	assert.Contains(t, text, "approval url:\n"+approvalURL+"\n")
+	assert.NotContains(t, text, "preparation approval url")
 }
 
 func TestVaultFileValidationUsesFieldNames(t *testing.T) {

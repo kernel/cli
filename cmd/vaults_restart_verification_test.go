@@ -57,7 +57,7 @@ func TestVaultRestartVerificationGuidance(t *testing.T) {
 	})
 	_, human, err := executeVaultInputCommand(t, client, "", "vaults", "items", "get", "checkout", "visa-order")
 	require.NoError(t, err)
-	assert.Contains(t, human, "Available operation: restart_verification")
+	assert.Contains(t, human, "available operation: restart_verification")
 	assert.Contains(t, human, "does not approve spending")
 	assert.NotContains(t, human, "no reset operation exists")
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -141,7 +142,7 @@ func TestVaultGetOperationHintUsesExplicitProject(t *testing.T) {
 	})
 	_, human, err := executeVaultCommand(t, client, "vaults", "items", "get", "checkout", "order-1", "--project", "chosen-project")
 	require.NoError(t, err)
-	assert.Contains(t, human, "Invoke: kernel vaults items invoke --project=chosen-project -- checkout order-1 authorize")
+	assert.Contains(t, human, "invoke: kernel vaults items invoke --project=chosen-project -- checkout order-1 authorize")
 	assert.NotContains(t, human, "other-project")
 }
 
@@ -165,8 +166,8 @@ func TestVaultGetOperationHints(t *testing.T) {
 				if wallet {
 					op = "refresh"
 				}
-				assert.Contains(t, human, "Available operation: "+op)
-				assert.Contains(t, human, "Invoke: kernel vaults items invoke")
+				assert.Contains(t, human, "available operation: "+op)
+				assert.Contains(t, human, "invoke: kernel vaults items invoke")
 				assert.Contains(t, human, " -- checkout item-1 "+op)
 				switch project {
 				case "":
@@ -188,22 +189,36 @@ func TestVaultGetOperationHints(t *testing.T) {
 func TestVaultInvokeConfirmTransactionSendsObservedOutcome(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
 	fixture := strings.ReplaceAll(requestedCardFixture, `[{"type":"authorize","description":"Use only after explicit user approval."}]`, `[{"type":"confirm_transaction","description":"Report the observed merchant outcome."}]`)
-	calls := 0
-	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		if calls == 2 {
-			assert.Equal(t, http.MethodPost, r.Method)
-			body, err := io.ReadAll(r.Body)
+	for _, occurredAt := range []string{
+		"2026-10-10T12:00:00Z",
+		"2026-10-10T12:00:00.123Z",
+		"2026-10-10T12:00:00.123456789Z",
+		"2026-10-10T12:00:00.123+05:30",
+	} {
+		t.Run(occurredAt, func(t *testing.T) {
+			raw := fmt.Sprintf(`{"status":"APPROVED","transaction_type":"PURCHASE","amount":1234,"currency":"USD","occurred_at":%q}`, occurredAt)
+			params, err := parseVaultOperationParams("confirm_transaction", raw, true, false)
 			require.NoError(t, err)
-			assert.JSONEq(t, `{"type":"confirm_transaction","status":"APPROVED","transaction_type":"PURCHASE","amount":1234,"currency":"USD","occurred_at":"2026-10-10T12:00:00Z"}`, string(body))
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, fixture)
-	})
-	_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "confirm_transaction",
-		"--params", `{"status":"APPROVED","transaction_type":"PURCHASE","amount":1234,"currency":"USD","occurred_at":"2026-10-10T12:00:00Z"}`, "-o", "json")
-	require.NoError(t, err)
-	assert.Equal(t, 2, calls)
+			assert.Equal(t, occurredAt, params.ConfirmTransaction.OccurredAt.Format(time.RFC3339Nano))
+
+			calls := 0
+			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if calls == 2 {
+					assert.Equal(t, http.MethodPost, r.Method)
+					body, err := io.ReadAll(r.Body)
+					require.NoError(t, err)
+					assert.JSONEq(t, fmt.Sprintf(`{"type":"confirm_transaction","status":"APPROVED","transaction_type":"PURCHASE","amount":1234,"currency":"USD","occurred_at":%q}`, params.ConfirmTransaction.OccurredAt.Format(time.RFC3339)), string(body))
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, fixture)
+			})
+			_, _, err = executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "confirm_transaction",
+				"--params", raw, "-o", "json")
+			require.NoError(t, err)
+			assert.Equal(t, 2, calls)
+		})
+	}
 }
 
 func TestParseVaultConfirmTransactionParamsValidates(t *testing.T) {

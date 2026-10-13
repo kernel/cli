@@ -230,8 +230,8 @@ func printVault(v *kernel.Vault, output string) error {
 		return printVaultJSON(raw)
 	}
 	PrintTableNoPad(pterm.TableData{
-		{"Property", "Value"}, {"ID", v.ID}, {"Name (immutable)", v.Name},
-		{"Created At", util.FormatLocal(v.CreatedAt)}, {"Updated At", util.FormatLocal(v.UpdatedAt)},
+		{"property", "value"}, {"id", v.ID}, {"name (immutable)", v.Name},
+		{"created at", util.FormatLocal(v.CreatedAt)}, {"updated at", util.FormatLocal(v.UpdatedAt)},
 	}, true)
 	return nil
 }
@@ -242,8 +242,8 @@ func printVaultEncryptionKey(k *kernel.VaultEncryptionKey, output string) error 
 		return printVaultJSON(json.RawMessage(k.RawJSON()))
 	}
 	PrintTableNoPad(pterm.TableData{
-		{"Property", "Value"}, {"Key ID (kid)", k.Kid}, {"Algorithm (alg)", string(k.Alg)}, {"Encryption (enc)", string(k.Enc)},
-		{"JWK kty", k.Jwk.Kty}, {"JWK crv", k.Jwk.Crv}, {"JWK x", k.Jwk.X}, {"JWK y", k.Jwk.Y},
+		{"property", "value"}, {"key id (kid)", k.Kid}, {"algorithm (alg)", string(k.Alg)}, {"encryption (enc)", string(k.Enc)},
+		{"jwk kty", k.Jwk.Kty}, {"jwk crv", k.Jwk.Crv}, {"jwk x", k.Jwk.X}, {"jwk y", k.Jwk.Y},
 	}, true)
 	return nil
 }
@@ -304,7 +304,7 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 		if vaultOperationTakesParams(op.Type) {
 			command += " --params '<json>'"
 		}
-		pterm.Printf("Invoke: %s -- %s %s %s\n", command, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
+		pterm.Printf("invoke: %s -- %s %s %s\n", command, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
 	}
 	return nil
 }
@@ -327,11 +327,11 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		return err
 	}
 	rows := pterm.TableData{
-		{"Property", "Value"}, {"Key (immutable)", item.Key}, {"ID", item.ID},
-		{"Type", item.Type}, {"Provider", item.Spec.Provider}, {"Status", item.State.Status},
+		{"property", "value"}, {"key (immutable)", item.Key}, {"id", item.ID},
+		{"type", item.Type}, {"provider", item.Spec.Provider}, {"status", item.State.Status},
 	}
 	if item.Type == "credential" {
-		rows = append(rows, []string{"Version", fmt.Sprint(item.Version)})
+		rows = append(rows, []string{"version", fmt.Sprint(item.Version)})
 		if item.Spec.Provider == "1password" {
 			if item.Spec.Account != "" {
 				rows = append(rows, []string{"1Password account (immutable)", item.Spec.Account})
@@ -339,13 +339,13 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 				rows = append(rows, []string{"1Password account", "stored token (developer-supplied)"})
 			}
 			for _, entry := range item.Spec.Requests.Entries {
-				rows = append(rows, []string{"Requested login", entry.Parameters.Website})
+				rows = append(rows, []string{"requested login", entry.Parameters.Website})
 			}
 			if item.State.JSON.AccessRequest.Valid() {
-				rows = append(rows, []string{"Access request state", item.State.AccessRequest.State})
+				rows = append(rows, []string{"access request state", item.State.AccessRequest.State})
 				entryRow := func(id, website string) {
 					if id != "" {
-						rows = append(rows, []string{"Entry ID", id + " " + website})
+						rows = append(rows, []string{"entry id", id + " " + website})
 					}
 				}
 				for _, entry := range item.State.AccessRequest.Entries {
@@ -358,9 +358,9 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 				}
 			}
 		} else if item.Spec.Provider == "managed_auth" {
-			rows = append(rows, []string{"Managed auth connection (immutable)", item.Spec.ConnectionID})
+			rows = append(rows, []string{"managed auth connection (immutable)", item.Spec.ConnectionID})
 		} else {
-			pterm.Info.Println("Use -o json for field definitions, presence, and non-sensitive values; sensitive values are omitted")
+			pterm.Info.Println("use -o json for field definitions, presence, and non-sensitive values; sensitive values are omitted")
 		}
 	}
 	if item.Type == "wallet" {
@@ -371,75 +371,75 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 			configID, configName = client.ProviderConfig.ID, client.ProviderConfig.Name
 		}
 		if configID != "" {
-			rows = append(rows, []string{"Provider config ID (immutable)", configID})
+			rows = append(rows, []string{"provider config id (immutable)", configID})
 		} else if configName != "" {
-			rows = append(rows, []string{"Provider config name", configName})
+			rows = append(rows, []string{"provider config name", configName})
 		}
 	}
 	if item.State.StatusReason != "" {
-		rows = append(rows, []string{"Status reason", item.State.StatusReason})
+		rows = append(rows, []string{"status reason", item.State.StatusReason})
 	}
 	if item.Type == "card" {
 		merchant := item.Spec.MerchantName
 		if item.Spec.Provider == "agentcard" {
 			merchant = item.Spec.Merchant
 		}
-		rows = append(rows, []string{"Wallet key", item.Spec.Wallet}, []string{"Merchant", merchant}, []string{"Amount (minor units)", fmt.Sprintf("%d %s", item.Spec.Amount, item.Spec.Currency)})
+		rows = append(rows, []string{"wallet key", item.Spec.Wallet}, []string{"merchant", merchant}, []string{"amount (minor units)", fmt.Sprintf("%d %s", item.Spec.Amount, item.Spec.Currency)})
 		if item.Spec.Provider == "link" {
-			rows = append(rows, []string{"Payment method ID", item.Spec.PaymentMethodID})
+			rows = append(rows, []string{"payment method id", item.Spec.PaymentMethodID})
 		}
 		if item.Spec.Provider == "agentcard" && item.Spec.CheckoutOrigin != "" {
-			rows = append(rows, []string{"Checkout origin", item.Spec.CheckoutOrigin})
+			rows = append(rows, []string{"checkout origin", item.Spec.CheckoutOrigin})
 		}
 		if item.Spec.Provider == "kernel" && item.Spec.MerchantURL != "" {
-			rows = append(rows, []string{"Merchant URL", item.Spec.MerchantURL})
+			rows = append(rows, []string{"merchant url", item.Spec.MerchantURL})
 		}
 		if item.Spec.Provider == "kernel" && item.Spec.MerchantCountry != "" {
-			rows = append(rows, []string{"Merchant country", item.Spec.MerchantCountry})
+			rows = append(rows, []string{"merchant country", item.Spec.MerchantCountry})
 		}
 		if masks := item.State.Masks; masks.Last4 != "" || masks.TokenLast4 != "" {
-			rows = append(rows, []string{"Card last4", util.OrDash(masks.Last4)})
+			rows = append(rows, []string{"card last4", util.OrDash(masks.Last4)})
 			if masks.TokenLast4 != "" {
-				rows = append(rows, []string{"Network token last4", masks.TokenLast4})
+				rows = append(rows, []string{"network token last4", masks.TokenLast4})
 			}
 		}
 	}
 	if item.State.JSON.Domains.Valid() {
-		rows = append(rows, []string{"Permitted domains (provider-assigned)", strings.Join(item.State.Domains, ", ")})
+		rows = append(rows, []string{"permitted domains (provider-assigned)", strings.Join(item.State.Domains, ", ")})
 	}
 	if actions.RequiredAction != "" {
-		rows = append(rows, []string{"Required action", actions.RequiredAction})
+		rows = append(rows, []string{"required action", actions.RequiredAction})
 	}
 	if !item.ExpiresAt.IsZero() {
-		rows = append(rows, []string{"Expires At", util.FormatLocal(item.ExpiresAt)})
+		rows = append(rows, []string{"expires at", util.FormatLocal(item.ExpiresAt)})
 	}
 	if item.State.JSON.Aliases.Valid() {
 		a := item.State.Aliases
-		rows = append(rows, []string{"Checkout alias: number", a.Number}, []string{"Checkout alias: cvc", a.Cvc}, []string{"Checkout alias: exp_month", a.ExpMonth}, []string{"Checkout alias: exp_year", a.ExpYear})
+		rows = append(rows, []string{"checkout alias: number", a.Number}, []string{"checkout alias: cvc", a.Cvc}, []string{"checkout alias: exp_month", a.ExpMonth}, []string{"checkout alias: exp_year", a.ExpYear})
 	}
 	if item.State.JSON.Preparation.Valid() {
 		p := item.State.Preparation
-		rows = append(rows, []string{"Preparation ID", p.ID}, []string{"Preparation status", string(p.Status)},
-			[]string{"Preparation browser", p.BrowserID}, []string{"Merchant origin", p.MerchantOrigin},
-			[]string{"Environment", string(p.Environment)})
+		rows = append(rows, []string{"preparation id", p.ID}, []string{"preparation status", string(p.Status)},
+			[]string{"preparation browser", p.BrowserID}, []string{"merchant origin", p.MerchantOrigin},
+			[]string{"environment", string(p.Environment)})
 		if p.Psp != "" {
-			rows = append(rows, []string{"Processor", string(p.Psp)})
+			rows = append(rows, []string{"processor", string(p.Psp)})
 		}
 		if !p.ExpiresAt.IsZero() {
-			rows = append(rows, []string{"Submit before", util.FormatLocal(p.ExpiresAt)})
+			rows = append(rows, []string{"submit before", util.FormatLocal(p.ExpiresAt)})
 		}
 	}
 	if item.State.JSON.Authorization.Valid() {
 		a := item.State.Authorization
-		rows = append(rows, []string{"Checkout authorization", a.ID}, []string{"Authorization status", string(a.Status)})
+		rows = append(rows, []string{"checkout authorization", a.ID}, []string{"authorization status", string(a.Status)})
 		if a.Reason != "" {
-			rows = append(rows, []string{"Authorization reason", a.Reason})
+			rows = append(rows, []string{"authorization reason", a.Reason})
 		}
 		if a.JSON.ChargedKind.Valid() {
-			rows = append(rows, []string{"Charged kind", string(a.ChargedKind)}, []string{"Charged (minor units)", fmt.Sprintf("%d %s", a.ChargedAmountCents, a.ChargedCurrency)})
+			rows = append(rows, []string{"charged kind", string(a.ChargedKind)}, []string{"charged (minor units)", fmt.Sprintf("%d %s", a.ChargedAmountCents, a.ChargedCurrency)})
 		}
 		if a.JSON.ReplayDelivered.Valid() {
-			rows = append(rows, []string{"Processor response delivered", fmt.Sprint(a.ReplayDelivered)})
+			rows = append(rows, []string{"processor response delivered", fmt.Sprint(a.ReplayDelivered)})
 		}
 	}
 	PrintTableNoPad(rows, true)
@@ -450,90 +450,90 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemActions) {
 	if actions.RecoveryRequired {
 		if op := actions.RestartVerification; op != nil {
-			pterm.Warning.Println("recovery_required: verification failed before the purchase intent was sent. Do not retry, delete, or replace the item. restart_verification prepares a fresh verification link; it does not approve spending, and the cardholder must verify and approve again. Run it once, only with the user's consent.")
-			pterm.Printf("Available operation: %s — %s\n", op.Type, op.Description)
+			pterm.Warning.Println("recovery_required: verification failed before the purchase intent was sent. do not retry, delete, or replace the item. restart_verification prepares a fresh verification link; it does not approve spending, and the cardholder must verify and approve again. run it once, only with the user's consent.")
+			pterm.Printf("available operation: %s — %s\n", op.Type, op.Description)
 			return
 		}
-		pterm.Warning.Println("recovery_required: the original operation is unresolved, not declined or expired. Do not retry, delete, or replace it. Reconcile with the provider or support; no reset operation exists.")
+		pterm.Warning.Println("recovery_required: the original operation is unresolved, not declined or expired. do not retry, delete, or replace it. reconcile with the provider or support; no reset operation exists.")
 		return
 	}
 	if item.Type == "wallet" && item.Spec.Provider == "link" && item.Spec.Authorization.Client.Type == "customer_managed" && item.State.Status == "degraded" {
-		pterm.Warning.Println("Imported grant is degraded; there is no in-place reauthorization. Import a fresh backend OAuth grant under a new wallet key for new work only. Existing cards stay bound to the old wallet; retain them and reconcile uncertain payments before further action.")
+		pterm.Warning.Println("imported grant is degraded; there is no in-place reauthorization. import a fresh backend OAuth grant under a new wallet key for new work only. existing cards stay bound to the old wallet; retain them and reconcile uncertain payments before further action.")
 	}
 	if actions.RequiredAction != "" && actions.ActionURL != "" {
-		pterm.Printf("Action URL:\n%s\n", actions.ActionURL)
+		pterm.Printf("action url:\n%s\n", actions.ActionURL)
 	}
 	if actions.ApprovalURL != "" {
-		pterm.Printf("Approval URL:\n%s\n", actions.ApprovalURL)
+		pterm.Printf("approval url:\n%s\n", actions.ApprovalURL)
 	}
 	for _, op := range actions.Operations {
-		pterm.Printf("Available operation: %s — %s\n", op.Type, op.Description)
+		pterm.Printf("available operation: %s — %s\n", op.Type, op.Description)
 	}
 	if item.Type == "credential_account" {
 		if actions.RequiredAction != "" {
-			pterm.Info.Println("Share the 1Password authorization URL with the account owner. Observe the connection with items get --wait 60; never ask for 1Password passwords or codes.")
+			pterm.Info.Println("share the 1Password authorization url with the account owner. observe the connection with items get --wait 60; never ask for 1Password passwords or codes.")
 		} else if item.State.Status == "reconnect_required" || item.State.Status == "declined" {
-			pterm.Info.Println("This 1Password account is not connected. Ask the owner before running credentials connect again with the same key; use 1pw_recover first if it is advertised.")
+			pterm.Info.Println("this 1Password account is not connected. ask the owner before running credentials connect again with the same key; use 1pw_recover first if it is advertised.")
 		}
 		return
 	}
 	if item.Type == "credential" && item.Spec.Provider == "1password" {
 		if item.Action.Instructions != "" {
-			pterm.Printf("Approval instructions:\n%s\n", item.Action.Instructions)
+			pterm.Printf("approval instructions:\n%s\n", item.Action.Instructions)
 		}
-		pterm.Info.Println("Ready means the account owner approved access, not that sign-in succeeded. 1pw_fill can submit the form, so never retry automatically. check the page first before retrying. never retry an access request automatically; after an uncertain outcome, do not delete and recreate the item.")
+		pterm.Info.Println("ready means the account owner approved access, not that sign-in succeeded. 1pw_fill can submit the form, so never retry automatically. check the page first before retrying. never retry an access request automatically; after an uncertain outcome, do not delete and recreate the item.")
 		return
 	}
 	if item.Type == "credential" && item.Spec.Provider == "managed_auth" {
-		pterm.Info.Println("Fill reads the managed auth connection's saved credential at fill time; use -o json for fill binding names. Ready means a saved credential exists, not that login succeeded. Fill only when advertised; fill does not submit the form.")
+		pterm.Info.Println("fill reads the managed auth connection's saved credential at fill time; use -o json for fill binding names. ready means a saved credential exists, not that login succeeded. fill only when advertised; fill does not submit the form.")
 		return
 	}
 	if item.Type == "credential" {
 		if actions.RequiredAction != "" {
-			pterm.Info.Println("Share the collection URL with the user to complete the credential form. Observe readiness with items get --wait 60; for edits to an already-ready item, compare versions without --wait.")
+			pterm.Info.Println("share the collection url with the user to complete the credential form. observe readiness with items get --wait 60; for edits to an already-ready item, compare versions without --wait.")
 		}
-		pterm.Info.Println("Do not use credential items for credit card data. Use wallet and card item types for credit cards and payment checkout instead.")
-		pterm.Info.Println("Ready means required fields are populated, not that login succeeded. Fill only when advertised; fill does not submit the form.")
+		pterm.Info.Println("do not use credential items for credit card data. use wallet and card item types for credit cards and payment checkout instead.")
+		pterm.Info.Println("ready means required fields are populated, not that login succeeded. fill only when advertised; fill does not submit the form.")
 		return
 	}
 	if item.Type == "card" {
 		if item.State.JSON.Preparation.Valid() {
 			switch item.State.Status {
 			case "preparing":
-				pterm.Info.Println("Keep the approval page open and poll items get --wait 60 until ready_to_submit before submitting native Pay.")
+				pterm.Info.Println("keep the approval page open and poll items get --wait 60 until ready_to_submit before submitting native Pay.")
 			case "ready_to_submit":
-				pterm.Info.Println("Submit native Pay before preparation.expires_at; polling does not extend the deadline.")
+				pterm.Info.Println("submit native Pay before preparation.expires_at; polling does not extend the deadline.")
 			}
-			pterm.Info.Println("Preparations are single-use, including after failure or expiry. Preparation consumed means claimed, not payment success. Do not retry automatically.")
+			pterm.Info.Println("preparations are single-use, including after failure or expiry. preparation consumed means claimed, not payment success. do not retry automatically.")
 		}
 		card := item.AsCard()
 		for _, expansion := range card.AvailableExpansions {
-			pterm.Printf("Available expansion: %s — %s\n", expansion.Type, expansion.Description)
+			pterm.Printf("available expansion: %s — %s\n", expansion.Type, expansion.Description)
 		}
 		if item.State.JSON.Aliases.Valid() {
-			pterm.Info.Println("Aliases are non-secret checkout values. Use only in a browser created with this vault attached; ready does not mean paid.")
+			pterm.Info.Println("aliases are non-secret checkout values. use only in a browser created with this vault attached; ready does not mean paid.")
 		}
-		pterm.Info.Println("Inspect items events for payment outcomes. Never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")
+		pterm.Info.Println("inspect items events for payment outcomes. never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")
 	} else {
 		wallet := item.AsWallet()
 		for _, expansion := range wallet.AvailableExpansions {
-			pterm.Printf("Available expansion: %s — %s\n", expansion.Type, expansion.Description)
+			pterm.Printf("available expansion: %s — %s\n", expansion.Type, expansion.Description)
 		}
 	}
 	if item.Expanded.JSON.PaymentMethods.Valid() {
 		printVaultPaymentMethods(item.Expanded.PaymentMethods)
 	}
 	if actions.RequiredAction != "" {
-		pterm.Info.Println("Complete the returned action with the provider; never pass card data or OAuth codes to the CLI. Observe with items get --wait 60.")
+		pterm.Info.Println("complete the returned action with the provider; never pass card data or OAuth codes to the cli. observe with items get --wait 60.")
 	}
 }
 
 func printVaultPaymentMethods(methods []kernel.VaultPaymentMethod) {
 	if len(methods) == 0 {
-		pterm.Info.Println("No payment methods returned")
+		pterm.Info.Println("no payment methods returned")
 		return
 	}
-	rows := pterm.TableData{{"Payment method ID", "Provider", "Type", "Label", "Brand", "Last4", "Default", "Single-use eligible", "Reasons"}}
+	rows := pterm.TableData{{"payment method id", "provider", "type", "label", "brand", "last4", "default", "single-use eligible", "reasons"}}
 	for _, m := range methods {
 		capability := m.Capabilities.SingleUseCard
 		eligible := "unknown"
@@ -543,11 +543,11 @@ func printVaultPaymentMethods(methods []kernel.VaultPaymentMethod) {
 		rows = append(rows, []string{m.ID, m.Provider, m.Type, m.Display.Label, m.Display.Brand, m.Display.Last4, fmt.Sprint(m.IsDefault), eligible, strings.Join(capability.Reasons, ", ")})
 	}
 	PrintTableNoPad(rows, true)
-	pterm.Info.Println("Select an ID explicitly in the card --spec JSON: Link uses payment_method_id; AgentCard uses card_id (or omit it for cardholder selection). Capabilities are advisory; missing means unknown, not ineligible.")
+	pterm.Info.Println("select an id explicitly in the card --spec json: Link uses payment_method_id; AgentCard uses card_id (or omit it for cardholder selection). capabilities are advisory; missing means unknown, not ineligible.")
 }
 
 func printVaultEvents(events []kernel.VaultItemEvent, data []vaultJSON) {
-	rows := pterm.TableData{{"Event ID", "Time", "Name", "Browser ID", "Outcome data"}}
+	rows := pterm.TableData{{"event id", "time", "name", "browser id", "outcome data"}}
 	for i, event := range events {
 		rows = append(rows, []string{event.ID, util.FormatLocal(event.CreatedAt), event.Name, util.OrDash(event.BrowserID), string(data[i]["data"])})
 	}
