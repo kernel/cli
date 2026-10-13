@@ -526,9 +526,15 @@ payments; do not repeat an uncertain payment through the new wallet. There is no
 imported-wallet reauthorization.
 
 **`recovery_required` means unresolved, not declined or expired.** It stops server-side waiting.
-If `restart_verification` is advertised in `available_operations`, invoke it once to get a
-fresh `spend_approval` link. Otherwise do not retry, delete, or replace the item; reconcile
-with the provider or support. Unresolved child cards can block wallet and vault deletion.
+If `restart_verification` is advertised in `available_operations`, invoke with explicit
+user approval each time to get a fresh `spend_approval` link. The cardholder must verify
+and approve spending again; restart grants no spend consent. If the response is unclear,
+re-get and share any new action; invoke once more only if still advertised with renewed
+user approval. Otherwise do not retry payment, delete or replace the item. Contact
+support@kernel.sh privately with project, vault, key, status_reason and relevant event
+timestamps (never card data, API keys or capability URLs) to reconcile the original
+operation and establish whether a new purchase is safe; never assume a new card is safe.
+Unresolved child cards can block wallet and vault deletion.
 Time passing or deletion is not evidence of non-execution.
 
 #### Kernel-managed card checkout
@@ -542,12 +548,18 @@ kernel vaults wallets payment-methods checkout cardholder
 
 Share the returned `card_enrollment` URL with the cardholder. A connected wallet may still
 report `single_use_card.eligible: false` with a `network_token_*` reason while network token
-enrollment is pending or unsupported. Inspect the expansion before requesting a card; this
-wallet uses its enrolled card, not a `payment_method_id` in the card spec.
+enrollment is pending or unsupported. Re-check `network_token_pending` later at most once
+in this attempt; `network_token_unsupported`, `network_token_failed`, or persistent
+ineligibility requires a different card, enrolled under a new wallet key after user
+confirmation. Missing eligibility is unknown. Never poll indefinitely.
+For `reconnect_required`, share the new enrollment action. For `degraded`, obtain user
+confirmation and delete only if the API permits it before a new wallet/enrollment;
+reconcile unresolved child cards first. This wallet uses its enrolled card, not a
+`payment_method_id` in the card spec.
 
 ```bash
 kernel vaults cards create checkout order-1 --provider kernel --spec '{
-  "wallet":"cardholder", "amount":1200, "currency":"usd",
+  "wallet":"cardholder", "amount":1200, "currency":"USD",
   "merchant_name":"Example Shop", "merchant_url":"https://shop.example/checkout",
   "merchant_country":"US"
 }'
@@ -558,7 +570,8 @@ kernel vaults items get checkout order-1 --wait 60
 
 Only invoke `authorize` when advertised. Visa returns a `spend_approval` URL for the
 cardholder to verify and approve; Mastercard may become ready without one. In
-`recovery_required`, invoke `restart_verification` once **only if advertised**:
+`recovery_required`, invoke `restart_verification` **only if advertised**, with explicit
+user approval each time:
 
 ```bash
 kernel vaults items invoke checkout order-1 restart_verification --open
@@ -567,7 +580,17 @@ kernel vaults items invoke checkout order-1 restart_verification --open
 This rotates the approval link locally without a provider call, only after a classified
 initial attestation failure with proof no intent was dispatched. Otherwise do not retry,
 delete, or replace the item. Always check `available_operations` rather than assuming
-the API supports this operation.
+the API supports this operation. Human output, JSON output and execution expose only
+advertised restart_verification during recovery; other operations and stale action URLs
+are suppressed.
+
+`--open` on enrollment or spend-approval URLs is only for a human cardholder using their
+own machine. Agents must omit it and share the capability URL privately; never open it
+for the cardholder. The examples with `--open` are for human use.
+Optional `merchant_category` and `merchant_category_code` (actual four-digit MCC other
+than `0000`) are accepted; omit rather than invent them. Kernel cards cannot be updated:
+with user confirmation, delete only if permitted and create a new item under a new key;
+reconcile unresolved outcomes first.
 
 When ready, create a browser with the vault attached, navigate to checkout, then fill:
 
@@ -585,8 +608,9 @@ kernel vaults items invoke checkout order-1 fill --params '{
 ```
 
 Use the **exact current HTTPS top-level URL** on `merchant_url`'s origin and selectors
-matching that page. Kernel cards have **no stored billing fields**: requesting `billing_*`
-returns 400 `field_unavailable` before any write. Enter billing details (such as name and
+matching that page. Supported fields are `number`, `expiration` (format `MM/YY` or
+`MM/YYYY`), `cvc`, `exp_month` and `exp_year`. Kernel cards have **no stored billing
+fields**: requesting `billing_*` returns 400 `field_unavailable` before any write. Enter billing details (such as name and
 ZIP) directly on the merchant page. Fill types the one-time network token and code but
 never submits checkout. Submit before `expires_at`; neither ready nor fill proves payment.
 
@@ -604,10 +628,27 @@ kernel vaults items invoke checkout order-1 confirm_transaction --params '{
 `type` or any extra properties. `status` must be `APPROVED`, `DECLINED`, `PENDING`, `ERROR`,
 or `CANCELLED`. `transaction_type` must be `PURCHASE`, `AUTHORIZATION`, `CAPTURE`, `REFUND`,
 `REVERSAL`, `VERIFICATION`, `CHARGEBACK`, or `FRAUD`. `amount` is an integer in minor units,
-0..50000 and no greater than the approved amount; `currency` is three uppercase letters;
+0..50000 and no greater than the approved amount; `currency` is three uppercase letters
+matching the approved purchase currency;
 `occurred_at` is the observed outcome's RFC3339 timestamp. The operation is no longer
-advertised after reporting. Never infer success from fill. Unknown outcomes, including
-transport loss while reporting, must not be reported or retried.
+advertised after reporting. Never infer success from fill. `PENDING` means explicit
+merchant evidence of an accepted pending transaction; `ERROR` means an explicit merchant
+transaction error, not transport loss or an ambiguous processing page. These are final
+reports, not polling states. Unknown outcomes need the user to check merchant orders,
+email or statements, then report the confirmed outcome even after card expiry.
+If a report response is lost, re-get and send the identical observed report once more
+only if freshly advertised; otherwise observe state/events (recorded, in flight or recovery).
+Never repeat checkout. After a confirmed merchant decline, report DECLINED when advertised;
+if the user wants another purchase, ask for a different card or merchant, delete only if
+permitted and create one new card under a new key. Expired approval/code before checkout:
+do not submit; with user confirmation delete only if permitted and create one new card.
+If checkout was submitted, reconcile and report the observed outcome first.
+
+Kernel request errors retain actionable API messages while scrubbing HTTP(S) URLs.
+After create transport/5xx failure, retry once with the identical key and spec, never a
+new key to recover a lost response. After authorize/report failures re-get and invoke
+once more only if freshly advertised. Authorize 409 requires state inspection, not input
+changes. For 429 wait for Retry-After before re-checking availability. No automatic retries.
 Never put PAN, CVC, expiry, or enrollment credentials in CLI arguments or logs.
 
 #### Link checkout preparation
@@ -713,8 +754,11 @@ through this endpoint.
 `items invoke` fetches the item again and calls
 `POST /vaults/{id_or_name}/items/{key}/operations` only if the requested operation is still
 advertised. In `recovery_required`, the CLI hides and refuses every operation except
-an advertised `restart_verification`, which may be invoked once. Even other advertised
-operations remain blocked; otherwise do not retry, delete, or replace the item.
+an advertised `restart_verification`, invoked with explicit user approval each time and
+new cardholder spend consent. Human and JSON output use the same recovery filtering.
+Other operations remain blocked; otherwise contact support@kernel.sh with project,
+vault, key, status_reason and event timestamps (no card data, API keys or capability URLs).
+Do not delete or replace unresolved items.
 Stale action URLs in recovery are not opened; a successful restart
 returns a fresh approval action.
 

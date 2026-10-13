@@ -40,9 +40,14 @@ func TestVaultRecoveryActionDisplayPolicy(t *testing.T) {
 					out, human, err := executeVaultInputCommand(t, client, "", args...)
 					require.NoError(t, err)
 					if output == "json" {
-						assert.Contains(t, out, `"spend_approval"`)
 						assert.Contains(t, out, `"available_operations"`)
-						assert.Contains(t, out, `"authorize"`)
+						if status == "recovery_required" {
+							assert.NotContains(t, out, "spend_approval")
+							assert.NotContains(t, out, `"authorize"`)
+						} else {
+							assert.Contains(t, out, `"spend_approval"`)
+							assert.Contains(t, out, `"authorize"`)
+						}
 						assert.Empty(t, human)
 					} else if status == "recovery_required" {
 						assert.NotContains(t, human, "spend_approval")

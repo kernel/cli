@@ -223,6 +223,9 @@ func (c VaultsCmd) GetItem(ctx context.Context, vault, key string, wait int64, e
 func (c VaultsCmd) CreateWallet(ctx context.Context, vault, key string, spec kernel.VaultItemUpsertParamsBodyWalletSpecUnion, output string, open bool) error {
 	item, err := c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfWallet: &kernel.VaultItemUpsertParamsBodyWallet{Spec: spec}}, option.WithMaxRetries(0))
 	if err != nil {
+		if vaultSpecProvider(spec) == "kernel" {
+			return kernelVaultRequestError(err, "create")
+		}
 		return vaultCredentialError(err)
 	}
 	return c.showItem(item, output, open)
@@ -237,6 +240,9 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 		item, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCard: &kernel.VaultItemUpsertParamsBodyCard{Spec: spec}}, option.WithMaxRetries(0))
 	}
 	if err != nil {
+		if vaultSpecProvider(spec) == "kernel" {
+			return kernelVaultRequestError(err, "create")
+		}
 		return util.CleanedUpSdkError{Err: err}
 	}
 	return c.showItem(item, output, false)
@@ -287,9 +293,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	}
 	if !available {
 		if actions.RecoveryRequired {
-			message := "recovery_required: reconcile the original operation with the provider or support; do not retry, delete, or replace it"
-			if len(actions.Operations) > 0 {
-				message += ". invoke the advertised restart_verification once to get a fresh approval link"
+			message := "recovery_required: " + kernelSupportGuidance
+			if actions.advertises("restart_verification") {
+				message = "recovery_required: " + vaultRecoveryHelp
 			}
 			return fmt.Errorf("%s", message)
 		}
@@ -298,8 +304,13 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		}
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
+	if operation == "confirm_transaction" && item.Spec.Provider == "kernel" {
+		if params.ConfirmTransaction.Currency != strings.ToUpper(item.Spec.Currency) || params.ConfirmTransaction.Amount > item.Spec.Amount {
+			return fmt.Errorf("confirm_transaction currency must match the approved purchase currency and amount must not exceed the approved purchase amount; operation was not invoked")
+		}
+	}
 	if operation == "fill" {
-		return c.fill(ctx, vault, key, params.Fill, output)
+		return c.fill(ctx, vault, key, params.Fill, output, item.Spec.Provider)
 	}
 	if operation == "1pw_fill" {
 		return c.onePasswordFill(ctx, vault, key, params.OnePassword, output)
@@ -338,13 +349,22 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		if item.Type == "credential" || item.Type == "credential_account" {
 			return vaultCredentialError(err)
 		}
+		if item.Spec.Provider == "kernel" {
+			return kernelVaultRequestError(err, operation)
+		}
 		return util.CleanedUpSdkError{Err: err}
 	}
 	if response == nil || (response.Type != "card" && response.Type != "wallet" && response.Type != "credential" && response.Type != "credential_account") {
+		if item.Spec.Provider == "kernel" {
+			return fmt.Errorf("unexpected vault operation response; %s", kernelVaultRetryGuidance(operation))
+		}
 		return fmt.Errorf("unexpected vault operation response; inspect the item and do not retry")
 	}
 	var updated kernel.VaultItemUnion
 	if err := json.Unmarshal([]byte(response.RawJSON()), &updated); err != nil {
+		if item.Spec.Provider == "kernel" {
+			return fmt.Errorf("invalid vault item response; %s", kernelVaultRetryGuidance(operation))
+		}
 		return fmt.Errorf("invalid vault item response; inspect the item and do not retry")
 	}
 	return c.showItem(&updated, output, open)

@@ -52,7 +52,7 @@ func TestVaultRestartVerificationRecovery(t *testing.T) {
 				})
 				if !advertised {
 					require.ErrorContains(t, err, "recovery_required")
-					assert.EqualError(t, err, "recovery_required: reconcile the original operation with the provider or support; do not retry, delete, or replace it")
+					assert.EqualError(t, err, "recovery_required: "+kernelSupportGuidance)
 					assert.Zero(t, posts)
 					assert.Empty(t, opened)
 					assert.Empty(t, out)
@@ -93,9 +93,9 @@ func TestVaultRecoveryRejectsOtherAdvertisedOperations(t *testing.T) {
 					args = append(args, "--params", fillParamsFixture)
 				}
 				out, human, err := executeVaultCommand(t, client, args...)
-				message := "recovery_required: reconcile the original operation with the provider or support; do not retry, delete, or replace it"
+				message := "recovery_required: " + kernelSupportGuidance
 				if restartAdvertised {
-					message += ". invoke the advertised restart_verification once to get a fresh approval link"
+					message = "recovery_required: " + vaultRecoveryHelp
 				}
 				assert.EqualError(t, err, message)
 				assert.Equal(t, 1, calls)
@@ -126,7 +126,7 @@ func TestVaultRecoveryDisplaysAdvertisedRestart(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, human, "available operation: restart_verification")
 	assert.Contains(t, human, "invoke: kernel vaults items invoke -- checkout order-1 restart_verification")
-	assert.Contains(t, human, "invoke it once")
+	assert.Contains(t, human, "explicit user approval each time")
 	assert.NotContains(t, human, "available operation: authorize")
 	assert.NotContains(t, human, "available operation: fill")
 	assert.NotContains(t, human, "must stay hidden")

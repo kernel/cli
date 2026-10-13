@@ -164,7 +164,7 @@ func TestKernelCardGuidance(t *testing.T) {
 	})
 	_, human, err := executeVaultCommand(t, client, "vaults", "items", "get", "checkout", "order-1")
 	require.NoError(t, err)
-	for _, want := range []string{"report the observed outcome once with confirm_transaction", "do not report or retry unknown outcomes", "no stored billing fields", "billing_* returns field_unavailable", "enter billing details on the merchant page"} {
+	for _, want := range []string{"report one observed merchant outcome only when confirm_transaction is advertised", "unknown means no reliable merchant outcome", "no stored billing fields", "billing_* returns field_unavailable", "enter billing details on the merchant page"} {
 		assert.Contains(t, human, want)
 	}
 	assert.NotContains(t, human, "does not observe merchant charges")

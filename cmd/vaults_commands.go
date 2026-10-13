@@ -98,8 +98,8 @@ vault names, item keys, and project ownership are immutable.
    AgentCard-only checkout aliases support egress substitution with checkout hold,
    approval, and replay; they are not a fallback after fill.
 6. after the user submits kernel card checkout, report the observed outcome once with
-   confirm_transaction when advertised. never infer success from fill; do not report or
-   retry unknown outcomes. in recovery_required, ` + vaultRecoveryHelp + `
+   confirm_transaction when advertised. ` + kernelTransactionHelp + `.
+   in recovery_required, ` + vaultRecoveryHelp + `
 
 permitted checkout domains are provider-assigned and displayed when returned; kernel
 card fill instead uses the exact origin of merchant_url.
@@ -175,7 +175,7 @@ each vault has its own key; it is created on first request and may be cached.`,
 		}}
 	itemGet.Flags().Int64("wait", 0, "hold while pending for up to this many seconds (0-60); observe only")
 	itemGet.Flags().StringSlice("expand", nil, "advertised live data to fetch: payment_methods")
-	itemGet.Flags().Bool("open", false, "open a returned https action url in your browser")
+	itemGet.Flags().Bool("open", false, "open a returned https action url; cardholder links are human-only, agents must share privately")
 	addVaultJSONOutputFlag(itemGet)
 	itemEvents := &cobra.Command{Use: "events <vault> <key>", Short: "read immutable item events without retrying payments", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -232,13 +232,15 @@ confirm_transaction requires --params or --spec-file without type, with all of:
 status (APPROVED, DECLINED, PENDING, ERROR, CANCELLED), transaction_type (PURCHASE,
 AUTHORIZATION, CAPTURE, REFUND, REVERSAL, VERIFICATION, CHARGEBACK, FRAUD), amount
 (integer minor units 0..50000, no greater than the approved amount), currency (three
-uppercase letters), and occurred_at (RFC3339). no other fields are accepted.
-after the user submits checkout, report the observed outcome once, only when advertised.
-never infer success from fill; do not report or retry unknown outcomes, including transport loss.
+uppercase letters matching the approved purchase currency), and occurred_at (RFC3339).
+no other fields are accepted. ` + kernelTransactionHelp + `.
 restart_verification takes no parameters. in recovery_required, ` + vaultRecoveryHelp + `
 it rotates the approval link without a provider call, only after a classified initial
 attestation failure with proof no intent was dispatched. other recovery states must not be retried.
-collect/authorize/prepare_checkout/1pw_recover/restart_verification may use --open. fill returns value-free per-field outcomes;
+collect/authorize/prepare_checkout/1pw_recover/restart_verification may use --open.
+--open on card_enrollment or spend_approval is for a human cardholder on their own machine.
+agents must omit --open and share capability links privately, never open them for cardholders.
+fill returns value-free per-field outcomes;
 completed exits 0, failed/unknown exit nonzero with valid json retained on stdout in -o json.
 
 webmcp_invoke (credential items and ready Link cards when advertised; see items webmcp invoke --help
@@ -313,7 +315,7 @@ JSON
 	invoke.Flags().String("params", "", "operation parameters json for fill, webmcp_invoke, prepare_checkout, confirm_transaction, or 1pw_* (maximum 128 KiB); omit type and credential values; 1pw_update_access_token requires --spec-file")
 	invoke.Flags().String("spec-file", "", "operation parameters json file (use '-' for stdin; maximum 128 KiB)")
 	invoke.MarkFlagsMutuallyExclusive("params", "spec-file")
-	invoke.Flags().Bool("open", false, "open a returned https action url in your browser")
+	invoke.Flags().Bool("open", false, "open a returned https action url; cardholder links are human-only, agents must share privately")
 	addVaultJSONOutputFlag(invoke)
 	items.AddCommand(itemList, itemGet, itemEvents, invoke, newVaultWebMCPCommand(), newVaultDeleteCommand(true))
 
@@ -345,7 +347,7 @@ JSON
 	walletCreate.Flags().String("provider-config-name", "", "bind the new wallet to this provider configuration name (immutable)")
 	walletCreate.MarkFlagsMutuallyExclusive("provider-config-id", "provider-config-name")
 	walletCreate.Flags().String("tokens-file", "", "import Link access_token and refresh_token json from a file (use '-' for stdin)")
-	walletCreate.Flags().Bool("open", false, "open the returned https connection/enrollment url")
+	walletCreate.Flags().Bool("open", false, "open a returned https connection/enrollment url; cardholder use only, agents must share privately")
 	addVaultJSONOutputFlag(walletCreate)
 	methods := &cobra.Command{Use: "payment-methods <vault> <key>", Short: "fetch advertised live wallet payment methods", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
 		Long: "fetch payment_methods through the item's GET expansion. the wallet must advertise this expansion.\ndisplays selectable ids and advisory capabilities; never automatically chooses a funding method.\njson returns the item with expanded.payment_methods, like items get --expand payment_methods.",
@@ -362,7 +364,7 @@ JSON
 			return getVaultsHandler(cmd).GetItem(cmd.Context(), args[0], args[1], wait, nil, resolveProjectSelection(project), vaultOutput(cmd), open)
 		}}
 	walletGet.Flags().Int64("wait", 0, "hold while pending for up to this many seconds (0-60); observe only")
-	walletGet.Flags().Bool("open", false, "open a returned https enrollment url")
+	walletGet.Flags().Bool("open", false, "open a returned https enrollment url; cardholder use only, agents must share privately")
 	addVaultJSONOutputFlag(walletGet)
 	wallets.AddCommand(walletCreate, walletGet, methods)
 
@@ -422,7 +424,7 @@ an AgentCard recovery item that permits abandonment must be deleted after explic
 				return err
 			}
 			if update && string(spec["provider"]) == `"kernel"` {
-				return fmt.Errorf("kernel card updates are not supported; create a new card item for a new purchase")
+				return fmt.Errorf("kernel card updates are not supported; " + kernelReplacementHelp)
 			}
 			return getVaultsHandler(cmd).SaveCard(cmd.Context(), args[0], args[1], param.Override[kernel.CardVaultItemSpecUnionParam](spec), update, vaultOutput(cmd))
 		}}

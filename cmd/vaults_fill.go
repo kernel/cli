@@ -96,7 +96,7 @@ const vaultFillNotWritten = "no fields were written by this request; correct the
 
 var vaultFillRejected = map[int]string{400: vaultFillNotWritten, 403: vaultFillNotWritten, 404: vaultFillNotWritten, 409: vaultFillNotWritten}
 
-func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFillParams, output string) error {
+func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFillParams, output string, provider string) error {
 	request := kernel.FillVaultItemOperationRequestParam{
 		BrowserID: params.BrowserID,
 		Type:      kernel.FillVaultItemOperationRequestTypeFill,
@@ -117,7 +117,15 @@ func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFil
 	}
 	response, err := c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, OfFill: &request}, option.WithMaxRetries(0))
 	if err != nil {
-		return vaultOperationRequestError(err, "fill", vaultFillErrorMessages, vaultFillRejected, vaultFillUncertain)
+		messages := vaultFillErrorMessages
+		if provider == "kernel" {
+			messages = make(map[string]string, len(vaultFillErrorMessages))
+			for code, message := range vaultFillErrorMessages {
+				messages[code] = message
+			}
+			messages["field_unavailable"] = "kernel cards have no stored billing fields; remove unsupported bindings and enter billing details on the merchant page"
+		}
+		return vaultOperationRequestError(err, "fill", messages, vaultFillRejected, vaultFillUncertain)
 	}
 	if response == nil {
 		return fmt.Errorf("empty fill result; %s", vaultFillUncertain)

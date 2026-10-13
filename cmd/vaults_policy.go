@@ -20,8 +20,16 @@ type vaultItemActions struct {
 	Operations       []vaultItemOperation
 }
 
-// Execution and human output use this policy; JSON preserves the API-advertised
-// fields through the separate display-safe projection.
+func (a vaultItemActions) advertises(operation string) bool {
+	for _, op := range a.Operations {
+		if op.Type == operation {
+			return true
+		}
+	}
+	return false
+}
+
+// Recovery exposes only the explicitly supported restart operation on every surface.
 func effectiveVaultItemActions(item *kernel.VaultItemUnion) (vaultItemActions, error) {
 	var fields struct {
 		Operations []vaultItemOperation `json:"available_operations"`

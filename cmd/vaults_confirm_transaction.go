@@ -3,9 +3,12 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"time"
 )
+
+var vaultCurrencyPattern = regexp.MustCompile(`^[A-Z]{3}$`)
 
 type vaultConfirmTransactionParams struct {
 	Type            string `json:"type"`
@@ -33,13 +36,8 @@ func parseVaultConfirmTransactionParams(raw string) (*vaultConfirmTransactionPar
 		return nil, fmt.Errorf("amount must be an integer between 0 and 50000 minor units, no greater than the approved amount")
 	}
 	params.Amount = *amount
-	if json.Unmarshal(object["currency"], &params.Currency) != nil || len(params.Currency) != 3 {
+	if json.Unmarshal(object["currency"], &params.Currency) != nil || !vaultCurrencyPattern.MatchString(params.Currency) {
 		return nil, fmt.Errorf("currency must be a three-letter uppercase code")
-	}
-	for _, letter := range params.Currency {
-		if letter < 'A' || letter > 'Z' {
-			return nil, fmt.Errorf("currency must be a three-letter uppercase code")
-		}
 	}
 	if json.Unmarshal(object["occurred_at"], &params.OccurredAt) != nil {
 		return nil, fmt.Errorf("occurred_at must be an RFC3339 timestamp")

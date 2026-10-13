@@ -44,7 +44,7 @@ var vaultItemFields = vaultOutputFields{
 	"expanded":             {"payment_methods": vaultMethodFields},
 	"spec": {
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil, "checkout_origin": nil,
-		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil, "merchant_country": nil,
+		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil, "merchant_country": nil, "merchant_category": nil, "merchant_category_code": nil,
 		"context": nil, "expires_at": nil, "description": nil, "account": nil, "connection_id": nil,
 		"requests":        onePasswordRequestFields,
 		"fields":          vaultFieldsOf("name label type required sensitive"),
@@ -137,6 +137,41 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 				return nil, err
 			}
 			result[key] = filtered
+		}
+	}
+	if _, item := fields["available_operations"]; item {
+		var state struct {
+			Status string `json:"status"`
+		}
+		if json.Unmarshal(result["state"], &state) == nil && state.Status == "recovery_required" {
+			var operations []vaultItemOperation
+			if err := json.Unmarshal(result["available_operations"], &operations); err != nil {
+				return nil, err
+			}
+			allowed := make([]vaultItemOperation, 0)
+			for _, op := range operations {
+				if op.Type == "restart_verification" {
+					allowed = append(allowed, op)
+				}
+			}
+			result["available_operations"], _ = json.Marshal(allowed)
+			delete(result, "action")
+			var stateFields vaultJSON
+			if err := json.Unmarshal(result["state"], &stateFields); err != nil {
+				return nil, err
+			}
+			for _, field := range []string{"authorization", "preparation"} {
+				if len(stateFields[field]) == 0 || string(stateFields[field]) == "null" {
+					continue
+				}
+				var detail vaultJSON
+				if err := json.Unmarshal(stateFields[field], &detail); err != nil {
+					return nil, err
+				}
+				delete(detail, "approval_url")
+				stateFields[field], _ = json.Marshal(detail)
+			}
+			result["state"], _ = json.Marshal(stateFields)
 		}
 	}
 	var itemType string
@@ -448,8 +483,8 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 
 func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemActions) {
 	if actions.RecoveryRequired {
-		guidance := "do not retry, delete, or replace it. reconcile with the provider or support; no reset operation exists."
-		if len(actions.Operations) > 0 {
+		guidance := kernelSupportGuidance
+		if actions.advertises("restart_verification") {
 			guidance = vaultRecoveryHelp
 		}
 		pterm.Warning.Println("recovery_required: the original operation is unresolved, not declined or expired. " + guidance)
@@ -499,7 +534,14 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	}
 	if item.Type == "card" {
 		if item.Spec.Provider == "kernel" {
-			pterm.Info.Println("Visa may require the returned spend_approval action; observe readiness with items get --wait 60. ready means a one-time code is available, not that the merchant charged the card. fill and submit checkout before expires_at; do not retry uncertain authorizations.")
+			switch item.State.Status {
+			case "requested", "pending_authorization", "ready":
+				pterm.Info.Println("Visa may require the returned spend_approval action; share it privately, never open it for the cardholder. ready means a one-time code is available, not that the merchant charged the card. fill and submit checkout before expires_at.")
+			}
+			switch item.State.Status {
+			case "ready", "declined", "expired", "consumed":
+				pterm.Info.Println(kernelTerminalHelp)
+			}
 		}
 		if item.State.JSON.Preparation.Valid() {
 			switch item.State.Status {
@@ -518,14 +560,14 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 			pterm.Info.Println("aliases are non-secret checkout values. use only in a browser created with this vault attached; ready does not mean paid.")
 		}
 		if item.Spec.Provider == "kernel" {
-			pterm.Info.Println("after the user submits checkout, report the observed outcome once with confirm_transaction when advertised. never infer payment success from fill; do not report or retry unknown outcomes. kernel cards have no stored billing fields; billing_* returns field_unavailable. enter billing details on the merchant page.")
+			pterm.Info.Println(kernelTransactionHelp + ". kernel cards have no stored billing fields; billing_* returns field_unavailable. enter billing details on the merchant page.")
 		} else {
 			pterm.Info.Println("inspect items events for payment outcomes. never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")
 		}
 	} else {
 		wallet := item.AsWallet()
 		if item.Spec.Provider == "kernel" {
-			pterm.Info.Println("share the hosted card_enrollment url with the cardholder. connected does not imply token eligibility; inspect wallets payment-methods for eligible and reasons before requesting a card.")
+			pterm.Info.Println(kernelWalletHelp)
 		}
 		for _, expansion := range wallet.AvailableExpansions {
 			pterm.Printf("available expansion: %s — %s\n", expansion.Type, expansion.Description)
@@ -555,7 +597,7 @@ func printVaultPaymentMethods(provider string, methods []kernel.VaultPaymentMeth
 	}
 	PrintTableNoPad(rows, true)
 	if provider == "kernel" {
-		pterm.Info.Println("kernel cards use the wallet key, not a payment method id. wait for single_use_card.eligible before requesting a card; reasons explain ineligibility. missing capability means unknown, not eligible.")
+		pterm.Info.Println("kernel cards use the wallet key, not a payment method id. " + kernelEligibilityHelp)
 	} else {
 		pterm.Info.Println("select an id explicitly in the card --spec json: Link uses payment_method_id; AgentCard uses card_id (or omit it for cardholder selection). capabilities are advisory; missing means unknown, not ineligible.")
 	}
