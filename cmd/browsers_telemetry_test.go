@@ -36,11 +36,13 @@ func captureStdout(t *testing.T, fn func()) string {
 
 type FakeBrowserTelemetryService struct {
 	StreamFunc           func() *ssestream.Stream[kernel.BrowserTelemetryStreamResponse]
+	LastStreamQuery      kernel.BrowserTelemetryStreamParams
 	EventsFunc           func(ctx context.Context, id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse], error)
 	EventsAutoPagingFunc func(id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) *pagination.OffsetPaginationAutoPager[kernel.BrowserTelemetryEventsResponse]
 }
 
 func (f *FakeBrowserTelemetryService) StreamStreaming(ctx context.Context, id string, query kernel.BrowserTelemetryStreamParams, opts ...option.RequestOption) *ssestream.Stream[kernel.BrowserTelemetryStreamResponse] {
+	f.LastStreamQuery = query
 	if f.StreamFunc != nil {
 		return f.StreamFunc()
 	}
@@ -248,6 +250,28 @@ func TestTelemetryStream_TypesFilterDropsNonMatching(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Contains(t, outBuf.String(), "network_response")
 	assert.NotContains(t, outBuf.String(), "network_request")
+}
+
+func TestTelemetryStream_TypesSentToServer(t *testing.T) {
+	setupStdoutCapture(t)
+	fakeBrowsers := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return &kernel.BrowserGetResponse{SessionID: id}, nil
+	}}
+	fakeTelemetry := &FakeBrowserTelemetryService{}
+	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}
+
+	err := b.TelemetryStream(context.Background(), BrowsersTelemetryStreamInput{
+		Identifier: "session123",
+		Types:      []string{"captcha_solve_started", "captcha_challenge_result"},
+		Seq:        -1,
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"captcha_solve_started", "captcha_challenge_result"}, fakeTelemetry.LastStreamQuery.Type)
+	// The stream endpoint accepts comma-joined types, which is how the SDK sends them.
+	query, err := fakeTelemetry.LastStreamQuery.URLQuery()
+	assert.NoError(t, err)
+	assert.Equal(t, "captcha_solve_started,captcha_challenge_result", query.Get("type"))
 }
 
 func TestTelemetryStream_SeqZeroErrors(t *testing.T) {
