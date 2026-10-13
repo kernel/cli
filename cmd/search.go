@@ -69,6 +69,10 @@ func newSearchCommand() *cobra.Command {
 	contents.Flags().String("content-browser-mode", "", "Browser retrieval mode: curl or render")
 	contents.MarkFlagsMutuallyExclusive("result-ids", "limit")
 	contents.MarkFlagsOneRequired("result-ids", "limit")
+	addJSONOutputFlag(cmd)
+	addJSONOutputFlag(get)
+	addJSONOutputFlag(providers)
+	addJSONOutputFlag(contents)
 	cmd.AddCommand(get, providers, contents)
 	return cmd
 }
@@ -211,6 +215,10 @@ func validateSearchQuery(query string) error {
 }
 
 func executeSearchRequest(cmd *cobra.Command, method, path string, body json.RawMessage) error {
+	output, _ := cmd.Flags().GetString("output")
+	if err := validateJSONOutput(output); err != nil {
+		return err
+	}
 	client := getKernelClient(cmd)
 	var response json.RawMessage
 	var opts []option.RequestOption
