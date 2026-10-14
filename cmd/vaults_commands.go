@@ -189,10 +189,14 @@ each vault has its own key; it is created on first request and may be cached.`,
 	invoke := &cobra.Command{Use: "invoke <vault> <key> <operation>", Short: "invoke an operation advertised by an item", Args: cobra.ExactArgs(3), PreRunE: vaultPreRun,
 		Long: `retrieve the item and invoke only an operation listed in available_operations.
 collect returns a time-scoped url for the full credential form without clearing values.
-authorize sends {"type":"authorize"} for payment authorization.
+authorize sends {"type":"authorize"} for payment authorization. for a Link card, optionally pass
+--params with browser_id and page_url together while the browser is on the final checkout page:
+kernel inspects that checkout, chooses how the credential is delivered, and limits fill to that
+checkout's origin. omitting both issues a virtual card that fills any page on the merchant origin.
+once approval has been requested, browser_id and page_url are ignored. kernel cards do not accept them.
 read the operation description and follow any approval requirements before invoking.
 fill requires --params json or --spec-file <path|-> with browser_id (session id, not name)
-and 1-32 ordered fields (field, selector). do not include type, values, or frame ids.
+and, when the item's advertised fill operation requires them, up to 32 ordered fields (field, selector). do not include type, values, or frame ids.
 the vault must already be attached to the browser. page_url selects an existing page;
 fill never navigates. credentials use declared field names, must omit format, and may
 omit page_url only when the api can resolve a unique page. totp codes stay server-generated.
@@ -282,6 +286,7 @@ JSON
 {"browser_id":"<browser-id>","tool_ref":"<tool-ref>","page_url":"https://example.com/login","input":{"email":null,"password":null},"bindings":[{"field":"email","input_path":"/email"},{"field":"password","input_path":"/password"}]}
 JSON
   kernel vaults items invoke checkout order-1 authorize --open
+  kernel vaults items invoke checkout order-1 authorize --params '{"browser_id":"<browser-id>","page_url":"https://shop.example/checkout"}'
   kernel vaults items invoke user-vault github 1pw_create_access_request --params '{"reason":"Sign in to GitHub"}'
   kernel vaults items invoke user-vault github 1pw_access_request_status --params '{"timeout_seconds":60}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login"}'
@@ -298,7 +303,7 @@ JSON
 			}
 			if cmd.Flags().Changed("spec-file") {
 				if !vaultOperationTakesParams(args[2]) {
-					return fmt.Errorf("--spec-file is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, and 1Password operations with parameters")
+					return fmt.Errorf("--spec-file is only supported for fill, authorize, webmcp_invoke, prepare_checkout, confirm_transaction, and 1Password operations with parameters")
 				}
 				data, err := readVaultJSONFile(cmd, "spec-file")
 				if err != nil {
@@ -312,7 +317,7 @@ JSON
 			}
 			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], params, vaultOutput(cmd), open)
 		}}
-	invoke.Flags().String("params", "", "operation parameters json for fill, webmcp_invoke, prepare_checkout, confirm_transaction, or 1pw_* (maximum 128 KiB); omit type and credential values; 1pw_update_access_token requires --spec-file")
+	invoke.Flags().String("params", "", "operation parameters json for fill, authorize, webmcp_invoke, prepare_checkout, confirm_transaction, or 1pw_* (maximum 128 KiB); omit type and credential values; 1pw_update_access_token requires --spec-file")
 	invoke.Flags().String("spec-file", "", "operation parameters json file (use '-' for stdin; maximum 128 KiB)")
 	invoke.MarkFlagsMutuallyExclusive("params", "spec-file")
 	invoke.Flags().Bool("open", false, "open a returned https action url; cardholder links are human-only, agents must share privately")

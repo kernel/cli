@@ -13,6 +13,7 @@ import (
 
 type vaultOperationParams struct {
 	Fill               *vaultFillParams
+	Authorize          *kernel.AuthorizeVaultItemOperationRequestParam
 	WebMCP             *kernel.WebmcpInvokeVaultItemOperationRequestParam
 	Checkout           *kernel.VaultCheckoutContextParam
 	ConfirmTransaction *vaultConfirmTransactionParams
@@ -26,13 +27,13 @@ func isOnePasswordOperation(operation string) bool {
 
 // vaultOperationTakesParams reports whether an operation accepts --params or --spec-file.
 func vaultOperationTakesParams(operation string) bool {
-	return operation == "fill" || operation == "webmcp_invoke" || operation == "prepare_checkout" || operation == "confirm_transaction" || (isOnePasswordOperation(operation) && operation != "1pw_recover")
+	return operation == "fill" || operation == "authorize" || operation == "webmcp_invoke" || operation == "prepare_checkout" || operation == "confirm_transaction" || (isOnePasswordOperation(operation) && operation != "1pw_recover")
 }
 
 type vaultFillParams struct {
 	BrowserID string           `json:"browser_id"`
 	PageURL   string           `json:"page_url,omitempty"`
-	Fields    []vaultFillField `json:"fields"`
+	Fields    []vaultFillField `json:"fields,omitempty"`
 	TimeoutMS *int             `json:"timeout_ms,omitempty"`
 }
 
@@ -142,14 +143,24 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 		}
 		return &vaultOperationParams{WebMCP: webMCP}, nil
 	}
+	if operation == "authorize" {
+		if !paramsSet {
+			return nil, nil
+		}
+		authorize, err := parseVaultAuthorizeParams(raw)
+		if err != nil {
+			return nil, err
+		}
+		return &vaultOperationParams{Authorize: authorize}, nil
+	}
 	if operation != "fill" {
 		if paramsSet {
-			return nil, fmt.Errorf("--params is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, and 1Password operations; authorize and restart_verification take no parameters")
+			return nil, fmt.Errorf("--params is only supported for fill, authorize, webmcp_invoke, prepare_checkout, confirm_transaction, and 1Password operations; restart_verification and collect take no parameters")
 		}
 		return nil, nil
 	}
 	if !paramsSet {
-		return nil, fmt.Errorf("fill requires --params or --spec-file with browser_id and fields")
+		return nil, fmt.Errorf("fill requires --params or --spec-file with browser_id and, when the item's fill operation requires them, fields")
 	}
 	fill, err := parseVaultFillParams(raw)
 	if err != nil {
@@ -181,9 +192,14 @@ func parseVaultFillParams(raw string) (*vaultFillParams, error) {
 			return nil, fmt.Errorf("timeout_ms must be an integer between 1 and 30000")
 		}
 	}
+	rawFields, present := object["fields"]
+	if !present {
+		// Some items fill without bindings; the advertised operation says when fields are needed.
+		return &params, nil
+	}
 	var fields []json.RawMessage
-	if json.Unmarshal(object["fields"], &fields) != nil || len(fields) < 1 || len(fields) > 32 {
-		return nil, fmt.Errorf("fields must be an array of 1-32 field bindings")
+	if json.Unmarshal(rawFields, &fields) != nil || fields == nil || len(fields) > 32 {
+		return nil, fmt.Errorf("fields must be an array of at most 32 field bindings")
 	}
 	params.Fields = make([]vaultFillField, 0, len(fields))
 	for i, rawField := range fields {
@@ -206,6 +222,36 @@ func parseVaultFillParams(raw string) (*vaultFillParams, error) {
 		params.Fields = append(params.Fields, binding)
 	}
 	return &params, nil
+}
+
+// parseVaultAuthorizeParams accepts the optional Link checkout context for authorize.
+func parseVaultAuthorizeParams(raw string) (*kernel.AuthorizeVaultItemOperationRequestParam, error) {
+	object, err := vaultParamsObject(raw, "browser_id page_url")
+	if err != nil {
+		return nil, err
+	}
+	request := &kernel.AuthorizeVaultItemOperationRequestParam{Type: kernel.AuthorizeVaultItemOperationRequestTypeAuthorize}
+	if len(object) == 0 {
+		return request, nil
+	}
+	rawBrowser, hasBrowser := object["browser_id"]
+	rawURL, hasURL := object["page_url"]
+	if !hasBrowser || !hasURL {
+		return nil, fmt.Errorf("authorize requires browser_id and page_url together, or neither")
+	}
+	var browserID, pageURL string
+	if json.Unmarshal(rawBrowser, &browserID) != nil || strings.TrimSpace(browserID) == "" {
+		return nil, fmt.Errorf("browser_id must be a non-empty browser session ID, not a name")
+	}
+	if json.Unmarshal(rawURL, &pageURL) != nil {
+		return nil, fmt.Errorf("page_url must be the exact absolute URL of the final checkout page")
+	}
+	if u, err := url.ParseRequestURI(pageURL); err != nil || u.Scheme == "" {
+		return nil, fmt.Errorf("page_url must be the exact absolute URL of the final checkout page")
+	}
+	request.BrowserID = kernel.Opt(browserID)
+	request.PageURL = kernel.Opt(pageURL)
+	return request, nil
 }
 
 func parseOnePasswordOperationParams(operation, raw string) (*kernel.VaultItemPerformOperationParams, error) {

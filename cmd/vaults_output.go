@@ -37,7 +37,7 @@ var vaultMethodFields = vaultOutputFields{
 	"capabilities": {"single_use_card": vaultFieldsOf("eligible reasons")},
 }
 var vaultItemFields = vaultOutputFields{
-	"id": nil, "key": nil, "type": nil, "version": nil, "created_at": nil, "updated_at": nil, "expires_at": nil,
+	"id": nil, "key": nil, "type": nil, "version": nil, "created_at": nil, "updated_at": nil, "expires_at": nil, "description": nil,
 	"available_operations": vaultOperationFields,
 	"available_expansions": vaultOperationFields,
 	"action":               vaultFieldsOf("name url expires_at instructions"),
@@ -335,7 +335,7 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 	}
 	for _, op := range actions.Operations {
 		command := prefix
-		if vaultOperationTakesParams(op.Type) {
+		if vaultOperationTakesParams(op.Type) && op.Type != "authorize" { // authorize params are optional
 			command += " --params '<json>'"
 		}
 		pterm.Printf("invoke: %s -- %s %s %s\n", command, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
@@ -492,6 +492,9 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 			pterm.Printf("available operation: %s — %s\n", op.Type, op.Description)
 		}
 		return
+	}
+	if item.Description != "" {
+		pterm.Printf("description: %s\n", item.Description)
 	}
 	if item.Type == "wallet" && item.Spec.Provider == "link" && item.Spec.Authorization.Client.Type == "customer_managed" && item.State.Status == "degraded" {
 		pterm.Warning.Println("imported grant is degraded; there is no in-place reauthorization. import a fresh backend OAuth grant under a new wallet key for new work only. existing cards stay bound to the old wallet; retain them and reconcile uncertain payments before further action.")
