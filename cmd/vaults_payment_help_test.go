@@ -17,7 +17,7 @@ func TestVaultPaymentHelpProviderBoundaries(t *testing.T) {
 		{
 			name: "vaults",
 			want: []string{
-				"attachment is required for fill",
+				"attachment is required for authorizing a Link card at a checkout and for fill",
 				"ready Link and kernel cards use only advertised fill",
 				"neither exposes aliases or supports egress substitution",
 				"AgentCard-only checkout aliases support egress substitution with checkout hold, approval, and replay",

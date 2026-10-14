@@ -402,7 +402,7 @@ func TestVaultNoSDKRetriesAndAPIErrorMessages(t *testing.T) {
 			var apiErr *kernel.Error
 			require.ErrorAs(t, err, &apiErr)
 			assert.Equal(t, status, apiErr.StatusCode)
-			assert.Equal(t, "authorization_failed: Authorization service unavailable", util.CleanedUpSdkError{Err: err}.Error())
+			assert.Contains(t, util.CleanedUpSdkError{Err: err}.Error(), fmt.Sprintf("authorization_failed: authorize failed (http %d): Authorization service unavailable; ", status))
 		})
 	}
 }

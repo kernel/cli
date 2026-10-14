@@ -310,6 +310,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		}
 	}
 	if operation == "fill" {
+		if item.Type != "card" && len(params.Fill.Fields) == 0 {
+			return fmt.Errorf("fill for %s items requires 1-32 fields binding declared field names to selectors; fill was not invoked", item.Type)
+		}
 		return c.fill(ctx, vault, key, params.Fill, output, item.Spec.Provider)
 	}
 	if operation == "1pw_fill" {
@@ -337,6 +340,8 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		request.OfPrepareCheckout = &kernel.PrepareCheckoutVaultItemOperationRequestParam{Type: "prepare_checkout", Checkout: *params.Checkout}
 	} else if operation == "collect" {
 		request.OfCollect = &kernel.CollectVaultItemOperationRequestParam{Type: "collect"}
+	} else if params != nil && params.Authorize != nil {
+		request.OfAuthorize = params.Authorize
 	} else {
 		// Preserve support for other advertised parameterless operations.
 		request.OfAuthorize = &kernel.AuthorizeVaultItemOperationRequestParam{Type: kernel.AuthorizeVaultItemOperationRequestType(operation)}
@@ -351,6 +356,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		}
 		if item.Spec.Provider == "kernel" {
 			return kernelVaultRequestError(err, operation)
+		}
+		if operation == "authorize" && item.Type == "card" && item.Spec.Provider == "link" {
+			return linkAuthorizeError(err)
 		}
 		return util.CleanedUpSdkError{Err: err}
 	}
