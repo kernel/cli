@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 
 	kernel "github.com/kernel/kernel-go-sdk"
@@ -19,11 +20,11 @@ const linkCardFlowHelp = `Link card checkout (each item's available_operations d
 2. create the card with cards create --provider link. this does not contact Link; the
    card is requested and advertises authorize. to change the amount or merchant before
    authorizing, use cards update.
-3. authorize with items invoke <vault> <key> authorize --browser-id <browser-session-id>
-   --page-url <exact current top-level checkout url>. KERNEL inspects the checkout, chooses
-   how the credential is delivered (a Link Pay Token or a virtual card), limits fill to that
-   checkout's origin, and sends the user an approval request. do not inspect or invoke
-   WebMCP yourself.
+3. once the user has approved this purchase, authorize with items invoke <vault> <key>
+   authorize --browser-id <browser-session-id> --page-url <exact current top-level checkout
+   url>. KERNEL inspects the checkout, chooses how the credential is delivered (a Link Pay
+   Token or a virtual card), limits fill to that checkout's origin, and sends the user an
+   approval request. do not inspect or invoke WebMCP yourself.
 4. share the approval url from the item's action with the user, then use items get --wait 60
    until fill is advertised. to re-check sooner, invoke authorize again; checkout context is
    not needed, and re-checking never creates another payment request.
@@ -51,6 +52,11 @@ var linkAuthorizeBrowserCodes = map[string]bool{
 	"destination_denied": true, "timeout": true, "browser_error": true,
 }
 
+// linkCheckoutPageURL matches the API's page_url pattern for authorize.
+var linkCheckoutPageURL = regexp.MustCompile(`^https://[^/?#@*\s]+(?:[/?#][^\s]*)?$`)
+
+const linkAuthorizeServerErrorGuidance = "if the browser was not created with --vault for this vault, was deleted, or is a pool browser that is not leased, checkout inspection cannot run: create a browser with --vault, open the checkout in it, and authorize again with that browser's session id. otherwise re-get the item and follow its advertised operations"
+
 // parseVaultAuthorizeCheckout returns the authorize request for --browser-id and --page-url,
 // or nil when neither flag is set.
 func parseVaultAuthorizeCheckout(cmd *cobra.Command, operation string) (*kernel.AuthorizeVaultItemOperationRequestParam, error) {
@@ -59,7 +65,10 @@ func parseVaultAuthorizeCheckout(cmd *cobra.Command, operation string) (*kernel.
 		return nil, nil
 	}
 	if operation != "authorize" {
-		return nil, fmt.Errorf("--browser-id and --page-url are only supported for authorize; pass %s inputs with --params or --spec-file", operation)
+		if vaultOperationTakesParams(operation) {
+			return nil, fmt.Errorf("--browser-id and --page-url are only supported for authorize; pass %s inputs with --params or --spec-file", operation)
+		}
+		return nil, fmt.Errorf("--browser-id and --page-url are only supported for authorize")
 	}
 	if browserSet != pageSet {
 		return nil, fmt.Errorf("--browser-id and --page-url must be passed together; authorize was not invoked")
@@ -69,7 +78,7 @@ func parseVaultAuthorizeCheckout(cmd *cobra.Command, operation string) (*kernel.
 	if strings.TrimSpace(browserID) == "" {
 		return nil, fmt.Errorf("--browser-id must be a non-empty browser session ID, not a name")
 	}
-	if u, err := url.Parse(pageURL); err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+	if _, err := url.Parse(pageURL); err != nil || !linkCheckoutPageURL.MatchString(pageURL) {
 		return nil, fmt.Errorf("--page-url must be the exact current top-level https checkout URL")
 	}
 	return &kernel.AuthorizeVaultItemOperationRequestParam{
@@ -80,10 +89,11 @@ func parseVaultAuthorizeCheckout(cmd *cobra.Command, operation string) (*kernel.
 }
 
 // linkAuthorizeError keeps the API's error code and message and adds the recovery step.
-func linkAuthorizeError(err error) error {
+// checkout reports whether the request carried browser_id and page_url.
+func linkAuthorizeError(err error, checkout bool) error {
 	var apiErr *kernel.Error
 	if !errors.As(err, &apiErr) {
-		return kernelVaultTransportError{message: "authorize result unavailable; re-get the item and follow its advertised operations. once approval is requested, authorize only re-checks it and never creates another payment request", cause: err}
+		return fmt.Errorf("authorize result unavailable (%w); re-get the item and follow its advertised operations. once approval is requested, authorize only re-checks it and never creates another payment request", err)
 	}
 	var body struct {
 		Code    string `json:"code"`
@@ -95,7 +105,9 @@ func linkAuthorizeError(err error) error {
 	case linkAuthorizeBrowserCodes[body.Code]:
 		guidance = linkAuthorizeBrowserGuidance
 	case apiErr.StatusCode == 429:
-		guidance = "wait, then authorize again"
+		guidance = retryAfterWait(apiErr) + ", then authorize again"
+	case checkout && apiErr.StatusCode >= 500:
+		guidance = linkAuthorizeServerErrorGuidance
 	case body.Code == "invalid_request":
 		guidance = "fix the reported input, then authorize again. if it reports that the amount exceeds the Link virtual card limit, delete this card and tell the user this checkout cannot be paid with a Link virtual card"
 	default:

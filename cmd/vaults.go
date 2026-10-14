@@ -309,9 +309,13 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 			return fmt.Errorf("confirm_transaction currency must match the approved purchase currency and amount must not exceed the approved purchase amount; operation was not invoked")
 		}
 	}
+	linkCard := item.Type == "card" && item.Spec.Provider == "link"
+	if params != nil && params.Authorize != nil && !linkCard {
+		return fmt.Errorf("--browser-id and --page-url only apply to Link cards; authorize was not invoked")
+	}
 	if operation == "fill" {
-		if item.Type != "card" && len(params.Fill.Fields) == 0 {
-			return fmt.Errorf("fill for %s items requires 1-32 fields binding declared field names to selectors; fill was not invoked", item.Type)
+		if !linkCard && len(params.Fill.Fields) == 0 {
+			return fmt.Errorf("fill for this item requires 1-32 fields binding field names to selectors; only a Link card's fill may omit them. fill was not invoked")
 		}
 		return c.fill(ctx, vault, key, params.Fill, output, item.Spec.Provider)
 	}
@@ -357,8 +361,8 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		if item.Spec.Provider == "kernel" {
 			return kernelVaultRequestError(err, operation)
 		}
-		if operation == "authorize" && item.Type == "card" && item.Spec.Provider == "link" {
-			return linkAuthorizeError(err)
+		if operation == "authorize" && linkCard {
+			return linkAuthorizeError(err, params != nil && params.Authorize != nil)
 		}
 		return util.CleanedUpSdkError{Err: err}
 	}

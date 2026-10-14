@@ -31,7 +31,7 @@ func TestLinkCardFlowHelpOrder(t *testing.T) {
 	for _, step := range []string{
 		"1. reach the final checkout page",
 		"2. create the card with cards create --provider link",
-		"3. authorize with items invoke <vault> <key> authorize --browser-id <browser-session-id> --page-url",
+		"3. once the user has approved this purchase, authorize with items invoke <vault> <key> authorize --browser-id <browser-session-id> --page-url",
 		"4. share the approval url from the item's action",
 		"5. fill as the item's fill description says",
 		"6. submit the checkout yourself; fill never submits payment",
@@ -118,12 +118,18 @@ func TestVaultLinkAuthorizeCheckoutValidation(t *testing.T) {
 		"http page":        {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "http://shop.example/checkout"}, "--page-url must be"},
 		"relative page":    {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "/checkout"}, "--page-url must be"},
 		"credentials page": {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "https://user:pass@shop.example/"}, "--page-url must be"},
-		"fill":             {[]string{"fill", "--params", linkPayTokenFillParams, "--browser-id", "browser-1", "--page-url", "https://shop.example/checkout"}, "only supported for authorize"},
+		"space in path":    {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "https://shop.example/check out"}, "--page-url must be"},
+		"glob host":        {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "https://*.shop.example/checkout"}, "--page-url must be"},
+		"fill":             {[]string{"fill", "--params", linkPayTokenFillParams, "--browser-id", "browser-1", "--page-url", "https://shop.example/checkout"}, "only supported for authorize; pass fill inputs with --params"},
+		"restart":          {[]string{"restart_verification", "--browser-id", "browser-1", "--page-url", "https://shop.example/checkout"}, "--browser-id and --page-url are only supported for authorize"},
 		"params":           {[]string{"authorize", "--params", linkPayTokenFillParams}, "authorize takes --browser-id and --page-url"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, _, err := executeVaultCommand(t, client, append([]string{"vaults", "items", "invoke", "checkout", "order-1"}, tc.args...)...)
 			require.ErrorContains(t, err, tc.want)
+			if name == "restart" {
+				assert.NotContains(t, err.Error(), "--params")
+			}
 		})
 	}
 }
@@ -134,32 +140,79 @@ func TestVaultLinkAuthorizeErrorGuidance(t *testing.T) {
 		status        int
 		code, message string
 		want          string
+		retryAfter    string
+		noCheckout    bool
 	}{
-		{400, "page_not_found", "no open tab is at page_url; open the checkout page in the browser and authorize again", linkAuthorizeBrowserGuidance},
-		{400, "ambiguous_page", "more than one tab is at page_url; close the extra tabs and authorize again", linkAuthorizeBrowserGuidance},
-		{404, "browser_not_found", "browser not found", linkAuthorizeBrowserGuidance},
-		{409, "browser_unavailable", "browser is unavailable for checkout inspection", linkAuthorizeBrowserGuidance},
-		{403, "destination_denied", "checkout destination is not authorized", linkAuthorizeBrowserGuidance},
-		{400, "timeout", "checkout inspection failed", linkAuthorizeBrowserGuidance},
-		{500, "browser_error", "checkout inspection failed", linkAuthorizeBrowserGuidance},
-		{400, "invalid_request", "amount exceeds the Link virtual card limit", "fix the reported input, then authorize again. if it reports that the amount exceeds the Link virtual card limit, delete this card and tell the user this checkout cannot be paid with a Link virtual card"},
-		{429, "rate_limited", "too many requests", "wait, then authorize again"},
+		{400, "page_not_found", "no open tab is at page_url; open the checkout page in the browser and authorize again", linkAuthorizeBrowserGuidance, "", false},
+		{400, "ambiguous_page", "more than one tab is at page_url; close the extra tabs and authorize again", linkAuthorizeBrowserGuidance, "", false},
+		{404, "browser_not_found", "browser not found", linkAuthorizeBrowserGuidance, "", false},
+		{409, "browser_unavailable", "browser is unavailable for checkout inspection", linkAuthorizeBrowserGuidance, "", false},
+		{403, "destination_denied", "checkout destination is not authorized", linkAuthorizeBrowserGuidance, "", false},
+		{400, "timeout", "checkout inspection failed", linkAuthorizeBrowserGuidance, "", false},
+		{500, "browser_error", "checkout inspection failed", linkAuthorizeBrowserGuidance, "", false},
+		{400, "invalid_request", "amount exceeds the Link virtual card limit", "fix the reported input, then authorize again. if it reports that the amount exceeds the Link virtual card limit, delete this card and tell the user this checkout cannot be paid with a Link virtual card", "", false},
+		{429, "rate_limited", "too many requests", "wait for the rate limit to clear, then authorize again", "", false},
+		{429, "rate_limited", "too many requests", "wait until Retry-After (30) has elapsed, then authorize again", "30", false},
+		{500, "provider_error", "failed to perform item operation", linkAuthorizeServerErrorGuidance, "", false},
+		{500, "provider_error", "failed to perform item operation", "re-get the item and follow its advertised operations", "", true},
 	} {
-		t.Run(tc.code, func(t *testing.T) {
+		t.Run(fmt.Sprint(tc.code, tc.retryAfter, tc.noCheckout), func(t *testing.T) {
 			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				if r.Method == http.MethodGet {
 					_, _ = io.WriteString(w, requestedCardFixture)
 					return
 				}
+				if tc.retryAfter != "" {
+					w.Header().Set("Retry-After", tc.retryAfter)
+				}
 				w.WriteHeader(tc.status)
 				_, _ = fmt.Fprintf(w, `{"code":%q,"message":%q}`, tc.code, tc.message)
 			})
-			_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "authorize", "--browser-id", "browser-1", "--page-url", "https://shop.example/checkout")
+			args := []string{"vaults", "items", "invoke", "checkout", "order-1", "authorize"}
+			if !tc.noCheckout {
+				args = append(args, "--browser-id", "browser-1", "--page-url", "https://shop.example/checkout")
+			}
+			_, _, err := executeVaultCommand(t, client, args...)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), fmt.Sprintf("%s: authorize failed (http %d): %s; %s", tc.code, tc.status, tc.message, tc.want))
 		})
 	}
+}
+
+func TestVaultLinkAuthorizeTransportErrorKeepsCause(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, requestedCardFixture)
+			return
+		}
+		conn, _, err := w.(http.Hijacker).Hijack()
+		require.NoError(t, err)
+		_ = conn.Close()
+	})
+	_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "authorize", "--browser-id", "browser-1", "--page-url", "https://shop.example/checkout")
+	require.ErrorContains(t, err, "authorize result unavailable (")
+	assert.Contains(t, err.Error(), "EOF")
+	assert.Contains(t, err.Error(), "never creates another payment request")
+}
+
+func TestVaultCheckoutInputsRequireLinkCard(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	readyKernelCard := strings.Replace(strings.Replace(kernelCardFixture, `"status":"requested"`, `"status":"ready"`, 1), `{"type":"authorize","description":"Authorize this purchase"}`, `{"type":"authorize","description":"Authorize this purchase"},{"type":"fill","description":"Fill checkout fields."}`, 1)
+	calls := 0
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		assert.Equal(t, http.MethodGet, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, readyKernelCard)
+	})
+	_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "authorize", "--browser-id", "browser-1", "--page-url", "https://shop.example/checkout")
+	require.ErrorContains(t, err, "--browser-id and --page-url only apply to Link cards")
+	_, _, err = executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "fill", "--params", linkPayTokenFillParams)
+	require.ErrorContains(t, err, "only a Link card's fill may omit them")
+	assert.Equal(t, 2, calls)
 }
 
 func TestVaultLinkPayTokenFillOmitsFields(t *testing.T) {
@@ -213,7 +266,7 @@ func TestVaultFillWithoutFieldsRequiresFieldsForCredentials(t *testing.T) {
 		_, _ = io.WriteString(w, readyFillCredentialFixture)
 	})
 	_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "user-vault", "login", "fill", "--params", `{"browser_id":"browser-1"}`)
-	require.ErrorContains(t, err, "fill for credential items requires 1-32 fields")
+	require.ErrorContains(t, err, "fill for this item requires 1-32 fields")
 	assert.Equal(t, 1, calls)
 
 	_, _, err = executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "fill", "--params", `{"browser_id":"browser-1","page_url":"https://shop.example/checkout","fields":[]}`)

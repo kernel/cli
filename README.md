@@ -691,7 +691,8 @@ authoritative; `items get` prints them. The flow:
    }'
    ```
 
-4. Authorize at the checkout with the browser session ID and the exact current top-level
+4. Once the user has approved this purchase, and only when the item advertises `authorize`,
+   authorize at the checkout with the browser session ID and the exact current top-level
    checkout URL. Pass both flags or neither. KERNEL inspects the checkout, chooses how the
    credential is delivered (a Link Pay Token or a virtual card), limits fill to that checkout's
    origin, and sends the user an approval request. Do not inspect or invoke WebMCP yourself.
