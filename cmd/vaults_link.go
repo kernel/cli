@@ -31,7 +31,7 @@ const linkCardFlowHelp = `Link card checkout (each item's available_operations d
    Pay Token takes browser_id and page_url and omits fields; a virtual card also takes
    field/selector bindings.
 6. submit the checkout yourself; fill never submits payment. failed or unknown fills are safe
-   to retry: check the page first, and never retry in an automatic loop.
+   to retry, but only after checking the page and not in an automatic loop.
 if authorize returns page_not_found, ambiguous_page, browser_not_found, browser_unavailable,
 destination_denied, timeout, or browser_error, no payment request was made: make sure the
 checkout is open in exactly one tab at page_url, then authorize again. if checkout inspection

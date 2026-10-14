@@ -719,7 +719,7 @@ authoritative; `items get` prints them. The flow:
    ```
 
 7. Submit the checkout yourself; fill never submits payment. Failed or unknown fills are safe
-   to retry: check the page first, and never retry in an automatic loop.
+   to retry, but only after checking the page and not in an automatic loop.
 
 Recovery:
 
