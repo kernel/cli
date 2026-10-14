@@ -93,7 +93,8 @@ func parseVaultAuthorizeCheckout(cmd *cobra.Command, operation string) (*kernel.
 func linkAuthorizeError(err error, checkout bool) error {
 	var apiErr *kernel.Error
 	if !errors.As(err, &apiErr) {
-		return fmt.Errorf("authorize result unavailable (%w); re-get the item and follow its advertised operations. once approval is requested, authorize only re-checks it and never creates another payment request", err)
+		cause := kernelVaultErrorURL.ReplaceAllString(err.Error(), "[redacted url]")
+		return kernelVaultTransportError{message: fmt.Sprintf("authorize result unavailable (%s); re-get the item and follow its advertised operations. once approval is requested, authorize only re-checks it and never creates another payment request", cause), cause: err}
 	}
 	var body struct {
 		Code    string `json:"code"`

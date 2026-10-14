@@ -195,6 +195,8 @@ func TestVaultLinkAuthorizeTransportErrorKeepsCause(t *testing.T) {
 	_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "authorize", "--browser-id", "browser-1", "--page-url", "https://shop.example/checkout")
 	require.ErrorContains(t, err, "authorize result unavailable (")
 	assert.Contains(t, err.Error(), "EOF")
+	assert.Contains(t, err.Error(), "[redacted url]")
+	assert.NotContains(t, err.Error(), "http://")
 	assert.Contains(t, err.Error(), "never creates another payment request")
 }
 
