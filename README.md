@@ -1516,7 +1516,7 @@ Automated authentication for web services. The `run` command orchestrates the fu
   - `--show-content` - Print the extracted content text for each result (implies `--content`)
   - `--content-source <source>` - Retrieval source: `auto`, `provider`, or `browser`
   - `--content-format <format>` - Extracted content format: `markdown` or `text`
-  - `--content-max-chars <n>` - Per-result Unicode character limit after extraction
+  - `--content-max-chars <n>` - Per-result Unicode character limit after extraction (100–100000; default 10000)
   - `--content-max-age-hours <n>` - Maximum acceptable age of cached page content; `0` forces a live fetch
   - `--content-timeout-ms <ms>` - Per-result retrieval deadline
   - `--content-browser-id <id>` - Retrieve through an existing browser session (requires `--content-source browser`)

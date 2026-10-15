@@ -62,13 +62,17 @@ func newSearchCommand() *cobra.Command {
 	contents.Flags().Int("timeout-ms", 0, "Overall deadline across all selected results in milliseconds (1000–120000; default 60000)")
 	contents.Flags().String("content-source", "", "Content source: auto, provider, or browser (default auto)")
 	contents.Flags().String("content-format", "", "Content format: markdown or text")
-	contents.Flags().Int("content-max-chars", 0, "Per-result Unicode character limit after extraction")
+	contents.Flags().Int("content-max-chars", 0, "Per-result Unicode character limit after extraction (100–100000; default 10000)")
 	contents.Flags().Int("content-max-age-hours", 0, "For source auto, maximum age of retained provider content; 0 fetches every result through a browser")
 	contents.Flags().Int("content-timeout-ms", 0, "Per-result deadline in milliseconds, including capacity acquisition, retrieval, and extraction")
 	contents.Flags().String("content-browser-id", "", "Existing browser session to retrieve through (requires source auto or browser)")
 	contents.Flags().String("content-browser-mode", "", "Browser retrieval mode: curl or render")
 	contents.MarkFlagsMutuallyExclusive("result-ids", "limit")
 	contents.MarkFlagsOneRequired("result-ids", "limit")
+	addJSONOutputFlag(cmd)
+	addJSONOutputFlag(get)
+	addJSONOutputFlag(providers)
+	addJSONOutputFlag(contents)
 	cmd.AddCommand(get, providers, contents)
 	return cmd
 }
@@ -211,6 +215,10 @@ func validateSearchQuery(query string) error {
 }
 
 func executeSearchRequest(cmd *cobra.Command, method, path string, body json.RawMessage) error {
+	output, _ := cmd.Flags().GetString("output")
+	if err := validateJSONOutput(output); err != nil {
+		return err
+	}
 	client := getKernelClient(cmd)
 	var response json.RawMessage
 	var opts []option.RequestOption
