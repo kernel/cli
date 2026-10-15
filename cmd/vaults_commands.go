@@ -430,11 +430,12 @@ func newVaultCardCommand(update bool) *cobra.Command {
 kernel cards cannot be updated. other requested cards accept a replacement spec.
 pending issuance updates preserve omitted optional fields; explicit empty lists clear them. the api restricts fields after
 authorization starts; wallet/provider bindings cannot change. an uncertain update
-enters recovery_required and must not be retried. checkout cards can be edited
+enters recovery_required; delete the card and create a new one rather than retrying
+the update. checkout cards can be edited
 between authorizations, but a Link card authorized at a checkout cannot be updated:
 delete it and create a new one. identical creates return existing state without resetting it.
 never reconfigure the same item to retry a failed, timed-out, rejected, or indeterminate payment.
-an AgentCard recovery item that permits abandonment must be deleted after explicit user confirmation before creating a replacement.
+a recovery item that permits deletion (Link or kernel issuance, or AgentCard without an authorization id) must be deleted after explicit user confirmation before creating a replacement.
 
 ` + linkCardFlowHelp + "\n" + vaultSpecHelp + vaultCardSpecHelp,
 		Example: "  kernel vaults cards " + use + ` checkout order-1 \

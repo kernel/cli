@@ -465,7 +465,8 @@ TypeScript-style types, which must stay in sync with the [API spec](https://api.
 cannot be updated. Pending issuance updates preserve omitted optional fields; explicit empty lists clear them. Wallet/provider bindings and unsupported fields
 cannot change after authorization starts. Checkout cards can be edited between authorizations,
 but a Link card authorized at a checkout cannot be updated (the API returns 409): delete it and
-create a new one. An uncertain update enters `recovery_required` and must not be retried.
+create a new one. An uncertain update enters `recovery_required`; delete the card and create a
+new one rather than retrying the update.
 Identical card creation returns its existing state without polling, reauthorizing, or resetting
 recovery. Link fill is limited to the origin of the checkout the card was authorized at;
 AgentCard checkout domains remain provider-assigned; Kernel fill is locked to the exact origin
@@ -535,10 +536,14 @@ If `restart_verification` is advertised in `available_operations`, invoke with e
 user approval each time to get a fresh `spend_approval` link. The cardholder must verify
 and approve spending again; restart grants no spend consent. If the response is unclear,
 re-get and share any new action; invoke once more only if still advertised with renewed
-user approval. Otherwise do not retry payment, delete or replace the item. Contact
-support@kernel.sh privately with project, vault, key, status_reason and relevant event
-timestamps (never card data, API keys or capability URLs) to reconcile the original
-operation and establish whether a new purchase is safe; never assume a new card is safe.
+user approval. Otherwise do not retry payment or the uncertain update. A Link or Kernel
+card in recovery for issuance, or an AgentCard card whose checkout create returned no
+authorization ID, may be deleted after explicit user confirmation and replaced by one new
+card under a new key. The cardholder may see an approval request for the original card and
+should approve only the new one. If the API refuses deletion (for example, Kernel recovery
+while reporting a merchant transaction), contact support@kernel.sh privately with project,
+vault, key, status_reason and relevant event timestamps (never card data, API keys or
+capability URLs) to reconcile the original operation; never assume a new card is safe.
 Unresolved child cards can block wallet and vault deletion.
 Time passing or deletion is not evidence of non-execution.
 
@@ -583,8 +588,10 @@ kernel vaults items invoke checkout order-1 restart_verification --open
 ```
 
 This rotates the approval link locally without a provider call, only after a classified
-initial attestation failure with proof no intent was dispatched. Otherwise do not retry,
-delete, or replace the item. Always check `available_operations` rather than assuming
+initial attestation failure with proof no intent was dispatched. Otherwise do not retry;
+with user confirmation, delete the card and create a new purchase under a new key (the
+cardholder approves it separately). Recovery while reporting a merchant transaction cannot
+be deleted and must be reconciled with support. Always check `available_operations` rather than assuming
 the API supports this operation. Human output, JSON output and execution expose only
 advertised restart_verification during recovery; other operations and stale action URLs
 are suppressed.
@@ -791,9 +798,9 @@ through this endpoint.
 advertised. In `recovery_required`, the CLI hides and refuses every operation except
 an advertised `restart_verification`, invoked with explicit user approval each time and
 new cardholder spend consent. Human and JSON output use the same recovery filtering.
-Other operations remain blocked; otherwise contact support@kernel.sh with project,
+Other operations remain blocked. Where the API permits it, delete the card after user
+confirmation and create a new one; otherwise contact support@kernel.sh with project,
 vault, key, status_reason and event timestamps (no card data, API keys or capability URLs).
-Do not delete or replace unresolved items.
 Stale action URLs in recovery are not opened; a successful restart
 returns a fresh approval action.
 
@@ -956,8 +963,9 @@ does not merge the new JSON with the existing spec.
 Waits are single bounded observations, not readiness guarantees or payment retries. Pending
 state is returned as-is. Requests are not automatically retried by the vault commands.
 **Never automatically retry failed, timed-out, rejected, or indeterminate payments.** Inspect
-state/events and reconcile the outcome instead. If an AgentCard recovery state explicitly
-permits user-confirmed abandonment, delete that card before creating a replacement; deletion
+state/events and reconcile the outcome instead. If a recovery state permits user-confirmed
+deletion (Link or Kernel issuance, or AgentCard without an authorization ID), delete that
+card before creating a replacement; deletion
 does not prove the original attempt failed. Do not pass card data, OAuth codes/tokens,
 ciphertext, provider secrets, or sensitive provider responses to the CLI. Complete collection,
 OAuth, and approval actions through the provider's returned URL/UI; no callback-code command
