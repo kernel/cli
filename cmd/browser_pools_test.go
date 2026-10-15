@@ -797,6 +797,59 @@ func TestBrowserPoolsUpdate_PrivateHostModes(t *testing.T) {
 	}
 }
 
+func TestBrowserPoolsUpdate_ExpectedNetwork(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    BrowserPoolsUpdateInput
+		wantJSON string
+	}{
+		{
+			name:     "no network configuration",
+			input:    BrowserPoolsUpdateInput{Size: 2, ExpectedNetwork: "{}"},
+			wantJSON: `"expected_network":{}`,
+		},
+		{
+			name:     "preserves explicit empty lists",
+			input:    BrowserPoolsUpdateInput{AllowedHosts: []string{"example.com"}, ExpectedNetwork: `{"private_hosts":[],"proxy_routes":[{"hosts":["a.example"],"proxy":{"id":"proxy-1"}}]}`},
+			wantJSON: `"expected_network":{"private_hosts":[],"proxy_routes":[{"hosts":["a.example"],"proxy":{"id":"proxy-1"}}]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupStdoutCapture(t)
+			var captured kernel.BrowserPoolUpdateParams
+			fake := &FakeBrowserPoolsService{
+				UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+					captured = body
+					return &kernel.BrowserPool{ID: id}, nil
+				},
+			}
+			tt.input.IDOrName = "pool-network"
+			require.NoError(t, (BrowserPoolsCmd{client: fake}).Update(context.Background(), tt.input))
+			raw, err := captured.MarshalJSON()
+			require.NoError(t, err)
+			assert.Contains(t, string(raw), tt.wantJSON)
+		})
+	}
+}
+
+func TestBrowserPoolsUpdate_RejectsInvalidExpectedNetwork(t *testing.T) {
+	for _, value := range []string{"null", "[]", "{bad"} {
+		t.Run(value, func(t *testing.T) {
+			setupStdoutCapture(t)
+			fake := &FakeBrowserPoolsService{
+				UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+					t.Fatal("Update should not be called when --expected-network is invalid")
+					return nil, nil
+				},
+			}
+			err := (BrowserPoolsCmd{client: fake}).Update(context.Background(), BrowserPoolsUpdateInput{IDOrName: "pool-1", ExpectedNetwork: value})
+			assert.ErrorContains(t, err, "--expected-network")
+		})
+	}
+}
+
 func TestBrowserPoolsCreate_WithTelemetry(t *testing.T) {
 	setupStdoutCapture(t)
 
