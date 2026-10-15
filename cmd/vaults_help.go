@@ -101,7 +101,7 @@ type AgentCardCardSpec = {
 type KernelCardSpec = {
   provider: "kernel";
   wallet: string;             // KERNEL wallet item key
-  amount: number;             // integer minor units; 1..50000
+  amount: number;             // integer minor units; 1..1000000
   currency: string;           // iso 4217 three letters
   merchant_name: string;      // 1..255 characters
   merchant_url: string;       // https merchant checkout url; fill is locked to its origin

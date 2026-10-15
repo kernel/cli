@@ -242,7 +242,7 @@ preparations are single-use, including after failure or expiry; never retry auto
 confirm_transaction requires --params or --spec-file without type, with all of:
 status (APPROVED, DECLINED, PENDING, ERROR, CANCELLED), transaction_type (PURCHASE,
 AUTHORIZATION, CAPTURE, REFUND, REVERSAL, VERIFICATION, CHARGEBACK, FRAUD), amount
-(integer minor units 0..50000, no greater than the approved amount), currency (three
+(integer minor units 0..1000000, no greater than the approved amount), currency (three
 uppercase letters matching the approved purchase currency), and occurred_at (RFC3339).
 no other fields are accepted. ` + kernelTransactionHelp + `.
 restart_verification takes no parameters. in recovery_required, ` + vaultRecoveryHelp + `
