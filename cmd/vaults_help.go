@@ -91,11 +91,14 @@ type AgentCardCardSpec = {
   checkout_origin?: string;   // top-level checkout origin for autopilot matching; update omission removes it
 };
 
-// one live purchase with a KERNEL-enrolled card. authorize obtains a network token and
-// one-time code for fill on merchant_url's origin until expires_at. Mastercard purchases
-// need no hosted approval. a Visa purchase returns a spend_approval action: the cardholder
-// approves it with a Visa passkey (the link expires after 30 minutes) before the code is
-// issued. updates are not supported.
+// one live purchase with a KERNEL-enrolled card. authorize, then fill on merchant_url's
+// origin, then submit checkout before expires_at (one hour after authorization). fill
+// delivers card details for a few minutes; submit promptly. repeated fill is safe and never
+// submits. supported cards without an agentic network token are authorized without a
+// one-time code. Mastercard purchases need no hosted approval. a Visa purchase returns a
+// spend_approval action: the cardholder approves it with a Visa passkey (the link expires
+// after 30 minutes) before details are issued. amount, merchant_url and merchant_country
+// are recorded but do not restrict browser payment requests. updates are not supported.
 type KernelCardSpec = {
   provider: "kernel";
   wallet: string;             // KERNEL wallet item key

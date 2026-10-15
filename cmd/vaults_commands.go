@@ -216,7 +216,8 @@ any write. enter billing details on the merchant page.
 the api searches the page and descendant frames, including payment iframes.
 fill is available for credential items and ready Link or kernel cards when advertised, not AgentCard.
 Link and kernel cards do not expose aliases or support egress substitution. kernel card fill
-is locked to merchant_url's origin and its one-time code expires; submit checkout before expiry.
+is locked to merchant_url's origin and delivers card details for a few minutes; submit checkout
+promptly after filling. a repeated kernel card fill is safe.
 fill writes real values into the browser; unrestricted browser/cdp access can read them.
 fill never explicitly submits forms or clicks buttons, but input/change events may trigger site behavior.
 completed means fields were filled, not website acceptance, login, or payment success.
