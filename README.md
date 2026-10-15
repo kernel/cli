@@ -452,7 +452,7 @@ TypeScript-style types, which must stay in sync with the [API spec](https://api.
   `card_enrollment` action collects card details from the cardholder, never from the CLI.
 - **Link wallet:** supply `authorization: {method: "oauth", client: {type: "kernel_managed"}}`.
 - **AgentCard wallet:** use `{}` to enroll, or supply `user_id` for a user enrolled in the same organization and provider configuration.
-- **Kernel card:** supply `wallet`, `amount` (minor units, at most 50000), `currency`,
+- **Kernel card:** supply `wallet`, `amount` (minor units, at most 1000000), `currency`,
   `merchant_name`, and HTTPS `merchant_url`. Supply two-letter `merchant_country` for Visa.
   Kernel card updates are unsupported.
 - **Link card:** include the required fields shown in help. Optional `line_items`, `totals`,
@@ -633,7 +633,7 @@ kernel vaults items invoke checkout order-1 confirm_transaction --params '{
 `type` or any extra properties. `status` must be `APPROVED`, `DECLINED`, `PENDING`, `ERROR`,
 or `CANCELLED`. `transaction_type` must be `PURCHASE`, `AUTHORIZATION`, `CAPTURE`, `REFUND`,
 `REVERSAL`, `VERIFICATION`, `CHARGEBACK`, or `FRAUD`. `amount` is an integer in minor units,
-0..50000 and no greater than the approved amount; `currency` is three uppercase letters
+0..1000000 and no greater than the approved amount; `currency` is three uppercase letters
 matching the approved purchase currency;
 `occurred_at` is the observed outcome's RFC3339 timestamp. The operation is no longer
 advertised after reporting. Never infer success from fill. `PENDING` means explicit
