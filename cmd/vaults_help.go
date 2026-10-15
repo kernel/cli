@@ -78,7 +78,6 @@ type LinkCardSpec = {
   line_items?: LinkLineItem[];
   totals?: LinkTotal[];
   metadata?: Record<string, string>;
-  expires_at?: number;        // int64
 };
 
 type AgentCardCardSpec = {
