@@ -456,7 +456,7 @@ TypeScript-style types, which must stay in sync with the [API spec](https://api.
   `merchant_name`, and HTTPS `merchant_url`. Supply two-letter `merchant_country` for Visa.
   Kernel card updates are unsupported.
 - **Link card:** include the required fields shown in help. Optional `line_items`, `totals`,
-  `metadata`, and `expires_at` are supported through JSON. `amount` is at most 500000 minor
+  and `metadata` are supported through JSON. `amount` is at most 500000 minor
   units; a virtual card allows at most 50000.
 - **AgentCard card:** uses `merchant`, not Link's `merchant_name`. Its optional `card_id` selects
   a vaulted card; otherwise the cardholder selects one at approval.
