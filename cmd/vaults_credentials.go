@@ -106,15 +106,16 @@ fields as an ordered array of named definitions.
 inspect the website and list fields in its natural top-to-bottom order because the
 user-facing collection form renders that order unchanged. definitions accept a stable
 name and an optional non-secret human-readable label; forms fall back to name. updates,
-state, and browser fills always use name. field types are text, email, password, and
-totp; definitions also accept required, sensitive, and value.
+state, and browser fills always use name. field types are text, email, password, totp,
+and passkey; definitions also accept required, sensitive, and value. a passkey value is
+a json-encoded FIDO CXF passkey object; passkeys are never filled into pages.
 custom collection web apps that encrypt in the browser may send encrypted_value (a
 compact jwe to the key from vaults get-encryption-key) instead of value; never both.
 set description to the recognizable site name only, e.g. "Hacker News", not
 "Hacker News sign-in credentials". this text is the user-facing form title.
 set sensitive:false explicitly for ordinary usernames and email addresses.
 reserve sensitive:true for secrets such as passwords, api tokens, and totp seeds.
-password and totp must be sensitive. omitted sensitive defaults to true for safety.
+password, totp, and passkey must be sensitive. omitted sensitive defaults to true for safety.
 omit required values to receive a collection url to present to the user.
 poll items get --wait 60 until state.status is ready. then choose an advertised operation:
 - ordinary web forms: items invoke fill writes field values without submitting.
@@ -124,9 +125,9 @@ poll items get --wait 60 until state.status is ready. then choose an advertised 
   side effects, and its output may include the supplied values.
 fill never submits, so a retry is safe. retry only after checking the page, and never in an automatic loop.
 ready means populated, not a successful login. an agent controlling the browser
-can read filled values. totp seeds must not be collected through the hosted form.
+can read filled values. totp seeds and passkeys must not be collected through the hosted form.
 get/list output includes definitions, has_value, and explicitly non-sensitive text/email values.
-sensitive values and totp seeds are omitted.
+sensitive values, totp seeds, and passkeys are omitted.
 collection urls are bearer credentials: share only with the intended user.
 
 ` + vaultOnePasswordCredentialHelp + `
@@ -140,7 +141,7 @@ func newVaultCredentialsCommand() *cobra.Command {
 	for _, update := range []bool{false, true} {
 		name, short := "create", "create a credential and return its collection url"
 		if update {
-			name, short = "update", "update credential values or description using an expected version"
+			name, short = "update", "update credential values, fields, or description using an expected version"
 		}
 		cmd := &cobra.Command{Use: name + " <vault> <key> --spec-file <path|->", Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun, Long: vaultCredentialHelp,
 			RunE: func(cmd *cobra.Command, args []string) error {
@@ -158,11 +159,16 @@ func newVaultCredentialsCommand() *cobra.Command {
 			},
 		}
 		if update {
-			cmd.Long += "\nupdate applies to KERNEL-hosted credentials only. update spec fields are an object keyed by field name, not the ordered array used on create.\nupdate preserves omitted fields, replaces nonempty string values (value, or encrypted_value from a browser-encrypting collection app), and clears supported values with null or an empty string. clearing a required text/email/password field returns pending_collection; form submissions still require a nonempty value.\nfield definitions are immutable. do not automatically retry version conflicts."
+			cmd.Long += "\nupdate applies to KERNEL-hosted credentials only. update spec fields are an object keyed by field name, not the ordered array used on create.\nupdate preserves omitted fields, replaces nonempty string values (value, or encrypted_value from a browser-encrypting collection app), and clears supported values with null or an empty string. clearing a required text/email/password field returns pending_collection; form submissions still require a nonempty value.\nadd_fields appends field definitions (same shape and defaults as create; set their values in fields in the same update) and remove_fields deletes fields by name with their values. names must be unique after removals, at most 32 fields may result, and at least one must remain. a required totp or passkey field needs a value. do not automatically retry version conflicts."
 			cmd.Flags().Int64("version", 0, "expected version from items get (required; never auto-refreshed)")
 			_ = cmd.MarkFlagRequired("version")
 			cmd.Flags().String("expected-item-id", "", "immutable item id from the original read; reject an update if the key now refers to a replacement item")
-			cmd.Example = "  kernel vaults credentials update user-vault login --version 2 --spec-file changes.json"
+			cmd.Example = `  kernel vaults credentials update user-vault login --version 2 --spec-file changes.json
+
+  # Add a TOTP field and remove an obsolete one
+  kernel vaults credentials update user-vault login --version 3 --spec-file - <<'JSON'
+{"add_fields":[{"name":"otp","type":"totp"}],"fields":{"otp":{"value":"<base32 seed>"}},"remove_fields":["pin"]}
+JSON`
 		} else {
 			cmd.Example = `  # Kernel-hosted collection
   kernel vaults credentials create user-vault login --spec-file - <<'JSON'

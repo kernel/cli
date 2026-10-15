@@ -369,7 +369,7 @@ Use `credentials update <vault> <key> --version <version> --spec-file changes.js
 with a spec such as `{"fields":{"password":{"value":"replacement"}}}`; update specs key
 `fields` by name rather than using the ordered array. Keep actual
 secrets in protected files or stdin, never shell arguments. Omission preserves values;
-null or an empty string clears supported fields, including required text/email/password fields (returning them to pending collection). The form still requires nonempty required inputs. Field definitions cannot change. Stale versions fail,
+null or an empty string clears supported fields, including required text/email/password fields (returning them to pending collection). The form still requires nonempty required inputs. Add fields with `add_fields` (an array of definitions with the same shape and defaults as create; set their values in `fields` in the same update) and delete fields and their values with `remove_fields` (an array of names). Names must be unique after removals, at most 32 fields may result, and at least one must remain. Stale versions fail,
 without retries. `items invoke <vault> <key> collect` reopens the full form without
 clearing values; compare versions to observe edits to already-ready items. When an update
 is bound to an earlier read, also pass `--expected-item-id <id>` to reject a replacement
@@ -379,11 +379,13 @@ Do not use credential items to store, collect, or fill credit card data, includi
 
 Set `description` to the recognizable site name only, such as `Hacker News`, not `Hacker News sign-in credentials`. Set `sensitive: false` explicitly for ordinary usernames and email addresses. Reserve `sensitive: true` for passwords, API tokens, and TOTP seeds; the omitted default remains true for safety.
 
-Types are `text`, `email`, `password`, and `totp`. TOTP seeds must be provided through
-create/update, never the form; only generated codes enter the browser. Unrestricted
+Types are `text`, `email`, `password`, `totp`, and `passkey`. TOTP seeds and passkeys must be provided through
+create/update, never the form; only generated TOTP codes enter the browser. A passkey value is a JSON-encoded
+FIDO Credential Exchange Format passkey object; passkeys are never filled into pages. Password, TOTP, and passkey
+fields must be sensitive. Unrestricted
 browser access can read filled values. CLI JSON output retains explicitly non-sensitive
-text/email values, definitions, version, and `has_value`. Sensitive values and TOTP
-seeds are omitted.
+text/email values, definitions, version, and `has_value`. Sensitive values, TOTP
+seeds, and passkeys are omitted.
 Credential spec input is capped at 128 KiB; write errors are redacted.
 
 To reuse a managed auth connection's saved credential, create a credential with

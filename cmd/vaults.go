@@ -342,11 +342,6 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 			return fmt.Errorf("prepare_checkout requires an AgentCard card")
 		}
 		request.OfPrepareCheckout = &kernel.PrepareCheckoutVaultItemOperationRequestParam{Type: "prepare_checkout", Checkout: *params.Checkout}
-	} else if params != nil && params.Authorize != nil {
-		if item.Spec.Provider == "kernel" && (params.Authorize.BrowserID.Valid() || params.Authorize.PageURL.Valid()) {
-			return fmt.Errorf("kernel cards do not accept browser_id or page_url; authorize was not invoked")
-		}
-		request.OfAuthorize = params.Authorize
 	} else if operation == "collect" {
 		request.OfCollect = &kernel.CollectVaultItemOperationRequestParam{Type: "collect"}
 	} else if params != nil && params.Authorize != nil {
