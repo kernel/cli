@@ -141,7 +141,7 @@ func TestVaultGetOperationHintUsesExplicitProject(t *testing.T) {
 	})
 	_, human, err := executeVaultCommand(t, client, "vaults", "items", "get", "checkout", "order-1", "--project", "chosen-project")
 	require.NoError(t, err)
-	assert.Contains(t, human, "invoke: kernel vaults items invoke --project=chosen-project -- checkout order-1 authorize")
+	assert.Contains(t, human, "invoke: kernel vaults items invoke --project=chosen-project --browser-id '<browser-session-id>' --page-url '<checkout-page-url>' -- checkout order-1 authorize")
 	assert.NotContains(t, human, "other-project")
 }
 

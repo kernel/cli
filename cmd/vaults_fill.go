@@ -32,7 +32,7 @@ var vaultFillResultFields = vaultOutputFields{
 const vaultFillUncertain = "browser fields may have been written; fill never submits, so a retry is safe. retry only after checking the page, and never in an automatic loop. do not fall back to aliases."
 
 var vaultFillErrorMessages = map[string]string{
-	"invalid_request":      "check field names, formats, and browser parameters",
+	"invalid_request":      "check field names, formats, and browser parameters; follow the item's fill description, which says whether to omit fields",
 	"invalid_selector":     "inspect the page and correct the selector",
 	"duplicate_target":     "multiple bindings resolve to the same element; use distinct targets",
 	"timeout":              "the fill deadline elapsed",
@@ -100,7 +100,6 @@ func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFil
 	request := kernel.FillVaultItemOperationRequestParam{
 		BrowserID: params.BrowserID,
 		Type:      kernel.FillVaultItemOperationRequestTypeFill,
-		Fields:    make([]kernel.VaultFillFieldParam, 0, len(params.Fields)),
 	}
 	if params.PageURL != "" {
 		request.PageURL = kernel.Opt(params.PageURL)
@@ -140,15 +139,20 @@ func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFil
 		}
 	} else {
 		pterm.Printf("fill: %s\n", result.Status)
-		rows := pterm.TableData{{"field index", "status", "error code"}}
-		for _, field := range result.Fields {
-			rows = append(rows, []string{strconv.Itoa(*field.Index), field.Status, field.ErrorCode})
+		if len(result.Fields) > 0 {
+			rows := pterm.TableData{{"field index", "status", "error code"}}
+			for _, field := range result.Fields {
+				rows = append(rows, []string{strconv.Itoa(*field.Index), field.Status, field.ErrorCode})
+			}
+			PrintTableNoPad(rows, true)
 		}
-		PrintTableNoPad(rows, true)
-		if result.Status == "completed" {
-			pterm.Println("fields filled; this does not confirm website acceptance or form submission.")
-		} else {
+		switch {
+		case result.Status != "completed":
 			pterm.Println(vaultFillUncertain)
+		case len(result.Fields) == 0:
+			pterm.Println("the checkout received the payment credential; fill never submits payment. submit the checkout yourself.")
+		default:
+			pterm.Println("fields filled; this does not confirm website acceptance or form submission.")
 		}
 	}
 	if result.Status != "completed" {
@@ -202,6 +206,10 @@ func parseVaultFillResult(raw json.RawMessage, count int) (*vaultFillResult, err
 				return nil, invalid
 			}
 		}
+	}
+	// A fill without field bindings reports only an overall status.
+	if count == 0 && (result.Status == "failed" || result.Status == "unknown") {
+		status = result.Status
 	}
 	if result.Status != status {
 		return nil, invalid

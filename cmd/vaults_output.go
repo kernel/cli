@@ -338,6 +338,9 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 		if vaultOperationTakesParams(op.Type) && op.Type != "authorize" { // authorize params are optional
 			command += " --params '<json>'"
 		}
+		if op.Type == "authorize" && item.Type == "card" && item.Spec.Provider == "link" && item.State.Status == "requested" {
+			command += " --browser-id '<browser-session-id>' --page-url '<checkout-page-url>'"
+		}
 		pterm.Printf("invoke: %s -- %s %s %s\n", command, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
 	}
 	return nil
@@ -562,13 +565,19 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		if item.State.JSON.Aliases.Valid() {
 			pterm.Info.Println("aliases are non-secret checkout values. use only in a browser created with this vault attached; ready does not mean paid.")
 		}
-		if item.Spec.Provider == "kernel" {
+		switch item.Spec.Provider {
+		case "kernel":
 			pterm.Info.Println(kernelTransactionHelp + ". kernel cards have no stored billing fields; billing_* returns field_unavailable. enter billing details on the merchant page.")
-		} else {
+		case "link":
+			pterm.Info.Println("fill never submits payment; submit the checkout yourself. if the result of submitting payment is unclear, check the merchant's order confirmation or order history before paying again. if authorization is declined or expires, delete this card and create a new one.")
+		default:
 			pterm.Info.Println("inspect items events for payment outcomes. never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")
 		}
 	} else {
 		wallet := item.AsWallet()
+		if item.Description != "" {
+			pterm.Info.Println(item.Description)
+		}
 		if item.Spec.Provider == "kernel" {
 			pterm.Info.Println(kernelWalletHelp)
 		}

@@ -83,16 +83,7 @@ func kernelVaultRequestError(err error, operation string) error {
 	detail := kernelVaultErrorURL.ReplaceAllString(body.Message, "[redacted url]")
 	switch {
 	case apiErr.StatusCode == 429:
-		wait := "wait for the rate limit to clear"
-		if apiErr.Response != nil {
-			after := apiErr.Response.Header.Get("Retry-After")
-			_, secondsErr := strconv.ParseUint(after, 10, 64)
-			_, dateErr := http.ParseTime(after)
-			if secondsErr == nil || dateErr == nil {
-				wait = "wait until Retry-After (" + after + ") has elapsed"
-			}
-		}
-		guidance = wait + "; " + guidance
+		guidance = retryAfterWait(apiErr) + "; " + guidance
 	case apiErr.StatusCode == 409 && operation == "authorize":
 		guidance = "authorization may be in flight, unresolved or unavailable in this state; there are no authorize inputs to fix. " + guidance
 	case apiErr.StatusCode >= 400 && apiErr.StatusCode < 500 && apiErr.StatusCode != 408:
@@ -102,6 +93,19 @@ func kernelVaultRequestError(err error, operation string) error {
 		guidance = "the request was rejected; fix the reported inputs or access. " + guidance
 	}
 	return safeKernelAPIError(apiErr, body.Code, fmt.Sprintf("%s failed (http %d): %s; %s", operation, apiErr.StatusCode, detail, guidance))
+}
+
+// retryAfterWait says how long to wait after a 429, using a valid Retry-After header when present.
+func retryAfterWait(apiErr *kernel.Error) string {
+	if apiErr.Response != nil {
+		after := apiErr.Response.Header.Get("Retry-After")
+		_, secondsErr := strconv.ParseUint(after, 10, 64)
+		_, dateErr := http.ParseTime(after)
+		if secondsErr == nil || dateErr == nil {
+			return "wait until Retry-After (" + after + ") has elapsed"
+		}
+	}
+	return "wait for the rate limit to clear"
 }
 
 const kernelSupportGuidance = "do not retry payment, delete, or replace the item. contact support@kernel.sh privately with project, vault, item key, status_reason and relevant event timestamps (never card data, api keys or capability urls) to reconcile the original operation and establish whether a new purchase is safe; do not assume a new card is safe or promise a resulting state"
