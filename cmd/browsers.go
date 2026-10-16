@@ -180,15 +180,15 @@ func parseRegionFlag(region string) (string, error) {
 	return "", fmt.Errorf("invalid --region value: %s (must be one of %s)", region, strings.Join(availableRegions(), ", "))
 }
 
-// availableMemorySizes returns the memory sizes the API accepts when creating a
-// browser session. Only headful, non-GPU sessions can request memory; every
-// other configuration gets a fixed allocation.
+// availableMemorySizes returns the memory sizes the API accepts for non-GPU
+// browser sessions. Headless and headful sessions support different subsets.
 func availableMemorySizes() []string {
-	return []string{"8GiB", "16GiB"}
+	return []string{"1GiB", "2GiB", "4GiB", "8GiB", "16GiB"}
 }
 
 // parseMemoryFlag validates a --memory value. An empty value means the flag was
-// not set, which lets the API apply its default (8GiB).
+// not set, which lets the API apply the image default (1GiB for headless or 8GiB
+// for headful).
 func parseMemoryFlag(memory string) (kernel.BrowserMemoryRequest, error) {
 	if memory == "" {
 		return "", nil
@@ -3292,7 +3292,7 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().BoolP("stealth", "s", false, "Launch browser in stealth mode to avoid detection")
 	browsersCreateCmd.Flags().BoolP("headless", "H", false, "Launch browser without GUI access")
 	browsersCreateCmd.Flags().Bool("gpu", false, "Launch browser with hardware-accelerated GPU rendering")
-	browsersCreateCmd.Flags().String("memory", "", "Memory for a headful, non-GPU browser session: '8GiB' (default) or '16GiB'")
+	browsersCreateCmd.Flags().String("memory", "", "Memory for a non-GPU browser: headless supports '1GiB' (default), '2GiB', or '4GiB'; headful supports '8GiB' (default) or '16GiB'")
 	browsersCreateCmd.Flags().String("video-memory", "", "Video memory (VRAM) for a GPU browser session (requires --gpu): '2GiB' (default, 4 vCPU/6GiB memory) or '4GiB' (8 vCPU/12GiB memory)")
 	browsersCreateCmd.Flags().String("invocation-id", "", "Associate the browser session with an invocation")
 	browsersCreateCmd.Flags().Bool("kiosk", false, "Launch browser in kiosk mode")

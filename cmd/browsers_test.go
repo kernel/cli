@@ -937,12 +937,24 @@ func TestBrowsersCreate_WithMemory(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"memory":"16GiB"`)
 
-	// Values are normalized to the casing the API expects.
-	err = b.Create(context.Background(), BrowsersCreateInput{Memory: "8gib"})
-	require.NoError(t, err)
-	assert.Equal(t, kernel.BrowserMemoryRequest8GiB, captured.Memory)
+	// Values are normalized to the casing the API expects, including the smaller
+	// allocations available to headless browsers.
+	for _, tc := range []struct {
+		input string
+		want  kernel.BrowserMemoryRequest
+	}{
+		{input: "1gib", want: kernel.BrowserMemoryRequest1GiB},
+		{input: "2GiB", want: kernel.BrowserMemoryRequest2GiB},
+		{input: "4GIB", want: kernel.BrowserMemoryRequest4GiB},
+		{input: "8gib", want: kernel.BrowserMemoryRequest8GiB},
+	} {
+		err = b.Create(context.Background(), BrowsersCreateInput{Memory: tc.input})
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, captured.Memory)
+	}
 
-	// Omitting the flag sends nothing; the server defaults to 8GiB.
+	// Omitting the flag sends nothing; the server selects the image default (1GiB
+	// for headless or 8GiB for headful).
 	err = b.Create(context.Background(), BrowsersCreateInput{})
 	require.NoError(t, err)
 	assert.Empty(t, captured.Memory)
@@ -952,7 +964,7 @@ func TestBrowsersCreate_WithMemory(t *testing.T) {
 	assert.NotContains(t, string(raw), "memory")
 
 	// An unsupported size is rejected before the request is made.
-	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{Memory: "4GiB"}))
+	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{Memory: "6GiB"}))
 }
 
 func TestBrowsersCreate_WithVideoMemory(t *testing.T) {
