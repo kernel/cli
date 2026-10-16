@@ -3160,7 +3160,13 @@ func init() {
 
 	// extensions
 	extensionsRoot := &cobra.Command{Use: "extensions", Short: "Add browser extensions to a running instance"}
-	extensionsUpload := &cobra.Command{Use: "upload <id> <extension-path>...", Short: "Upload one or more unpacked extensions and restart Chromium", Args: cobra.MinimumNArgs(2), RunE: runBrowsersExtensionsUpload}
+	extensionsUpload := &cobra.Command{
+		Use:   "upload <id> <extension-path>...",
+		Short: "Load one or more unpacked extensions into a running browser",
+		Long:  "Load one or more unpacked extensions into a running browser. Eligible extensions are activated live; Chromium restarts only when enterprise policy requires it or live activation fails.",
+		Args:  cobra.MinimumNArgs(2),
+		RunE:  runBrowsersExtensionsUpload,
+	}
 	extensionsRoot.AddCommand(extensionsUpload)
 	browsersCmd.AddCommand(extensionsRoot)
 
