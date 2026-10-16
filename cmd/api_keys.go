@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/kernel/cli/pkg/interactive"
 	"github.com/kernel/cli/pkg/util"
@@ -28,10 +30,12 @@ type APIKeysCmd struct {
 }
 
 type APIKeysCreateInput struct {
-	Name         string
-	DaysToExpire Int64Flag
-	ProjectID    string
-	Output       string
+	Name             string
+	DaysToExpire     Int64Flag
+	ExpiresAt        string
+	ProjectID        string
+	PolicyStatements []string
+	Output           string
 }
 
 type APIKeysListInput struct {
@@ -86,8 +90,25 @@ func (c APIKeysCmd) Create(ctx context.Context, in APIKeysCreateInput) error {
 		}
 		params.DaysToExpire = kernel.Int(in.DaysToExpire.Value)
 	}
+	if in.ExpiresAt != "" {
+		if in.DaysToExpire.Set {
+			return fmt.Errorf("--expires-at cannot be combined with --days-to-expire")
+		}
+		expiresAt, err := time.Parse(time.RFC3339, in.ExpiresAt)
+		if err != nil {
+			return fmt.Errorf("invalid --expires-at value %q: must be an RFC 3339 timestamp (e.g. 2026-01-15T09:00:00Z)", in.ExpiresAt)
+		}
+		params.ExpiresAt = kernel.Time(expiresAt)
+	}
 	if in.ProjectID != "" {
 		params.ProjectID = kernel.String(in.ProjectID)
+	}
+	if len(in.PolicyStatements) > 0 {
+		statements, err := parseAPIKeyPolicyStatements(in.PolicyStatements)
+		if err != nil {
+			return err
+		}
+		params.Policy = kernel.APIKeyNewParamsPolicy{Statements: statements}
 	}
 
 	key, err := c.apiKeys.New(ctx, params)
@@ -332,6 +353,25 @@ func (c APIKeysCmd) Delete(ctx context.Context, in APIKeysDeleteInput) error {
 	return nil
 }
 
+// parseAPIKeyPolicyStatements parses ACTION=RESOURCE pairs into policy allow
+// statements. Actions never contain '=', so the first '=' is the separator.
+func parseAPIKeyPolicyStatements(values []string) ([]kernel.APIKeyNewParamsPolicyStatement, error) {
+	if len(values) > 256 {
+		return nil, fmt.Errorf("--policy-statement may be specified at most 256 times")
+	}
+	statements := make([]kernel.APIKeyNewParamsPolicyStatement, 0, len(values))
+	for _, value := range values {
+		action, resource, ok := strings.Cut(value, "=")
+		action = strings.TrimSpace(action)
+		resource = strings.TrimSpace(resource)
+		if !ok || action == "" || resource == "" {
+			return nil, fmt.Errorf("invalid --policy-statement value %q: expected ACTION=RESOURCE (e.g. browsers:use=projects/proj_abc123/*)", value)
+		}
+		statements = append(statements, kernel.APIKeyNewParamsPolicyStatement{Action: action, Resource: resource})
+	}
+	return statements, nil
+}
+
 func renderCreatedAPIKey(key *kernel.CreatedAPIKey) {
 	rows := pterm.TableData{
 		{"Field", "Value"},
@@ -342,6 +382,7 @@ func renderCreatedAPIKey(key *kernel.CreatedAPIKey) {
 		{"Project", formatAPIKeyProject(key.APIKey)},
 		{"Masked Key", key.MaskedKey},
 		{"Expires At", formatAPIKeyExpiresAt(key.APIKey)},
+		{"Policy", formatAPIKeyPolicy(key.APIKey)},
 	}
 	PrintTableNoPad(rows, true)
 }
@@ -357,6 +398,7 @@ func renderAPIKeyDetails(key *kernel.APIKey) {
 		{"Created By", formatAPIKeyCreator(*key)},
 		{"Expires At", formatAPIKeyExpiresAt(*key)},
 		{"Created At", util.FormatLocal(key.CreatedAt)},
+		{"Policy", formatAPIKeyPolicy(*key)},
 	}
 	PrintTableNoPad(rows, true)
 }
@@ -376,6 +418,17 @@ func formatAPIKeyScope(key kernel.APIKey) string {
 		return "Project"
 	}
 	return "Org"
+}
+
+func formatAPIKeyPolicy(key kernel.APIKey) string {
+	if !key.JSON.Policy.Valid() || len(key.Policy.Statements) == 0 {
+		return "Unrestricted"
+	}
+	lines := make([]string, 0, len(key.Policy.Statements))
+	for _, statement := range key.Policy.Statements {
+		lines = append(lines, statement.Action+" on "+statement.Resource)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func formatAPIKeyCreator(key kernel.APIKey) string {
@@ -404,7 +457,9 @@ func runAPIKeysCreate(cmd *cobra.Command, args []string) error {
 	c := getAPIKeysHandler(cmd)
 	name, _ := cmd.Flags().GetString("name")
 	daysToExpire, _ := cmd.Flags().GetInt64("days-to-expire")
+	expiresAt, _ := cmd.Flags().GetString("expires-at")
 	projectID, _ := cmd.Flags().GetString("project-id")
+	policyStatements, _ := cmd.Flags().GetStringArray("policy-statement")
 	output, _ := cmd.Flags().GetString("output")
 
 	return c.Create(cmd.Context(), APIKeysCreateInput{
@@ -413,8 +468,10 @@ func runAPIKeysCreate(cmd *cobra.Command, args []string) error {
 			Set:   cmd.Flags().Changed("days-to-expire"),
 			Value: daysToExpire,
 		},
-		ProjectID: projectID,
-		Output:    output,
+		ExpiresAt:        expiresAt,
+		ProjectID:        projectID,
+		PolicyStatements: policyStatements,
+		Output:           output,
 	})
 }
 
@@ -489,9 +546,14 @@ var apiKeysCmd = &cobra.Command{
 var apiKeysCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create an API key",
-	Long:  "Create an API key.\n\nBy default the new key is org-wide. Use --project-id to create a key whose own access is scoped to that project. The global --project flag only scopes this CLI request.",
-	Args:  cobra.NoArgs,
-	RunE:  runAPIKeysCreate,
+	Long:  "Create an API key.\n\nBy default the new key is org-wide. Use --project-id to create a key whose own access is scoped to that project. The global --project flag only scopes this CLI request.\n\nUse --policy-statement (repeatable) to issue a scoped key that may only perform the listed actions on the listed resources; every action and resource not listed is denied.",
+	Example: strings.Join([]string{
+		"create --name ci --days-to-expire 30",
+		"create --name ci --expires-at 2026-01-15T09:00:00Z",
+		"create --name browser-only --project-id proj_abc123 --policy-statement 'browsers:use=projects/proj_abc123/*'",
+	}, "\n"),
+	Args: cobra.NoArgs,
+	RunE: runAPIKeysCreate,
 }
 
 var apiKeysListCmd = &cobra.Command{
@@ -533,8 +595,10 @@ var apiKeysDeleteCmd = &cobra.Command{
 func init() {
 	addJSONOutputFlag(apiKeysCreateCmd)
 	apiKeysCreateCmd.Flags().String("name", "", "API key name (required)")
-	apiKeysCreateCmd.Flags().Int64("days-to-expire", 0, "Number of days until expiry (1-3650); omit for never")
+	apiKeysCreateCmd.Flags().Int64("days-to-expire", 0, "Number of days until expiry (1-3650); omit for never. Cannot be combined with --expires-at")
+	apiKeysCreateCmd.Flags().String("expires-at", "", "Exact expiry time as an RFC 3339 timestamp (e.g. 2026-01-15T09:00:00Z); must be in the future. Cannot be combined with --days-to-expire")
 	apiKeysCreateCmd.Flags().String("project-id", "", "Create a project-scoped API key for this project ID; omit for org-wide")
+	apiKeysCreateCmd.Flags().StringArray("policy-statement", nil, "Allow statement for a scoped key as ACTION=RESOURCE, e.g. browsers:use=projects/proj_abc123/* (repeatable). Resources are projects/{id}/{kind}/{id}; use projects/{id}/* for everything in a project")
 	_ = apiKeysCreateCmd.MarkFlagRequired("name")
 
 	addJSONOutputFlag(apiKeysListCmd)

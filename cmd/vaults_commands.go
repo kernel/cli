@@ -216,7 +216,8 @@ any write. enter billing details on the merchant page.
 the api searches the page and descendant frames, including payment iframes.
 fill is available for credential items and ready Link or kernel cards when advertised, not AgentCard.
 Link and kernel cards do not expose aliases or support egress substitution. kernel card fill
-is locked to merchant_url's origin and its one-time code expires; submit checkout before expiry.
+is locked to merchant_url's origin and delivers card details for a few minutes; submit checkout
+promptly after filling. a repeated kernel card fill is safe.
 fill writes real values into the browser; unrestricted browser/cdp access can read them.
 fill never explicitly submits forms or clicks buttons, but input/change events may trigger site behavior.
 completed means fields were filled, not website acceptance, login, or payment success.
@@ -241,7 +242,7 @@ preparations are single-use, including after failure or expiry; never retry auto
 confirm_transaction requires --params or --spec-file without type, with all of:
 status (APPROVED, DECLINED, PENDING, ERROR, CANCELLED), transaction_type (PURCHASE,
 AUTHORIZATION, CAPTURE, REFUND, REVERSAL, VERIFICATION, CHARGEBACK, FRAUD), amount
-(integer minor units 0..50000, no greater than the approved amount), currency (three
+(integer minor units 0..1000000, no greater than the approved amount), currency (three
 uppercase letters matching the approved purchase currency), and occurred_at (RFC3339).
 no other fields are accepted. ` + kernelTransactionHelp + `.
 restart_verification takes no parameters. in recovery_required, ` + vaultRecoveryHelp + `
@@ -429,11 +430,12 @@ func newVaultCardCommand(update bool) *cobra.Command {
 kernel cards cannot be updated. other requested cards accept a replacement spec.
 pending issuance updates preserve omitted optional fields; explicit empty lists clear them. the api restricts fields after
 authorization starts; wallet/provider bindings cannot change. an uncertain update
-enters recovery_required and must not be retried. checkout cards can be edited
+enters recovery_required; delete the card and create a new one rather than retrying
+the update. checkout cards can be edited
 between authorizations, but a Link card authorized at a checkout cannot be updated:
 delete it and create a new one. identical creates return existing state without resetting it.
 never reconfigure the same item to retry a failed, timed-out, rejected, or indeterminate payment.
-an AgentCard recovery item that permits abandonment must be deleted after explicit user confirmation before creating a replacement.
+a recovery item that permits deletion (Link or kernel issuance, or AgentCard without an authorization id) must be deleted after explicit user confirmation before creating a replacement.
 
 ` + linkCardFlowHelp + "\n" + vaultSpecHelp + vaultCardSpecHelp,
 		Example: "  kernel vaults cards " + use + ` checkout order-1 \

@@ -369,7 +369,7 @@ Use `credentials update <vault> <key> --version <version> --spec-file changes.js
 with a spec such as `{"fields":{"password":{"value":"replacement"}}}`; update specs key
 `fields` by name rather than using the ordered array. Keep actual
 secrets in protected files or stdin, never shell arguments. Omission preserves values;
-null or an empty string clears supported fields, including required text/email/password fields (returning them to pending collection). The form still requires nonempty required inputs. Field definitions cannot change. Stale versions fail,
+null or an empty string clears supported fields, including required text/email/password fields (returning them to pending collection). The form still requires nonempty required inputs. Add fields with `add_fields` (an array of definitions with the same shape and defaults as create; set their values in `fields` in the same update) and delete fields and their values with `remove_fields` (an array of names). Names must be unique after removals, at most 32 fields may result, and at least one must remain. Stale versions fail,
 without retries. `items invoke <vault> <key> collect` reopens the full form without
 clearing values; compare versions to observe edits to already-ready items. When an update
 is bound to an earlier read, also pass `--expected-item-id <id>` to reject a replacement
@@ -379,11 +379,13 @@ Do not use credential items to store, collect, or fill credit card data, includi
 
 Set `description` to the recognizable site name only, such as `Hacker News`, not `Hacker News sign-in credentials`. Set `sensitive: false` explicitly for ordinary usernames and email addresses. Reserve `sensitive: true` for passwords, API tokens, and TOTP seeds; the omitted default remains true for safety.
 
-Types are `text`, `email`, `password`, and `totp`. TOTP seeds must be provided through
-create/update, never the form; only generated codes enter the browser. Unrestricted
+Types are `text`, `email`, `password`, `totp`, and `passkey`. TOTP seeds and passkeys must be provided through
+create/update, never the form; only generated TOTP codes enter the browser. A passkey value is a JSON-encoded
+FIDO Credential Exchange Format passkey object; passkeys are never filled into pages. Password, TOTP, and passkey
+fields must be sensitive. Unrestricted
 browser access can read filled values. CLI JSON output retains explicitly non-sensitive
-text/email values, definitions, version, and `has_value`. Sensitive values and TOTP
-seeds are omitted.
+text/email values, definitions, version, and `has_value`. Sensitive values, TOTP
+seeds, and passkeys are omitted.
 Credential spec input is capped at 128 KiB; write errors are redacted.
 
 To reuse a managed auth connection's saved credential, create a credential with
@@ -450,11 +452,11 @@ TypeScript-style types, which must stay in sync with the [API spec](https://api.
   `card_enrollment` action collects card details from the cardholder, never from the CLI.
 - **Link wallet:** supply `authorization: {method: "oauth", client: {type: "kernel_managed"}}`.
 - **AgentCard wallet:** use `{}` to enroll, or supply `user_id` for a user enrolled in the same organization and provider configuration.
-- **Kernel card:** supply `wallet`, `amount` (minor units, at most 50000), `currency`,
+- **Kernel card:** supply `wallet`, `amount` (minor units, at most 1000000), `currency`,
   `merchant_name`, and HTTPS `merchant_url`. Supply two-letter `merchant_country` for Visa.
   Kernel card updates are unsupported.
 - **Link card:** include the required fields shown in help. Optional `line_items`, `totals`,
-  `metadata`, and `expires_at` are supported through JSON. `amount` is at most 500000 minor
+  and `metadata` are supported through JSON. `amount` is at most 500000 minor
   units; a virtual card allows at most 50000.
 - **AgentCard card:** uses `merchant`, not Link's `merchant_name`. Its optional `card_id` selects
   a vaulted card; otherwise the cardholder selects one at approval.
@@ -463,7 +465,8 @@ TypeScript-style types, which must stay in sync with the [API spec](https://api.
 cannot be updated. Pending issuance updates preserve omitted optional fields; explicit empty lists clear them. Wallet/provider bindings and unsupported fields
 cannot change after authorization starts. Checkout cards can be edited between authorizations,
 but a Link card authorized at a checkout cannot be updated (the API returns 409): delete it and
-create a new one. An uncertain update enters `recovery_required` and must not be retried.
+create a new one. An uncertain update enters `recovery_required`; delete the card and create a
+new one rather than retrying the update.
 Identical card creation returns its existing state without polling, reauthorizing, or resetting
 recovery. Link fill is limited to the origin of the checkout the card was authorized at;
 AgentCard checkout domains remain provider-assigned; Kernel fill is locked to the exact origin
@@ -533,10 +536,14 @@ If `restart_verification` is advertised in `available_operations`, invoke with e
 user approval each time to get a fresh `spend_approval` link. The cardholder must verify
 and approve spending again; restart grants no spend consent. If the response is unclear,
 re-get and share any new action; invoke once more only if still advertised with renewed
-user approval. Otherwise do not retry payment, delete or replace the item. Contact
-support@kernel.sh privately with project, vault, key, status_reason and relevant event
-timestamps (never card data, API keys or capability URLs) to reconcile the original
-operation and establish whether a new purchase is safe; never assume a new card is safe.
+user approval. Otherwise do not retry payment or the uncertain update. A Link or Kernel
+card in recovery for issuance, or an AgentCard card whose checkout create returned no
+authorization ID, may be deleted after explicit user confirmation and replaced by one new
+card under a new key. The cardholder may see an approval request for the original card and
+should approve only the new one. If the API refuses deletion (for example, Kernel recovery
+while reporting a merchant transaction), contact support@kernel.sh privately with project,
+vault, key, status_reason and relevant event timestamps (never card data, API keys or
+capability URLs) to reconcile the original operation; never assume a new card is safe.
 Unresolved child cards can block wallet and vault deletion.
 Time passing or deletion is not evidence of non-execution.
 
@@ -581,8 +588,10 @@ kernel vaults items invoke checkout order-1 restart_verification --open
 ```
 
 This rotates the approval link locally without a provider call, only after a classified
-initial attestation failure with proof no intent was dispatched. Otherwise do not retry,
-delete, or replace the item. Always check `available_operations` rather than assuming
+initial attestation failure with proof no intent was dispatched. Otherwise do not retry;
+with user confirmation, delete the card and create a new purchase under a new key (the
+cardholder approves it separately). Recovery while reporting a merchant transaction cannot
+be deleted and must be reconciled with support. Always check `available_operations` rather than assuming
 the API supports this operation. Human output, JSON output and execution expose only
 advertised restart_verification during recovery; other operations and stale action URLs
 are suppressed.
@@ -631,7 +640,7 @@ kernel vaults items invoke checkout order-1 confirm_transaction --params '{
 `type` or any extra properties. `status` must be `APPROVED`, `DECLINED`, `PENDING`, `ERROR`,
 or `CANCELLED`. `transaction_type` must be `PURCHASE`, `AUTHORIZATION`, `CAPTURE`, `REFUND`,
 `REVERSAL`, `VERIFICATION`, `CHARGEBACK`, or `FRAUD`. `amount` is an integer in minor units,
-0..50000 and no greater than the approved amount; `currency` is three uppercase letters
+0..1000000 and no greater than the approved amount; `currency` is three uppercase letters
 matching the approved purchase currency;
 `occurred_at` is the observed outcome's RFC3339 timestamp. The operation is no longer
 advertised after reporting. Never infer success from fill. `PENDING` means explicit
@@ -789,9 +798,9 @@ through this endpoint.
 advertised. In `recovery_required`, the CLI hides and refuses every operation except
 an advertised `restart_verification`, invoked with explicit user approval each time and
 new cardholder spend consent. Human and JSON output use the same recovery filtering.
-Other operations remain blocked; otherwise contact support@kernel.sh with project,
+Other operations remain blocked. Where the API permits it, delete the card after user
+confirmation and create a new one; otherwise contact support@kernel.sh with project,
 vault, key, status_reason and event timestamps (no card data, API keys or capability URLs).
-Do not delete or replace unresolved items.
 Stale action URLs in recovery are not opened; a successful restart
 returns a fresh approval action.
 
@@ -954,8 +963,9 @@ does not merge the new JSON with the existing spec.
 Waits are single bounded observations, not readiness guarantees or payment retries. Pending
 state is returned as-is. Requests are not automatically retried by the vault commands.
 **Never automatically retry failed, timed-out, rejected, or indeterminate payments.** Inspect
-state/events and reconcile the outcome instead. If an AgentCard recovery state explicitly
-permits user-confirmed abandonment, delete that card before creating a replacement; deletion
+state/events and reconcile the outcome instead. If a recovery state permits user-confirmed
+deletion (Link or Kernel issuance, or AgentCard without an authorization ID), delete that
+card before creating a replacement; deletion
 does not prove the original attempt failed. Do not pass card data, OAuth codes/tokens,
 ciphertext, provider secrets, or sensitive provider responses to the CLI. Complete collection,
 OAuth, and approval actions through the provider's returned URL/UI; no callback-code command
@@ -982,6 +992,7 @@ exists.
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools update <id-or-name>` - Update pool configuration
   - Same flags as create (except `--region`, which is fixed at creation and cannot be updated) plus `--clear-profile`, `--clear-proxy`, `--clear-start-url`, `--clear-extensions`, `--clear-chrome-policy`, `--clear-private-hosts`, `--clear-proxy-routes`, and `--clear-allowed-hosts` for removing durable configuration. `--clear-private-hosts` removes the whole network configuration (restoring the default private IP ranges and dropping proxy routes and the allowlist). `--private-host`, `--proxy-route`, `--allowed-host`, `--clear-proxy-routes`, and `--clear-allowed-hosts` replace the pool's whole network configuration, so pass the other network flags to keep them; any network update without `--allowed-host` removes the pool's allowlist. Any change to the pool's allowlist, including removing it, automatically replaces idle browsers; leased browsers keep their allowlist until release, when it is reset to the new list or the browser is replaced. `--fill-rate 0` pauses automatic filling. `--discard-all-idle` discards all idle browsers and refills the pool. `--telemetry`, `--memory`, and other network updates only apply to browsers warmed after the update.
+  - `--expected-network <json>` - Optimistic concurrency precondition: pass the pool's network configuration from the last pool response (`browser-pools get <id-or-name> -o json`, the `browser_pool_config.network` object), or `'{}'` when it has none. The whole update is rejected with 409 `stale_network` if the saved network differs, checked atomically with the write. Explicit empty lists differ from omitted lists, and proxy route targets must match the saved references (resolved IDs, not equivalent proxy names). Omit for unconditional updates
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools delete <id-or-name>` - Delete a pool
   - `--force` - Force delete even if browsers are leased
@@ -1463,8 +1474,10 @@ Automated authentication for web services. The `run` command orchestrates the fu
 
 - `kernel api-keys create` - Create a new API key
   - `--name <name>` - API key name (required)
-  - `--days-to-expire <days>` - Number of days until expiry (1-3650); omit for never
+  - `--days-to-expire <days>` - Number of days until expiry (1-3650); omit for never. Cannot be combined with `--expires-at`
+  - `--expires-at <timestamp>` - Exact expiry time as an RFC 3339 timestamp (e.g. `2026-01-15T09:00:00Z`); must be in the future. Cannot be combined with `--days-to-expire`
   - `--project-id <project_id>` - Create a project-scoped API key for this project ID; omit for org-wide. This is different from global `--project`, which scopes the CLI request to a project ID.
+  - `--policy-statement <action=resource>` - Issue a scoped key allowed only the listed actions on the listed resources (repeatable), e.g. `browsers:use=projects/proj_abc123/*`. Everything not listed is denied.
   - `--output json`, `-o json` - Output raw JSON object, including the one-time plaintext key
 
 - `kernel api-keys list` - List API keys
