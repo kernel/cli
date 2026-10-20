@@ -107,8 +107,12 @@ type BrowserComputerService interface {
 	WriteClipboard(ctx context.Context, idOrName string, body kernel.BrowserComputerWriteClipboardParams, opts ...option.RequestOption) (err error)
 }
 
-// Regular expression to validate CUID2 identifiers (starts with a letter, 24 lowercase alphanumeric characters).
-var cuidRegex = regexp.MustCompile(`^[a-z][a-z0-9]{23}$`)
+var (
+	// CUID2 identifiers start with a letter and contain 24 lowercase alphanumerics.
+	cuidRegex = regexp.MustCompile(`^[a-z][a-z0-9]{23}$`)
+	// Browser allowlist mutation IDs follow the OpenAPI pattern and size limit.
+	allowlistMutationIDRegex = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+)
 
 // getAvailableViewports returns the list of supported viewport configurations.
 func getAvailableViewports() []string {
@@ -503,6 +507,10 @@ type BrowsersCreateInput struct {
 	ProxyName            string
 	ProxyMode            string
 	Region               string
+	Locale               string
+	LocaleProvided       bool
+	Timezone             string
+	TimezoneProvided     bool
 	PrivateHosts         []string
 	AllowedHosts         []string
 	AllowedHostsProvided bool
@@ -558,12 +566,22 @@ type BrowsersUpdateInput struct {
 	TagsProvided        bool
 	ClearTags           bool
 	StartURL            string
+	Locale              string
+	LocaleProvided      bool
+	ClearLocale         bool
+	Timezone            string
+	TimezoneProvided    bool
+	ClearTimezone       bool
 	// AllowedHosts replaces the session's egress allowlist when
 	// AllowedHostsProvided is set; ClearAllowedHosts removes it.
-	AllowedHosts         []string
-	AllowedHostsProvided bool
-	ClearAllowedHosts    bool
-	Output               string
+	AllowedHosts                      []string
+	AllowedHostsProvided              bool
+	ClearAllowedHosts                 bool
+	ExpectedAllowlistRevision         string
+	ExpectedAllowlistRevisionProvided bool
+	MutationID                        string
+	MutationIDProvided                bool
+	Output                            string
 }
 
 // BrowsersCmd is a cobra-independent command handler for browsers operations.
@@ -653,7 +671,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	}
 
 	// Prepare table data
-	headers := []string{"Browser ID", "Name", "Created At", "Region", "Profile", "Pool", "CDP WS URL", "Live View URL"}
+	headers := []string{"Browser ID", "Name", "Created At", "Region", "Locale", "Timezone", "Profile", "Pool", "CDP WS URL", "Live View URL"}
 	showDeletedAt := in.IncludeDeleted || in.Status == "deleted" || in.Status == "all"
 	if showDeletedAt {
 		headers = append(headers, "Deleted At")
@@ -680,6 +698,8 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 			util.OrDash(browser.Name),
 			util.FormatLocal(browser.CreatedAt),
 			util.OrDash(string(browser.Region)),
+			formatBrowserLocationField(browser.Location.Locale, browser.Location.LocaleSource),
+			formatBrowserLocationField(browser.Location.Timezone, browser.Location.TimezoneSource),
 			profile,
 			pool,
 			truncateURL(browser.CdpWsURL, 50),
@@ -783,6 +803,23 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 		params.Region = kernel.BrowserNewParamsRegion(region)
 	}
 
+	localeSet := in.LocaleProvided || in.Locale != ""
+	timezoneSet := in.TimezoneProvided || in.Timezone != ""
+	locale := strings.TrimSpace(in.Locale)
+	timezone := strings.TrimSpace(in.Timezone)
+	if localeSet && locale == "" {
+		return fmt.Errorf("--locale requires a non-empty canonical BCP 47 locale")
+	}
+	if timezoneSet && timezone == "" {
+		return fmt.Errorf("--timezone requires a non-empty IANA timezone")
+	}
+	if localeSet {
+		params.Location.Locale = kernel.String(locale)
+	}
+	if timezoneSet {
+		params.Location.Timezone = kernel.String(timezone)
+	}
+
 	network, err := buildNetworkParam(in.PrivateHosts)
 	if err != nil {
 		return err
@@ -880,7 +917,9 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 
 	tableData := buildBrowserTableData(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.ProfileSaveChanges, browser.StartURL, browser.Name, browser.Tags)
+	tableData = appendBrowserLocationRows(tableData, browser.Location)
 	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)}, []string{"Allowed Hosts", formatAllowedHosts(browser.Network)}, []string{"Proxy Routes", formatProxyRoutes(browser.Network)})
+	tableData = appendBrowserAllowlistStateRows(tableData, browser.Network.AllowlistState)
 	PrintTableNoPad(tableData, true)
 	if len(browser.Vaults) > 0 {
 		rows := pterm.TableData{{"Attached vault ID", "Name"}}
@@ -895,8 +934,9 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	return nil
 }
 
-func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, profileSaveChanges bool, startURL, name string, tags kernel.Tags) {
+func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, profileSaveChanges bool, startURL, name string, tags kernel.Tags, location kernel.BrowserLocation) {
 	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, profile, profileSaveChanges, startURL, name, tags)
+	tableData = appendBrowserLocationRows(tableData, location)
 	PrintTableNoPad(tableData, true)
 }
 
@@ -926,6 +966,40 @@ func buildBrowserTableData(sessionID, cdpURL, liveViewURL string, profile kernel
 	}
 	if len(tags) > 0 {
 		tableData = append(tableData, []string{"Tags", formatTags(tags)})
+	}
+	return tableData
+}
+
+func formatBrowserLocationField(value string, source kernel.BrowserLocationSource) string {
+	if value == "" {
+		return "-"
+	}
+	if source == "" {
+		return value
+	}
+	return fmt.Sprintf("%s (%s)", value, source)
+}
+
+func appendBrowserLocationRows(tableData pterm.TableData, location kernel.BrowserLocation) pterm.TableData {
+	if location.Locale == "" && location.Timezone == "" {
+		return tableData
+	}
+	return append(tableData,
+		[]string{"Locale", formatBrowserLocationField(location.Locale, location.LocaleSource)},
+		[]string{"Timezone", formatBrowserLocationField(location.Timezone, location.TimezoneSource)},
+	)
+}
+
+func appendBrowserAllowlistStateRows(tableData pterm.TableData, state kernel.BrowserAllowlistState) pterm.TableData {
+	if state.Revision == "" {
+		return tableData
+	}
+	tableData = append(tableData, []string{"Allowlist Revision", state.Revision})
+	if state.BaseRevision != "" {
+		tableData = append(tableData, []string{"Allowlist Base Revision", state.BaseRevision})
+	}
+	if state.MutationID != "" {
+		tableData = append(tableData, []string{"Allowlist Mutation ID", state.MutationID})
 	}
 	return tableData
 }
@@ -1006,6 +1080,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	// Append additional detailed fields
 	tableData = append(tableData, []string{"Created At", util.FormatLocal(browser.CreatedAt)})
 	tableData = append(tableData, []string{"Region", util.OrDash(string(browser.Region))})
+	tableData = appendBrowserLocationRows(tableData, browser.Location)
 	tableData = append(tableData, []string{"Timeout (seconds)", fmt.Sprintf("%d", browser.TimeoutSeconds)})
 	tableData = append(tableData, []string{"Headless", fmt.Sprintf("%t", browser.Headless)})
 	tableData = append(tableData, []string{"Stealth", fmt.Sprintf("%t", browser.Stealth)})
@@ -1028,6 +1103,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)})
 	tableData = append(tableData, []string{"Allowed Hosts", formatAllowedHosts(browser.Network)})
 	tableData = append(tableData, []string{"Proxy Routes", formatProxyRoutes(browser.Network)})
+	tableData = appendBrowserAllowlistStateRows(tableData, browser.Network.AllowlistState)
 	if vaults := formatVaultReferences(browser.Vaults); vaults != "" {
 		tableData = append(tableData, []string{"Vaults", vaults})
 	}
@@ -1132,6 +1208,24 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	hasTagsChange := len(in.Tags) > 0 || in.ClearTags
 	hasStartURLChange := in.StartURL != ""
 
+	localeSet := in.LocaleProvided || in.Locale != ""
+	timezoneSet := in.TimezoneProvided || in.Timezone != ""
+	if localeSet && in.ClearLocale {
+		return fmt.Errorf("cannot specify both --locale and --clear-locale")
+	}
+	if timezoneSet && in.ClearTimezone {
+		return fmt.Errorf("cannot specify both --timezone and --clear-timezone")
+	}
+	locale := strings.TrimSpace(in.Locale)
+	timezone := strings.TrimSpace(in.Timezone)
+	if localeSet && locale == "" {
+		return fmt.Errorf("--locale requires a non-empty canonical BCP 47 locale; use --clear-locale to restore the region default")
+	}
+	if timezoneSet && timezone == "" {
+		return fmt.Errorf("--timezone requires a non-empty IANA timezone; use --clear-timezone to restore the region default")
+	}
+	hasLocationChange := localeSet || in.ClearLocale || timezoneSet || in.ClearTimezone
+
 	// The API replaces the allowlist with the given entries, or removes it when
 	// sent null. An empty list is rejected, so require at least one entry.
 	if (in.AllowedHostsProvided || len(in.AllowedHosts) > 0) && in.ClearAllowedHosts {
@@ -1142,6 +1236,21 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return err
 	}
 	hasAllowedHostsChange := len(allowedHosts) > 0 || in.ClearAllowedHosts
+
+	expectedRevisionSet := in.ExpectedAllowlistRevisionProvided || in.ExpectedAllowlistRevision != ""
+	mutationIDSet := in.MutationIDProvided || in.MutationID != ""
+	if expectedRevisionSet != mutationIDSet {
+		return fmt.Errorf("--expected-allowlist-revision and --mutation-id must be supplied together")
+	}
+	if expectedRevisionSet && !hasAllowedHostsChange {
+		return fmt.Errorf("--expected-allowlist-revision and --mutation-id require --allowed-host or --clear-allowed-hosts")
+	}
+	if expectedRevisionSet && len(in.ExpectedAllowlistRevision) != 64 {
+		return fmt.Errorf("--expected-allowlist-revision must be the 64-character revision returned by 'browsers get'")
+	}
+	if mutationIDSet && !allowlistMutationIDRegex.MatchString(in.MutationID) {
+		return fmt.Errorf("--mutation-id must be 1-64 ASCII letters, digits, underscores, or hyphens")
+	}
 
 	// Validate --save-changes is only used with a profile
 	if in.ProfileSaveChanges.Set && !hasProfileChange {
@@ -1154,8 +1263,8 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	// Validate that at least one update option is provided
-	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && in.TelemetryCdpExclude == "" && !hasNameChange && !hasTagsChange && !hasStartURLChange && !hasAllowedHostsChange {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --telemetry-cdp-exclude, --name, --clear-name, --tag, --clear-tags, --start-url, --allowed-host, or --clear-allowed-hosts")
+	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && in.TelemetryCdpExclude == "" && !hasNameChange && !hasTagsChange && !hasStartURLChange && !hasLocationChange && !hasAllowedHostsChange {
+		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --telemetry-cdp-exclude, --name, --clear-name, --tag, --clear-tags, --start-url, --locale, --clear-locale, --timezone, --clear-timezone, --allowed-host, or --clear-allowed-hosts")
 	}
 
 	params := kernel.BrowserUpdateParams{}
@@ -1181,11 +1290,29 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		params.StartURL = kernel.String(in.StartURL)
 	}
 
-	// Handle egress allowlist changes. Null removes the allowlist.
+	// Handle session-only locale and timezone overrides. Null restores the
+	// browser region's default for that field.
+	if in.ClearLocale {
+		params.Location.Locale = param.Null[string]()
+	} else if localeSet {
+		params.Location.Locale = kernel.String(locale)
+	}
+	if in.ClearTimezone {
+		params.Location.Timezone = param.Null[string]()
+	} else if timezoneSet {
+		params.Location.Timezone = kernel.String(timezone)
+	}
+
+	// Handle egress allowlist changes. Null removes the allowlist. The optional
+	// revision and mutation ID make this an atomic conditional update.
 	if in.ClearAllowedHosts {
 		params.Network.AllowedHosts = param.NullSlice[[]string]()
 	} else if len(allowedHosts) > 0 {
 		params.Network.AllowedHosts = allowedHosts
+	}
+	if expectedRevisionSet {
+		params.Network.ExpectedAllowlistRevision = kernel.String(in.ExpectedAllowlistRevision)
+		params.Network.MutationID = kernel.String(in.MutationID)
 	}
 
 	// Handle proxy changes
@@ -1265,8 +1392,15 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	if hasStartURLChange {
 		pterm.Info.Printf("Start URL: %s\n", util.OrDash(browser.StartURL))
 	}
+	if hasLocationChange {
+		pterm.Info.Printf("Locale: %s\n", formatBrowserLocationField(browser.Location.Locale, browser.Location.LocaleSource))
+		pterm.Info.Printf("Timezone: %s\n", formatBrowserLocationField(browser.Location.Timezone, browser.Location.TimezoneSource))
+	}
 	if hasAllowedHostsChange {
 		pterm.Info.Printf("Allowed Hosts: %s\n", formatAllowedHosts(browser.Network))
+		if browser.Network.AllowlistState.Revision != "" {
+			pterm.Info.Printf("Allowlist Revision: %s\n", browser.Network.AllowlistState.Revision)
+		}
 	}
 	if in.Telemetry != "" || in.TelemetryCdpExclude != "" {
 		printTelemetrySummary(browser.Telemetry)
@@ -2898,6 +3032,7 @@ var browsersListCmd = &cobra.Command{
 var browsersCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new browser session",
+	Long:  "Create a new browser session. --locale and --timezone are optional session-only location overrides; each omitted field uses the browser region's default. --start-url opens once the location applies.",
 	RunE:  runBrowsersCreate,
 }
 
@@ -2937,13 +3072,20 @@ Supported operations:
   - Rename or clear the session name (--name or --clear-name)
   - Replace or clear the session tags (--tag or --clear-tags)
   - Navigate the session to a URL (--start-url)
+  - Override or clear the session locale and timezone (--locale/--timezone or clear flags)
   - Replace or remove the egress allowlist (--allowed-host or --clear-allowed-hosts)
+  - Conditionally update the allowlist (--expected-allowlist-revision with --mutation-id)
 
 Notes:
   - Profiles can only be loaded into sessions that don't already have a profile.
   - --start-url navigation is best-effort: the update succeeds even if the page fails to load.
   - --start-url combined with --profile-id/--profile-name overrides the profile's restored tabs.
   - --tag replaces the entire tag set (it is not merged with existing tags).
+  - Location overrides are session-only. Omit a location flag to leave that field unchanged;
+    use --clear-locale or --clear-timezone to restore the browser region's default. A browser
+    that cannot change location refuses the request before anything changes. Location applies
+    after other changes, and --start-url opens once it applies. If location application fails,
+    other changes and the saved override remain; retry the request to apply both.
   - --allowed-host replaces an existing allowlist only; it cannot add one to a browser created
     without one. Omit to leave the list unchanged; an empty list is invalid.
   - --clear-allowed-hosts removes the allowlist and returns to unfiltered egress. Once removed,
@@ -2955,6 +3097,10 @@ Notes:
     Supported on leased pooled browsers: the pool's allowlist is restored before reuse, or the
     browser is destroyed if it cannot be safely restored. If the update fails, retry it: the
     new list may already apply to some requests.
+  - For an atomic conditional allowlist update, pass the revision shown by 'browsers get'
+    with --expected-allowlist-revision and a unique --mutation-id. A stale request returns
+    409 stale_network without changing the allowlist. For an uncertain retry, reuse both
+    values and the identical allowlist payload. These fields guard only the allowlist.
   - Allowlists filter Kernel-managed egress only, not all browser VM traffic.`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
@@ -3006,7 +3152,13 @@ func init() {
 	browsersUpdateCmd.Flags().Bool("clear-tags", false, "Remove all tags from the browser session")
 	browsersUpdateCmd.Flags().StringSlice("allowed-host", nil, "Replace an existing egress allowlist (repeat or comma-separated, max 100), using the same entry rules as 'browsers create --allowed-host'. Cannot add one to a browser created without one or after removal. Omit to leave unchanged; an empty list is invalid. Applies without restarting the browser; --start-url must be allowed by the new list. Requires proxy v3; on leased pooled browsers the pool's allowlist is restored on release (mutually exclusive with --clear-allowed-hosts). See notes for propagation timing")
 	browsersUpdateCmd.Flags().Bool("clear-allowed-hosts", false, "Remove the egress allowlist and return to unfiltered egress; an allowlist cannot be added back to this browser")
+	browsersUpdateCmd.Flags().String("expected-allowlist-revision", "", "The 64-character network.allowlist_state.revision from the browser's last saved snapshot. Supply with --mutation-id to conditionally update --allowed-host/--clear-allowed-hosts; stale revisions return 409 stale_network")
+	browsersUpdateCmd.Flags().String("mutation-id", "", "Unique ID for a conditional allowlist update (1-64 ASCII letters, digits, _ or -). Supply with --expected-allowlist-revision; reuse both values and the identical allowlist payload when retrying an uncertain update")
 	browsersUpdateCmd.Flags().String("start-url", "", "Navigate the browser to this URL after applying the update. Overrides the restored tabs when a profile is loaded in the same update. Navigation is best-effort, so failures do not fail the update")
+	browsersUpdateCmd.Flags().String("locale", "", "Set a session-only supported canonical BCP 47 locale override (for example, en-US). Omit to leave unchanged; mutually exclusive with --clear-locale")
+	browsersUpdateCmd.Flags().Bool("clear-locale", false, "Clear the session locale override and use the browser region's default")
+	browsersUpdateCmd.Flags().String("timezone", "", "Set a session-only IANA timezone override (for example, America/Los_Angeles). Omit to leave unchanged; mutually exclusive with --clear-timezone")
+	browsersUpdateCmd.Flags().Bool("clear-timezone", false, "Clear the session timezone override and use the browser region's default")
 
 	browsersCmd.AddCommand(browsersListCmd)
 	browsersCmd.AddCommand(browsersCreateCmd)
@@ -3304,6 +3456,8 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().String("proxy-name", "", "Proxy name to use for the browser session; must match exactly one active proxy in the project (mutually exclusive with --proxy-id and --proxy-mode)")
 	browsersCreateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' for the browser default (Kernel's stealth proxy when --stealth is set, direct egress otherwise)")
 	browsersCreateCmd.Flags().String("region", "", "Geographic region for the session: 'us-east', 'us-west', 'eu-west', or 'ap-southeast'. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to us-east")
+	browsersCreateCmd.Flags().String("locale", "", "Session-only supported canonical BCP 47 locale override (for example, en-US); omit to use the default for the browser's region")
+	browsersCreateCmd.Flags().String("timezone", "", "Session-only IANA timezone override (for example, America/Los_Angeles); omit to use the default for the browser's region")
 	browsersCreateCmd.Flags().StringSlice("private-host", nil, "Destinations the browser reaches directly through its own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel the session joins (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Replaces the default private ranges (RFC1918, 100.64.0.0/10, fc00::/7); omit to keep them. Fixed once the session is created")
 	browsersCreateCmd.Flags().StringSlice("allowed-host", nil, "Set an egress allowlist at creation: the only destinations the browser may reach through Kernel-managed egress (repeat or comma-separated, max 100); anything else is refused with a 403 (network_policy_denied). Filters Kernel-managed egress only, not all browser VM traffic. Accepts exact hostnames ('example.com'), a leading wildcard matching subdomains only ('*.example.com'), public IPs ('8.8.8.8', '[2001:4860:4860::8888]'), and public CIDRs ('8.8.4.0/24'). No ports, paths, or schemes. --start-url must be allowed. Omit for unfiltered egress; an empty list is invalid. Requires proxy v3; cannot be combined with --pool-id or --pool-name, even with --yes. An existing list can be replaced or removed with 'browsers update'; it cannot be added later if omitted at creation or removed")
 	browsersCreateCmd.Flags().StringArray("proxy-route", nil, "Route HOST[,HOST...]=PROXY through a proxy (repeatable, max 10 routes and 50 hosts per route). PROXY is an ID by default; use id:ID or name:NAME explicitly. Exact hosts beat wildcards (longer suffixes win); *.example.com excludes example.com. Unmatched hosts use --proxy-* or default egress. Routes also apply to start_url and other setup traffic. Create-only")
@@ -3445,6 +3599,8 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	proxyName, _ := cmd.Flags().GetString("proxy-name")
 	proxyMode, _ := cmd.Flags().GetString("proxy-mode")
 	region, _ := cmd.Flags().GetString("region")
+	locale, _ := cmd.Flags().GetString("locale")
+	timezone, _ := cmd.Flags().GetString("timezone")
 	privateHosts, _ := cmd.Flags().GetStringSlice("private-host")
 	allowedHosts, _ := cmd.Flags().GetStringSlice("allowed-host")
 	proxyRoutes, _ := cmd.Flags().GetStringArray("proxy-route")
@@ -3565,7 +3721,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if output == "json" {
 			return util.PrintPrettyJSON(resp)
 		}
-		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.ProfileSaveChanges, resp.StartURL, resp.Name, resp.Tags)
+		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.ProfileSaveChanges, resp.StartURL, resp.Name, resp.Tags, resp.Location)
 		return nil
 	}
 
@@ -3602,6 +3758,10 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		ProxyName:            proxyName,
 		ProxyMode:            proxyMode,
 		Region:               region,
+		Locale:               locale,
+		LocaleProvided:       cmd.Flags().Changed("locale"),
+		Timezone:             timezone,
+		TimezoneProvided:     cmd.Flags().Changed("timezone"),
 		PrivateHosts:         privateHosts,
 		AllowedHosts:         allowedHosts,
 		AllowedHostsProvided: cmd.Flags().Changed("allowed-host"),
@@ -3688,34 +3848,50 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	startURL, _ := cmd.Flags().GetString("start-url")
 	allowedHosts, _ := cmd.Flags().GetStringSlice("allowed-host")
 	clearAllowedHosts, _ := cmd.Flags().GetBool("clear-allowed-hosts")
+	expectedAllowlistRevision, _ := cmd.Flags().GetString("expected-allowlist-revision")
+	mutationID, _ := cmd.Flags().GetString("mutation-id")
+	locale, _ := cmd.Flags().GetString("locale")
+	clearLocale, _ := cmd.Flags().GetBool("clear-locale")
+	timezone, _ := cmd.Flags().GetString("timezone")
+	clearTimezone, _ := cmd.Flags().GetBool("clear-timezone")
 
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
 	return b.Update(cmd.Context(), BrowsersUpdateInput{
-		Identifier:           args[0],
-		ProxyID:              proxyID,
-		ProxyName:            proxyName,
-		ProxyMode:            proxyMode,
-		ClearProxy:           clearProxy,
-		DisableDefaultProxy:  BoolFlag{Set: cmd.Flags().Changed("disable-default-proxy"), Value: disableDefaultProxy},
-		ProfileID:            profileID,
-		ProfileName:          profileName,
-		ProfileSaveChanges:   BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
-		Viewport:             viewport,
-		Force:                force,
-		Telemetry:            telemetry,
-		TelemetryCdpExclude:  telemetryCdpExclude,
-		Name:                 name,
-		SetName:              cmd.Flags().Changed("name"),
-		ClearName:            clearName,
-		Tags:                 tags,
-		TagsProvided:         tagsProvided,
-		ClearTags:            clearTags,
-		StartURL:             startURL,
-		AllowedHosts:         allowedHosts,
-		AllowedHostsProvided: cmd.Flags().Changed("allowed-host"),
-		ClearAllowedHosts:    clearAllowedHosts,
-		Output:               out,
+		Identifier:                        args[0],
+		ProxyID:                           proxyID,
+		ProxyName:                         proxyName,
+		ProxyMode:                         proxyMode,
+		ClearProxy:                        clearProxy,
+		DisableDefaultProxy:               BoolFlag{Set: cmd.Flags().Changed("disable-default-proxy"), Value: disableDefaultProxy},
+		ProfileID:                         profileID,
+		ProfileName:                       profileName,
+		ProfileSaveChanges:                BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
+		Viewport:                          viewport,
+		Force:                             force,
+		Telemetry:                         telemetry,
+		TelemetryCdpExclude:               telemetryCdpExclude,
+		Name:                              name,
+		SetName:                           cmd.Flags().Changed("name"),
+		ClearName:                         clearName,
+		Tags:                              tags,
+		TagsProvided:                      tagsProvided,
+		ClearTags:                         clearTags,
+		StartURL:                          startURL,
+		Locale:                            locale,
+		LocaleProvided:                    cmd.Flags().Changed("locale"),
+		ClearLocale:                       clearLocale,
+		Timezone:                          timezone,
+		TimezoneProvided:                  cmd.Flags().Changed("timezone"),
+		ClearTimezone:                     clearTimezone,
+		AllowedHosts:                      allowedHosts,
+		AllowedHostsProvided:              cmd.Flags().Changed("allowed-host"),
+		ClearAllowedHosts:                 clearAllowedHosts,
+		ExpectedAllowlistRevision:         expectedAllowlistRevision,
+		ExpectedAllowlistRevisionProvided: cmd.Flags().Changed("expected-allowlist-revision"),
+		MutationID:                        mutationID,
+		MutationIDProvided:                cmd.Flags().Changed("mutation-id"),
+		Output:                            out,
 	})
 }
 

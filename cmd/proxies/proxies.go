@@ -23,10 +23,14 @@ var proxiesListCmd = &cobra.Command{
 }
 
 var proxiesGetCmd = &cobra.Command{
-	Use:   "get <id>",
-	Short: "Get proxy configuration by ID",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runProxiesGet,
+	Use:   "get <id-or-name>",
+	Short: "Get proxy configuration by ID or exact name",
+	Long: `Retrieve a proxy in the resolved project by ID or exact name using the
+database collation. IDs take precedence when a value matches both an ID and a
+name. Proxy names are not unique; an ambiguous name returns a 400 response
+with code ambiguous_proxy_name.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runProxiesGet,
 }
 
 var proxiesCreateCmd = &cobra.Command{
@@ -63,24 +67,25 @@ Examples:
 }
 
 var proxiesUpdateCmd = &cobra.Command{
-	Use:   "update <id>",
-	Short: "Rename a proxy configuration",
-	Long:  "Rename a proxy configuration. Only the name can be changed; recreate the proxy to change its type or config.",
+	Use:   "update <id-or-name>",
+	Short: "Rename a proxy configuration by ID or exact name",
+	Long:  "Rename a proxy configuration by ID or exact name. Proxy names are not unique and duplicate names are allowed; an ambiguous name is rejected. Only the name can be changed; recreate the proxy to change its type or config.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runProxiesUpdate,
 }
 
 var proxiesDeleteCmd = &cobra.Command{
-	Use:   "delete <id>",
-	Short: "Delete a proxy configuration",
+	Use:   "delete <id-or-name>",
+	Short: "Delete a proxy configuration by ID or exact name",
+	Long:  "Soft-delete a proxy by ID or exact name. Session records referencing it are not modified. With egress binding polling enabled, active-session tunnels using it terminate within one polling interval and later connections through it are rejected.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runProxiesDelete,
 }
 
 var proxiesCheckCmd = &cobra.Command{
-	Use:   "check <id>",
-	Short: "Run a health check on a proxy",
-	Long:  "Run a health check on a proxy to verify it's working and update its status. Optionally test against a specific public URL.",
+	Use:   "check <id-or-name>",
+	Short: "Run a health check on a proxy by ID or exact name",
+	Long:  "Run a health check on a proxy by ID or exact name to verify it is working. Optionally test a public URL. For ISP proxies this reliably tests reachability from the stable exit IP; residential and mobile exit nodes vary, so their result validates configuration and connectivity rather than guaranteeing site-specific reachability.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runProxiesCheck,
 }

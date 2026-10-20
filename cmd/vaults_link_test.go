@@ -47,7 +47,7 @@ func TestLinkCardFlowHelpOrder(t *testing.T) {
 		"make sure the checkout is open in exactly one tab at page_url, then authorize again",
 		"authorize without --browser-id and --page-url to issue a virtual card",
 		"cards update returns 409: delete the card and create a new one",
-		"50000 minor-unit virtual card limit",
+		"Link card amounts are limited to 50000 minor units",
 		"check the merchant's order confirmation or order history before paying again",
 		"failed or unknown fills are safe to retry, but only after checking the page and not in an automatic loop",
 	} {
@@ -150,7 +150,7 @@ func TestVaultLinkAuthorizeErrorGuidance(t *testing.T) {
 		{403, "destination_denied", "checkout destination is not authorized", linkAuthorizeBrowserGuidance, "", false},
 		{400, "timeout", "checkout inspection failed", linkAuthorizeBrowserGuidance, "", false},
 		{500, "browser_error", "checkout inspection failed", linkAuthorizeBrowserGuidance, "", false},
-		{400, "invalid_request", "amount exceeds the Link virtual card limit", "fix the reported input, then authorize again. if it reports that the amount exceeds the Link virtual card limit, delete this card and tell the user this checkout cannot be paid with a Link virtual card", "", false},
+		{400, "invalid_request", "invalid card request", "fix the reported input, then authorize again", "", false},
 		{429, "rate_limited", "too many requests", "wait for the rate limit to clear, then authorize again", "", false},
 		{429, "rate_limited", "too many requests", "wait until Retry-After (30) has elapsed, then authorize again", "30", false},
 		{500, "provider_error", "failed to perform item operation", linkAuthorizeServerErrorGuidance, "", false},

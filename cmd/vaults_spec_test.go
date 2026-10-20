@@ -94,12 +94,16 @@ func TestVaultSpecHelpAndFlags(t *testing.T) {
 				for _, field := range []string{"merchant_name:", "merchant:", "line_items?:", "metadata?:", "checkout_origin?:", "type LinkLineItem", "type LinkTotal"} {
 					assert.Contains(t, cmd.Long, field)
 				}
-				for _, guidance := range []string{"eligible", "autopilot may not apply", "user approval may", "does not guarantee payment success", "KERNEL does not validate this declaration against the page open in the browser.", "preparation merchant_origin instead", "card updates replace the whole spec", "omitting checkout_origin from an update removes"} {
+				for _, guidance := range []string{"eligible", "autopilot may not apply", "user approval may", "does not guarantee payment success", "KERNEL does not validate this declaration against the page open in the browser.", "preparation merchant_origin instead", "card updates replace the whole spec", "omitting checkout_origin from an update removes", "integer minor units; 1..50000"} {
 					assert.Contains(t, cmd.Long, guidance)
 				}
+				assert.NotContains(t, cmd.Long, "1..500000")
 			} else {
 				assert.Contains(t, cmd.Long, "authorization:")
 				assert.Contains(t, cmd.Long, "user_id?:")
+				for _, guidance := range []string{"customer-owned provider_config", "read-only access validation", "no hosted enrollment", "no stored cards", "KERNEL-managed credentials", "bindings are immutable", "no wallet or reserved key", "at most one wallet and connected event"} {
+					assert.Contains(t, cmd.Long, guidance)
+				}
 			}
 		})
 	}
