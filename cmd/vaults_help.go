@@ -70,7 +70,7 @@ type LinkCardSpec = {
   provider: "link";
   wallet: string;             // wallet item key
   payment_method_id: string;  // from wallets payment-methods
-  amount: number;             // integer minor units; 1..500000; a virtual card allows at most 50000
+  amount: number;             // integer minor units; 1..50000
   currency: string;           // three letters
   merchant_name: string;      // 1..255 characters
   merchant_url: string;       // uri; a virtual card authorized without a checkout fills only this origin
