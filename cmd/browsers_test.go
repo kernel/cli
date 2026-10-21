@@ -2527,6 +2527,136 @@ func TestBrowsersCreate_RejectsStartURLFlagToken(t *testing.T) {
 	assert.False(t, called)
 }
 
+func TestBrowsersCreate_WithLocation(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+		captured = body
+		var resp kernel.BrowserNewResponse
+		require.NoError(t, json.Unmarshal([]byte(`{"session_id":"session123","cdp_ws_url":"ws://example","location":{"timezone":"Europe/Berlin","locale":"de-DE","timezone_source":"override","locale_source":"override"}}`), &resp))
+		return &resp, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	require.NoError(t, b.Create(context.Background(), BrowsersCreateInput{Timezone: "Europe/Berlin", Locale: "de-DE"}))
+
+	raw, err := json.Marshal(captured)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"location":{"locale":"de-DE","timezone":"Europe/Berlin"}`)
+	assert.Contains(t, outBuf.String(), "Europe/Berlin (override)")
+	assert.Contains(t, outBuf.String(), "de-DE (override)")
+}
+
+func TestBrowsersCreate_WithoutLocation_NotSent(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+		captured = body
+		return &kernel.BrowserNewResponse{SessionID: "session123", CdpWsURL: "ws://example"}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	require.NoError(t, b.Create(context.Background(), BrowsersCreateInput{}))
+
+	raw, err := json.Marshal(captured)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), `"location"`)
+	assert.NotContains(t, outBuf.String(), "Timezone")
+}
+
+// An empty value clears that override; an omitted flag leaves it unchanged.
+func TestBrowsersUpdate_Location(t *testing.T) {
+	tests := []struct {
+		name string
+		in   BrowsersUpdateInput
+		want string
+	}{
+		{"sets timezone only", BrowsersUpdateInput{Timezone: "America/Los_Angeles", TimezoneProvided: true}, `{"timezone":"America/Los_Angeles"}`},
+		{"sets locale only", BrowsersUpdateInput{Locale: "ja-JP", LocaleProvided: true}, `{"locale":"ja-JP"}`},
+		{"empty timezone clears it", BrowsersUpdateInput{TimezoneProvided: true}, `{"timezone":null}`},
+		{"empty both clears both", BrowsersUpdateInput{TimezoneProvided: true, LocaleProvided: true}, `{"locale":null,"timezone":null}`},
+		{"clears one and sets the other", BrowsersUpdateInput{TimezoneProvided: true, Locale: "fr-FR", LocaleProvided: true}, `{"locale":"fr-FR","timezone":null}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupStdoutCapture(t)
+			fake, captured := captureUpdateParams(t)
+			b := BrowsersCmd{browsers: fake}
+
+			tt.in.Identifier = "session123"
+			require.NoError(t, b.Update(context.Background(), tt.in))
+
+			raw, err := json.Marshal(*captured)
+			require.NoError(t, err)
+			assert.Contains(t, string(raw), `"location":`+tt.want)
+		})
+	}
+}
+
+func TestBrowsersUpdate_OmitLocation_NotSent(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	require.NoError(t, b.Update(context.Background(), BrowsersUpdateInput{Identifier: "session123", Name: "renamed", SetName: true}))
+
+	raw, err := json.Marshal(*captured)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), `"location"`)
+}
+
+// --timezone="" must count as passed, so exercise the flag wiring through the
+// run function and check what reaches the API.
+func TestBrowsersUpdateCommand_EmptyLocationFlagClearsOverride(t *testing.T) {
+	setupStdoutCapture(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPatch, r.Method)
+		assert.Equal(t, "/browsers/sess-1", r.URL.Path)
+		payload, _ := io.ReadAll(r.Body)
+		assert.JSONEq(t, `{"location":{"timezone":null,"locale":"de-DE"}}`, string(payload))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"session_id":"sess-1","location":{"timezone":"America/New_York","locale":"de-DE","timezone_source":"default","locale_source":"override"}}`)
+	}))
+	t.Cleanup(server.Close)
+	client := kernel.NewClient(option.WithBaseURL(server.URL), option.WithAPIKey("test"))
+	cmd := &cobra.Command{Use: "update"}
+	cmd.SetContext(context.WithValue(context.Background(), util.KernelClientKey, client))
+	cmd.Flags().String("timezone", "", "")
+	cmd.Flags().String("locale", "", "")
+	addJSONOutputFlag(cmd)
+	require.NoError(t, cmd.ParseFlags([]string{"--timezone=", "--locale", "de-DE"}))
+
+	require.NoError(t, runBrowsersUpdate(cmd, []string{"sess-1"}))
+	assert.Contains(t, outBuf.String(), "Timezone: America/New_York (default)")
+	assert.Contains(t, outBuf.String(), "Locale: de-DE (override)")
+}
+
+func TestLocationFlagsRegistered(t *testing.T) {
+	for _, path := range [][]string{{"browsers", "create"}, {"browsers", "update"}} {
+		cmd, _, err := rootCmd.Find(path)
+		require.NoError(t, err)
+		assert.NotNil(t, cmd.Flags().Lookup("timezone"))
+		assert.NotNil(t, cmd.Flags().Lookup("locale"))
+	}
+}
+
+func TestBrowsersGet_ShowsLocation(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{
+		GetFunc: func(_ context.Context, _ string, _ kernel.BrowserGetParams, _ ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			var resp kernel.BrowserGetResponse
+			err := json.Unmarshal([]byte(`{"session_id":"sess-1","location":{"timezone":"Europe/Berlin","locale":"en-US","timezone_source":"override","locale_source":"default"}}`), &resp)
+			require.NoError(t, err)
+			return &resp, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+
+	require.NoError(t, b.Get(context.Background(), BrowsersGetInput{Identifier: "sess-1"}))
+	assert.Contains(t, outBuf.String(), "Europe/Berlin (override)")
+	assert.Contains(t, outBuf.String(), "en-US (default)")
+}
+
 func TestBrowsersCreate_WithTelemetry(t *testing.T) {
 	setupStdoutCapture(t)
 	var captured kernel.BrowserNewParams
