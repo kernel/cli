@@ -408,7 +408,7 @@ func TestBrowsersList_PrintsTableWithRows(t *testing.T) {
 				Locale:         "fr-FR",
 				LocaleSource:   kernel.BrowserLocationSourceOverride,
 				Timezone:       "Europe/Paris",
-				TimezoneSource: kernel.BrowserLocationSourceMetro,
+				TimezoneSource: kernel.BrowserLocationSourceDefault,
 			},
 		},
 		{
@@ -434,7 +434,7 @@ func TestBrowsersList_PrintsTableWithRows(t *testing.T) {
 	assert.Contains(t, out, "eu-west")
 	assert.Contains(t, out, "us-east")
 	assert.Contains(t, out, "fr-FR (override)")
-	assert.Contains(t, out, "Europe/Paris (metro)")
+	assert.Contains(t, out, "Europe/Paris (default)")
 }
 
 func TestBrowsersList_PrintsErrorOnFailure(t *testing.T) {
@@ -3539,7 +3539,7 @@ func TestBrowsersGet_ShowsLocationAndAllowlistState(t *testing.T) {
 			SessionID: "session123",
 			Location: kernel.BrowserLocation{
 				Locale:         "en-US",
-				LocaleSource:   kernel.BrowserLocationSourceMetro,
+				LocaleSource:   kernel.BrowserLocationSourceDefault,
 				Timezone:       "America/New_York",
 				TimezoneSource: kernel.BrowserLocationSourceOverride,
 			},
@@ -3553,7 +3553,7 @@ func TestBrowsersGet_ShowsLocationAndAllowlistState(t *testing.T) {
 
 	require.NoError(t, (BrowsersCmd{browsers: fake}).Get(context.Background(), BrowsersGetInput{Identifier: "session123"}))
 	out := outBuf.String()
-	assert.Contains(t, out, "en-US (metro)")
+	assert.Contains(t, out, "en-US (default)")
 	assert.Contains(t, out, "America/New_York (override)")
 	assert.Contains(t, out, "Allowlist Revision")
 	assert.Contains(t, out, strings.Repeat("d", 64))
