@@ -2564,18 +2564,18 @@ func TestBrowsersCreate_WithoutLocation_NotSent(t *testing.T) {
 	assert.NotContains(t, outBuf.String(), "Timezone")
 }
 
-// An empty value clears that override; an omitted flag leaves it unchanged.
+// A clear flag sends null for that override; an omitted flag leaves it unchanged.
 func TestBrowsersUpdate_Location(t *testing.T) {
 	tests := []struct {
 		name string
 		in   BrowsersUpdateInput
 		want string
 	}{
-		{"sets timezone only", BrowsersUpdateInput{Timezone: "America/Los_Angeles", TimezoneProvided: true}, `{"timezone":"America/Los_Angeles"}`},
-		{"sets locale only", BrowsersUpdateInput{Locale: "ja-JP", LocaleProvided: true}, `{"locale":"ja-JP"}`},
-		{"empty timezone clears it", BrowsersUpdateInput{TimezoneProvided: true}, `{"timezone":null}`},
-		{"empty both clears both", BrowsersUpdateInput{TimezoneProvided: true, LocaleProvided: true}, `{"locale":null,"timezone":null}`},
-		{"clears one and sets the other", BrowsersUpdateInput{TimezoneProvided: true, Locale: "fr-FR", LocaleProvided: true}, `{"locale":"fr-FR","timezone":null}`},
+		{"sets timezone only", BrowsersUpdateInput{Timezone: "America/Los_Angeles", SetTimezone: true}, `{"timezone":"America/Los_Angeles"}`},
+		{"sets locale only", BrowsersUpdateInput{Locale: "ja-JP", SetLocale: true}, `{"locale":"ja-JP"}`},
+		{"clears timezone", BrowsersUpdateInput{ClearTimezone: true}, `{"timezone":null}`},
+		{"clears both", BrowsersUpdateInput{ClearTimezone: true, ClearLocale: true}, `{"locale":null,"timezone":null}`},
+		{"clears one and sets the other", BrowsersUpdateInput{ClearTimezone: true, Locale: "fr-FR", SetLocale: true}, `{"locale":"fr-FR","timezone":null}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2593,6 +2593,29 @@ func TestBrowsersUpdate_Location(t *testing.T) {
 	}
 }
 
+func TestBrowsersUpdate_LocationFlagErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      BrowsersUpdateInput
+		wantErr string
+	}{
+		{"empty timezone", BrowsersUpdateInput{SetTimezone: true}, "--timezone requires a non-empty value; use --clear-timezone to go back to the browser region's default"},
+		{"empty locale", BrowsersUpdateInput{SetLocale: true}, "--locale requires a non-empty value; use --clear-locale to go back to the browser region's default"},
+		{"timezone and clear", BrowsersUpdateInput{Timezone: "Europe/Berlin", SetTimezone: true, ClearTimezone: true}, "cannot specify both --timezone and --clear-timezone"},
+		{"locale and clear", BrowsersUpdateInput{Locale: "de-DE", SetLocale: true, ClearLocale: true}, "cannot specify both --locale and --clear-locale"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+				t.Fatal("Update should not be called")
+				return nil, nil
+			}}
+			tt.in.Identifier = "session123"
+			assert.EqualError(t, (BrowsersCmd{browsers: fake}).Update(context.Background(), tt.in), tt.wantErr)
+		})
+	}
+}
+
 func TestBrowsersUpdate_OmitLocation_NotSent(t *testing.T) {
 	setupStdoutCapture(t)
 	fake, captured := captureUpdateParams(t)
@@ -2605,9 +2628,8 @@ func TestBrowsersUpdate_OmitLocation_NotSent(t *testing.T) {
 	assert.NotContains(t, string(raw), `"location"`)
 }
 
-// --timezone="" must count as passed, so exercise the flag wiring through the
-// run function and check what reaches the API.
-func TestBrowsersUpdateCommand_EmptyLocationFlagClearsOverride(t *testing.T) {
+// Exercise the flag wiring through the run function and check what reaches the API.
+func TestBrowsersUpdateCommand_ClearTimezoneAndSetLocale(t *testing.T) {
 	setupStdoutCapture(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPatch, r.Method)
@@ -2622,9 +2644,11 @@ func TestBrowsersUpdateCommand_EmptyLocationFlagClearsOverride(t *testing.T) {
 	cmd := &cobra.Command{Use: "update"}
 	cmd.SetContext(context.WithValue(context.Background(), util.KernelClientKey, client))
 	cmd.Flags().String("timezone", "", "")
+	cmd.Flags().Bool("clear-timezone", false, "")
 	cmd.Flags().String("locale", "", "")
+	cmd.Flags().Bool("clear-locale", false, "")
 	addJSONOutputFlag(cmd)
-	require.NoError(t, cmd.ParseFlags([]string{"--timezone=", "--locale", "de-DE"}))
+	require.NoError(t, cmd.ParseFlags([]string{"--clear-timezone", "--locale", "de-DE"}))
 
 	require.NoError(t, runBrowsersUpdate(cmd, []string{"sess-1"}))
 	assert.Contains(t, outBuf.String(), "Timezone: America/New_York (default)")
@@ -2638,6 +2662,10 @@ func TestLocationFlagsRegistered(t *testing.T) {
 		assert.NotNil(t, cmd.Flags().Lookup("timezone"))
 		assert.NotNil(t, cmd.Flags().Lookup("locale"))
 	}
+	update, _, err := rootCmd.Find([]string{"browsers", "update"})
+	require.NoError(t, err)
+	assert.NotNil(t, update.Flags().Lookup("clear-timezone"))
+	assert.NotNil(t, update.Flags().Lookup("clear-locale"))
 }
 
 func TestBrowsersGet_ShowsLocation(t *testing.T) {

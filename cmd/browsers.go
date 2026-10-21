@@ -378,15 +378,6 @@ func formatBrowserLocationField(value string, source kernel.BrowserLocationSourc
 	return fmt.Sprintf("%s (%s)", value, source)
 }
 
-// locationUpdateValue sets a location override, or sends null for an empty value
-// so the browser goes back to its region's default.
-func locationUpdateValue(value string) param.Opt[string] {
-	if value == "" {
-		return param.Null[string]()
-	}
-	return kernel.Opt(value)
-}
-
 // formatVaultReferences renders the vaults linked to a session for table output,
 // preferring each vault's name and falling back to its ID. It returns an empty
 // string when no vaults are linked, so the row can be omitted entirely.
@@ -591,12 +582,14 @@ type BrowsersUpdateInput struct {
 	TagsProvided        bool
 	ClearTags           bool
 	StartURL            string
-	// Timezone and Locale set the session's location overrides when their
-	// Provided flag is set; an empty value clears that override.
-	Timezone         string
-	TimezoneProvided bool
-	Locale           string
-	LocaleProvided   bool
+	// Timezone and Locale set the session's location overrides when SetTimezone
+	// and SetLocale are set; ClearTimezone and ClearLocale remove them.
+	Timezone      string
+	SetTimezone   bool
+	ClearTimezone bool
+	Locale        string
+	SetLocale     bool
+	ClearLocale   bool
 	// AllowedHosts replaces the session's egress allowlist when
 	// AllowedHostsProvided is set; ClearAllowedHosts removes it.
 	AllowedHosts         []string
@@ -1171,6 +1164,19 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("--name requires a non-empty value; use --clear-name to clear the name")
 	}
 
+	if in.SetTimezone && in.ClearTimezone {
+		return fmt.Errorf("cannot specify both --timezone and --clear-timezone")
+	}
+	if in.SetTimezone && in.Timezone == "" {
+		return fmt.Errorf("--timezone requires a non-empty value; use --clear-timezone to go back to the browser region's default")
+	}
+	if in.SetLocale && in.ClearLocale {
+		return fmt.Errorf("cannot specify both --locale and --clear-locale")
+	}
+	if in.SetLocale && in.Locale == "" {
+		return fmt.Errorf("--locale requires a non-empty value; use --clear-locale to go back to the browser region's default")
+	}
+
 	hasProxyChange := proxySel.set()
 	hasProfileChange := in.ProfileID != "" || in.ProfileName != ""
 	hasViewportChange := in.Viewport != ""
@@ -1178,7 +1184,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	hasNameChange := in.SetName || in.ClearName
 	hasTagsChange := len(in.Tags) > 0 || in.ClearTags
 	hasStartURLChange := in.StartURL != ""
-	hasLocationChange := in.TimezoneProvided || in.LocaleProvided
+	hasLocationChange := in.SetTimezone || in.ClearTimezone || in.SetLocale || in.ClearLocale
 
 	// The API replaces the allowlist with the given entries, or removes it when
 	// sent null. An empty list is rejected, so require at least one entry.
@@ -1203,7 +1209,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 
 	// Validate that at least one update option is provided
 	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && in.TelemetryCdpExclude == "" && !hasNameChange && !hasTagsChange && !hasStartURLChange && !hasLocationChange && !hasAllowedHostsChange {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --telemetry-cdp-exclude, --name, --clear-name, --tag, --clear-tags, --start-url, --timezone, --locale, --allowed-host, or --clear-allowed-hosts")
+		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --telemetry-cdp-exclude, --name, --clear-name, --tag, --clear-tags, --start-url, --timezone, --clear-timezone, --locale, --clear-locale, --allowed-host, or --clear-allowed-hosts")
 	}
 
 	params := kernel.BrowserUpdateParams{}
@@ -1229,11 +1235,17 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		params.StartURL = kernel.String(in.StartURL)
 	}
 
-	if in.TimezoneProvided {
-		params.Location.Timezone = locationUpdateValue(in.Timezone)
+	// Handle location changes. Null clears an override so the browser uses its
+	// region's default.
+	if in.ClearTimezone {
+		params.Location.Timezone = param.Null[string]()
+	} else if in.SetTimezone {
+		params.Location.Timezone = kernel.Opt(in.Timezone)
 	}
-	if in.LocaleProvided {
-		params.Location.Locale = locationUpdateValue(in.Locale)
+	if in.ClearLocale {
+		params.Location.Locale = param.Null[string]()
+	} else if in.SetLocale {
+		params.Location.Locale = kernel.Opt(in.Locale)
 	}
 
 	// Handle egress allowlist changes. Null removes the allowlist.
@@ -2996,7 +3008,7 @@ Supported operations:
   - Rename or clear the session name (--name or --clear-name)
   - Replace or clear the session tags (--tag or --clear-tags)
   - Navigate the session to a URL (--start-url)
-  - Set the session timezone and locale (--timezone, --locale)
+  - Set or clear the session timezone and locale (--timezone, --locale, --clear-timezone, --clear-locale)
   - Replace or remove the egress allowlist (--allowed-host or --clear-allowed-hosts)
 
 Notes:
@@ -3004,8 +3016,8 @@ Notes:
   - --start-url navigation is best-effort: the update succeeds even if the page fails to load.
   - --start-url combined with --profile-id/--profile-name overrides the profile's restored tabs.
   - --tag replaces the entire tag set (it is not merged with existing tags).
-  - --timezone and --locale apply without restarting the browser. Pass an empty value
-    (--timezone="") to go back to the browser region's default; omit a flag to leave it unchanged.
+  - --timezone and --locale apply without restarting the browser. --clear-timezone and
+    --clear-locale go back to the browser region's default; omit them to leave a field unchanged.
     --start-url in the same update opens once the new location applies.
   - --allowed-host replaces an existing allowlist only; it cannot add one to a browser created
     without one. Omit to leave the list unchanged; an empty list is invalid.
@@ -3069,8 +3081,10 @@ func init() {
 	browsersUpdateCmd.Flags().Bool("clear-tags", false, "Remove all tags from the browser session")
 	browsersUpdateCmd.Flags().StringSlice("allowed-host", nil, "Replace an existing egress allowlist (repeat or comma-separated, max 100), using the same entry rules as 'browsers create --allowed-host'. Cannot add one to a browser created without one or after removal. Omit to leave unchanged; an empty list is invalid. Applies without restarting the browser; --start-url must be allowed by the new list. Requires proxy v3; on leased pooled browsers the pool's allowlist is restored on release (mutually exclusive with --clear-allowed-hosts). See notes for propagation timing")
 	browsersUpdateCmd.Flags().Bool("clear-allowed-hosts", false, "Remove the egress allowlist and return to unfiltered egress; an allowlist cannot be added back to this browser")
-	browsersUpdateCmd.Flags().String("timezone", "", "Set the session timezone (IANA, e.g. America/Los_Angeles); --timezone=\"\" goes back to the browser region's default")
-	browsersUpdateCmd.Flags().String("locale", "", "Set the session locale used for languages and date and number formatting (BCP 47, e.g. de-DE); --locale=\"\" goes back to the browser region's default")
+	browsersUpdateCmd.Flags().String("timezone", "", "Set the session timezone (IANA, e.g. America/Los_Angeles) (mutually exclusive with --clear-timezone)")
+	browsersUpdateCmd.Flags().Bool("clear-timezone", false, "Clear the session timezone override and use the browser region's default")
+	browsersUpdateCmd.Flags().String("locale", "", "Set the session locale used for languages and date and number formatting (BCP 47, e.g. de-DE) (mutually exclusive with --clear-locale)")
+	browsersUpdateCmd.Flags().Bool("clear-locale", false, "Clear the session locale override and use the browser region's default")
 	browsersUpdateCmd.Flags().String("start-url", "", "Navigate the browser to this URL after applying the update. Overrides the restored tabs when a profile is loaded in the same update. Navigation is best-effort, so failures do not fail the update")
 
 	browsersCmd.AddCommand(browsersListCmd)
@@ -3752,7 +3766,9 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	clearTags, _ := cmd.Flags().GetBool("clear-tags")
 	startURL, _ := cmd.Flags().GetString("start-url")
 	timezone, _ := cmd.Flags().GetString("timezone")
+	clearTimezone, _ := cmd.Flags().GetBool("clear-timezone")
 	locale, _ := cmd.Flags().GetString("locale")
+	clearLocale, _ := cmd.Flags().GetBool("clear-locale")
 	allowedHosts, _ := cmd.Flags().GetStringSlice("allowed-host")
 	clearAllowedHosts, _ := cmd.Flags().GetBool("clear-allowed-hosts")
 
@@ -3780,9 +3796,11 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 		ClearTags:            clearTags,
 		StartURL:             startURL,
 		Timezone:             timezone,
-		TimezoneProvided:     cmd.Flags().Changed("timezone"),
+		SetTimezone:          cmd.Flags().Changed("timezone"),
+		ClearTimezone:        clearTimezone,
 		Locale:               locale,
-		LocaleProvided:       cmd.Flags().Changed("locale"),
+		SetLocale:            cmd.Flags().Changed("locale"),
+		ClearLocale:          clearLocale,
 		AllowedHosts:         allowedHosts,
 		AllowedHostsProvided: cmd.Flags().Changed("allowed-host"),
 		ClearAllowedHosts:    clearAllowedHosts,

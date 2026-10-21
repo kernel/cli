@@ -299,8 +299,10 @@ kernel search contents srch_01jsearchresult --limit 3 --content-source browser
   - `--clear-name` - Clear the session name
   - `--tag <KEY=VALUE>` - Set a tag, repeatable; up to 50 pairs. Replaces the entire tag set (not merged); mutually exclusive with `--clear-tags`
   - `--clear-tags` - Remove all tags from the session
-  - `--timezone <iana>` - Set the session timezone, e.g. `America/Los_Angeles`. `--timezone=""` goes back to the browser region's default; omit to leave it unchanged. Applies without restarting the browser
-  - `--locale <bcp47>` - Set the session locale, e.g. `de-DE`. `--locale=""` goes back to the browser region's default; omit to leave it unchanged. Applies without restarting the browser
+  - `--timezone <iana>` - Set the session timezone, e.g. `America/Los_Angeles`. Applies without restarting the browser; mutually exclusive with `--clear-timezone`
+  - `--clear-timezone` - Clear the timezone override and use the browser region's default
+  - `--locale <bcp47>` - Set the session locale, e.g. `de-DE`. Applies without restarting the browser; mutually exclusive with `--clear-locale`
+  - `--clear-locale` - Clear the locale override and use the browser region's default
   - `--telemetry=all` - Enable telemetry for all categories
   - `--telemetry=off` - Disable telemetry
   - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`
