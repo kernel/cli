@@ -3017,7 +3017,7 @@ Notes:
   - --start-url combined with --profile-id/--profile-name overrides the profile's restored tabs.
   - --tag replaces the entire tag set (it is not merged with existing tags).
   - --timezone and --locale apply without restarting the browser. --clear-timezone and
-    --clear-locale go back to the browser region's default; omit them to leave a field unchanged.
+    --clear-locale go back to the browser region's default. Omit a flag to leave that field unchanged.
     --start-url in the same update opens once the new location applies.
   - --allowed-host replaces an existing allowlist only; it cannot add one to a browser created
     without one. Omit to leave the list unchanged; an empty list is invalid.
