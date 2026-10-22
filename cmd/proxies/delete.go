@@ -20,7 +20,7 @@ func (p ProxyCmd) Delete(ctx context.Context, in ProxyDeleteInput) error {
 		// Try to get the proxy details for better confirmation message
 		proxy, err := p.proxies.Get(ctx, in.ID)
 		if err != nil {
-			// If we can't get the proxy, just use the ID
+			// If we can't get the proxy, just use the supplied ID or name
 			if !util.IsNotFound(err) {
 				return util.CleanedUpSdkError{Err: err}
 			}
@@ -29,7 +29,7 @@ func (p ProxyCmd) Delete(ctx context.Context, in ProxyDeleteInput) error {
 
 		var confirmMsg string
 		if proxy != nil && proxy.Name != "" {
-			confirmMsg = fmt.Sprintf("Are you sure you want to delete proxy '%s' (ID: %s)?", proxy.Name, in.ID)
+			confirmMsg = fmt.Sprintf("Are you sure you want to delete proxy '%s' (ID: %s)?", proxy.Name, proxy.ID)
 		} else {
 			confirmMsg = fmt.Sprintf("Are you sure you want to delete proxy '%s'?", in.ID)
 		}

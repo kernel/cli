@@ -78,7 +78,7 @@ func TestVaultConfirmTransactionInvalidParamsDoNotRequest(t *testing.T) {
 	for field, values := range map[string][]string{
 		"status":           {`"approved"`, `"UNKNOWN"`, `42`},
 		"transaction_type": {`"purchase"`, `"SALE"`, `false`},
-		"amount":           {`-1`, `50001`, `100.5`, `100.0`, `"100"`, `9223372036854775808`},
+		"amount":           {`-1`, `1000001`, `100.5`, `100.0`, `"100"`, `9223372036854775808`},
 		"currency":         {`"usd"`, `"US"`, `"USDD"`, `"U1D"`, `123`},
 		"occurred_at":      {`"2026-09-01"`, `"2026-09-01T12:00:00"`, `"not-a-date"`, `42`},
 	} {
@@ -110,7 +110,7 @@ func TestVaultConfirmTransactionInvalidParamsDoNotRequest(t *testing.T) {
 func TestVaultConfirmTransactionValidValues(t *testing.T) {
 	for _, status := range []string{"APPROVED", "DECLINED", "PENDING", "ERROR", "CANCELLED"} {
 		for _, transactionType := range []string{"PURCHASE", "AUTHORIZATION", "CAPTURE", "REFUND", "REVERSAL", "VERIFICATION", "CHARGEBACK", "FRAUD"} {
-			for _, amount := range []int{0, 50000} {
+			for _, amount := range []int{0, 1000000} {
 				raw := fmt.Sprintf(`{"status":%q,"transaction_type":%q,"amount":%d,"currency":"USD","occurred_at":"2026-09-01T12:00:00.123+01:00"}`, status, transactionType, amount)
 				params, err := parseVaultOperationParams("confirm_transaction", raw, true, false)
 				require.NoError(t, err)

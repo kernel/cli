@@ -48,10 +48,17 @@ type LinkWalletSpec = {
   };
 };
 
+// without user_id, creation returns a hosted enrollment action and KERNEL polls until
+// the user connects. with a customer-owned provider_config, user_id imports an existing
+// connection after read-only access validation; no hosted enrollment is needed, even if
+// the user has no stored cards. with KERNEL-managed credentials, user_id must already be
+// enrolled by a wallet in this organization under the same configuration. user and config
+// bindings are immutable. failed import validation creates no wallet or reserved key, so
+// correct user_id and retry. concurrent imports create at most one wallet and connected event.
 type AgentCardWalletSpec = {
   provider: "agentcard";
   provider_config?: ProviderConfigReference; // omit for KERNEL-managed credentials
-  user_id?: string; // usr_...; enrolled in this organization under the same config
+  user_id?: string; // usr_...; import or reuse according to the credential ownership above
 };
 
 // one card stored with KERNEL-managed credentials. creation returns a card_enrollment
@@ -70,7 +77,7 @@ type LinkCardSpec = {
   provider: "link";
   wallet: string;             // wallet item key
   payment_method_id: string;  // from wallets payment-methods
-  amount: number;             // integer minor units; 1..500000; a virtual card allows at most 50000
+  amount: number;             // integer minor units; 1..50000
   currency: string;           // three letters
   merchant_name: string;      // 1..255 characters
   merchant_url: string;       // uri; a virtual card authorized without a checkout fills only this origin
@@ -90,15 +97,18 @@ type AgentCardCardSpec = {
   checkout_origin?: string;   // top-level checkout origin for autopilot matching; update omission removes it
 };
 
-// one live purchase with a KERNEL-enrolled card. authorize obtains a network token and
-// one-time code for fill on merchant_url's origin until expires_at. Mastercard purchases
-// need no hosted approval. a Visa purchase returns a spend_approval action: the cardholder
-// approves it with a Visa passkey (the link expires after 30 minutes) before the code is
-// issued. updates are not supported.
+// one live purchase with a KERNEL-enrolled card. authorize, then fill on merchant_url's
+// origin, then submit checkout before expires_at (one hour after authorization). fill
+// delivers card details for a few minutes; submit promptly. repeated fill is safe and never
+// submits. supported cards without an agentic network token are authorized without a
+// one-time code. Mastercard purchases need no hosted approval. a Visa purchase returns a
+// spend_approval action: the cardholder approves it with a Visa passkey (the link expires
+// after 30 minutes) before details are issued. amount, merchant_url and merchant_country
+// are recorded but do not restrict browser payment requests. updates are not supported.
 type KernelCardSpec = {
   provider: "kernel";
   wallet: string;             // KERNEL wallet item key
-  amount: number;             // integer minor units; 1..50000
+  amount: number;             // integer minor units; 1..1000000
   currency: string;           // iso 4217 three letters
   merchant_name: string;      // 1..255 characters
   merchant_url: string;       // https merchant checkout url; fill is locked to its origin

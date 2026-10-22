@@ -64,6 +64,23 @@ func TestCredentialUpdateIdentityPrecondition(t *testing.T) {
 	}
 }
 
+func TestCredentialUpdateFieldDefinitionsWithGeneratedSDK(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	spec := `{"add_fields":[{"name":"site_passkey","type":"passkey","required":true,"sensitive":true}],"fields":{"site_passkey":{"value":"synthetic-cxf-passkey"}},"remove_fields":["password"]}`
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "PATCH", r.Method)
+		var body map[string]json.RawMessage
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.JSONEq(t, spec, string(body["spec"]))
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, credentialFixture)
+	})
+
+	out, _, err := executeVaultCommand(t, client, "vaults", "credentials", "update", "user-123", "login", "--version", "7", "--spec-file", credentialSpecFile(t, spec), "-o", "json")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "synthetic-cxf-passkey")
+}
+
 func TestCredentialInitialValuesWithGeneratedSDK(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
 	spec := `{"description":"Example","fields":[{"name":"username","label":"Membership Number or Username","type":"text","sensitive":false,"value":"synthetic-user"},{"name":"email","type":"email","sensitive":false,"value":"test@example.com"},{"name":"password","type":"password","sensitive":true,"value":"synthetic-password"},{"name":"otp","type":"totp","sensitive":true,"value":"JBSWY3DPEHPK3PXP"}]}`

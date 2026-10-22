@@ -539,7 +539,7 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		if item.Spec.Provider == "kernel" {
 			switch item.State.Status {
 			case "requested", "pending_authorization", "ready":
-				pterm.Info.Println("Visa may require the returned spend_approval action; share it privately, never open it for the cardholder. ready means a one-time code is available, not that the merchant charged the card. fill and submit checkout before expires_at.")
+				pterm.Info.Println("Visa may require the returned spend_approval action; share it privately, never open it for the cardholder. ready means card details can be filled, not that the merchant charged the card. fill delivers details for a few minutes; submit checkout promptly after filling and before expires_at.")
 			}
 			switch item.State.Status {
 			case "ready", "declined", "expired", "consumed":

@@ -404,6 +404,12 @@ func TestBrowsersList_PrintsTableWithRows(t *testing.T) {
 			BrowserLiveViewURL: "http://view-1",
 			CreatedAt:          created,
 			Region:             kernel.BrowserListResponseRegionEuWest,
+			Location: kernel.BrowserLocation{
+				Locale:         "fr-FR",
+				LocaleSource:   kernel.BrowserLocationSourceOverride,
+				Timezone:       "Europe/Paris",
+				TimezoneSource: kernel.BrowserLocationSourceDefault,
+			},
 		},
 		{
 			SessionID:          "sess-2",
@@ -427,6 +433,8 @@ func TestBrowsersList_PrintsTableWithRows(t *testing.T) {
 	assert.Contains(t, out, "sess-2")
 	assert.Contains(t, out, "eu-west")
 	assert.Contains(t, out, "us-east")
+	assert.Contains(t, out, "fr-FR (override)")
+	assert.Contains(t, out, "Europe/Paris (default)")
 }
 
 func TestBrowsersList_PrintsErrorOnFailure(t *testing.T) {
@@ -937,12 +945,24 @@ func TestBrowsersCreate_WithMemory(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"memory":"16GiB"`)
 
-	// Values are normalized to the casing the API expects.
-	err = b.Create(context.Background(), BrowsersCreateInput{Memory: "8gib"})
-	require.NoError(t, err)
-	assert.Equal(t, kernel.BrowserMemoryRequest8GiB, captured.Memory)
+	// Values are normalized to the casing the API expects, including the smaller
+	// allocations available to headless browsers.
+	for _, tc := range []struct {
+		input string
+		want  kernel.BrowserMemoryRequest
+	}{
+		{input: "1gib", want: kernel.BrowserMemoryRequest1GiB},
+		{input: "2GiB", want: kernel.BrowserMemoryRequest2GiB},
+		{input: "4GIB", want: kernel.BrowserMemoryRequest4GiB},
+		{input: "8gib", want: kernel.BrowserMemoryRequest8GiB},
+	} {
+		err = b.Create(context.Background(), BrowsersCreateInput{Memory: tc.input})
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, captured.Memory)
+	}
 
-	// Omitting the flag sends nothing; the server defaults to 8GiB.
+	// Omitting the flag sends nothing; the server selects the image default (1GiB
+	// for headless or 8GiB for headful).
 	err = b.Create(context.Background(), BrowsersCreateInput{})
 	require.NoError(t, err)
 	assert.Empty(t, captured.Memory)
@@ -952,7 +972,7 @@ func TestBrowsersCreate_WithMemory(t *testing.T) {
 	assert.NotContains(t, string(raw), "memory")
 
 	// An unsupported size is rejected before the request is made.
-	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{Memory: "4GiB"}))
+	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{Memory: "6GiB"}))
 }
 
 func TestBrowsersCreate_WithVideoMemory(t *testing.T) {
@@ -3313,4 +3333,252 @@ func TestBrowsersUpdate_AllowedHostsValidation(t *testing.T) {
 			assert.False(t, called)
 		})
 	}
+}
+
+func TestBrowsersCreate_WithLocationOverrides(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+		captured = body
+		return &kernel.BrowserNewResponse{
+			SessionID: "session-location",
+			Location: kernel.BrowserLocation{
+				Locale:         "fr-CA",
+				LocaleSource:   kernel.BrowserLocationSourceOverride,
+				Timezone:       "America/Toronto",
+				TimezoneSource: kernel.BrowserLocationSourceOverride,
+			},
+		}, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{
+		Locale:   " fr-CA ",
+		Timezone: " America/Toronto ",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "fr-CA", captured.Location.Locale.Value)
+	assert.Equal(t, "America/Toronto", captured.Location.Timezone.Value)
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"location":{"locale":"fr-CA","timezone":"America/Toronto"}`)
+	assert.Contains(t, outBuf.String(), "fr-CA (override)")
+	assert.Contains(t, outBuf.String(), "America/Toronto (override)")
+
+	// Omission preserves the API's regional defaults and leaves location off the request.
+	require.NoError(t, b.Create(context.Background(), BrowsersCreateInput{}))
+	raw, err = captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), `"location"`)
+}
+
+func TestBrowsersCreate_EmptyLocationOverridesRejected(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		in      BrowsersCreateInput
+		wantErr string
+	}{
+		{"locale", BrowsersCreateInput{Locale: " ", LocaleProvided: true}, "--locale requires"},
+		{"timezone", BrowsersCreateInput{Timezone: " ", TimezoneProvided: true}, "--timezone requires"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			fake := &FakeBrowsersService{NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+				called = true
+				return &kernel.BrowserNewResponse{}, nil
+			}}
+			err := (BrowsersCmd{browsers: fake}).Create(context.Background(), tc.in)
+			require.ErrorContains(t, err, tc.wantErr)
+			assert.False(t, called)
+		})
+	}
+}
+
+func TestBrowsersUpdate_LocationOverrides(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier: "session123",
+		Locale:     " de-DE ",
+		Timezone:   " Europe/Berlin ",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "de-DE", captured.Location.Locale.Value)
+	assert.Equal(t, "Europe/Berlin", captured.Location.Timezone.Value)
+	raw, err := json.Marshal(*captured)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"location":{"locale":"de-DE","timezone":"Europe/Berlin"}`)
+}
+
+func TestBrowsersUpdate_ClearLocationOverridesSendsNull(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier:    "session123",
+		ClearLocale:   true,
+		ClearTimezone: true,
+	})
+
+	require.NoError(t, err)
+	raw, err := json.Marshal(*captured)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"location":{"locale":null,"timezone":null}`)
+	assert.NotContains(t, string(raw), `"network"`)
+}
+
+func TestBrowsersUpdate_LocationValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      BrowsersUpdateInput
+		wantErr string
+	}{
+		{"set and clear locale", BrowsersUpdateInput{Locale: "en-US", ClearLocale: true}, "both --locale and --clear-locale"},
+		{"set and clear timezone", BrowsersUpdateInput{Timezone: "UTC", ClearTimezone: true}, "both --timezone and --clear-timezone"},
+		{"empty locale", BrowsersUpdateInput{LocaleProvided: true}, "--locale requires a non-empty"},
+		{"empty timezone", BrowsersUpdateInput{TimezoneProvided: true}, "--timezone requires a non-empty"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			called := false
+			fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, idOrName string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+				called = true
+				return &kernel.BrowserUpdateResponse{}, nil
+			}}
+			tt.in.Identifier = "session123"
+			err := (BrowsersCmd{browsers: fake}).Update(context.Background(), tt.in)
+			require.ErrorContains(t, err, tt.wantErr)
+			assert.False(t, called)
+		})
+	}
+}
+
+func TestBrowsersUpdate_ConditionalAllowlist(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+	revision := strings.Repeat("a", 64)
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier:                "session123",
+		AllowedHosts:              []string{"example.com"},
+		AllowedHostsProvided:      true,
+		ExpectedAllowlistRevision: revision,
+		MutationID:                "cli_retry-1",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, revision, captured.Network.ExpectedAllowlistRevision.Value)
+	assert.Equal(t, "cli_retry-1", captured.Network.MutationID.Value)
+	assert.Equal(t, []string{"example.com"}, captured.Network.AllowedHosts)
+	raw, err := json.Marshal(*captured)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"expected_allowlist_revision":"`+revision+`"`)
+	assert.Contains(t, string(raw), `"mutation_id":"cli_retry-1"`)
+}
+
+func TestBrowsersUpdate_ConditionalAllowlistRemoval(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+	revision := strings.Repeat("b", 64)
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier:                "session123",
+		ClearAllowedHosts:         true,
+		ExpectedAllowlistRevision: revision,
+		MutationID:                "remove_allowlist_1",
+	})
+
+	require.NoError(t, err)
+	raw, err := json.Marshal(*captured)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"allowed_hosts":null`)
+	assert.Contains(t, string(raw), `"expected_allowlist_revision":"`+revision+`"`)
+	assert.Contains(t, string(raw), `"mutation_id":"remove_allowlist_1"`)
+}
+
+func TestBrowsersUpdate_ConditionalAllowlistValidation(t *testing.T) {
+	revision := strings.Repeat("c", 64)
+	tests := []struct {
+		name    string
+		in      BrowsersUpdateInput
+		wantErr string
+	}{
+		{"revision only", BrowsersUpdateInput{AllowedHosts: []string{"example.com"}, ExpectedAllowlistRevision: revision}, "must be supplied together"},
+		{"mutation only", BrowsersUpdateInput{AllowedHosts: []string{"example.com"}, MutationID: "mutation-1"}, "must be supplied together"},
+		{"without allowlist payload", BrowsersUpdateInput{ExpectedAllowlistRevision: revision, MutationID: "mutation-1"}, "require --allowed-host or --clear-allowed-hosts"},
+		{"bad revision length", BrowsersUpdateInput{AllowedHosts: []string{"example.com"}, ExpectedAllowlistRevision: "short", MutationID: "mutation-1"}, "64-character revision"},
+		{"bad mutation characters", BrowsersUpdateInput{AllowedHosts: []string{"example.com"}, ExpectedAllowlistRevision: revision, MutationID: "not valid"}, "ASCII letters"},
+		{"empty supplied values", BrowsersUpdateInput{AllowedHosts: []string{"example.com"}, ExpectedAllowlistRevisionProvided: true, MutationIDProvided: true}, "64-character revision"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			called := false
+			fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, idOrName string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
+				called = true
+				return &kernel.BrowserUpdateResponse{}, nil
+			}}
+			tt.in.Identifier = "session123"
+			err := (BrowsersCmd{browsers: fake}).Update(context.Background(), tt.in)
+			require.ErrorContains(t, err, tt.wantErr)
+			assert.False(t, called)
+		})
+	}
+}
+
+func TestBrowsersGet_ShowsLocationAndAllowlistState(t *testing.T) {
+	setupStdoutCapture(t)
+	fake := &FakeBrowsersService{GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+		return &kernel.BrowserGetResponse{
+			SessionID: "session123",
+			Location: kernel.BrowserLocation{
+				Locale:         "en-US",
+				LocaleSource:   kernel.BrowserLocationSourceDefault,
+				Timezone:       "America/New_York",
+				TimezoneSource: kernel.BrowserLocationSourceOverride,
+			},
+			Network: kernel.BrowserNetworkConfig{AllowlistState: kernel.BrowserAllowlistState{
+				Revision:     strings.Repeat("d", 64),
+				BaseRevision: strings.Repeat("e", 64),
+				MutationID:   "mutation-2",
+			}},
+		}, nil
+	}}
+
+	require.NoError(t, (BrowsersCmd{browsers: fake}).Get(context.Background(), BrowsersGetInput{Identifier: "session123"}))
+	out := outBuf.String()
+	assert.Contains(t, out, "en-US (default)")
+	assert.Contains(t, out, "America/New_York (override)")
+	assert.Contains(t, out, "Allowlist Revision")
+	assert.Contains(t, out, strings.Repeat("d", 64))
+	assert.Contains(t, out, "Allowlist Base Revision")
+	assert.Contains(t, out, "mutation-2")
+}
+
+func TestBrowserLocationAndConditionalAllowlistFlags(t *testing.T) {
+	create, _, err := rootCmd.Find([]string{"browsers", "create"})
+	require.NoError(t, err)
+	for _, name := range []string{"locale", "timezone"} {
+		flag := create.Flags().Lookup(name)
+		require.NotNil(t, flag, name)
+	}
+	assert.Contains(t, create.Flags().Lookup("locale").Usage, "canonical BCP 47")
+	assert.Contains(t, create.Flags().Lookup("timezone").Usage, "IANA timezone")
+
+	update, _, err := rootCmd.Find([]string{"browsers", "update"})
+	require.NoError(t, err)
+	for _, name := range []string{"locale", "clear-locale", "timezone", "clear-timezone", "expected-allowlist-revision", "mutation-id"} {
+		flag := update.Flags().Lookup(name)
+		require.NotNil(t, flag, name)
+	}
+	assert.Contains(t, update.Flags().Lookup("expected-allowlist-revision").Usage, "stale_network")
+	assert.Contains(t, update.Flags().Lookup("mutation-id").Usage, "identical allowlist payload")
+	assert.Contains(t, update.Long, "reuse both")
+	assert.Contains(t, update.Long, "browser region's default")
 }

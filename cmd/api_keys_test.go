@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
@@ -125,6 +126,52 @@ func TestAPIKeysCreateRejectsInvalidDaysToExpire(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--days-to-expire must be between 1 and 3650")
+}
+
+func TestAPIKeysCreateBuildsExpiresAtAndPolicy(t *testing.T) {
+	buf := capturePtermOutput(t)
+	fake := &FakeAPIKeysService{
+		NewFunc: func(ctx context.Context, body kernel.APIKeyNewParams, opts ...option.RequestOption) (*kernel.CreatedAPIKey, error) {
+			assert.False(t, body.DaysToExpire.Valid())
+			assert.True(t, body.ExpiresAt.Valid())
+			assert.Equal(t, time.Date(2030, 1, 15, 9, 0, 0, 0, time.UTC), body.ExpiresAt.Value.UTC())
+			require.Len(t, body.Policy.Statements, 2)
+			assert.Equal(t, "browsers:use", body.Policy.Statements[0].Action)
+			assert.Equal(t, "projects/proj_123/browsers/*", body.Policy.Statements[0].Resource)
+			assert.Equal(t, "vaults:read", body.Policy.Statements[1].Action)
+			assert.Equal(t, "projects/proj_123/vaults/v=1", body.Policy.Statements[1].Resource)
+			return createdAPIKeyFromJSON(`{"id":"key_123","name":"ci","key":"sk_live_123","masked_key":"sk_...123","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123"},"expires_at":"2030-01-15T09:00:00Z","project_id":"proj_123","project_name":"Prod","policy":{"statements":[{"action":"browsers:use","resource":"projects/proj_123/browsers/*"}]}}`), nil
+		},
+	}
+	c := APIKeysCmd{apiKeys: fake}
+
+	err := c.Create(context.Background(), APIKeysCreateInput{
+		Name:             "ci",
+		ExpiresAt:        "2030-01-15T09:00:00Z",
+		PolicyStatements: []string{"browsers:use=projects/proj_123/browsers/*", "vaults:read=projects/proj_123/vaults/v=1"},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "browsers:use on projects/proj_123/browsers/*")
+}
+
+func TestAPIKeysCreateRejectsInvalidExpiresAtAndPolicy(t *testing.T) {
+	c := APIKeysCmd{apiKeys: &FakeAPIKeysService{}}
+
+	err := c.Create(context.Background(), APIKeysCreateInput{Name: "ci", ExpiresAt: "tomorrow"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid --expires-at")
+
+	err = c.Create(context.Background(), APIKeysCreateInput{
+		Name:         "ci",
+		ExpiresAt:    "2030-01-15T09:00:00Z",
+		DaysToExpire: Int64Flag{Set: true, Value: 30},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot be combined")
+
+	err = c.Create(context.Background(), APIKeysCreateInput{Name: "ci", PolicyStatements: []string{"browsers:use"}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expected ACTION=RESOURCE")
 }
 
 func TestAPIKeysRejectInvalidOutputBeforeCallingAPI(t *testing.T) {

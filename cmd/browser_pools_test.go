@@ -189,6 +189,44 @@ func TestBrowserPoolsCreate_WithRegion(t *testing.T) {
 	assert.Error(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Region: "emea"}))
 }
 
+func TestBrowserPoolsMemorySizes(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var created kernel.BrowserPoolNewParams
+	var updated kernel.BrowserPoolUpdateParams
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			created = body
+			return &kernel.BrowserPool{ID: "pool-memory"}, nil
+		},
+		UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			updated = body
+			return &kernel.BrowserPool{ID: id}, nil
+		},
+	}
+	c := BrowserPoolsCmd{client: fake}
+
+	for _, tc := range []struct {
+		input string
+		want  kernel.BrowserMemoryRequest
+	}{
+		{input: "1gib", want: kernel.BrowserMemoryRequest1GiB},
+		{input: "2GiB", want: kernel.BrowserMemoryRequest2GiB},
+		{input: "4GIB", want: kernel.BrowserMemoryRequest4GiB},
+		{input: "8GiB", want: kernel.BrowserMemoryRequest8GiB},
+		{input: "16GiB", want: kernel.BrowserMemoryRequest16GiB},
+	} {
+		require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Memory: tc.input}))
+		assert.Equal(t, tc.want, created.Memory)
+
+		require.NoError(t, c.Update(context.Background(), BrowserPoolsUpdateInput{IDOrName: "pool-memory", Memory: tc.input}))
+		assert.Equal(t, kernel.BrowserPoolUpdateParamsMemory(tc.want), updated.Memory)
+	}
+
+	assert.Error(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Memory: "6GiB"}))
+	assert.Error(t, c.Update(context.Background(), BrowserPoolsUpdateInput{IDOrName: "pool-memory", Memory: "6GiB"}))
+}
+
 func TestBrowserPoolsGet_ShowsRegion(t *testing.T) {
 	setupStdoutCapture(t)
 
@@ -793,6 +831,59 @@ func TestBrowserPoolsUpdate_PrivateHostModes(t *testing.T) {
 			raw, err := captured.MarshalJSON()
 			require.NoError(t, err)
 			assert.Contains(t, string(raw), tt.wantJSON)
+		})
+	}
+}
+
+func TestBrowserPoolsUpdate_ExpectedNetwork(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    BrowserPoolsUpdateInput
+		wantJSON string
+	}{
+		{
+			name:     "no network configuration",
+			input:    BrowserPoolsUpdateInput{Size: 2, ExpectedNetwork: "{}"},
+			wantJSON: `"expected_network":{}`,
+		},
+		{
+			name:     "preserves explicit empty lists",
+			input:    BrowserPoolsUpdateInput{AllowedHosts: []string{"example.com"}, ExpectedNetwork: `{"private_hosts":[],"proxy_routes":[{"hosts":["a.example"],"proxy":{"id":"proxy-1"}}]}`},
+			wantJSON: `"expected_network":{"private_hosts":[],"proxy_routes":[{"hosts":["a.example"],"proxy":{"id":"proxy-1"}}]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupStdoutCapture(t)
+			var captured kernel.BrowserPoolUpdateParams
+			fake := &FakeBrowserPoolsService{
+				UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+					captured = body
+					return &kernel.BrowserPool{ID: id}, nil
+				},
+			}
+			tt.input.IDOrName = "pool-network"
+			require.NoError(t, (BrowserPoolsCmd{client: fake}).Update(context.Background(), tt.input))
+			raw, err := captured.MarshalJSON()
+			require.NoError(t, err)
+			assert.Contains(t, string(raw), tt.wantJSON)
+		})
+	}
+}
+
+func TestBrowserPoolsUpdate_RejectsInvalidExpectedNetwork(t *testing.T) {
+	for _, value := range []string{"null", "[]", "{bad"} {
+		t.Run(value, func(t *testing.T) {
+			setupStdoutCapture(t)
+			fake := &FakeBrowserPoolsService{
+				UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+					t.Fatal("Update should not be called when --expected-network is invalid")
+					return nil, nil
+				},
+			}
+			err := (BrowserPoolsCmd{client: fake}).Update(context.Background(), BrowserPoolsUpdateInput{IDOrName: "pool-1", ExpectedNetwork: value})
+			assert.ErrorContains(t, err, "--expected-network")
 		})
 	}
 }

@@ -3,7 +3,9 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/kernel/cli/pkg/util"
@@ -387,6 +389,7 @@ type BrowserPoolsUpdateInput struct {
 	AllowedHosts           []string
 	AllowedHostsProvided   bool
 	ClearAllowedHosts      bool
+	ExpectedNetwork        string
 	Viewport               string
 	ChromePolicy           string
 	ChromePolicyFile       string
@@ -395,6 +398,24 @@ type BrowserPoolsUpdateInput struct {
 	TelemetryCdpExclude    string
 	DiscardAllIdle         BoolFlag
 	Output                 string
+}
+
+// parseExpectedNetwork decodes --expected-network into a raw JSON object. It is
+// kept untyped so explicit empty lists, which the API treats differently from
+// omitted ones, survive the SDK's omitzero encoding.
+func parseExpectedNetwork(data string) (map[string]any, error) {
+	data = strings.TrimSpace(data)
+	if data == "" {
+		return nil, nil
+	}
+	network := map[string]any{}
+	if err := json.Unmarshal([]byte(data), &network); err != nil {
+		return nil, fmt.Errorf("invalid JSON in --expected-network (must be a JSON object, e.g. '{}'): %w", err)
+	}
+	if network == nil {
+		return nil, fmt.Errorf("invalid --expected-network: must be a JSON object, not null; use '{}' for a pool with no network configuration")
+	}
+	return network, nil
 }
 
 func validateBrowserPoolUpdateInput(in BrowserPoolsUpdateInput) error {
@@ -546,9 +567,17 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 		params.Network = network
 	}
 
+	expectedNetwork, err := parseExpectedNetwork(in.ExpectedNetwork)
+	if err != nil {
+		return err
+	}
+
 	extraFields := map[string]any{}
 	// The SDK's omitzero encoder drops empty collections, so explicit clears use
 	// its extra-fields escape hatch to preserve {} and [] on the wire.
+	if expectedNetwork != nil {
+		extraFields["expected_network"] = expectedNetwork
+	}
 	if in.ClearExtensions {
 		extraFields["extensions"] = []kernel.BrowserExtensionParam{}
 	}
@@ -589,6 +618,10 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 
 	pool, err := c.client.Update(ctx, in.IDOrName, params)
 	if err != nil {
+		var apiErr *kernel.Error
+		if expectedNetwork != nil && errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict {
+			pterm.Warning.Println("The pool's network configuration no longer matches --expected-network; nothing was updated. Re-read it with 'kernel browser-pools get <id-or-name> -o json' and retry.")
+		}
 		return util.CleanedUpSdkError{Err: err}
 	}
 
@@ -869,7 +902,7 @@ func init() {
 	browserPoolsCreateCmd.Flags().Bool("stealth", false, "Enable stealth mode")
 	browserPoolsCreateCmd.Flags().Bool("headless", false, "Enable headless mode")
 	browserPoolsCreateCmd.Flags().Bool("kiosk", false, "Enable kiosk mode")
-	browserPoolsCreateCmd.Flags().String("memory", "", "Memory for headful browsers in the pool: '8GiB' (default) or '16GiB'")
+	browserPoolsCreateCmd.Flags().String("memory", "", "Memory for non-GPU browsers in the pool: headless supports '1GiB' (default), '2GiB', or '4GiB'; headful supports '8GiB' (default) or '16GiB'")
 	browserPoolsCreateCmd.Flags().Bool("refresh-on-profile-update", false, "Flush idle browsers when the pool's profile is updated")
 	browserPoolsCreateCmd.Flags().String("profile-id", "", "Profile ID")
 	browserPoolsCreateCmd.Flags().String("profile-name", "", "Profile name")
@@ -880,7 +913,7 @@ func init() {
 	browserPoolsCreateCmd.Flags().StringSlice("allowed-host", nil, "Set an egress allowlist for browsers in the pool: the only destinations they may reach through Kernel-managed egress (repeat or comma-separated, max 100); anything else is refused with a 403 (network_policy_denied). Accepts the same entries as 'browsers create --allowed-host'. Leased browsers can replace or remove it with 'browsers update'; per-lease changes are reset to the pool's allowlist on release (or the browser is replaced). Requires proxy v3")
 	browserPoolsCreateCmd.Flags().String("start-url", "", "Initial page to open for new browsers")
 	browserPoolsCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names")
-	browserPoolsCreateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
+	browserPoolsCreateCmd.Flags().String("viewport", "", "Initial browser viewport WIDTHxHEIGHT[@RATE]. Defaults to 1920x1080@25. Positive values are accepted; without @RATE, the API derives the rate from the dimensions. Non-recommended sizes may make live view or recordings unstable")
 	browserPoolsCreateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
 	browserPoolsCreateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
 	browserPoolsCreateCmd.Flags().String("telemetry", "", "Configure telemetry for browsers warmed into the pool (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
@@ -896,7 +929,7 @@ func init() {
 	browserPoolsUpdateCmd.Flags().Bool("stealth", false, "Enable stealth mode")
 	browserPoolsUpdateCmd.Flags().Bool("headless", false, "Enable headless mode")
 	browserPoolsUpdateCmd.Flags().Bool("kiosk", false, "Enable kiosk mode")
-	browserPoolsUpdateCmd.Flags().String("memory", "", "Memory for newly-warmed headful browsers in the pool: '8GiB' or '16GiB'. Existing browsers keep their allocation; use --discard-all-idle to replace idle browsers")
+	browserPoolsUpdateCmd.Flags().String("memory", "", "Memory for newly-warmed non-GPU browsers: headless supports '1GiB', '2GiB', or '4GiB'; headful supports '8GiB' or '16GiB'. Existing browsers keep their allocation; use --discard-all-idle to replace idle browsers")
 	browserPoolsUpdateCmd.Flags().Bool("refresh-on-profile-update", false, "Flush idle browsers when the pool's profile is updated")
 	browserPoolsUpdateCmd.Flags().String("profile-id", "", "Profile ID")
 	browserPoolsUpdateCmd.Flags().String("profile-name", "", "Profile name")
@@ -913,7 +946,8 @@ func init() {
 	browserPoolsUpdateCmd.Flags().Bool("clear-proxy-routes", false, "Remove the pool's proxy routes (combine with --private-host or --allowed-host to keep those settings; an omitted --allowed-host removes the pool's allowlist)")
 	browserPoolsUpdateCmd.Flags().StringSlice("allowed-host", nil, "Set or replace the pool's egress allowlist (repeat or comma-separated, max 100), using the same entry rules as 'browsers create --allowed-host'. An empty list is invalid. Changing the allowlist automatically replaces idle browsers; leased browsers keep theirs until release, when it is reset to the new list or the browser is replaced. Network flags replace the pool's whole network configuration, so pass --private-host and --proxy-route too to keep them. Requires proxy v3")
 	browserPoolsUpdateCmd.Flags().Bool("clear-allowed-hosts", false, "Remove the pool's egress allowlist and replace idle browsers (combine with --private-host or --proxy-route to keep those settings)")
-	browserPoolsUpdateCmd.Flags().String("viewport", "", "Viewport size (e.g. 1280x800)")
+	browserPoolsUpdateCmd.Flags().String("expected-network", "", "Optimistic concurrency precondition: the pool's network configuration as a JSON object, copied from the last pool response ('browser-pools get -o json'), or '{}' when it has none. The whole update is rejected with 409 stale_network if the saved network differs, checked atomically with the write. Explicit empty lists differ from omitted lists; proxy route targets must match the saved references (resolved IDs, not equivalent proxy names)")
+	browserPoolsUpdateCmd.Flags().String("viewport", "", "New browser viewport WIDTHxHEIGHT[@RATE]. Positive values are accepted; without @RATE, the API derives the rate from the dimensions. Non-recommended sizes may make live view or recordings unstable")
 	browserPoolsUpdateCmd.Flags().String("chrome-policy", "", "Custom Chrome enterprise policy as a JSON object")
 	browserPoolsUpdateCmd.Flags().String("chrome-policy-file", "", "Read Chrome enterprise policy (JSON object) from a file (use '-' for stdin)")
 	browserPoolsUpdateCmd.Flags().Bool("clear-chrome-policy", false, "Remove the pool's custom Chrome enterprise policy")
@@ -1068,6 +1102,7 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 	clearProxyRoutes, _ := cmd.Flags().GetBool("clear-proxy-routes")
 	allowedHosts, _ := cmd.Flags().GetStringSlice("allowed-host")
 	clearAllowedHosts, _ := cmd.Flags().GetBool("clear-allowed-hosts")
+	expectedNetwork, _ := cmd.Flags().GetString("expected-network")
 	viewport, _ := cmd.Flags().GetString("viewport")
 	chromePolicy, _ := cmd.Flags().GetString("chrome-policy")
 	chromePolicyFile, _ := cmd.Flags().GetString("chrome-policy-file")
@@ -1104,6 +1139,7 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 		AllowedHosts:           allowedHosts,
 		AllowedHostsProvided:   cmd.Flags().Changed("allowed-host"),
 		ClearAllowedHosts:      clearAllowedHosts,
+		ExpectedNetwork:        expectedNetwork,
 		Viewport:               viewport,
 		ChromePolicy:           chromePolicy,
 		ChromePolicyFile:       chromePolicyFile,

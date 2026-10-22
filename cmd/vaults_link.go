@@ -39,10 +39,10 @@ checkout is open in exactly one tab at page_url, then authorize again. if checko
 keeps failing, authorize without --browser-id and --page-url to issue a virtual card that fills
 any page on the merchant_url origin. once a card is authorized at a checkout, cards update
 returns 409: delete the card and create a new one. if authorization is declined or expires,
-read status_reason, then delete the card and create a new one. if the amount exceeds the
-50000 minor-unit virtual card limit on a checkout without Link Pay Token support, delete the
-card and tell the user. if the result of submitting payment is unclear, check the merchant's
-order confirmation or order history before paying again.`
+read status_reason, then delete the card and create a new one. Link card amounts are limited
+to 50000 minor units; if card creation or update rejects the amount, correct it before
+authorizing. if the result of submitting payment is unclear, check the merchant's order
+confirmation or order history before paying again.`
 
 const linkAuthorizeBrowserGuidance = "no payment request was made. make sure the checkout is open in exactly one tab at page_url in a browser with this vault attached, then authorize again. if checkout inspection keeps failing, authorize without --browser-id and --page-url to issue a virtual card that fills any page on the merchant_url origin"
 
@@ -110,7 +110,7 @@ func linkAuthorizeError(err error, checkout bool) error {
 	case checkout && apiErr.StatusCode >= 500:
 		guidance = linkAuthorizeServerErrorGuidance
 	case body.Code == "invalid_request":
-		guidance = "fix the reported input, then authorize again. if it reports that the amount exceeds the Link virtual card limit, delete this card and tell the user this checkout cannot be paid with a Link virtual card"
+		guidance = "fix the reported input, then authorize again"
 	default:
 		guidance = "re-get the item and follow its advertised operations"
 	}

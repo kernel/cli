@@ -8,6 +8,7 @@ import (
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -207,4 +208,19 @@ func TestProxyGet_Error(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "API error")
+}
+
+func TestProxyCommandHelpMatchesIdentifierSemantics(t *testing.T) {
+	assert.Equal(t, "get <id-or-name>", proxiesGetCmd.Use)
+	assert.Contains(t, proxiesGetCmd.Long, "ID or exact name")
+	assert.Contains(t, proxiesGetCmd.Long, "IDs take precedence")
+	assert.Contains(t, proxiesGetCmd.Long, "ambiguous_proxy_name")
+
+	for _, cmd := range []*cobra.Command{proxiesUpdateCmd, proxiesDeleteCmd, proxiesCheckCmd} {
+		assert.Contains(t, cmd.Use, "<id-or-name>")
+		assert.Contains(t, cmd.Short, "ID or exact name")
+	}
+	assert.Contains(t, proxiesUpdateCmd.Long, "duplicate names are allowed")
+	assert.Contains(t, proxiesDeleteCmd.Long, "active-session tunnels")
+	assert.Contains(t, proxiesCheckCmd.Long, "residential and mobile exit nodes vary")
 }
