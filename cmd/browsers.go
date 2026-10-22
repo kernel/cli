@@ -356,6 +356,28 @@ func formatPrivateHosts(network kernel.BrowserNetworkConfig) string {
 	return strings.Join(network.PrivateHosts, ", ")
 }
 
+// browserLocationRows shows the effective timezone and locale with whether each
+// is the session's override or the browser region's default.
+func browserLocationRows(location kernel.BrowserLocation) [][]string {
+	if location.Timezone == "" && location.Locale == "" {
+		return nil
+	}
+	return [][]string{
+		{"Timezone", formatBrowserLocationField(location.Timezone, location.TimezoneSource)},
+		{"Locale", formatBrowserLocationField(location.Locale, location.LocaleSource)},
+	}
+}
+
+func formatBrowserLocationField(value string, source kernel.BrowserLocationSource) string {
+	if value == "" {
+		return "-"
+	}
+	if source == "" {
+		return value
+	}
+	return fmt.Sprintf("%s (%s)", value, source)
+}
+
 // formatVaultReferences renders the vaults linked to a session for table output,
 // preferring each vault's name and falling back to its ID. It returns an empty
 // string when no vaults are linked, so the row can be omitted entirely.
@@ -508,6 +530,8 @@ type BrowsersCreateInput struct {
 	AllowedHostsProvided bool
 	ProxyRoutes          []string
 	StartURL             string
+	Timezone             string
+	Locale               string
 	Extensions           []string
 	Vaults               []string
 	Viewport             string
@@ -558,6 +582,14 @@ type BrowsersUpdateInput struct {
 	TagsProvided        bool
 	ClearTags           bool
 	StartURL            string
+	// Timezone and Locale set the session's location overrides when SetTimezone
+	// and SetLocale are set; ClearTimezone and ClearLocale remove them.
+	Timezone      string
+	SetTimezone   bool
+	ClearTimezone bool
+	Locale        string
+	SetLocale     bool
+	ClearLocale   bool
 	// AllowedHosts replaces the session's egress allowlist when
 	// AllowedHostsProvided is set; ClearAllowedHosts removes it.
 	AllowedHosts         []string
@@ -774,6 +806,12 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	if in.StartURL != "" {
 		params.StartURL = kernel.Opt(in.StartURL)
 	}
+	if in.Timezone != "" {
+		params.Location.Timezone = kernel.Opt(in.Timezone)
+	}
+	if in.Locale != "" {
+		params.Location.Locale = kernel.Opt(in.Locale)
+	}
 
 	region, err := parseRegionFlag(in.Region)
 	if err != nil {
@@ -881,6 +919,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 
 	tableData := buildBrowserTableData(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.ProfileSaveChanges, browser.StartURL, browser.Name, browser.Tags)
 	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)}, []string{"Allowed Hosts", formatAllowedHosts(browser.Network)}, []string{"Proxy Routes", formatProxyRoutes(browser.Network)})
+	tableData = append(tableData, browserLocationRows(browser.Location)...)
 	PrintTableNoPad(tableData, true)
 	if len(browser.Vaults) > 0 {
 		rows := pterm.TableData{{"Attached vault ID", "Name"}}
@@ -1006,6 +1045,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	// Append additional detailed fields
 	tableData = append(tableData, []string{"Created At", util.FormatLocal(browser.CreatedAt)})
 	tableData = append(tableData, []string{"Region", util.OrDash(string(browser.Region))})
+	tableData = append(tableData, browserLocationRows(browser.Location)...)
 	tableData = append(tableData, []string{"Timeout (seconds)", fmt.Sprintf("%d", browser.TimeoutSeconds)})
 	tableData = append(tableData, []string{"Headless", fmt.Sprintf("%t", browser.Headless)})
 	tableData = append(tableData, []string{"Stealth", fmt.Sprintf("%t", browser.Stealth)})
@@ -1124,6 +1164,19 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return fmt.Errorf("--name requires a non-empty value; use --clear-name to clear the name")
 	}
 
+	if in.SetTimezone && in.ClearTimezone {
+		return fmt.Errorf("cannot specify both --timezone and --clear-timezone")
+	}
+	if in.SetTimezone && in.Timezone == "" {
+		return fmt.Errorf("--timezone requires a non-empty value; use --clear-timezone to go back to the browser region's default")
+	}
+	if in.SetLocale && in.ClearLocale {
+		return fmt.Errorf("cannot specify both --locale and --clear-locale")
+	}
+	if in.SetLocale && in.Locale == "" {
+		return fmt.Errorf("--locale requires a non-empty value; use --clear-locale to go back to the browser region's default")
+	}
+
 	hasProxyChange := proxySel.set()
 	hasProfileChange := in.ProfileID != "" || in.ProfileName != ""
 	hasViewportChange := in.Viewport != ""
@@ -1131,6 +1184,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	hasNameChange := in.SetName || in.ClearName
 	hasTagsChange := len(in.Tags) > 0 || in.ClearTags
 	hasStartURLChange := in.StartURL != ""
+	hasLocationChange := in.SetTimezone || in.ClearTimezone || in.SetLocale || in.ClearLocale
 
 	// The API replaces the allowlist with the given entries, or removes it when
 	// sent null. An empty list is rejected, so require at least one entry.
@@ -1154,8 +1208,8 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	// Validate that at least one update option is provided
-	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && in.TelemetryCdpExclude == "" && !hasNameChange && !hasTagsChange && !hasStartURLChange && !hasAllowedHostsChange {
-		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --telemetry-cdp-exclude, --name, --clear-name, --tag, --clear-tags, --start-url, --allowed-host, or --clear-allowed-hosts")
+	if !hasProxyChange && !hasProfileChange && !hasViewportChange && in.Telemetry == "" && in.TelemetryCdpExclude == "" && !hasNameChange && !hasTagsChange && !hasStartURLChange && !hasLocationChange && !hasAllowedHostsChange {
+		return fmt.Errorf("must specify at least one of: --proxy-id, --proxy-name, --proxy-mode, --clear-proxy, --disable-default-proxy, --profile-id, --profile-name, --viewport, --telemetry, --telemetry-cdp-exclude, --name, --clear-name, --tag, --clear-tags, --start-url, --timezone, --clear-timezone, --locale, --clear-locale, --allowed-host, or --clear-allowed-hosts")
 	}
 
 	params := kernel.BrowserUpdateParams{}
@@ -1179,6 +1233,19 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	// rather than treated as a request to blank the current page.
 	if hasStartURLChange {
 		params.StartURL = kernel.String(in.StartURL)
+	}
+
+	// Handle location changes. Null clears an override so the browser uses its
+	// region's default.
+	if in.ClearTimezone {
+		params.Location.Timezone = param.Null[string]()
+	} else if in.SetTimezone {
+		params.Location.Timezone = kernel.Opt(in.Timezone)
+	}
+	if in.ClearLocale {
+		params.Location.Locale = param.Null[string]()
+	} else if in.SetLocale {
+		params.Location.Locale = kernel.Opt(in.Locale)
 	}
 
 	// Handle egress allowlist changes. Null removes the allowlist.
@@ -1264,6 +1331,10 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 	if hasStartURLChange {
 		pterm.Info.Printf("Start URL: %s\n", util.OrDash(browser.StartURL))
+	}
+	if hasLocationChange {
+		pterm.Info.Printf("Timezone: %s\n", formatBrowserLocationField(browser.Location.Timezone, browser.Location.TimezoneSource))
+		pterm.Info.Printf("Locale: %s\n", formatBrowserLocationField(browser.Location.Locale, browser.Location.LocaleSource))
 	}
 	if hasAllowedHostsChange {
 		pterm.Info.Printf("Allowed Hosts: %s\n", formatAllowedHosts(browser.Network))
@@ -2937,6 +3008,7 @@ Supported operations:
   - Rename or clear the session name (--name or --clear-name)
   - Replace or clear the session tags (--tag or --clear-tags)
   - Navigate the session to a URL (--start-url)
+  - Set or clear the session timezone and locale (--timezone, --locale, --clear-timezone, --clear-locale)
   - Replace or remove the egress allowlist (--allowed-host or --clear-allowed-hosts)
 
 Notes:
@@ -2944,6 +3016,9 @@ Notes:
   - --start-url navigation is best-effort: the update succeeds even if the page fails to load.
   - --start-url combined with --profile-id/--profile-name overrides the profile's restored tabs.
   - --tag replaces the entire tag set (it is not merged with existing tags).
+  - --timezone and --locale apply without restarting the browser. --clear-timezone and
+    --clear-locale go back to the browser region's default. Omit a flag to leave that field unchanged.
+    --start-url in the same update opens once the new location applies.
   - --allowed-host replaces an existing allowlist only; it cannot add one to a browser created
     without one. Omit to leave the list unchanged; an empty list is invalid.
   - --clear-allowed-hosts removes the allowlist and returns to unfiltered egress. Once removed,
@@ -3006,6 +3081,10 @@ func init() {
 	browsersUpdateCmd.Flags().Bool("clear-tags", false, "Remove all tags from the browser session")
 	browsersUpdateCmd.Flags().StringSlice("allowed-host", nil, "Replace an existing egress allowlist (repeat or comma-separated, max 100), using the same entry rules as 'browsers create --allowed-host'. Cannot add one to a browser created without one or after removal. Omit to leave unchanged; an empty list is invalid. Applies without restarting the browser; --start-url must be allowed by the new list. Requires proxy v3; on leased pooled browsers the pool's allowlist is restored on release (mutually exclusive with --clear-allowed-hosts). See notes for propagation timing")
 	browsersUpdateCmd.Flags().Bool("clear-allowed-hosts", false, "Remove the egress allowlist and return to unfiltered egress; an allowlist cannot be added back to this browser")
+	browsersUpdateCmd.Flags().String("timezone", "", "Set the session timezone (IANA, e.g. America/Los_Angeles) (mutually exclusive with --clear-timezone)")
+	browsersUpdateCmd.Flags().Bool("clear-timezone", false, "Clear the session timezone override and use the browser region's default")
+	browsersUpdateCmd.Flags().String("locale", "", "Set the session locale used for languages and date and number formatting (BCP 47, e.g. de-DE) (mutually exclusive with --clear-locale)")
+	browsersUpdateCmd.Flags().Bool("clear-locale", false, "Clear the session locale override and use the browser region's default")
 	browsersUpdateCmd.Flags().String("start-url", "", "Navigate the browser to this URL after applying the update. Overrides the restored tabs when a profile is loaded in the same update. Navigation is best-effort, so failures do not fail the update")
 
 	browsersCmd.AddCommand(browsersListCmd)
@@ -3302,6 +3381,8 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().StringSlice("allowed-host", nil, "Set an egress allowlist at creation: the only destinations the browser may reach through Kernel-managed egress (repeat or comma-separated, max 100); anything else is refused with a 403 (network_policy_denied). Filters Kernel-managed egress only, not all browser VM traffic. Accepts exact hostnames ('example.com'), a leading wildcard matching subdomains only ('*.example.com'), public IPs ('8.8.8.8', '[2001:4860:4860::8888]'), and public CIDRs ('8.8.4.0/24'). No ports, paths, or schemes. --start-url must be allowed. Omit for unfiltered egress; an empty list is invalid. Requires proxy v3; cannot be combined with --pool-id or --pool-name, even with --yes. An existing list can be replaced or removed with 'browsers update'; it cannot be added later if omitted at creation or removed")
 	browsersCreateCmd.Flags().StringArray("proxy-route", nil, "Route HOST[,HOST...]=PROXY through a proxy (repeatable, max 10 routes and 50 hosts per route). PROXY is an ID by default; use id:ID or name:NAME explicitly. Exact hosts beat wildcards (longer suffixes win); *.example.com excludes example.com. Unmatched hosts use --proxy-* or default egress. Routes also apply to start_url and other setup traffic. Create-only")
 	browsersCreateCmd.Flags().String("start-url", "", "Initial page to open on launch")
+	browsersCreateCmd.Flags().String("timezone", "", "Session timezone (IANA, e.g. Europe/Berlin); defaults to the browser region's timezone")
+	browsersCreateCmd.Flags().String("locale", "", "Session locale used for languages and date and number formatting (BCP 47, e.g. de-DE); defaults to the browser region's locale")
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
 	browsersCreateCmd.Flags().String("viewport", "", "Browser viewport size (e.g., 1920x1080@25). Supported: 2560x1440@10, 1920x1080@25, 1920x1200@25, 1440x900@25, 1024x768@60, 1200x800@60, 1280x800@60")
 	browsersCreateCmd.Flags().Bool("viewport-interactive", false, "Interactively select viewport size from list")
@@ -3443,6 +3524,8 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	allowedHosts, _ := cmd.Flags().GetStringSlice("allowed-host")
 	proxyRoutes, _ := cmd.Flags().GetStringArray("proxy-route")
 	startURL, _ := cmd.Flags().GetString("start-url")
+	timezone, _ := cmd.Flags().GetString("timezone")
+	locale, _ := cmd.Flags().GetString("locale")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
 	vaults, _ := cmd.Flags().GetStringArray("vault")
 	viewport, _ := cmd.Flags().GetString("viewport")
@@ -3601,6 +3684,8 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		AllowedHostsProvided: cmd.Flags().Changed("allowed-host"),
 		ProxyRoutes:          proxyRoutes,
 		StartURL:             startURL,
+		Timezone:             timezone,
+		Locale:               locale,
 		Extensions:           extensions,
 		Vaults:               vaults,
 		Viewport:             viewport,
@@ -3680,6 +3765,10 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	tags, tagsProvided := tagsFromFlag(cmd, "tag")
 	clearTags, _ := cmd.Flags().GetBool("clear-tags")
 	startURL, _ := cmd.Flags().GetString("start-url")
+	timezone, _ := cmd.Flags().GetString("timezone")
+	clearTimezone, _ := cmd.Flags().GetBool("clear-timezone")
+	locale, _ := cmd.Flags().GetString("locale")
+	clearLocale, _ := cmd.Flags().GetBool("clear-locale")
 	allowedHosts, _ := cmd.Flags().GetStringSlice("allowed-host")
 	clearAllowedHosts, _ := cmd.Flags().GetBool("clear-allowed-hosts")
 
@@ -3706,6 +3795,12 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 		TagsProvided:         tagsProvided,
 		ClearTags:            clearTags,
 		StartURL:             startURL,
+		Timezone:             timezone,
+		SetTimezone:          cmd.Flags().Changed("timezone"),
+		ClearTimezone:        clearTimezone,
+		Locale:               locale,
+		SetLocale:            cmd.Flags().Changed("locale"),
+		ClearLocale:          clearLocale,
 		AllowedHosts:         allowedHosts,
 		AllowedHostsProvided: cmd.Flags().Changed("allowed-host"),
 		ClearAllowedHosts:    clearAllowedHosts,
