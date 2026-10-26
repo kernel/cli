@@ -32,8 +32,8 @@ func parseVaultConfirmTransactionParams(raw string) (*vaultConfirmTransactionPar
 		return nil, fmt.Errorf("transaction_type must be PURCHASE, AUTHORIZATION, CAPTURE, REFUND, REVERSAL, VERIFICATION, CHARGEBACK, or FRAUD")
 	}
 	var amount *int64
-	if json.Unmarshal(object["amount"], &amount) != nil || amount == nil || *amount < 0 || *amount > 50000 {
-		return nil, fmt.Errorf("amount must be an integer between 0 and 50000 minor units, no greater than the approved amount")
+	if json.Unmarshal(object["amount"], &amount) != nil || amount == nil || *amount < 0 || *amount > 1_000_000 {
+		return nil, fmt.Errorf("amount must be an integer between 0 and 1000000 minor units, no greater than the approved amount")
 	}
 	params.Amount = *amount
 	if json.Unmarshal(object["currency"], &params.Currency) != nil || !vaultCurrencyPattern.MatchString(params.Currency) {

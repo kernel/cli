@@ -67,6 +67,8 @@ KERNEL-hosted credential flow (fill never submits website forms; WebMCP tools ma
    browser_id and field selectors (writes fields without submitting). when the item
    advertises webmcp_invoke, items webmcp invoke instead binds credential fields to existing
    null inputs of a live WebMCP tool (the tool may submit or have side effects).
+   passkey fields are never filled: use register_passkey to create one in a vault-bound
+   browser, arm_passkey to sign in, and disarm_passkey as soon as the task is done.
    fill never submits, so a retry is safe. retry only after checking the page, and
    never in an automatic loop.
 use credentials update --version for edits, or items invoke collect to reopen the form.
@@ -164,14 +166,15 @@ each vault has its own key; it is created on first request and may be cached.`,
 	addJSONOutputFlag(encryptionKey)
 	cmd.AddCommand(create, list, get, encryptionKey, newVaultDeleteCommand(false))
 
-	items := &cobra.Command{Use: "items", Short: "inspect readiness and collection urls, or invoke collect/fill/webmcp_invoke", Long: "use get --wait 60 to observe readiness and get -o json for schema/version/presence.\nuse invoke collect to obtain a collection url, or invoke fill --spec-file to fill a browser.\nuse webmcp invoke to call a live WebMCP tool with item fields bound to null input slots.\n1Password credentials use the advertised 1pw_* operations instead of collect/fill/webmcp_invoke.\ncreate and edit credentials with vaults credentials; payment items use wallets/cards."}
+	items := &cobra.Command{Use: "items", Short: "inspect item readiness or invoke advertised credential and payment operations", Long: "use get --wait 60 to observe readiness and get -o json for schema/version/presence.\nuse invoke collect to obtain a collection url, invoke fill --spec-file to fill a browser, or invoke advertised passkey operations with --browser-id.\nuse webmcp invoke to call a live WebMCP tool with item fields bound to null input slots.\n1Password credentials use the advertised 1pw_* operations instead of collect/fill/webmcp_invoke.\ncreate and edit credentials with vaults credentials; payment items use wallets/cards."}
 	itemList := &cobra.Command{Use: "list <vault>", Short: "list items by vault id or name", Args: cobra.ExactArgs(1), PreRunE: vaultPreRun,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return getVaultsHandler(cmd).ListItems(cmd.Context(), args[0], vaultOutput(cmd))
 		}}
 	addVaultJSONOutputFlag(itemList)
-	itemGet := &cobra.Command{Use: "get <vault> <key>", Short: "get item state and any required action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: "get item state, available operations, provider actions, and returned AgentCard checkout aliases.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nan item still pending after the wait is returned as-is; ready means populated for credentials, not logged in or paid.\nfor credential edits on an already-ready item, compare versions without --wait. explicitly non-sensitive text/email values are returned; sensitive values and totp seeds are omitted.\nrecovery_required stops waiting and means unresolved, not declined or expired.\n" + vaultRecoveryHelp,
+	itemGet := &cobra.Command{Use: "get <vault> <key>", Short: "get item state, available operations, and requested live data", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+		Long:    "get item state, available operations, provider actions, and returned AgentCard checkout aliases.\n--expand fetches live, non-persisted provider data only when the item advertises that expansion; requesting unavailable data fails rather than returning a partial item. Link user info and shipping addresses can contain personal data. use -o json to preserve null versus omitted fields.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nan item still pending after the wait is returned as-is; ready means populated for credentials, not logged in or paid.\nfor credential edits on an already-ready item, compare versions without --wait. explicitly non-sensitive text/email values are returned; sensitive values and totp seeds are omitted.\nrecovery_required stops waiting and means unresolved, not declined or expired.\n" + vaultRecoveryHelp,
+		Example: "  kernel vaults items get checkout wallet-1 --expand payment_methods\n  kernel vaults items get checkout wallet-1 --expand link_user_info,link_shipping_addresses -o json",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			wait, _ := cmd.Flags().GetInt64("wait")
 			expand, _ := cmd.Flags().GetStringSlice("expand")
@@ -180,7 +183,7 @@ each vault has its own key; it is created on first request and may be cached.`,
 			return getVaultsHandler(cmd).GetItem(cmd.Context(), args[0], args[1], wait, expand, resolveProjectSelection(project), vaultOutput(cmd), open)
 		}}
 	itemGet.Flags().Int64("wait", 0, "hold while pending for up to this many seconds (0-60); observe only")
-	itemGet.Flags().StringSlice("expand", nil, "advertised live data to fetch: payment_methods")
+	itemGet.Flags().StringSlice("expand", nil, "advertised live data to fetch: payment_methods, link_user_info, or link_shipping_addresses")
 	itemGet.Flags().Bool("open", false, "open a returned https action url; cardholder links are human-only, agents must share privately")
 	addVaultJSONOutputFlag(itemGet)
 	itemEvents := &cobra.Command{Use: "events <vault> <key>", Short: "read immutable item events without retrying payments", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
@@ -209,7 +212,7 @@ omit page_url only when the api can resolve a unique page. totp codes stay serve
 cards require an exact https page_url. Link virtual card fields: number, cvc, exp_month (MM),
 exp_year (YYYY), billing_name, billing_line1, billing_line2, billing_city,
 billing_state, billing_postal_code, billing_country. expiration requires format MM/YY
-or MM/YYYY. optional timeout_ms is 1-30000 (default 10000).
+or MM/YYYY. deprecated timeout_ms is accepted for compatibility but ignored; fill sets no operation deadline and adapts typing pace to value length.
 kernel cards support number, expiration (format MM/YY or MM/YYYY), cvc, exp_month, and exp_year.
 kernel cards have no stored billing fields: billing_* returns field_unavailable (400) before
 any write. enter billing details on the merchant page.
@@ -241,7 +244,7 @@ preparations are single-use, including after failure or expiry; never retry auto
 confirm_transaction requires --params or --spec-file without type, with all of:
 status (APPROVED, DECLINED, PENDING, ERROR, CANCELLED), transaction_type (PURCHASE,
 AUTHORIZATION, CAPTURE, REFUND, REVERSAL, VERIFICATION, CHARGEBACK, FRAUD), amount
-(integer minor units 0..50000, no greater than the approved amount), currency (three
+(integer minor units 0..1000000, no greater than the approved amount), currency (three
 uppercase letters matching the approved purchase currency), and occurred_at (RFC3339).
 no other fields are accepted. ` + kernelTransactionHelp + `.
 restart_verification takes no parameters. in recovery_required, ` + vaultRecoveryHelp + `
@@ -252,6 +255,8 @@ collect/authorize/prepare_checkout/1pw_recover/restart_verification may use --op
 agents must omit --open and share capability links privately, never open them for cardholders.
 fill returns value-free per-field outcomes;
 completed exits 0, failed/unknown exit nonzero with valid json retained on stdout in -o json.
+
+` + vaultPasskeyOperationHelp + `
 
 webmcp_invoke (credential items and ready Link cards when advertised; see items webmcp invoke --help
 for the flag-based form) requires browser_id, the opaque live tool_ref and exact source.page_url
@@ -300,6 +305,9 @@ JSON
   kernel vaults items invoke user-vault github 1pw_access_request_status --params '{"timeout_seconds":60}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login"}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login","entry_id":"<entry-id>"}'
+  kernel vaults items invoke user-vault login register_passkey --browser-id <browser-session-id> --field passkey
+  kernel vaults items invoke user-vault login arm_passkey --browser-id <browser-session-id> --field passkey
+  kernel vaults items invoke user-vault login disarm_passkey --browser-id <browser-session-id>
   kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browser-session-id","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#cardNumber"},{"field":"expiration","format":"MM/YY","selector":"#cardExpiry"},{"field":"cvc","selector":"#cardCvc"}]}' -o json
   kernel vaults items invoke checkout order-1 confirm_transaction --params '{"status":"APPROVED","transaction_type":"PURCHASE","amount":100,"currency":"USD","occurred_at":"2026-09-01T12:00:00Z"}'
   kernel vaults items invoke checkout order-1 restart_verification --open`,
@@ -312,7 +320,7 @@ JSON
 			}
 			if cmd.Flags().Changed("spec-file") {
 				if !vaultOperationTakesParams(args[2]) {
-					return fmt.Errorf("--spec-file is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, and 1Password operations with parameters")
+					return fmt.Errorf("--spec-file is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, and 1Password operations with parameters; passkey operations use --browser-id and optional --field")
 				}
 				data, err := readVaultJSONFile(cmd, "spec-file")
 				if err != nil {
@@ -324,11 +332,17 @@ JSON
 			if err != nil {
 				return err
 			}
+			passkey, err := parseVaultPasskeyOperationFlags(cmd, args[2])
+			if err != nil {
+				return err
+			}
 			authorize, err := parseVaultAuthorizeCheckout(cmd, args[2])
 			if err != nil {
 				return err
 			}
-			if authorize != nil {
+			if passkey != nil {
+				params = &vaultOperationParams{Passkey: passkey}
+			} else if authorize != nil {
 				params = &vaultOperationParams{Authorize: authorize}
 			}
 			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], params, vaultOutput(cmd), open)
@@ -337,8 +351,9 @@ JSON
 	invoke.Flags().String("spec-file", "", "operation parameters json file (use '-' for stdin; maximum 128 KiB)")
 	invoke.MarkFlagsMutuallyExclusive("params", "spec-file")
 	invoke.Flags().Bool("open", false, "open a returned https action url; cardholder links are human-only, agents must share privately")
-	invoke.Flags().String("browser-id", "", "authorize a Link card at checkout: browser session id with this vault attached (requires --page-url)")
-	invoke.Flags().String("page-url", "", "authorize a Link card at checkout: exact current top-level checkout url open in --browser-id (requires --browser-id)")
+	invoke.Flags().String("browser-id", "", "browser session id, not a reusable name; used by Link authorize (with --page-url) and passkey operations")
+	invoke.Flags().String("page-url", "", "Link authorize only: exact current top-level checkout url open in --browser-id")
+	invoke.Flags().String("field", "", "passkey field to arm, receive a registration, or disarm; arm/register require it when ambiguous, while disarm omits it to affect every field")
 	addVaultJSONOutputFlag(invoke)
 	items.AddCommand(itemList, itemGet, itemEvents, invoke, newVaultWebMCPCommand(), newVaultDeleteCommand(true))
 

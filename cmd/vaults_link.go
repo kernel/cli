@@ -39,10 +39,13 @@ checkout is open in exactly one tab at page_url, then authorize again. if checko
 keeps failing, authorize without --browser-id and --page-url to issue a virtual card that fills
 any page on the merchant_url origin. once a card is authorized at a checkout, cards update
 returns 409: delete the card and create a new one. if authorization is declined or expires,
-read status_reason, then delete the card and create a new one. if the amount exceeds the
-50000 minor-unit virtual card limit on a checkout without Link Pay Token support, delete the
-card and tell the user. if the result of submitting payment is unclear, check the merchant's
-order confirmation or order history before paying again.`
+read status_reason, then delete the card and create a new one. if the result of submitting
+payment is unclear, check the merchant's order confirmation or order history before paying again.
+for a recurring card, amount is the limit for each declared period. the merchant schedules
+later charges and the same card remains ready until it expires or is deleted; do not create a
+new card each period. deleting the card, wallet, or vault revokes the Link credential so later
+charges decline, but does not cancel the merchant subscription. if deletion returns 409
+provider_revocation_pending, retry deletion.`
 
 const linkAuthorizeBrowserGuidance = "no payment request was made. make sure the checkout is open in exactly one tab at page_url in a browser with this vault attached, then authorize again. if checkout inspection keeps failing, authorize without --browser-id and --page-url to issue a virtual card that fills any page on the merchant_url origin"
 
@@ -65,6 +68,10 @@ func parseVaultAuthorizeCheckout(cmd *cobra.Command, operation string) (*kernel.
 		return nil, nil
 	}
 	if operation != "authorize" {
+		if isPasskeyOperation(operation) {
+			// Passkey flags are validated and converted by parseVaultPasskeyOperationFlags.
+			return nil, nil
+		}
 		if vaultOperationTakesParams(operation) {
 			return nil, fmt.Errorf("--browser-id and --page-url are only supported for authorize; pass %s inputs with --params or --spec-file", operation)
 		}

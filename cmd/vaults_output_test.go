@@ -177,6 +177,43 @@ func TestVaultOutputPaymentMethodsAdvisoryUnknownVsFalse(t *testing.T) {
 	assert.Contains(t, out, `"capabilities": {}`)
 }
 
+func TestVaultOutputLinkRecurringTerms(t *testing.T) {
+	body := strings.Replace(readyLinkCardFixture, `"merchant_url":"https://shop.example"`, `"merchant_url":"https://shop.example","recurring":{"interval":"week","interval_count":2,"provider_secret":"SECRET_RECURRING"}`, 1)
+	var item kernel.VaultItemUnion
+	require.NoError(t, json.Unmarshal([]byte(body), &item))
+	buf := capturePtermOutput(t)
+	require.NoError(t, printVaultItem(&item, ""))
+	for _, text := range []string{"recurring interval", "week", "recurring interval count", "2", "merchant-scheduled charges", "do not create a new card each period", "does not cancel the merchant subscription"} {
+		assert.Contains(t, buf.String(), text)
+	}
+	assert.NotContains(t, buf.String(), "SECRET_RECURRING")
+	out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
+	assert.Contains(t, out, `"recurring"`)
+	assert.Contains(t, out, `"interval": "week"`)
+	assert.Contains(t, out, `"interval_count": 2`)
+	assert.NotContains(t, out, "SECRET_RECURRING")
+}
+
+func TestVaultOutputLinkLiveExpansions(t *testing.T) {
+	body := strings.TrimSuffix(connectedWalletFixture, "}") + `,"expanded":{
+		"link_user_info":{"id":"usr_1","email":"jane@example.com","name":"Jane Doe","first_name":"Jane","last_name":"Doe","phone":null,"address":{"line1":"510 Townsend St","line2":null,"city":"San Francisco","state":"CA","postal_code":"94103","country":"US","provider_secret":"SECRET_ADDRESS"},"eligible_for_balance":true,"default_spend_request_currency":"usd","agent_wallet_spend_limits":{"per_transaction":{"limit":50000},"daily":{"limit":500000,"used":120000,"remaining":380000},"thirty_day":{"limit":null,"used":600000,"remaining":null}},"agent_wallet_step_up":{"status":"identity_verification","action_url":"https://link.example/verify?code=SECRET_STEPUP"},"provider_secret":"SECRET_USER"},
+		"link_shipping_addresses":[{"id":"sa_1","is_default":true,"nickname":null,"address":{"name":"Jane Doe","line_1":"510 Townsend St","line_2":null,"locality":"San Francisco","dependent_locality":null,"administrative_area":"CA","postal_code":"94103","sorting_code":null,"country_code":"US","provider_secret":"SECRET_SHIPPING"},"provider_secret":"SECRET_ENTRY"}]
+	}}`
+	var item kernel.VaultItemUnion
+	require.NoError(t, json.Unmarshal([]byte(body), &item))
+	buf := capturePtermOutput(t)
+	require.NoError(t, printVaultItem(&item, ""))
+	for _, text := range []string{"Link user property", "Jane Doe", "jane@example.com", "eligible for balance", "per-transaction limit", "50000", "30-day limit", "unlimited", "shipping address id", "sa_1", "510 Townsend St", "live provider data"} {
+		assert.Contains(t, buf.String(), text)
+	}
+	assert.NotContains(t, buf.String(), "SECRET")
+	out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
+	for _, text := range []string{`"link_user_info"`, `"link_shipping_addresses"`, `"phone": null`, `"nickname": null`, `"limit": null`} {
+		assert.Contains(t, out, text)
+	}
+	assert.NotContains(t, out, "SECRET")
+}
+
 func TestVaultActionOutputNoInventedURLs(t *testing.T) {
 	for _, action := range []struct{ name, url string }{
 		{"link_oauth", "https://provider.example/auth?state=state&code_challenge=challenge"},
