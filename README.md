@@ -456,7 +456,7 @@ TypeScript-style types, which must stay in sync with the [API spec](https://api.
   `card_enrollment` action collects card details from the cardholder, never from the CLI.
 - **Link wallet:** supply `authorization: {method: "oauth", client: {type: "kernel_managed"}}`.
 - **AgentCard wallet:** use `{}` to enroll, or supply `user_id` for a user enrolled in the same organization and provider configuration.
-- **Kernel card:** supply `wallet`, `amount` (minor units, at most 50000), `currency`,
+- **Kernel card:** supply `wallet`, `amount` (minor units, at most 1000000), `currency`,
   `merchant_name`, and HTTPS `merchant_url`. Supply two-letter `merchant_country` for Visa.
   Kernel card updates are unsupported.
 - **Link card:** include the required fields shown in help. Optional `line_items`, `totals`,
@@ -637,7 +637,7 @@ kernel vaults items invoke checkout order-1 confirm_transaction --params '{
 `type` or any extra properties. `status` must be `APPROVED`, `DECLINED`, `PENDING`, `ERROR`,
 or `CANCELLED`. `transaction_type` must be `PURCHASE`, `AUTHORIZATION`, `CAPTURE`, `REFUND`,
 `REVERSAL`, `VERIFICATION`, `CHARGEBACK`, or `FRAUD`. `amount` is an integer in minor units,
-0..50000 and no greater than the approved amount; `currency` is three uppercase letters
+0..1000000 and no greater than the approved amount; `currency` is three uppercase letters
 matching the approved purchase currency;
 `occurred_at` is the observed outcome's RFC3339 timestamp. The operation is no longer
 advertised after reporting. Never infer success from fill. `PENDING` means explicit
@@ -882,7 +882,8 @@ kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browse
   stored billing fields. `billing_*` returns 400 `field_unavailable` before any write;
   enter billing details on the merchant page. Fill is restricted to `merchant_url`'s origin.
 - Combined card `expiration` requires `format: "MM/YY"` or `"MM/YYYY"`. Other fields reject `format`.
-- Optional `timeout_ms` is an integer from 1 to 30000 (default 10000), for the whole operation.
+- Deprecated `timeout_ms` is accepted for compatibility as an integer from 1 to 30000,
+  but the API ignores it. Fill sets no operation deadline and adapts typing pace to value length.
 
 Fill returns an execution result, **not an updated item**. Normal output shows zero-based
 field indices, statuses, and error codes. `-o json` preserves the display-safe result shape:
