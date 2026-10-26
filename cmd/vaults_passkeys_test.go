@@ -92,8 +92,8 @@ func TestVaultPasskeyOperationFlagsValidateBeforeAPI(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"missing browser", []string{"arm_passkey"}, "requires --browser-id"},
-		{"empty browser", []string{"arm_passkey", "--browser-id", ""}, "non-empty browser session ID"},
+		{"missing browser", []string{"arm_passkey"}, "requires --browser-id with a browser session id, not a name"},
+		{"empty browser", []string{"arm_passkey", "--browser-id", ""}, "non-empty browser session id"},
 		{"empty field", []string{"arm_passkey", "--browser-id", "browser-id", "--field", ""}, "non-empty passkey field name"},
 		{"long field", []string{"register_passkey", "--browser-id", "browser-id", "--field", strings.Repeat("x", 65)}, "at most 64 bytes"},
 		{"page url", []string{"disarm_passkey", "--browser-id", "browser-id", "--page-url", "https://example.com"}, "--page-url is only supported for authorize"},
@@ -144,9 +144,11 @@ func TestVaultPasskeyHelpMatchesSpec(t *testing.T) {
 	cmd, _, err := newVaultsCommand().Find([]string{"items", "invoke"})
 	require.NoError(t, err)
 	require.NotNil(t, cmd.Flags().Lookup("field"))
-	assert.Contains(t, cmd.Flags().Lookup("browser-id").Usage, "session ID, not a reusable name")
+	assert.Contains(t, cmd.Flags().Lookup("browser-id").Usage, "session id, not a reusable name")
+	assert.Contains(t, cmd.Flags().Lookup("page-url").Usage, "checkout url")
 	assert.Contains(t, cmd.Flags().Lookup("field").Usage, "disarm omits it to affect every field")
 	for _, text := range []string{
+		"browser session id, not a reusable browser name",
 		"private key never enters the browser",
 		"there is no time limit",
 		"reload it",

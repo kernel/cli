@@ -11,7 +11,7 @@ import (
 )
 
 const vaultPasskeyOperationHelp = `passkey operations apply only when advertised by a KERNEL-hosted credential item.
-they require --browser-id with a browser session ID, not a reusable browser name. the
+they require --browser-id with a browser session id, not a reusable browser name. the
 browser must have the item's vault attached. --field selects one passkey field; arm and
 register require it when more than one eligible field exists, while disarm omits it to
 affect every passkey field. the positional operation supplies type.
@@ -63,11 +63,11 @@ func parseVaultPasskeyOperationFlags(cmd *cobra.Command, operation string) (*ker
 		return nil, fmt.Errorf("--page-url is only supported for authorize; %s was not invoked", operation)
 	}
 	if !cmd.Flags().Changed("browser-id") {
-		return nil, fmt.Errorf("%s requires --browser-id with a browser session ID, not a name", operation)
+		return nil, fmt.Errorf("%s requires --browser-id with a browser session id, not a name", operation)
 	}
 	browserID, _ := cmd.Flags().GetString("browser-id")
 	if strings.TrimSpace(browserID) == "" {
-		return nil, fmt.Errorf("--browser-id must be a non-empty browser session ID, not a name")
+		return nil, fmt.Errorf("--browser-id must be a non-empty browser session id, not a name")
 	}
 	field, _ := cmd.Flags().GetString("field")
 	if fieldSet && (strings.TrimSpace(field) == "" || len(field) > 64) {
