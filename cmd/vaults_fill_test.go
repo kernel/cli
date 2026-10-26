@@ -102,6 +102,15 @@ func TestVaultFillParamsValidation(t *testing.T) {
 	}
 }
 
+func TestVaultFillHelpMarksTimeoutDeprecated(t *testing.T) {
+	cmd, _, err := newVaultsCommand().Find([]string{"items", "invoke"})
+	require.NoError(t, err)
+	assert.Contains(t, cmd.Long, "deprecated timeout_ms")
+	assert.Contains(t, cmd.Long, "accepted for compatibility but ignored")
+	assert.Contains(t, cmd.Long, "adapts typing pace to value length")
+	assert.NotContains(t, cmd.Long, "timeout_ms is 1-30000 (default 10000)")
+}
+
 func TestVaultFillBindingsSerialization(t *testing.T) {
 	fields := make([]vaultFillField, 0)
 	for _, field := range strings.Fields("number cvc exp_month exp_year billing_name billing_line1 billing_line2 billing_city billing_state billing_postal_code billing_country") {

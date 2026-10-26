@@ -20,6 +20,7 @@ func TestVaultRawSpecForwarding(t *testing.T) {
 				`{"custom_option":false,"amount":0,"currency":"USD","metadata":null}`,
 				`{"checkout_origin":"https://shop.example.com","amount":1234}`,
 				`{"line_items":[{"name":"Item","quantity":2,"unit_amount":100,"totals":[{"type":"tax","display_text":"Tax","amount":10}]}],"totals":[],"metadata":{"reference":"order-1"}}`,
+				`{"amount":5000,"recurring":{"interval":"week","interval_count":2}}`,
 			} {
 				t.Run(path+"/"+provider+"/"+raw, func(t *testing.T) {
 					var expected map[string]json.RawMessage
@@ -91,10 +92,10 @@ func TestVaultSpecHelpAndFlags(t *testing.T) {
 			assert.NotContains(t, cmd.Long, "sandbox/live")
 			assert.NotContains(t, cmd.Long, "expires_at?:")
 			if strings.HasPrefix(path, "cards") {
-				for _, field := range []string{"merchant_name:", "merchant:", "line_items?:", "metadata?:", "checkout_origin?:", "type LinkLineItem", "type LinkTotal"} {
+				for _, field := range []string{"merchant_name:", "merchant:", "line_items?:", "metadata?:", "recurring?:", "type LinkRecurring", `interval: "day" | "week" | "month" | "year"`, "checkout_origin?:", "type LinkLineItem", "type LinkTotal"} {
 					assert.Contains(t, cmd.Long, field)
 				}
-				for _, guidance := range []string{"eligible", "autopilot may not apply", "user approval may", "does not guarantee payment success", "KERNEL does not validate this declaration against the page open in the browser.", "preparation merchant_origin instead", "card updates replace the whole spec", "omitting checkout_origin from an update removes"} {
+				for _, guidance := range []string{"eligible", "autopilot may not apply", "user approval may", "does not guarantee payment success", "KERNEL does not validate this declaration against the page open in the browser.", "preparation merchant_origin instead", "card updates replace the whole spec", "omitting checkout_origin from an update removes", "per-period spending limit", "do not create a new card each period", "does not cancel the merchant subscription", "1..1000000"} {
 					assert.Contains(t, cmd.Long, guidance)
 				}
 			} else {

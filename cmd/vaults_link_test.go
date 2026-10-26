@@ -47,8 +47,10 @@ func TestLinkCardFlowHelpOrder(t *testing.T) {
 		"make sure the checkout is open in exactly one tab at page_url, then authorize again",
 		"authorize without --browser-id and --page-url to issue a virtual card",
 		"cards update returns 409: delete the card and create a new one",
-		"50000 minor-unit virtual card limit",
 		"check the merchant's order confirmation or order history before paying again",
+		"for a recurring card, amount is the limit for each declared period",
+		"do not create a new card each period",
+		"does not cancel the merchant subscription",
 		"failed or unknown fills are safe to retry, but only after checking the page and not in an automatic loop",
 	} {
 		assert.Contains(t, flow, want)

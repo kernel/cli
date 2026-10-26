@@ -17,7 +17,8 @@ type vaultOperationParams struct {
 	WebMCP             *kernel.WebmcpInvokeVaultItemOperationRequestParam
 	Checkout           *kernel.VaultCheckoutContextParam
 	ConfirmTransaction *vaultConfirmTransactionParams
-	// OnePassword is a complete 1pw_* request body; Invoke supplies the vault.
+	// Passkey and OnePassword are complete operation request bodies; Invoke supplies the vault.
+	Passkey     *kernel.VaultItemPerformOperationParams
 	OnePassword *kernel.VaultItemPerformOperationParams
 }
 
@@ -93,6 +94,12 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 	if len(raw) > 128*1024 {
 		return nil, fmt.Errorf("operation parameters exceed 128 KiB")
 	}
+	if isPasskeyOperation(operation) {
+		if paramsSet {
+			return nil, fmt.Errorf("%s uses --browser-id and optional --field, not --params or --spec-file", operation)
+		}
+		return nil, nil
+	}
 	if isOnePasswordOperation(operation) {
 		if operation == "1pw_recover" {
 			if paramsSet {
@@ -145,7 +152,7 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 	}
 	if operation != "fill" {
 		if paramsSet {
-			return nil, fmt.Errorf("--params is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, and 1Password operations; authorize takes --browser-id and --page-url, and restart_verification takes no parameters")
+			return nil, fmt.Errorf("--params is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, and 1Password operations; authorize takes --browser-id and --page-url, passkey operations take --browser-id and optional --field, and restart_verification takes no parameters")
 		}
 		return nil, nil
 	}

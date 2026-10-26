@@ -60,7 +60,7 @@ func (f *FakeBrowserTelemetryService) EventsAutoPaging(ctx context.Context, id s
 	if f.EventsAutoPagingFunc != nil {
 		return f.EventsAutoPagingFunc(id, query, opts...)
 	}
-	return pagination.NewOffsetPaginationAutoPager(&pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse]{}, nil)
+	return pagination.NewOffsetPaginationAutoPager[kernel.BrowserTelemetryEventsResponse](nil, nil)
 }
 
 func TestTelemetryStream_NilTelemetryErrors(t *testing.T) {
@@ -745,7 +745,7 @@ func TestTelemetryEvents_FullScanIgnoresOffsetUsesSince(t *testing.T) {
 	fakeTelemetry := &FakeBrowserTelemetryService{
 		EventsAutoPagingFunc: func(id string, query kernel.BrowserTelemetryEventsParams, opts ...option.RequestOption) *pagination.OffsetPaginationAutoPager[kernel.BrowserTelemetryEventsResponse] {
 			gotQuery = query
-			return pagination.NewOffsetPaginationAutoPager(&pagination.OffsetPagination[kernel.BrowserTelemetryEventsResponse]{}, nil)
+			return pagination.NewOffsetPaginationAutoPager[kernel.BrowserTelemetryEventsResponse](nil, nil)
 		},
 	}
 	b := BrowsersCmd{browsers: fakeBrowsers, telemetry: fakeTelemetry}

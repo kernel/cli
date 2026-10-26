@@ -494,6 +494,32 @@ func TestVaultGetWaitExpansionAndEvents(t *testing.T) {
 	assert.NotContains(t, human, "SECRET")
 }
 
+func TestVaultGetLinkLiveExpansions(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "project-test")
+	body := strings.TrimSuffix(connectedWalletFixture, "}") + `,"expanded":{
+		"link_user_info":{"id":"usr_1","email":"jane@example.com","name":"Jane Doe","first_name":"Jane","last_name":"Doe","phone":null,"eligible_for_balance":true,"default_spend_request_currency":"usd","agent_wallet_spend_limits":{"per_transaction":{"limit":50000},"daily":{"limit":500000,"used":120000,"remaining":380000},"thirty_day":{"limit":null,"used":600000,"remaining":null}},"agent_wallet_step_up":{"status":"not_required","action_url":null}},
+		"link_shipping_addresses":[{"id":"sa_1","is_default":true,"nickname":"Home","address":{"name":"Jane Doe","line_1":"510 Townsend St","line_2":null,"locality":"San Francisco","dependent_locality":null,"administrative_area":"CA","postal_code":"94103","sorting_code":null,"country_code":"US"}}]
+	}}`
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/vaults/checkout/items/wallet-1", r.URL.Path)
+		assert.Equal(t, "link_user_info,link_shipping_addresses", r.URL.Query().Get("expand"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, body)
+	})
+	out, _, err := executeVaultCommand(t, client, "vaults", "items", "get", "checkout", "wallet-1", "--expand", "link_user_info,link_shipping_addresses", "-o", "json")
+	require.NoError(t, err)
+	assert.Contains(t, out, `"link_user_info"`)
+	assert.Contains(t, out, `"link_shipping_addresses"`)
+
+	cmd, _, err := newVaultsCommand().Find([]string{"items", "get"})
+	require.NoError(t, err)
+	for _, value := range vaultItemExpansionTypes {
+		assert.Contains(t, cmd.Flags().Lookup("expand").Usage, value)
+	}
+	assert.Contains(t, cmd.Long, "live, non-persisted provider data")
+	assert.Contains(t, cmd.Long, "personal data")
+}
+
 func TestVaultDeleteResponses(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "project-test")
 	for _, path := range []string{"vaults delete checkout --yes", "vaults items delete checkout order-1 --yes"} {

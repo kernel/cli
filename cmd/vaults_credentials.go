@@ -25,9 +25,11 @@ const vaultCredentialPathsHelp = `credential vaults have two sign-in paths. befo
      site's fields, the user types values into a KERNEL-hosted form at the returned
      collection url, and KERNEL stores them encrypted. once ready, items invoke fill
      writes them into ordinary web form fields in a vault-bound browser without
-     submitting. when the item advertises webmcp_invoke, items webmcp invoke instead
-     binds credential fields to existing null inputs of a live WebMCP tool; the tool
-     may submit or have other side effects.
+     submitting. passkeys are never filled: invoke register_passkey to create one in
+     an empty passkey field, arm_passkey to sign in, and disarm_passkey afterward.
+     when the item advertises webmcp_invoke, items webmcp invoke instead binds
+     credential fields to existing null inputs of a live WebMCP tool; the tool may
+     submit or have other side effects.
    - 1Password brokered approval (spec provider "1password", preview): requires the
      login to be in the user's own, non-shared 1Password vault; shared-vault items and
      passkeys are not supported. state this requirement when asking. the account
@@ -106,25 +108,35 @@ fields as an ordered array of named definitions.
 inspect the website and list fields in its natural top-to-bottom order because the
 user-facing collection form renders that order unchanged. definitions accept a stable
 name and an optional non-secret human-readable label; forms fall back to name. updates,
-state, and browser fills always use name. field types are text, email, password, and
-totp; definitions also accept required, sensitive, and value.
+state, and browser fills always use name; passkey operations use the same name. field
+types are text, email, password, totp, and passkey; definitions also accept required,
+sensitive, and value. text, email, and password have form inputs. totp and passkey do
+not, so both KERNEL-hosted and customer-hosted collection forms omit them.
 custom collection web apps that encrypt in the browser may send encrypted_value (a
 compact jwe to the key from vaults get-encryption-key) instead of value; never both.
+a passkey value is a JSON-encoded FIDO Credential Exchange Format object with unpadded
+base64url credentialId, a userHandle of at most 64 bytes, a PKCS#8 ECDSA P-256 private
+key, a lowercase rpId domain, and optional username and userDisplayName. other CXF
+members are ignored. alternatively, declare an optional empty passkey field and use
+register_passkey in a vault-bound browser; only ES256 passkeys are created.
 set description to the recognizable site name only, e.g. "Hacker News", not
 "Hacker News sign-in credentials". this text is the user-facing form title.
 set sensitive:false explicitly for ordinary usernames and email addresses.
-reserve sensitive:true for secrets such as passwords, api tokens, and totp seeds.
-password and totp must be sensitive. omitted sensitive defaults to true for safety.
-omit required values to receive a collection url to present to the user.
+reserve sensitive:true for secrets such as passwords, api tokens, totp seeds, and
+passkeys. password, totp, and passkey must be sensitive. omitted sensitive defaults to
+true for safety. omit required form-supported values to receive a collection url to
+present to the user; an empty required totp or passkey cannot be collected in that form.
 poll items get --wait 60 until state.status is ready. then choose an advertised operation:
 - ordinary web forms: items invoke fill writes field values without submitting.
+- passkeys: invoke register_passkey to create one in an empty field, arm_passkey to
+  answer matching sign-in requests, and disarm_passkey as soon as the task is done.
 - live WebMCP tool: when webmcp_invoke is advertised, run browsers webmcp list, then
   items webmcp invoke with the tool_ref, exact source.page_url, public input containing
   null slots, and --bind <field>=<json-pointer>. the tool may submit or have other
   side effects, and its output may include the supplied values.
 fill never submits, so a retry is safe. retry only after checking the page, and never in an automatic loop.
 ready means populated, not a successful login. an agent controlling the browser
-can read filled values. totp seeds must not be collected through the hosted form.
+can read filled values. totp seeds and passkeys must not be collected through the hosted form.
 get/list output includes definitions, has_value, and explicitly non-sensitive text/email values.
 sensitive values and totp seeds are omitted.
 collection urls are bearer credentials: share only with the intended user.
@@ -158,7 +170,7 @@ func newVaultCredentialsCommand() *cobra.Command {
 			},
 		}
 		if update {
-			cmd.Long += "\nupdate applies to KERNEL-hosted credentials only. update spec fields are an object keyed by field name, not the ordered array used on create.\nupdate preserves omitted fields, replaces nonempty string values (value, or encrypted_value from a browser-encrypting collection app), and clears supported values with null or an empty string. clearing a required text/email/password field returns pending_collection; form submissions still require a nonempty value.\nfield definitions are immutable. do not automatically retry version conflicts."
+			cmd.Long += "\nupdate applies to KERNEL-hosted credentials only. update spec fields are an object keyed by field name, not the ordered array used on create.\nupdate preserves omitted fields, replaces nonempty string values (value, or encrypted_value from a browser-encrypting collection app), and clears supported values with null or an empty string. clearing a required text/email/password field returns pending_collection; clearing a required totp or passkey returns an error because the hosted form cannot collect it.\nfield definitions are immutable. do not automatically retry version conflicts."
 			cmd.Flags().Int64("version", 0, "expected version from items get (required; never auto-refreshed)")
 			_ = cmd.MarkFlagRequired("version")
 			cmd.Flags().String("expected-item-id", "", "immutable item id from the original read; reject an update if the key now refers to a replacement item")

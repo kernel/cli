@@ -196,14 +196,27 @@ func validateVaultWait(wait int64) error {
 	return nil
 }
 
+var vaultItemExpansionTypes = []string{"payment_methods", "link_user_info", "link_shipping_addresses"}
+
+func validateVaultItemExpansions(expand []string) error {
+	allowed := make(map[string]bool, len(vaultItemExpansionTypes))
+	for _, field := range vaultItemExpansionTypes {
+		allowed[field] = true
+	}
+	for _, field := range expand {
+		if !allowed[field] {
+			return fmt.Errorf("--expand must contain only: %s", strings.Join(vaultItemExpansionTypes, ", "))
+		}
+	}
+	return nil
+}
+
 func (c VaultsCmd) GetItem(ctx context.Context, vault, key string, wait int64, expand []string, project, output string, open bool) error {
 	if err := validateVaultWait(wait); err != nil {
 		return err
 	}
-	for _, field := range expand {
-		if field != "payment_methods" {
-			return fmt.Errorf("--expand only supports payment_methods")
-		}
+	if err := validateVaultItemExpansions(expand); err != nil {
+		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(wait)*time.Second+30*time.Second)
 	defer cancel()
@@ -263,6 +276,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	}
 	if operation == "confirm_transaction" && (params == nil || params.ConfirmTransaction == nil || open) {
 		return fmt.Errorf("confirm_transaction requires --params and does not support --open")
+	}
+	if isPasskeyOperation(operation) && (params == nil || params.Passkey == nil || open) {
+		return fmt.Errorf("%s requires --browser-id and does not support --open", operation)
 	}
 	if isOnePasswordOperation(operation) && (params == nil || params.OnePassword == nil) {
 		return fmt.Errorf("%s requires its documented parameters", operation)
@@ -334,6 +350,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 			return err
 		}
 		opts = append(opts, option.WithRequestBody("application/json", body))
+	} else if params != nil && params.Passkey != nil {
+		request = *params.Passkey
+		request.IDOrName = vault
 	} else if params != nil && params.OnePassword != nil {
 		request = *params.OnePassword
 		request.IDOrName = vault
@@ -365,6 +384,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 			return linkAuthorizeError(err, params != nil && params.Authorize != nil)
 		}
 		return util.CleanedUpSdkError{Err: err}
+	}
+	if isPasskeyOperation(operation) {
+		return printVaultPasskeyOperationResult(response, operation, output)
 	}
 	if response == nil || (response.Type != "card" && response.Type != "wallet" && response.Type != "credential" && response.Type != "credential_account") {
 		if item.Spec.Provider == "kernel" {

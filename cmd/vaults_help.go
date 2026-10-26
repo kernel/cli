@@ -70,7 +70,7 @@ type LinkCardSpec = {
   provider: "link";
   wallet: string;             // wallet item key
   payment_method_id: string;  // from wallets payment-methods
-  amount: number;             // integer minor units; 1..500000; a virtual card allows at most 50000
+  amount: number;             // integer minor units; 1..50000; with recurring, the per-period spending limit
   currency: string;           // three letters
   merchant_name: string;      // 1..255 characters
   merchant_url: string;       // uri; a virtual card authorized without a checkout fills only this origin
@@ -78,6 +78,13 @@ type LinkCardSpec = {
   line_items?: LinkLineItem[];
   totals?: LinkTotal[];
   metadata?: Record<string, string>;
+  recurring?: LinkRecurring;
+};
+
+// recurring terms cannot change after authorization. interval_count defaults to 1.
+type LinkRecurring = {
+  interval: "day" | "week" | "month" | "year";
+  interval_count?: number;    // integer >= 1; e.g. 2 with week means every two weeks
 };
 
 type AgentCardCardSpec = {
@@ -94,11 +101,13 @@ type AgentCardCardSpec = {
 // one-time code for fill on merchant_url's origin until expires_at. Mastercard purchases
 // need no hosted approval. a Visa purchase returns a spend_approval action: the cardholder
 // approves it with a Visa passkey (the link expires after 30 minutes) before the code is
-// issued. updates are not supported.
+// issued. when the card network cannot issue an agentic token, spend_approval instead
+// collects a fresh security code; after collection, fill before expires_at, normally within
+// five minutes. an expired purchase requires a new card. updates are not supported.
 type KernelCardSpec = {
   provider: "kernel";
   wallet: string;             // KERNEL wallet item key
-  amount: number;             // integer minor units; 1..50000
+  amount: number;             // integer minor units; 1..1000000
   currency: string;           // iso 4217 three letters
   merchant_name: string;      // 1..255 characters
   merchant_url: string;       // https merchant checkout url; fill is locked to its origin
@@ -124,6 +133,13 @@ type LinkTotal = {
   display_text: string;
   amount: number;             // integer minor units
 };
+
+for a recurring Link card, amount is the spending limit for each period. the merchant
+schedules later charges, and the card stays ready after each charge until it expires or is
+deleted; do not create a new card each period. deleting the card, its wallet, or its vault
+first revokes the Link credential so later charges decline. if deletion returns 409
+provider_revocation_pending, retry deletion. deletion does not cancel the merchant subscription. recurring
+terms cannot be changed after authorization.
 
 kernel cards cannot be updated. ` + kernelReplacementHelp + `.
 in recovery_required, ` + vaultRecoveryHelp + `

@@ -36,12 +36,32 @@ var vaultMethodFields = vaultOutputFields{
 	"display":      vaultFieldsOf("label brand last4"),
 	"capabilities": {"single_use_card": vaultFieldsOf("eligible reasons")},
 }
+var vaultLinkUserInfoFields = vaultOutputFields{
+	"id": nil, "email": nil, "name": nil, "first_name": nil, "last_name": nil, "phone": nil,
+	"address":                        vaultFieldsOf("line1 line2 city state postal_code country"),
+	"eligible_for_balance":           nil,
+	"default_spend_request_currency": nil,
+	"agent_wallet_spend_limits": {
+		"per_transaction": vaultFieldsOf("limit"),
+		"daily":           vaultFieldsOf("limit used remaining"),
+		"thirty_day":      vaultFieldsOf("limit used remaining"),
+	},
+	"agent_wallet_step_up": vaultFieldsOf("status action_url"),
+}
+var vaultLinkShippingAddressFields = vaultOutputFields{
+	"id": nil, "is_default": nil, "nickname": nil,
+	"address": vaultFieldsOf("name line_1 line_2 locality dependent_locality administrative_area postal_code sorting_code country_code"),
+}
 var vaultItemFields = vaultOutputFields{
 	"id": nil, "key": nil, "type": nil, "version": nil, "created_at": nil, "updated_at": nil, "expires_at": nil, "description": nil,
 	"available_operations": vaultOperationFields,
 	"available_expansions": vaultOperationFields,
 	"action":               vaultFieldsOf("name url expires_at instructions"),
-	"expanded":             {"payment_methods": vaultMethodFields},
+	"expanded": {
+		"payment_methods":         vaultMethodFields,
+		"link_user_info":          vaultLinkUserInfoFields,
+		"link_shipping_addresses": vaultLinkShippingAddressFields,
+	},
 	"spec": {
 		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil, "checkout_origin": nil,
 		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil, "merchant_country": nil, "merchant_category": nil, "merchant_category_code": nil,
@@ -51,6 +71,7 @@ var vaultItemFields = vaultOutputFields{
 		"provider_config": vaultFieldsOf("id name"),
 		"authorization":   {"method": nil, "client": {"type": nil, "provider_config": vaultFieldsOf("id name")}},
 		"totals":          vaultTotalFields,
+		"recurring":       vaultFieldsOf("interval interval_count"),
 		"line_items": {
 			"name": nil, "quantity": nil, "unit_amount": nil, "description": nil,
 			"sku": nil, "url": nil, "image_url": nil, "product_url": nil, "totals": vaultTotalFields,
@@ -121,7 +142,8 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 			continue
 		}
 		if value, ok := object[key]; ok {
-			if key == "url" || key == "approval_url" || key == "merchant_url" || key == "merchant_origin" || key == "image_url" || key == "product_url" || key == "website" {
+			isNullActionURL := key == "action_url" && bytes.Equal(bytes.TrimSpace(value), []byte("null"))
+			if (key == "url" || key == "approval_url" || key == "action_url" || key == "merchant_url" || key == "merchant_origin" || key == "image_url" || key == "product_url" || key == "website") && !isNullActionURL {
 				var address string
 				if json.Unmarshal(value, &address) != nil {
 					continue
@@ -338,6 +360,12 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 		if vaultOperationTakesParams(op.Type) {
 			command += " --params '<json>'"
 		}
+		if isPasskeyOperation(op.Type) {
+			command += " --browser-id '<browser-session-id>'"
+			if op.Type != "disarm_passkey" {
+				command += " --field '<passkey-field>'"
+			}
+		}
 		if op.Type == "authorize" && item.Type == "card" && item.Spec.Provider == "link" && item.State.Status == "requested" {
 			command += " --browser-id '<browser-session-id>' --page-url '<checkout-page-url>'"
 		}
@@ -424,6 +452,16 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		rows = append(rows, []string{"wallet key", item.Spec.Wallet}, []string{"merchant", merchant}, []string{"amount (minor units)", fmt.Sprintf("%d %s", item.Spec.Amount, item.Spec.Currency)})
 		if item.Spec.Provider == "link" {
 			rows = append(rows, []string{"payment method id", item.Spec.PaymentMethodID})
+			if item.Spec.JSON.Recurring.Valid() {
+				intervalCount := "1 (default)"
+				if item.Spec.Recurring.JSON.IntervalCount.Valid() {
+					intervalCount = fmt.Sprint(item.Spec.Recurring.IntervalCount)
+				}
+				rows = append(rows,
+					[]string{"recurring interval", item.Spec.Recurring.Interval},
+					[]string{"recurring interval count", intervalCount},
+				)
+			}
 		}
 		if item.Spec.Provider == "agentcard" && item.Spec.CheckoutOrigin != "" {
 			rows = append(rows, []string{"checkout origin", item.Spec.CheckoutOrigin})
@@ -532,14 +570,14 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 			pterm.Info.Println("share the collection url with the user to complete the credential form. observe readiness with items get --wait 60; for edits to an already-ready item, compare versions without --wait.")
 		}
 		pterm.Info.Println("do not use credential items for credit card data. use wallet and card item types for credit cards and payment checkout instead.")
-		pterm.Info.Println("ready means required fields are populated, not that login succeeded. fill only when advertised; fill does not submit the form.")
+		pterm.Info.Println("ready means required fields are populated, not that login succeeded. fill only when advertised; fill does not submit the form. passkey fields are never filled: use register_passkey, arm_passkey, and disarm_passkey only when advertised.")
 		return
 	}
 	if item.Type == "card" {
 		if item.Spec.Provider == "kernel" {
 			switch item.State.Status {
 			case "requested", "pending_authorization", "ready":
-				pterm.Info.Println("Visa may require the returned spend_approval action; share it privately, never open it for the cardholder. ready means a one-time code is available, not that the merchant charged the card. fill and submit checkout before expires_at.")
+				pterm.Info.Println("Visa may require passkey approval through spend_approval; an alias-mode card may instead require fresh security-code collection. share the link privately and never open it for the cardholder; an unused link expires after 30 minutes. alias-mode cards normally expire five minutes after collection. ready means card details are available, not that the merchant charged the card; fill and submit before expires_at.")
 			}
 			switch item.State.Status {
 			case "ready", "declined", "expired", "consumed":
@@ -567,6 +605,9 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 			pterm.Info.Println(kernelTransactionHelp + ". kernel cards have no stored billing fields; billing_* returns field_unavailable. enter billing details on the merchant page.")
 		case "link":
 			pterm.Info.Println("fill never submits payment; submit the checkout yourself. if the result of submitting payment is unclear, check the merchant's order confirmation or order history before paying again. if authorization is declined or expires, delete this card and create a new one.")
+			if item.Spec.JSON.Recurring.Valid() {
+				pterm.Info.Println("this recurring card remains ready for merchant-scheduled charges until it expires or is deleted; do not create a new card each period. deleting the card, wallet, or vault revokes the Link credential but does not cancel the merchant subscription. if deletion returns 409 provider_revocation_pending, retry deletion.")
+			}
 		default:
 			pterm.Info.Println("inspect items events for payment outcomes. never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")
 		}
@@ -584,6 +625,12 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	}
 	if item.Expanded.JSON.PaymentMethods.Valid() {
 		printVaultPaymentMethods(item.Spec.Provider, item.Expanded.PaymentMethods)
+	}
+	if item.Expanded.JSON.LinkUserInfo.Valid() {
+		printVaultLinkUserInfo(item.Expanded.LinkUserInfo)
+	}
+	if item.Expanded.JSON.LinkShippingAddresses.Valid() {
+		printVaultLinkShippingAddresses(item.Expanded.LinkShippingAddresses)
 	}
 	if actions.RequiredAction != "" {
 		pterm.Info.Println("complete the returned action with the provider; never pass card data or OAuth codes to the cli. observe with items get --wait 60.")
@@ -610,6 +657,124 @@ func printVaultPaymentMethods(provider string, methods []kernel.VaultPaymentMeth
 	} else {
 		pterm.Info.Println("select an id explicitly in the card --spec json: Link uses payment_method_id; AgentCard uses card_id (or omit it for cardholder selection). capabilities are advisory; missing means unknown, not ineligible.")
 	}
+}
+
+func vaultExpandedString(value, raw string) string {
+	if raw == "" || raw == "null" {
+		return "—"
+	}
+	return value
+}
+
+func vaultExpandedLimit(value int64, raw string) string {
+	if raw == "null" {
+		return "unlimited"
+	}
+	if raw == "" {
+		return "—"
+	}
+	return fmt.Sprint(value)
+}
+
+func compactVaultAddress(parts ...string) string {
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if strings.TrimSpace(part) != "" {
+			values = append(values, part)
+		}
+	}
+	return strings.Join(values, ", ")
+}
+
+func printVaultLinkUserInfo(info kernel.LinkUserInfo) {
+	rows := pterm.TableData{{"Link user property", "value"}}
+	addString := func(label, value, raw string) {
+		if raw != "" {
+			rows = append(rows, []string{label, vaultExpandedString(value, raw)})
+		}
+	}
+	addString("id", info.ID, info.JSON.ID.Raw())
+	addString("name", info.Name, info.JSON.Name.Raw())
+	addString("first name", info.FirstName, info.JSON.FirstName.Raw())
+	addString("last name", info.LastName, info.JSON.LastName.Raw())
+	addString("email", info.Email, info.JSON.Email.Raw())
+	addString("phone", info.Phone, info.JSON.Phone.Raw())
+	if raw := info.JSON.Address.Raw(); raw != "" {
+		address := "—"
+		if raw != "null" {
+			a := info.Address
+			address = compactVaultAddress(a.Line1, a.Line2, a.City, a.State, a.PostalCode, a.Country)
+			if address == "" {
+				address = "—"
+			}
+		}
+		rows = append(rows, []string{"address", address})
+	}
+	if raw := info.JSON.EligibleForBalance.Raw(); raw != "" {
+		value := "—"
+		if raw != "null" {
+			value = fmt.Sprint(info.EligibleForBalance)
+		}
+		rows = append(rows, []string{"eligible for balance", value})
+	}
+	addString("default spend currency", info.DefaultSpendRequestCurrency, info.JSON.DefaultSpendRequestCurrency.Raw())
+	if info.JSON.AgentWalletSpendLimits.Valid() {
+		limits := info.AgentWalletSpendLimits
+		if limits.JSON.PerTransaction.Raw() != "" {
+			rows = append(rows, []string{"per-transaction limit", vaultExpandedLimit(limits.PerTransaction.Limit, limits.PerTransaction.JSON.Limit.Raw())})
+		}
+		if limits.JSON.Daily.Raw() != "" {
+			rows = append(rows,
+				[]string{"daily limit", vaultExpandedLimit(limits.Daily.Limit, limits.Daily.JSON.Limit.Raw())},
+				[]string{"daily used", vaultExpandedLimit(limits.Daily.Used, limits.Daily.JSON.Used.Raw())},
+				[]string{"daily remaining", vaultExpandedLimit(limits.Daily.Remaining, limits.Daily.JSON.Remaining.Raw())},
+			)
+		}
+		if limits.JSON.ThirtyDay.Raw() != "" {
+			rows = append(rows,
+				[]string{"30-day limit", vaultExpandedLimit(limits.ThirtyDay.Limit, limits.ThirtyDay.JSON.Limit.Raw())},
+				[]string{"30-day used", vaultExpandedLimit(limits.ThirtyDay.Used, limits.ThirtyDay.JSON.Used.Raw())},
+				[]string{"30-day remaining", vaultExpandedLimit(limits.ThirtyDay.Remaining, limits.ThirtyDay.JSON.Remaining.Raw())},
+			)
+		}
+	}
+	if info.JSON.AgentWalletStepUp.Valid() {
+		addString("verification status", info.AgentWalletStepUp.Status, info.AgentWalletStepUp.JSON.Status.Raw())
+	}
+	if len(rows) > 1 {
+		PrintTableNoPad(rows, true)
+	}
+	if info.JSON.AgentWalletStepUp.Valid() && info.AgentWalletStepUp.JSON.ActionURL.Valid() && vaultDisplayURL(info.AgentWalletStepUp.ActionURL) {
+		pterm.Printf("Link verification action url:\n%s\n", info.AgentWalletStepUp.ActionURL)
+	}
+	pterm.Info.Println("Link user info is live provider data and is not stored in the vault item.")
+}
+
+func printVaultLinkShippingAddresses(addresses []kernel.LinkShippingAddress) {
+	if len(addresses) == 0 {
+		pterm.Info.Println("no Link shipping addresses returned")
+		return
+	}
+	rows := pterm.TableData{{"shipping address id", "nickname", "default", "recipient and address"}}
+	for _, address := range addresses {
+		isDefault := "—"
+		if address.JSON.IsDefault.Valid() {
+			isDefault = fmt.Sprint(address.IsDefault)
+		}
+		details := address.Address
+		formatted := compactVaultAddress(details.Name, details.Line1, details.Line2, details.Locality, details.DependentLocality, details.AdministrativeArea, details.PostalCode, details.SortingCode, details.CountryCode)
+		if formatted == "" {
+			formatted = "—"
+		}
+		rows = append(rows, []string{
+			address.ID,
+			vaultExpandedString(address.Nickname, address.JSON.Nickname.Raw()),
+			isDefault,
+			formatted,
+		})
+	}
+	PrintTableNoPad(rows, true)
+	pterm.Info.Println("Link shipping addresses are live provider data and are not stored in the vault item.")
 }
 
 func printVaultEvents(events []kernel.VaultItemEvent, data []vaultJSON) {
