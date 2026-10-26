@@ -62,13 +62,14 @@ func newSearchCommand() *cobra.Command {
 	contents.Flags().Int("timeout-ms", 0, "Overall deadline across all selected results in milliseconds (1000–120000; default 60000)")
 	contents.Flags().String("content-source", "", "Content source: auto, provider, or browser (default auto)")
 	contents.Flags().String("content-format", "", "Content format: markdown or text")
-	contents.Flags().Int("content-max-chars", 0, "Per-result Unicode character limit after extraction (100–100000; default 10000)")
+	contents.Flags().Int("content-max-chars", 0, "Per-result Unicode character limit after extraction (clamped to 100–100000; default 10000)")
 	contents.Flags().Int("content-max-age-hours", 0, "For source auto, maximum age of retained provider content; 0 fetches every result through a browser")
 	contents.Flags().Int("content-timeout-ms", 0, "Per-result deadline in milliseconds, including capacity acquisition, retrieval, and extraction")
 	contents.Flags().String("content-browser-id", "", "Existing browser session to retrieve through (requires source auto or browser)")
 	contents.Flags().String("content-browser-mode", "", "Browser retrieval mode: curl or render")
+	contents.Flags().String("request", "", "Complete contents request as a JSON object; cannot be combined with other contents flags")
 	contents.MarkFlagsMutuallyExclusive("result-ids", "limit")
-	contents.MarkFlagsOneRequired("result-ids", "limit")
+	contents.MarkFlagsOneRequired("result-ids", "limit", "request")
 	addJSONOutputFlag(cmd)
 	addJSONOutputFlag(get)
 	addJSONOutputFlag(providers)
@@ -82,6 +83,19 @@ func runSearchContents(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("search ID must not be empty")
 	}
 	flags := cmd.Flags()
+	if flags.Changed("request") {
+		for _, name := range []string{"result-ids", "limit", "timeout-ms", "content-source", "content-format", "content-max-chars", "content-max-age-hours", "content-timeout-ms", "content-browser-id", "content-browser-mode"} {
+			if flags.Changed(name) {
+				return fmt.Errorf("--request cannot be combined with --%s", name)
+			}
+		}
+		input, _ := flags.GetString("request")
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(input), &fields); err != nil || fields == nil {
+			return fmt.Errorf("contents request must be a JSON object")
+		}
+		return executeSearchRequest(cmd, http.MethodPost, "search/"+url.PathEscape(args[0])+"/contents", json.RawMessage(input))
+	}
 	var request kernel.FetchRequestParam
 	if flags.Changed("result-ids") {
 		ids, _ := flags.GetStringSlice("result-ids")
@@ -128,7 +142,6 @@ func runSearchContents(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	for name, target := range map[string]*param.Opt[int64]{
-		"content-max-chars":     &content.MaxChars,
 		"content-max-age-hours": &content.MaxAgeHours,
 		"content-timeout-ms":    &content.TimeoutMs,
 	} {
@@ -139,6 +152,13 @@ func runSearchContents(cmd *cobra.Command, args []string) error {
 			}
 			*target = kernel.Int(int64(value))
 		}
+	}
+	if flags.Changed("content-max-chars") {
+		value, _ := flags.GetInt("content-max-chars")
+		if value < 0 {
+			return fmt.Errorf("--content-max-chars must not be negative")
+		}
+		content.MaxChars = kernel.Int(int64(min(max(value, 100), 100000)))
 	}
 	if flags.Changed("content-browser-id") {
 		browserID, _ := flags.GetString("content-browser-id")

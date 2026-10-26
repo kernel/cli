@@ -102,6 +102,9 @@ func TestSearchContents(t *testing.T) {
 	}{
 		{"limit", []string{"--limit", "3"}, `{"limit":3}`},
 		{"limit with json output", []string{"--limit", "3", "-o", "json"}, `{"limit":3}`},
+		{"request body", []string{"--request", `{"result_ids":["res_1"],"content":{"source":"browser","max_chars":120000}}`}, `{"result_ids":["res_1"],"content":{"source":"browser","max_chars":120000}}`},
+		{"max chars above range is clamped", []string{"--limit", "1", "--content-max-chars", "120000"}, `{"limit":1,"content":{"max_chars":100000}}`},
+		{"max chars below range is clamped", []string{"--limit", "1", "--content-max-chars", "50"}, `{"limit":1,"content":{"max_chars":100}}`},
 		{"result ids", []string{"--result-ids", "res_2,res_1", "--timeout-ms", "30000"}, `{"result_ids":["res_2","res_1"],"timeout_ms":30000}`},
 		{"content options", []string{"--limit", "1", "--content-source", "browser", "--content-format", "text", "--content-max-chars", "500", "--content-max-age-hours", "0", "--content-timeout-ms", "5000", "--content-browser-id", "br_1", "--content-browser-mode", "render"},
 			`{"limit":1,"content":{"source":"browser","format":"text","max_chars":500,"max_age_hours":0,"timeout_ms":5000,"browser":{"browser_id":"br_1","mode":"render"}}}`},
@@ -143,6 +146,8 @@ func TestSearchInvalidInput(t *testing.T) {
 		{"contents", "srch_test", "--limit", "1", "--content-format", "html"},
 		{"contents", "srch_test", "--limit", "1", "--content-browser-mode", "headless"},
 		{"contents", "srch_test", "--limit", "1", "--content-max-chars", "-1"},
+		{"contents", "srch_test", "--request", "[]"},
+		{"contents", "srch_test", "--request", `{"limit":1}`, "--limit", "1"},
 		{"contents", "srch_test", "--limit", "1", "--content-browser-id", " "},
 		{"contents", "srch_test", "--result-ids", "res_1,"},
 	} {
