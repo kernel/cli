@@ -1522,7 +1522,7 @@ Automated authentication for web services. The `run` command orchestrates the fu
   - `--show-content` - Print the extracted content text for each result (implies `--content`)
   - `--content-source <source>` - Retrieval source: `auto`, `provider`, or `browser`
   - `--content-format <format>` - Extracted content format: `markdown` or `text`
-  - `--content-max-chars <n>` - Per-result Unicode character limit after extraction (clamped to 100–100000; default 10000)
+  - `--content-max-chars <n>` - Per-result Unicode character limit after extraction
   - `--content-max-age-hours <n>` - Maximum acceptable age of cached page content; `0` forces a live fetch
   - `--content-timeout-ms <ms>` - Per-result retrieval deadline
   - `--content-browser-id <id>` - Retrieve through an existing browser session (requires `--content-source browser`)
@@ -1544,11 +1544,13 @@ Automated authentication for web services. The `run` command orchestrates the fu
   - `--timeout-ms <ms>` - Overall deadline across all selected results
   - `--content-source <source>` - `auto` (default), `provider`, or `browser`
   - `--content-format <format>` - `markdown` or `text`
-  - `--content-max-chars <n>` - Per-result character limit after extraction
+  - `--content-max-chars <n>` - Per-result character limit after extraction, clamped to 100–100000 (default 10000)
   - `--content-max-age-hours <n>` - For `auto`, maximum age of retained provider content; `0` always uses a browser
   - `--content-timeout-ms <ms>` - Per-result deadline
   - `--content-browser-id <id>` - Retrieve through an existing browser session
   - `--content-browser-mode <mode>` - `curl` or `render`
+  - `--request <json>` - Complete request body as a JSON object (`result_ids` or `limit`, plus optional `timeout_ms` and `content`); cannot be combined with the other contents flags
+  - `--output json`, `-o json` - Output raw JSON object
 
 Searches are retained for 24 hours. Omitting the strategy flags lets Kernel pick an
 eligible provider; portable filters a provider cannot honor are approximated or

@@ -148,6 +148,7 @@ func TestSearchInvalidInput(t *testing.T) {
 		{"contents", "srch_test", "--limit", "1", "--content-max-chars", "-1"},
 		{"contents", "srch_test", "--request", "[]"},
 		{"contents", "srch_test", "--request", `{"limit":1}`, "--limit", "1"},
+		{"contents", "srch_test", "--request", `{"limit":1}`, "--content-source", "browser"},
 		{"contents", "srch_test", "--limit", "1", "--content-browser-id", " "},
 		{"contents", "srch_test", "--result-ids", "res_1,"},
 	} {

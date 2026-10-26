@@ -14,6 +14,7 @@ import (
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/param"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 func newSearchCommand() *cobra.Command {
@@ -27,6 +28,7 @@ func newSearchCommand() *cobra.Command {
 		Args:    cobra.MaximumNArgs(1),
 		RunE:    runSearch,
 	}
+	cmd.PersistentFlags().StringP("output", "o", "", util.JSONOutputFlagDescription)
 	cmd.Flags().String("provider", "", "Pin a provider slug (default: automatic routing)")
 	cmd.Flags().Int("max-results", 10, "Requested result count (1–100; subject to provider cap)")
 	cmd.Flags().String("request", "", "Complete Search API request as a JSON object; cannot be combined with query flags")
@@ -50,10 +52,10 @@ func newSearchCommand() *cobra.Command {
 	contents := &cobra.Command{
 		Use:   "contents <id>",
 		Short: "Fetch content for selected results of a retained search as JSON",
-		Long: "Retrieves selected results from a retained search. Provide exactly one of --result-ids or --limit; the latter fetches the top results. Content defaults to source auto. " +
+		Long: "Retrieves selected results from a retained search. Provide exactly one of --result-ids or --limit, or a complete request with --request; the --limit form fetches the top results. Content defaults to source auto. " +
 			"Responses preserve --result-ids order and include one outcome per selected result, including timeout entries for work unfinished at the overall deadline. " +
 			"Browser retrievals run sequentially in result order and are billed like any other browser.",
-		Example: "  kernel search contents srch_123 --limit 3\n  kernel search contents srch_123 --result-ids res_1,res_2 --content-source browser --content-browser-mode render",
+		Example: "  kernel search contents srch_123 --limit 3\n  kernel search contents srch_123 --result-ids res_1,res_2 --content-source browser --content-browser-mode render\n  kernel search contents srch_123 --request '{\"result_ids\":[\"res_1\"],\"content\":{\"source\":\"browser\"}}'",
 		Args:    cobra.ExactArgs(1),
 		RunE:    runSearchContents,
 	}
@@ -70,10 +72,11 @@ func newSearchCommand() *cobra.Command {
 	contents.Flags().String("request", "", "Complete contents request as a JSON object; cannot be combined with other contents flags")
 	contents.MarkFlagsMutuallyExclusive("result-ids", "limit")
 	contents.MarkFlagsOneRequired("result-ids", "limit", "request")
-	addJSONOutputFlag(cmd)
-	addJSONOutputFlag(get)
-	addJSONOutputFlag(providers)
-	addJSONOutputFlag(contents)
+	contents.Flags().VisitAll(func(f *pflag.Flag) {
+		if f.Name != "request" {
+			contents.MarkFlagsMutuallyExclusive("request", f.Name)
+		}
+	})
 	cmd.AddCommand(get, providers, contents)
 	return cmd
 }
@@ -84,17 +87,12 @@ func runSearchContents(cmd *cobra.Command, args []string) error {
 	}
 	flags := cmd.Flags()
 	if flags.Changed("request") {
-		for _, name := range []string{"result-ids", "limit", "timeout-ms", "content-source", "content-format", "content-max-chars", "content-max-age-hours", "content-timeout-ms", "content-browser-id", "content-browser-mode"} {
-			if flags.Changed(name) {
-				return fmt.Errorf("--request cannot be combined with --%s", name)
-			}
-		}
 		input, _ := flags.GetString("request")
-		var fields map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(input), &fields); err != nil || fields == nil {
-			return fmt.Errorf("contents request must be a JSON object")
+		body, _, err := parseJSONObject(input, "contents request")
+		if err != nil {
+			return err
 		}
-		return executeSearchRequest(cmd, http.MethodPost, "search/"+url.PathEscape(args[0])+"/contents", json.RawMessage(input))
+		return executeSearchRequest(cmd, http.MethodPost, "search/"+url.PathEscape(args[0])+"/contents", body)
 	}
 	var request kernel.FetchRequestParam
 	if flags.Changed("result-ids") {
@@ -158,7 +156,11 @@ func runSearchContents(cmd *cobra.Command, args []string) error {
 		if value < 0 {
 			return fmt.Errorf("--content-max-chars must not be negative")
 		}
-		content.MaxChars = kernel.Int(int64(min(max(value, 100), 100000)))
+		clamped := min(max(value, 100), 100000)
+		if clamped != value {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: --content-max-chars %d clamped to %d\n", value, clamped)
+		}
+		content.MaxChars = kernel.Int(int64(clamped))
 	}
 	if flags.Changed("content-browser-id") {
 		browserID, _ := flags.GetString("content-browser-id")
@@ -182,11 +184,10 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		}
 		input, _ := cmd.Flags().GetString("request")
 		var fields map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(input), &fields); err != nil {
-			return fmt.Errorf("search request must be a JSON object: %w", err)
-		}
-		if fields == nil {
-			return fmt.Errorf("search request must be a JSON object")
+		var err error
+		body, fields, err = parseJSONObject(input, "search request")
+		if err != nil {
+			return err
 		}
 		var query string
 		if err := json.Unmarshal(fields["query"], &query); err != nil {
@@ -195,7 +196,6 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		if err := validateSearchQuery(query); err != nil {
 			return err
 		}
-		body = json.RawMessage(input)
 	} else {
 		if len(args) != 1 {
 			return fmt.Errorf("provide a query or --request")
@@ -225,6 +225,18 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		}
 	}
 	return executeSearchRequest(cmd, http.MethodPost, "search", body)
+}
+
+// parseJSONObject returns the raw input and its top-level fields when input is a JSON object.
+func parseJSONObject(input, label string) (json.RawMessage, map[string]json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(input), &fields); err != nil {
+		return nil, nil, fmt.Errorf("%s must be a JSON object: %w", label, err)
+	}
+	if fields == nil {
+		return nil, nil, fmt.Errorf("%s must be a JSON object", label)
+	}
+	return json.RawMessage(input), fields, nil
 }
 
 func validateSearchQuery(query string) error {
