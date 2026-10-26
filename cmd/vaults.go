@@ -309,7 +309,14 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 			return fmt.Errorf("confirm_transaction currency must match the approved purchase currency and amount must not exceed the approved purchase amount; operation was not invoked")
 		}
 	}
+	linkCard := item.Type == "card" && item.Spec.Provider == "link"
+	if params != nil && params.Authorize != nil && !linkCard {
+		return fmt.Errorf("--browser-id and --page-url only apply to Link cards; authorize was not invoked")
+	}
 	if operation == "fill" {
+		if !linkCard && len(params.Fill.Fields) == 0 {
+			return fmt.Errorf("fill for this item requires 1-32 fields binding field names to selectors; only a Link card's fill may omit them. fill was not invoked")
+		}
 		return c.fill(ctx, vault, key, params.Fill, output, item.Spec.Provider)
 	}
 	if operation == "1pw_fill" {
@@ -337,6 +344,8 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		request.OfPrepareCheckout = &kernel.PrepareCheckoutVaultItemOperationRequestParam{Type: "prepare_checkout", Checkout: *params.Checkout}
 	} else if operation == "collect" {
 		request.OfCollect = &kernel.CollectVaultItemOperationRequestParam{Type: "collect"}
+	} else if params != nil && params.Authorize != nil {
+		request.OfAuthorize = params.Authorize
 	} else {
 		// Preserve support for other advertised parameterless operations.
 		request.OfAuthorize = &kernel.AuthorizeVaultItemOperationRequestParam{Type: kernel.AuthorizeVaultItemOperationRequestType(operation)}
@@ -351,6 +360,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		}
 		if item.Spec.Provider == "kernel" {
 			return kernelVaultRequestError(err, operation)
+		}
+		if operation == "authorize" && linkCard {
+			return linkAuthorizeError(err, params != nil && params.Authorize != nil)
 		}
 		return util.CleanedUpSdkError{Err: err}
 	}

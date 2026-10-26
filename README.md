@@ -271,6 +271,8 @@ kernel search contents srch_01jsearchresult --limit 3 --content-source browser
   - `--allowed-host <host>` - Set an egress allowlist at creation: the only destinations the browser may reach through Kernel-managed egress (repeatable or comma-separated, max 100). Other destinations are refused with a 403 whose `X-Kernel-Proxy-Error` header is `network_policy_denied`. Filters Kernel-managed egress only, not all browser VM traffic. Accepts exact hostnames (`example.com`), a leading wildcard that matches subdomains but not the domain itself (`*.example.com`), public IPs (`8.8.8.8`, `[2001:4860:4860::8888]`), and public CIDRs (`8.8.4.0/24`); no ports, paths, or schemes. `--start-url` must be allowed. Omit for unfiltered egress; an empty list is invalid. Requires proxy v3; cannot be combined with `--pool-id` or `--pool-name`, even with `--yes` (set the allowlist on the pool with `kernel browser-pools create/update --allowed-host`). An existing list can be replaced or removed later with `browsers update --allowed-host` / `--clear-allowed-hosts`, but cannot be added later if omitted at creation or removed.
   - `--proxy-route '<host>[,<host>...]=<proxy>'` - Route matching browser requests through a selected proxy (repeatable, max 10 routes with 1–50 hosts each). Example: `--proxy-route 'api.ipify.org,*.ipify.org=name:my-dc-proxy'`. The proxy is an ID by default; use `id:<id>` or `name:<name>` explicitly. Exact hostnames beat wildcards; longer wildcard suffixes beat shorter ones. `*.example.com` matches subdomains, not `example.com`. Matching ignores case and ports. Unmatched hosts use `--proxy-*` or default egress. Routes apply from the start of the session, including to `--start-url`. Routes are create-only and cannot be combined with `--pool-id`/`--pool-name`; configure them on the pool instead.
   - `--start-url <url>` - Initial page to open on launch
+  - `--timezone <iana>` - Session timezone, e.g. `Europe/Berlin`. Defaults to the browser region's timezone
+  - `--locale <bcp47>` - Session locale used for languages and date and number formatting, e.g. `de-DE`. Defaults to the browser region's locale
   - `--proxy-id <id>` / `--proxy-name <name>` - Use that proxy for the session regardless of stealth (mutually exclusive with each other and with `--proxy-mode`)
   - `--proxy-mode direct|default` - Egress mode instead of a selected proxy: `direct` for no proxy regardless of stealth, `default` for the stealth-derived default (Kernel's stealth proxy with `--stealth`, direct egress otherwise). Omit all proxy flags to get the default.
   - `--name <name>` - Optional unique name for the session (used to find it later by name; can be changed with `browsers update --name`)
@@ -297,6 +299,10 @@ kernel search contents srch_01jsearchresult --limit 3 --content-source browser
   - `--clear-name` - Clear the session name
   - `--tag <KEY=VALUE>` - Set a tag, repeatable; up to 50 pairs. Replaces the entire tag set (not merged); mutually exclusive with `--clear-tags`
   - `--clear-tags` - Remove all tags from the session
+  - `--timezone <iana>` - Set the session timezone, e.g. `America/Los_Angeles`. Applies without restarting the browser; mutually exclusive with `--clear-timezone`
+  - `--clear-timezone` - Clear the timezone override and use the browser region's default
+  - `--locale <bcp47>` - Set the session locale, e.g. `de-DE`. Applies without restarting the browser; mutually exclusive with `--clear-locale`
+  - `--clear-locale` - Clear the locale override and use the browser region's default
   - `--telemetry=all` - Enable telemetry for all categories
   - `--telemetry=off` - Disable telemetry
   - `--telemetry=<list>` - Per-category config, e.g. `--telemetry=network=on,page=off`
@@ -416,10 +422,10 @@ cannot switch projects.
 | `kernel vaults wallets get <vault> <key>` | Observe wallet state and its hosted action; `--wait 0..60`, `--open` |
 | `kernel vaults wallets payment-methods <vault> <key>` | Fetch advertised live payment methods; JSON is the item with `expanded.payment_methods` |
 | `kernel vaults cards create <vault> <key> --provider link\|agentcard\|kernel --spec '<json>'` | Create a card request without authorizing it |
-| `kernel vaults cards update <vault> <key> --provider link\|agentcard --spec '<json>'` | Update a card spec; pending issuance preserves omitted optional fields, and the API enforces state/provider constraints |
+| `kernel vaults cards update <vault> <key> --provider link\|agentcard --spec '<json>'` | Update a card spec before it is authorized at a checkout; pending issuance preserves omitted optional fields, and the API enforces state/provider constraints |
 | `kernel vaults items list <vault>` | List item keys, types, providers, status, and required actions |
 | `kernel vaults items get <vault> <key>` | Inspect state/actions/returned AgentCard aliases and copyable operation commands; `--wait 0..60`, `--expand payment_methods`, `--open` |
-| `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; `authorize --open` opens a returned HTTPS action; `prepare_checkout --params '<json>'` prepares an unused AgentCard card for Square Pay; `fill --params '<json>'` fills checkout or login fields; `collect --open` opens a credential item's hosted form |
+| `kernel vaults items invoke <vault> <key> <operation>` | GET the item, then POST an advertised operation; `authorize --browser-id <id> --page-url <url>` authorizes a Link card at checkout; `authorize --open` opens a returned HTTPS action; `prepare_checkout --params '<json>'` prepares an unused AgentCard card for Square Pay; `fill --params '<json>'` fills checkout or login fields; `collect --open` opens a credential item's hosted form |
 | `kernel vaults items webmcp invoke <vault> <key>` | Invoke a live WebMCP tool with item fields bound to null input slots; `--browser-id`, `--tool-ref`, `--page-url`, `--input`/`--input-file`, repeatable `--bind <field>=<json-pointer>`, `--timeout-sec 1..120`. Same as `items invoke <vault> <key> webmcp_invoke --params '<json>'` |
 | `kernel vaults items events <vault> <key>` | Read ordered audit events; `--after <event-id>`, `--wait 0..60` |
 | `kernel vaults items delete <vault> <key>` | Invalidate an item; `--yes` skips confirmation |
@@ -454,15 +460,18 @@ TypeScript-style types, which must stay in sync with the [API spec](https://api.
   `merchant_name`, and HTTPS `merchant_url`. Supply two-letter `merchant_country` for Visa.
   Kernel card updates are unsupported.
 - **Link card:** include the required fields shown in help. Optional `line_items`, `totals`,
-  `metadata`, and `expires_at` are supported through JSON.
+  `metadata`, and `expires_at` are supported through JSON. `amount` is at most 500000 minor
+  units; a virtual card allows at most 50000.
 - **AgentCard card:** uses `merchant`, not Link's `merchant_name`. Its optional `card_id` selects
   a vaulted card; otherwise the cardholder selects one at approval.
 
 `cards update` replaces the spec for supported providers' requested cards; Kernel cards
 cannot be updated. Pending issuance updates preserve omitted optional fields; explicit empty lists clear them. Wallet/provider bindings and unsupported fields
-cannot change after authorization starts. Checkout cards can be edited between authorizations.
-An uncertain update enters `recovery_required` and must not be retried. Identical card creation
-returns its existing state without polling, reauthorizing, or resetting recovery. Link and
+cannot change after authorization starts. Checkout cards can be edited between authorizations,
+but a Link card authorized at a checkout cannot be updated (the API returns 409): delete it and
+create a new one. An uncertain update enters `recovery_required` and must not be retried.
+Identical card creation returns its existing state without polling, reauthorizing, or resetting
+recovery. Link fill is limited to the origin of the checkout the card was authorized at;
 AgentCard checkout domains remain provider-assigned; Kernel fill is locked to the exact origin
 of `merchant_url`. Neither command submits a merchant payment.
 
@@ -651,12 +660,12 @@ once more only if freshly advertised. Authorize 409 requires state inspection, n
 changes. For 429 wait for Retry-After before re-checking availability. No automatic retries.
 Never put PAN, CVC, expiry, or enrollment credentials in CLI arguments or logs.
 
-#### Link checkout preparation
+#### Link card checkout
 
-Link OAuth, user approval, and provider-issued single-use card issuance precede browser checkout.
-Issued Link cards use only the advertised vault-item `fill` operation for checkout fields.
+Each item's `available_operations` descriptions and the Link wallet's `description` are
+authoritative; `items get` prints them. The flow:
 
-1. Create/select a vault in the effective project. Connect the wallet in the provider's UI:
+1. Connect the wallet once, in the provider's UI:
 
    ```bash
    kernel vaults create --name checkout
@@ -665,11 +674,18 @@ Issued Link cards use only the advertised vault-item `fill` operation for checko
    kernel vaults items get checkout wallet-1 --wait 60
    ```
 
-2. Once connected, list methods and explicitly choose a returned ID:
+2. Reach the final checkout page in a browser created with the vault attached. Note the amount,
+   currency, merchant name and URL, and choose a funding method:
 
    ```bash
+   kernel browsers create --vault checkout
    kernel vaults wallets payment-methods checkout wallet-1
-   # Equivalent: kernel vaults items get checkout wallet-1 --expand payment_methods
+   ```
+
+3. Create the card. This does not contact Link; the card is `requested` and advertises
+   `authorize`. To change the amount or merchant before authorizing, use `cards update`.
+
+   ```bash
    kernel vaults cards create checkout order-1 --provider link --spec '{
      "wallet": "wallet-1",
      "payment_method_id": "<returned-id>",
@@ -681,29 +697,52 @@ Issued Link cards use only the advertised vault-item `fill` operation for checko
    }'
    ```
 
-3. After explicit user approval, authorize **only if the item advertises it**. Follow the
-   returned approval action, then observe:
+4. Once the user has approved this purchase, and only when the item advertises `authorize`,
+   authorize at the checkout with the browser session ID and the exact current top-level
+   checkout URL. Pass both flags or neither. KERNEL inspects the checkout, chooses how the
+   credential is delivered (a Link Pay Token or a virtual card), limits fill to that checkout's
+   origin, and sends the user an approval request. Do not inspect or invoke WebMCP yourself.
 
    ```bash
-   kernel vaults items get checkout order-1
-   kernel vaults items invoke checkout order-1 authorize --open
+   kernel vaults items invoke checkout order-1 authorize \
+     --browser-id <browser-session-id> --page-url https://shop.example/checkout
+   ```
+
+5. Share the approval URL from the item's action with the user, then wait until `fill` is
+   advertised. To re-check sooner, invoke `authorize` again; checkout context is not needed,
+   and re-checking never creates another payment request.
+
+   ```bash
    kernel vaults items get checkout order-1 --wait 60
    ```
 
-4. When ready, attach the same vault to a new browser, navigate to checkout, and use
-   the advertised `fill` operation below. Respect returned permitted domains:
+6. Fill as the item's `fill` description says, in any browser with the vault attached. A Link
+   Pay Token takes `browser_id` and `page_url` and omits `fields`; a virtual card also takes
+   field/selector bindings (see [Fill browser fields](#fill-browser-fields)).
 
    ```bash
-   kernel browsers create --vault checkout
+   kernel vaults items invoke checkout order-1 fill \
+     --params '{"browser_id":"<browser-session-id>","page_url":"https://shop.example/checkout"}' -o json
    ```
 
-5. Observe outcomes independently of merchant checkout submission:
+7. Submit the checkout yourself; fill never submits payment. Failed or unknown fills are safe
+   to retry, but only after checking the page and not in an automatic loop.
 
-   ```bash
-   kernel vaults items get checkout order-1
-   kernel vaults items events checkout order-1
-   kernel vaults items events checkout order-1 --after <last-event-id> --wait 60
-   ```
+Recovery:
+
+- Authorize errors `page_not_found`, `ambiguous_page`, `browser_not_found`, `browser_unavailable`,
+  `destination_denied`, `timeout`, and `browser_error` happen before any payment request. The CLI
+  prints the code and message. Make sure the checkout is open in exactly one tab at `page_url`,
+  then authorize again. If checkout inspection keeps failing, authorize without `--browser-id`
+  and `--page-url` to issue a virtual card that fills any page on the `merchant_url` origin.
+- Once a card is authorized at a checkout, `cards update` returns 409: delete the card and
+  create a new one.
+- If authorization is declined or expires, read `status_reason`, then delete the card and
+  create a new one.
+- If the amount exceeds the 50000 minor-unit virtual card limit on a checkout without Link Pay
+  Token support, delete the card and tell the user.
+- If the result of submitting payment is unclear, check the merchant's order confirmation or
+  order history before paying again. `items events` shows the card's recorded events.
 
 #### AgentCard checkout preparation
 
@@ -763,7 +802,8 @@ Stale action URLs in recovery are not opened; a successful restart
 returns a fresh approval action.
 
 `authorize` sends `{"type":"authorize"}` without `--params` and returns the updated item,
-possibly with a required user action. `collect` is also parameterless and returns a credential
+possibly with a required user action. For a Link card at checkout, `--browser-id` and
+`--page-url` (both or neither) add `browser_id` and `page_url`. `collect` is also parameterless and returns a credential
 collection URL. `restart_verification` is parameterless and sends `{"type":"restart_verification"}`.
 `--open` is supported for authorize, collect, prepare_checkout, 1pw_recover, and restart_verification.
 `fill`, `prepare_checkout`, and `confirm_transaction` accept inputs in
@@ -815,7 +855,8 @@ Do not automatically retry or switch checkout paths after an uncertain result.
 Fill supports credential items and ready Link or Kernel cards when advertised by the API, not AgentCard.
 All use the same execution and outcome handling. Credential bindings use declared field names,
 including TOTP fields, and must omit `format`. Credentials may omit `page_url` only when the API
-can resolve a unique page. Card bindings require an exact HTTPS `page_url` and the card fields
+can resolve a unique page. Cards require an exact HTTPS `page_url`. Follow the item's advertised
+`fill` description for the rest: a Link Pay Token omits `fields`; other cards use the card fields
 listed below. The vault must already be attached to the browser for fill authorization.
 Fill writes real stored values into the browser without returning them in the result;
 unrestricted browser/CDP access can read those values. It does not explicitly submit forms
@@ -830,10 +871,10 @@ kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browse
   the CLI does not resolve names.
 - For cards, `page_url` is the exact current top-level HTTPS URL, including path, query, and fragment,
   without embedded credentials. It must match exactly one open page; no prefix/glob matching.
-- `fields` contains 1-32 bindings in write order. Each has `field` and a nonempty CSS
+- `fields`, when the item's fill description asks for it, contains 1-32 bindings in write order. Each has `field` and a nonempty CSS
   `selector` targeting an editable input/select or its container. The API searches the selected
   page and descendants, including payment iframes. Do not supply frame IDs or literal values.
-- Link stored card fields: `number`, `cvc`, `exp_month` (MM), `exp_year` (YYYY), `billing_name`,
+- Link virtual card fields: `number`, `cvc`, `exp_month` (MM), `exp_year` (YYYY), `billing_name`,
   `billing_line1`, `billing_line2`, `billing_city`, `billing_state`, `billing_postal_code`,
   `billing_country`. Billing fields use the stored address without reformatting; request only
   needed fields. Missing requested billing data fails validation before browser writes.
