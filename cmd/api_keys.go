@@ -188,7 +188,7 @@ func (c APIKeysCmd) List(ctx context.Context, in APIKeysListInput) error {
 
 	// Only surface Deleted At when the filter can actually return deleted keys.
 	showDeletedAt := in.IncludeDeleted || in.Status == "deleted" || in.Status == "all"
-	header := []string{"ID", "Name", "Scope", "Project", "Masked Key", "Expires At", "Created At"}
+	header := []string{"ID", "Name", "Scope", "Project", "Masked Key", "Expires At", "Last Used At", "Created At"}
 	if showDeletedAt {
 		header = append(header, "Deleted At")
 	}
@@ -201,6 +201,7 @@ func (c APIKeysCmd) List(ctx context.Context, in APIKeysListInput) error {
 			formatAPIKeyProject(key),
 			key.MaskedKey,
 			formatAPIKeyExpiresAt(key),
+			formatAPIKeyLastUsedAt(key),
 			util.FormatLocal(key.CreatedAt),
 		}
 		if showDeletedAt {
@@ -356,6 +357,7 @@ func renderAPIKeyDetails(key *kernel.APIKey) {
 		{"Masked Key", key.MaskedKey},
 		{"Created By", formatAPIKeyCreator(*key)},
 		{"Expires At", formatAPIKeyExpiresAt(*key)},
+		{"Last Used At", formatAPIKeyLastUsedAt(*key)},
 		{"Created At", util.FormatLocal(key.CreatedAt)},
 	}
 	PrintTableNoPad(rows, true)
@@ -393,6 +395,13 @@ func formatAPIKeyExpiresAt(key kernel.APIKey) string {
 		return "Never"
 	}
 	return util.FormatLocal(key.ExpiresAt)
+}
+
+func formatAPIKeyLastUsedAt(key kernel.APIKey) string {
+	if !key.JSON.LastUsedAt.Valid() {
+		return "-"
+	}
+	return util.FormatLocal(key.LastUsedAt)
 }
 
 func getAPIKeysHandler(cmd *cobra.Command) APIKeysCmd {
@@ -497,6 +506,7 @@ var apiKeysCreateCmd = &cobra.Command{
 var apiKeysListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List API keys",
+	Long:  "List API keys. Last-used timestamps are accurate to within about 20 minutes; '-' means no use has been recorded since tracking began.",
 	Args:  cobra.NoArgs,
 	RunE:  runAPIKeysList,
 }
@@ -504,6 +514,7 @@ var apiKeysListCmd = &cobra.Command{
 var apiKeysGetCmd = &cobra.Command{
 	Use:   "get <id>",
 	Short: "Get an API key",
+	Long:  "Get an API key. The last-used timestamp is accurate to within about 20 minutes; '-' means no use has been recorded since tracking began.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runAPIKeysGet,
 }
