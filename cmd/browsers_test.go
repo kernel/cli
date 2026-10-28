@@ -148,6 +148,7 @@ func TestBrowsersSaveProfile(t *testing.T) {
 			fake := &FakeBrowsersService{SaveProfileFunc: func(ctx context.Context, id string, body kernel.BrowserSaveProfileParams, opts ...option.RequestOption) (*kernel.Profile, error) {
 				calls++
 				assert.Equal(t, "browser-1", id)
+				assert.Len(t, opts, 2, "save-profile disables retries and captures the response")
 				raw, err := json.Marshal(body)
 				require.NoError(t, err)
 				assert.JSONEq(t, tc.expected, string(raw))
@@ -181,9 +182,15 @@ func TestBrowsersSaveProfileValidationAndHelp(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, cmd.Flags().Lookup("profile-id"))
 	assert.NotNil(t, cmd.Flags().Lookup("profile-name"))
-	for _, text := range []string{"Saving restarts the browser", "CDP", "WebDriver", "pages reload", "profile upload completes", "remain in the running browser", "does not attach", "save_changes", "refresh_on_profile_update", "completion time", "failed save leaves it unchanged", "browser_busy", "browser_lease_changed"} {
+	for _, text := range []string{"Saving restarts the browser", "CDP", "Playwright", "WebDriver", "pages reload", "stable", "profile upload completes", "remain in the running browser", "does not attach", "save_changes", "refresh_on_profile_update", "completion time", "failed save leaves it unchanged", "browser_busy", "browser_lease_changed", "browser_not_active", "doesn't retry"} {
 		assert.Contains(t, cmd.Long, text)
 	}
+}
+
+func TestSaveProfileOutcome(t *testing.T) {
+	assert.Equal(t, "Created profile", saveProfileOutcome(&http.Response{StatusCode: http.StatusCreated}))
+	assert.Equal(t, "Overwrote profile", saveProfileOutcome(&http.Response{StatusCode: http.StatusOK}))
+	assert.Equal(t, "Saved profile", saveProfileOutcome(nil))
 }
 
 func TestBrowsersCurlRawUsesBrowserHTTPClient(t *testing.T) {

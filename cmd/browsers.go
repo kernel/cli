@@ -1106,7 +1106,10 @@ func (b BrowsersCmd) SaveProfile(ctx context.Context, in BrowsersSaveProfileInpu
 	} else {
 		destination.Name = kernel.Opt(in.ProfileName)
 	}
-	profile, err := b.browsers.SaveProfile(ctx, in.Identifier, kernel.BrowserSaveProfileParams{SaveProfileRequest: destination})
+	// A retry after a failed or timed-out save would start a second save and
+	// restart the browser again.
+	var res *http.Response
+	profile, err := b.browsers.SaveProfile(ctx, in.Identifier, kernel.BrowserSaveProfileParams{SaveProfileRequest: destination}, option.WithMaxRetries(0), option.WithResponseInto(&res))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -1126,8 +1129,21 @@ func (b BrowsersCmd) SaveProfile(ctx context.Context, in BrowsersSaveProfileInpu
 		{"Updated At", util.FormatLocal(profile.UpdatedAt)},
 		{"Last Used At", util.FormatLocal(profile.LastUsedAt)},
 	}, true)
+	pterm.Success.Println(saveProfileOutcome(res))
 	pterm.Info.Println("The browser restarted. Reconnect CDP clients; WebDriver clients must create a new session.")
 	return nil
+}
+
+// saveProfileOutcome reports whether the save created the profile (201) or
+// overwrote an existing one (200).
+func saveProfileOutcome(res *http.Response) string {
+	if res != nil && res.StatusCode == http.StatusCreated {
+		return "Created profile"
+	}
+	if res != nil && res.StatusCode == http.StatusOK {
+		return "Overwrote profile"
+	}
+	return "Saved profile"
 }
 
 // browserUpdateProxySelection folds every proxy flag `browsers update` accepts
@@ -3056,9 +3072,10 @@ var browsersSaveProfileCmd = &cobra.Command{
 Provide exactly one destination: --profile-id overwrites an existing profile;
 --profile-name overwrites a matching profile in the browser's project or creates it.
 
-Saving restarts the browser without ending the session. Active CDP and WebDriver
-connections close; reconnect CDP clients and create a new WebDriver session. Tabs are
-restored, but pages reload and in-memory page state is lost. The command returns after
+Saving restarts the browser without ending the session. Active CDP (including Playwright)
+and WebDriver connections close; reconnect CDP clients and create a new WebDriver session.
+Tabs are restored, but pages reload and in-memory page state is lost, so save at a stable
+point, such as right after a login completes. The command returns after
 the restarted browser accepts CDP connections and the profile upload completes. Caches,
 Service Worker storage, and Google Drive IndexedDB data are excluded from the saved
 profile but remain in the running browser.
@@ -3073,9 +3090,11 @@ started save wins. An automatic end-of-session save from save_changes is instead
 ordered against these saves by completion time. A successful save restarts the browser
 inactivity timeout; a failed save leaves it unchanged.
 
-A 409 can mean the browser is inactive, a pooled browser was released or reacquired
-(browser_lease_changed), or it is briefly busy (browser_busy). Retry only browser_busy,
-or resolve the current pooled-browser lease before making a new explicit save.`,
+A 409 can mean the browser is no longer running (browser_not_active), a pooled browser
+was released or reacquired (browser_lease_changed), or it is briefly busy (browser_busy).
+Retry only browser_busy, or resolve the current pooled-browser lease before making a new
+explicit save. The command doesn't retry on its own; if it is interrupted, the save may
+still finish, so check the profile before saving again.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runBrowsersSaveProfile,
 }
