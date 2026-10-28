@@ -234,3 +234,37 @@ func TestParseVaultConfirmTransactionParamsValidates(t *testing.T) {
 		require.ErrorContains(t, err, message, raw)
 	}
 }
+
+func TestVaultInvokeOpensAddedPaymentMethodEnrollment(t *testing.T) {
+	for _, open := range []bool{false, true} {
+		t.Run(fmt.Sprint(open), func(t *testing.T) {
+			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				body := kernelMethodsWalletFixture
+				if r.Method == http.MethodPost {
+					body = kernelAddedMethodFixture
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, body)
+			})
+			opened := ""
+			c := VaultsCmd{vaults: &client.Vaults, openURL: func(url string) error { opened = url; return nil }}
+			var err error
+			captureStdout(t, func() {
+				err = c.Invoke(context.Background(), "checkout", "cardholder", "add_payment_method", nil, "json", open)
+			})
+			require.NoError(t, err)
+			if open {
+				assert.Equal(t, "https://vault.example/card#token=pm-2.opaque", opened)
+			} else {
+				assert.Empty(t, opened)
+			}
+		})
+	}
+}
+
+func TestVaultInvokeRemovePaymentMethodRequiresID(t *testing.T) {
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Fatal("request without payment_method_id reached API") })
+	c := VaultsCmd{vaults: &client.Vaults}
+	err := c.Invoke(context.Background(), "checkout", "cardholder", "remove_payment_method", nil, "", false)
+	require.ErrorContains(t, err, "requires payment_method_id")
+}

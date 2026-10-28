@@ -12,11 +12,12 @@ import (
 )
 
 type vaultOperationParams struct {
-	Authorize          *kernel.AuthorizeVaultItemOperationRequestParam
-	Fill               *vaultFillParams
-	WebMCP             *kernel.WebmcpInvokeVaultItemOperationRequestParam
-	Checkout           *kernel.VaultCheckoutContextParam
-	ConfirmTransaction *vaultConfirmTransactionParams
+	Authorize           *kernel.AuthorizeVaultItemOperationRequestParam
+	Fill                *vaultFillParams
+	WebMCP              *kernel.WebmcpInvokeVaultItemOperationRequestParam
+	Checkout            *kernel.VaultCheckoutContextParam
+	ConfirmTransaction  *vaultConfirmTransactionParams
+	RemovePaymentMethod *kernel.RemovePaymentMethodVaultItemOperationRequestParam
 	// Passkey and OnePassword are complete operation request bodies; Invoke supplies the vault.
 	Passkey     *kernel.VaultItemPerformOperationParams
 	OnePassword *kernel.VaultItemPerformOperationParams
@@ -28,7 +29,7 @@ func isOnePasswordOperation(operation string) bool {
 
 // vaultOperationTakesParams reports whether an operation accepts --params or --spec-file.
 func vaultOperationTakesParams(operation string) bool {
-	return operation == "fill" || operation == "webmcp_invoke" || operation == "prepare_checkout" || operation == "confirm_transaction" || (isOnePasswordOperation(operation) && operation != "1pw_recover")
+	return operation == "fill" || operation == "webmcp_invoke" || operation == "prepare_checkout" || operation == "confirm_transaction" || operation == "remove_payment_method" || (isOnePasswordOperation(operation) && operation != "1pw_recover")
 }
 
 type vaultFillParams struct {
@@ -88,8 +89,8 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 	if strings.TrimSpace(operation) == "" {
 		return nil, fmt.Errorf("operation must not be empty")
 	}
-	if openSet && operation != "authorize" && operation != "collect" && operation != "prepare_checkout" && operation != "1pw_recover" && operation != "restart_verification" {
-		return nil, fmt.Errorf("--open is only supported for authorize, collect, prepare_checkout, 1pw_recover, and restart_verification")
+	if openSet && operation != "authorize" && operation != "collect" && operation != "prepare_checkout" && operation != "1pw_recover" && operation != "restart_verification" && operation != "add_payment_method" {
+		return nil, fmt.Errorf("--open is only supported for authorize, collect, prepare_checkout, 1pw_recover, restart_verification, and add_payment_method")
 	}
 	if len(raw) > 128*1024 {
 		return nil, fmt.Errorf("operation parameters exceed 128 KiB")
@@ -130,6 +131,20 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 		}
 		return &vaultOperationParams{ConfirmTransaction: confirmation}, nil
 	}
+	if operation == "remove_payment_method" {
+		if !paramsSet {
+			return nil, fmt.Errorf("remove_payment_method requires --params or --spec-file with payment_method_id, or use wallets remove-payment-method")
+		}
+		object, err := vaultParamsObject(raw, "payment_method_id")
+		if err != nil {
+			return nil, err
+		}
+		request := kernel.RemovePaymentMethodVaultItemOperationRequestParam{Type: kernel.RemovePaymentMethodVaultItemOperationRequestTypeRemovePaymentMethod}
+		if json.Unmarshal(object["payment_method_id"], &request.PaymentMethodID) != nil || strings.TrimSpace(request.PaymentMethodID) == "" || len(request.PaymentMethodID) > 128 {
+			return nil, fmt.Errorf("payment_method_id must be a non-empty id of at most 128 bytes from wallets payment-methods")
+		}
+		return &vaultOperationParams{RemovePaymentMethod: &request}, nil
+	}
 	if operation == "prepare_checkout" {
 		if !paramsSet {
 			return nil, fmt.Errorf("prepare_checkout requires --params or --spec-file with checkout")
@@ -152,7 +167,7 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 	}
 	if operation != "fill" {
 		if paramsSet {
-			return nil, fmt.Errorf("--params is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, and 1Password operations; authorize takes --browser-id and --page-url, passkey operations take --browser-id and optional --field, and restart_verification takes no parameters")
+			return nil, fmt.Errorf("--params is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, remove_payment_method, and 1Password operations; authorize takes --browser-id and --page-url, passkey operations take --browser-id and optional --field, and restart_verification and add_payment_method take no parameters")
 		}
 		return nil, nil
 	}

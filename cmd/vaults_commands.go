@@ -5,8 +5,6 @@ import (
 	"fmt"
 
 	"github.com/kernel/cli/pkg/interactive"
-	kernel "github.com/kernel/kernel-go-sdk"
-	"github.com/kernel/kernel-go-sdk/packages/param"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 )
@@ -87,12 +85,17 @@ vault names, item keys, and project ownership are immutable.
 
 1. create/select a vault, then create a provider wallet and follow its returned action.
    for kernel, share the hosted card_enrollment url; card details stay on that page.
-2. inspect wallets payment-methods for eligibility and reasons before creating a card.
-   for Link, select a payment method id explicitly.
+   a kernel wallet that advertises add_payment_method starts empty: add each card with
+   wallets add-payment-method and share its card_enrollment url.
+2. inspect wallets payment-methods for status, eligibility and reasons before creating a
+   card. for Link, select a payment method id explicitly. for kernel, payment_method_id
+   is optional on card items (omitted selects the default card, id card) and required on
+   payment_request items.
 3. attach the vault with browsers create --vault <id-or-name>; attachment is required for
    authorizing a Link card at a checkout and for fill. for Link, reach the final checkout
    page before creating the card.
-4. create a card request with --provider and --spec json.
+4. create a card request with --provider and --spec json; add --type payment_request
+   to create a Link or kernel purchase as a payment_request item where enabled.
 5. inspect items get, then use items invoke <vault> <key> <operation> only when advertised.
    follow the operation description and any returned provider action.
 6. ready Link and kernel cards use only advertised fill with --params for browser checkout.
@@ -250,7 +253,17 @@ no other fields are accepted. ` + kernelTransactionHelp + `.
 restart_verification takes no parameters. in recovery_required, ` + vaultRecoveryHelp + `
 it rotates the approval link without a provider call, only after a classified initial
 attestation failure with proof no intent was dispatched. other recovery states must not be retried.
-collect/authorize/prepare_checkout/1pw_recover/restart_verification may use --open.
+add_payment_method (kernel wallets, no parameters) starts hosted enrollment of a card and
+returns the new payment method in pending_enrollment with a single-use card_enrollment url
+that expires after 30 minutes. remove_payment_method (kernel wallets) requires --params or
+--spec-file with payment_method_id only; it deletes that stored card and leaves the wallet's
+other payment methods and status unchanged. 409 purchase_unresolved means a purchase funded
+by the method must be reconciled first; 409 provider_revocation_pending means the method
+stays removal_pending and the removal must be retried later. removal is not proof that a
+payment did not occur. both are advertised only when payment methods are enabled, and
+scoped api keys need vaults:write in addition to vaults:use on the vault (otherwise 403
+insufficient_scope). wallets add-payment-method and remove-payment-method are shortcuts.
+collect/authorize/prepare_checkout/1pw_recover/restart_verification/add_payment_method may use --open.
 --open on card_enrollment or spend_approval is for a human cardholder on their own machine.
 agents must omit --open and share capability links privately, never open them for cardholders.
 fill returns value-free per-field outcomes;
@@ -310,7 +323,9 @@ JSON
   kernel vaults items invoke user-vault login disarm_passkey --browser-id <browser-session-id>
   kernel vaults items invoke checkout order-1 fill --params '{"browser_id":"browser-session-id","page_url":"https://shop.example/checkout","fields":[{"field":"number","selector":"#cardNumber"},{"field":"expiration","format":"MM/YY","selector":"#cardExpiry"},{"field":"cvc","selector":"#cardCvc"}]}' -o json
   kernel vaults items invoke checkout order-1 confirm_transaction --params '{"status":"APPROVED","transaction_type":"PURCHASE","amount":100,"currency":"USD","occurred_at":"2026-09-01T12:00:00Z"}'
-  kernel vaults items invoke checkout order-1 restart_verification --open`,
+  kernel vaults items invoke checkout order-1 restart_verification --open
+  kernel vaults items invoke checkout cardholder add_payment_method
+  kernel vaults items invoke checkout cardholder remove_payment_method --params '{"payment_method_id":"<id>"}'`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			open, _ := cmd.Flags().GetBool("open")
 			raw, _ := cmd.Flags().GetString("params")
@@ -320,7 +335,7 @@ JSON
 			}
 			if cmd.Flags().Changed("spec-file") {
 				if !vaultOperationTakesParams(args[2]) {
-					return fmt.Errorf("--spec-file is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, and 1Password operations with parameters; passkey operations use --browser-id and optional --field")
+					return fmt.Errorf("--spec-file is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, remove_payment_method, and 1Password operations with parameters; passkey operations use --browser-id and optional --field")
 				}
 				data, err := readVaultJSONFile(cmd, "spec-file")
 				if err != nil {
@@ -347,7 +362,7 @@ JSON
 			}
 			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], params, vaultOutput(cmd), open)
 		}}
-	invoke.Flags().String("params", "", "operation parameters json for fill, webmcp_invoke, prepare_checkout, confirm_transaction, or 1pw_* (maximum 128 KiB); omit type and credential values; 1pw_update_access_token requires --spec-file")
+	invoke.Flags().String("params", "", "operation parameters json for fill, webmcp_invoke, prepare_checkout, confirm_transaction, remove_payment_method, or 1pw_* (maximum 128 KiB); omit type and credential values; 1pw_update_access_token requires --spec-file")
 	invoke.Flags().String("spec-file", "", "operation parameters json file (use '-' for stdin; maximum 128 KiB)")
 	invoke.MarkFlagsMutuallyExclusive("params", "spec-file")
 	invoke.Flags().Bool("open", false, "open a returned https action url; cardholder links are human-only, agents must share privately")
@@ -388,7 +403,7 @@ JSON
 	walletCreate.Flags().Bool("open", false, "open a returned https connection/enrollment url; cardholder use only, agents must share privately")
 	addVaultJSONOutputFlag(walletCreate)
 	methods := &cobra.Command{Use: "payment-methods <vault> <key>", Short: "fetch advertised live wallet payment methods", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: "fetch payment_methods through the item's GET expansion. the wallet must advertise this expansion.\ndisplays selectable ids and advisory capabilities; never automatically chooses a funding method.\njson returns the item with expanded.payment_methods, like items get --expand payment_methods.",
+		Long: "fetch payment_methods through the item's GET expansion. the wallet must advertise this expansion.\ndisplays selectable ids and advisory capabilities; never automatically chooses a funding method.\nkernel wallets list their cards in creation order with status (pending_enrollment, active, removal_pending, recovery_required), status_reason, and a pending card's card_enrollment url and expiry; a card that is not active is ineligible.\njson returns the item with expanded.payment_methods, like items get --expand payment_methods.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			project, _ := cmd.Flags().GetString("project")
 			return getVaultsHandler(cmd).GetItem(cmd.Context(), args[0], args[1], 0, []string{"payment_methods"}, resolveProjectSelection(project), vaultOutput(cmd), false)
@@ -404,7 +419,28 @@ JSON
 	walletGet.Flags().Int64("wait", 0, "hold while pending for up to this many seconds (0-60); observe only")
 	walletGet.Flags().Bool("open", false, "open a returned https enrollment url; cardholder use only, agents must share privately")
 	addVaultJSONOutputFlag(walletGet)
-	wallets.AddCommand(walletCreate, walletGet, methods)
+	addMethod := &cobra.Command{Use: "add-payment-method <vault> <key>", Short: "start hosted enrollment of a card in a kernel wallet", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+		Long:    "invoke add_payment_method on a kernel wallet that advertises it, the same as items invoke <vault> <key> add_payment_method.\nreturns a new payment method in pending_enrollment with a card_enrollment url.\n" + kernelEnrollmentHelp + ".\na wallet holds at most 10 payment methods and 3 open enrollment links.\nscoped api keys need vaults:write in addition to vaults:use on the vault.",
+		Example: "  kernel vaults wallets add-payment-method checkout cardholder",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			open, _ := cmd.Flags().GetBool("open")
+			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], "add_payment_method", nil, vaultOutput(cmd), open)
+		}}
+	addMethod.Flags().Bool("open", false, "open the returned https enrollment url; cardholder use only, agents must share privately")
+	addVaultJSONOutputFlag(addMethod)
+	removeMethod := &cobra.Command{Use: "remove-payment-method <vault> <key> --payment-method-id <id>", Short: "remove one card from a kernel wallet", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+		Long:    "invoke remove_payment_method on a kernel wallet that advertises it, the same as items invoke <vault> <key> remove_payment_method --params '{\"payment_method_id\":\"<id>\"}'.\nremoval deletes the stored card; " + kernelRemovedPaymentMethodHelp + ".\n409 purchase_unresolved: a purchase funded by the method has an unresolved outcome; reconcile it before removing.\n409 provider_revocation_pending: the method stays removal_pending and refuses payments; retry the removal later.\nscoped api keys need vaults:write in addition to vaults:use on the vault.",
+		Example: "  kernel vaults wallets remove-payment-method checkout cardholder --payment-method-id <id>",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, _ := cmd.Flags().GetString("payment-method-id")
+			yes, _ := cmd.Flags().GetBool("yes")
+			return getVaultsHandler(cmd).RemovePaymentMethod(cmd.Context(), args[0], args[1], id, yes, vaultOutput(cmd))
+		}}
+	removeMethod.Flags().String("payment-method-id", "", "payment method id from wallets payment-methods (required)")
+	_ = removeMethod.MarkFlagRequired("payment-method-id")
+	removeMethod.Flags().BoolP("yes", "y", false, "skip confirmation prompt")
+	addVaultJSONOutputFlag(removeMethod)
+	wallets.AddCommand(walletCreate, walletGet, methods, addMethod, removeMethod)
 
 	cards := &cobra.Command{Use: "cards", Short: "configure card requests"}
 	cards.AddCommand(newVaultCardCommand(false), newVaultCardCommand(true))
@@ -439,6 +475,27 @@ func newVaultCardCommand(update bool) *cobra.Command {
 	if update {
 		providers = "link|agentcard"
 	}
+	example := "  kernel vaults cards " + use + ` checkout order-1 \
+    --provider agentcard --spec '{
+      "wallet": "wallet-1",
+      "merchant": "Example Shop",
+      "amount": 1234,
+      "currency": "usd"
+    }'`
+	if !update {
+		example += `
+
+  kernel vaults cards create checkout order-2 --type payment_request \
+    --provider kernel --spec '{
+      "wallet": "cardholder",
+      "payment_method_id": "<id>",
+      "amount": 1200,
+      "currency": "usd",
+      "merchant_name": "Example Shop",
+      "merchant_url": "https://shop.example/checkout",
+      "merchant_country": "US"
+    }'`
+	}
 	cmd := &cobra.Command{Use: use + " <vault> <key> --provider <" + providers + "> --spec '<json>'", Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
 		Long: short + `. neither create nor update authorizes a card.
 kernel cards cannot be updated. other requested cards accept a replacement spec.
@@ -451,24 +508,26 @@ never reconfigure the same item to retry a failed, timed-out, rejected, or indet
 an AgentCard recovery item that permits abandonment must be deleted after explicit user confirmation before creating a replacement.
 
 ` + linkCardFlowHelp + "\n" + vaultSpecHelp + vaultCardSpecHelp,
-		Example: "  kernel vaults cards " + use + ` checkout order-1 \
-    --provider agentcard --spec '{
-      "wallet": "wallet-1",
-      "merchant": "Example Shop",
-      "amount": 1234,
-      "currency": "usd"
-    }'`,
+		Example: example,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			spec, err := vaultSpecFromFlags(cmd)
 			if err != nil {
 				return err
 			}
+			itemType, _ := cmd.Flags().GetString("type")
+			if itemType != "card" && itemType != "payment_request" {
+				return fmt.Errorf("--type must be card or payment_request")
+			}
+			if itemType == "payment_request" && string(spec["provider"]) == `"agentcard"` {
+				return fmt.Errorf("payment_request items support link and kernel; AgentCard reusable cards remain card items")
+			}
 			if update && string(spec["provider"]) == `"kernel"` {
 				return fmt.Errorf("kernel card updates are not supported; " + kernelReplacementHelp)
 			}
-			return getVaultsHandler(cmd).SaveCard(cmd.Context(), args[0], args[1], param.Override[kernel.CardVaultItemSpecUnionParam](spec), update, vaultOutput(cmd))
+			return getVaultsHandler(cmd).SaveCard(cmd.Context(), args[0], args[1], itemType, spec, update, vaultOutput(cmd))
 		}}
 	addVaultSpecFlags(cmd)
+	cmd.Flags().String("type", "card", "item type: card, or payment_request for link and kernel purchases; an update must match the stored type")
 	addVaultJSONOutputFlag(cmd)
 	return cmd
 }

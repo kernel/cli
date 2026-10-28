@@ -14,6 +14,7 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	kernel "github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
+	"github.com/kernel/kernel-go-sdk/packages/param"
 	"github.com/pterm/pterm"
 )
 
@@ -174,6 +175,11 @@ func (c VaultsCmd) ListItems(ctx context.Context, vault, output string) error {
 	return nil
 }
 
+// isVaultPurchase reports whether an item is a single purchase: a card or a payment_request.
+func isVaultPurchase(item *kernel.VaultItemUnion) bool {
+	return item.Type == "card" || item.Type == "payment_request"
+}
+
 // vaultItemSite names the site a credential signs in to so agents can reuse it.
 func vaultItemSite(item kernel.VaultItemUnion) string {
 	if item.Type != "credential" {
@@ -244,16 +250,27 @@ func (c VaultsCmd) CreateWallet(ctx context.Context, vault, key string, spec ker
 	return c.showItem(item, output, open)
 }
 
-func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.CardVaultItemSpecUnionParam, update bool, output string) error {
+// SaveCard creates or updates a card or payment_request item; both take the same provider specs.
+func (c VaultsCmd) SaveCard(ctx context.Context, vault, key, itemType string, spec map[string]json.RawMessage, update bool, output string) error {
 	var item *kernel.VaultItemUnion
 	var err error
-	if update {
-		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCardVaultItemUpdateRequest: &kernel.VaultItemUpdateParamsBodyCardVaultItemUpdateRequest{Type: "card", Spec: spec}}, option.WithMaxRetries(0))
+	if itemType == "payment_request" {
+		requestSpec := param.Override[kernel.PaymentRequestVaultItemSpecUnionParam](spec)
+		if update {
+			item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfPaymentRequestVaultItemUpdateRequest: &kernel.VaultItemUpdateParamsBodyPaymentRequestVaultItemUpdateRequest{Type: "payment_request", Spec: requestSpec}}, option.WithMaxRetries(0))
+		} else {
+			item, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfPaymentRequest: &kernel.VaultItemUpsertParamsBodyPaymentRequest{Spec: requestSpec}}, option.WithMaxRetries(0))
+		}
 	} else {
-		item, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCard: &kernel.VaultItemUpsertParamsBodyCard{Spec: spec}}, option.WithMaxRetries(0))
+		cardSpec := param.Override[kernel.CardVaultItemSpecUnionParam](spec)
+		if update {
+			item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCardVaultItemUpdateRequest: &kernel.VaultItemUpdateParamsBodyCardVaultItemUpdateRequest{Type: "card", Spec: cardSpec}}, option.WithMaxRetries(0))
+		} else {
+			item, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCard: &kernel.VaultItemUpsertParamsBodyCard{Spec: cardSpec}}, option.WithMaxRetries(0))
+		}
 	}
 	if err != nil {
-		if vaultSpecProvider(spec) == "kernel" {
+		if string(spec["provider"]) == `"kernel"` {
 			return kernelVaultRequestError(err, "create")
 		}
 		return util.CleanedUpSdkError{Err: err}
@@ -276,6 +293,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	}
 	if operation == "confirm_transaction" && (params == nil || params.ConfirmTransaction == nil || open) {
 		return fmt.Errorf("confirm_transaction requires --params and does not support --open")
+	}
+	if operation == "remove_payment_method" && (params == nil || params.RemovePaymentMethod == nil || open) {
+		return fmt.Errorf("remove_payment_method requires payment_method_id and does not support --open")
 	}
 	if isPasskeyOperation(operation) && (params == nil || params.Passkey == nil || open) {
 		return fmt.Errorf("%s requires --browser-id and does not support --open", operation)
@@ -318,6 +338,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		if isOnePasswordOperation(operation) {
 			return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item with items get -o json. For 1Password credentials, check that the linked credential_account is connected and the credential state; do not delete or recreate the item to reset it", operation)
 		}
+		if operation == "add_payment_method" || operation == "remove_payment_method" {
+			return fmt.Errorf("operation %q is not advertised in available_operations; it is offered only on connected kernel wallets where payment methods are enabled, and scoped api keys also need vaults:write on the vault. a wallet holds at most 10 payment methods and 3 open enrollment links. inspect the wallet with wallets payment-methods", operation)
+		}
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
 	if operation == "confirm_transaction" && item.Spec.Provider == "kernel" {
@@ -325,7 +348,7 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 			return fmt.Errorf("confirm_transaction currency must match the approved purchase currency and amount must not exceed the approved purchase amount; operation was not invoked")
 		}
 	}
-	linkCard := item.Type == "card" && item.Spec.Provider == "link"
+	linkCard := isVaultPurchase(item) && item.Spec.Provider == "link"
 	if params != nil && params.Authorize != nil && !linkCard {
 		return fmt.Errorf("--browser-id and --page-url only apply to Link cards; authorize was not invoked")
 	}
@@ -363,6 +386,10 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		request.OfPrepareCheckout = &kernel.PrepareCheckoutVaultItemOperationRequestParam{Type: "prepare_checkout", Checkout: *params.Checkout}
 	} else if operation == "collect" {
 		request.OfCollect = &kernel.CollectVaultItemOperationRequestParam{Type: "collect"}
+	} else if operation == "add_payment_method" {
+		request.OfAddPaymentMethod = &kernel.AddPaymentMethodVaultItemOperationRequestParam{Type: kernel.AddPaymentMethodVaultItemOperationRequestTypeAddPaymentMethod}
+	} else if params != nil && params.RemovePaymentMethod != nil {
+		request.OfRemovePaymentMethod = params.RemovePaymentMethod
 	} else if params != nil && params.Authorize != nil {
 		request.OfAuthorize = params.Authorize
 	} else {
@@ -388,7 +415,14 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	if isPasskeyOperation(operation) {
 		return printVaultPasskeyOperationResult(response, operation, output)
 	}
-	if response == nil || (response.Type != "card" && response.Type != "wallet" && response.Type != "credential" && response.Type != "credential_account") {
+	if operation == "add_payment_method" || operation == "remove_payment_method" {
+		actionURL, err := printVaultPaymentMethodOperationResult(response, operation, output)
+		if err != nil || !open {
+			return err
+		}
+		return c.openActionURL(actionURL, output)
+	}
+	if response == nil || (response.Type != "card" && response.Type != "payment_request" && response.Type != "wallet" && response.Type != "credential" && response.Type != "credential_account") {
 		if item.Spec.Provider == "kernel" {
 			return fmt.Errorf("unexpected vault operation response; %s", kernelVaultRetryGuidance(operation))
 		}
@@ -402,6 +436,29 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		return fmt.Errorf("invalid vault item response; inspect the item and do not retry")
 	}
 	return c.showItem(&updated, output, open)
+}
+
+func (c VaultsCmd) RemovePaymentMethod(ctx context.Context, vault, key, paymentMethodID string, yes bool, output string) error {
+	raw, err := json.Marshal(map[string]string{"payment_method_id": paymentMethodID})
+	if err != nil {
+		return err
+	}
+	params, err := parseVaultOperationParams("remove_payment_method", string(raw), true, false)
+	if err != nil {
+		return err
+	}
+	if !yes {
+		label := "payment method " + paymentMethodID + " from wallet " + vault + "/" + key
+		ok, err := c.prompter.Confirm("remove "+label, "Remove "+label+" and delete its stored card?")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			pterm.Info.Println("Removal cancelled")
+			return nil
+		}
+	}
+	return c.Invoke(ctx, vault, key, "remove_payment_method", params, output, false)
 }
 
 func (c VaultsCmd) Events(ctx context.Context, vault, key, after string, wait int64, output string) error {
@@ -448,7 +505,10 @@ func (c VaultsCmd) showItem(item *kernel.VaultItemUnion, output string, open boo
 	if actions.RecoveryRequired {
 		return nil
 	}
-	actionURL := actions.ActionURL
+	return c.openActionURL(actions.ActionURL, output)
+}
+
+func (c VaultsCmd) openActionURL(actionURL, output string) error {
 	if actionURL == "" {
 		if output != "json" {
 			pterm.Info.Println("No action URL returned; no browser opened")
