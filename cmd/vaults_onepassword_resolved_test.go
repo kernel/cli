@@ -23,6 +23,7 @@ func TestVaultOnePasswordResolvedReferencesAreDisplayed(t *testing.T) {
 	})
 	out, _, err := executeVaultCommand(t, client, "vaults", "items", "get", "user", "github", "-o", "json")
 	require.NoError(t, err)
+	assert.Contains(t, out, `"id": "entry-1"`)
 	assert.Contains(t, out, `"resolved"`)
 	assert.Contains(t, out, `"reference": "op://Private/GitHub/login"`)
 	assert.Contains(t, out, `"entryId": "entry-1"`)

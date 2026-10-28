@@ -50,10 +50,12 @@ func TestCredentialConnectOnePassword(t *testing.T) {
 func TestCredentialCreateOnePassword(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
 	requests := `"requests":{"version":2,"entries":[{"type":"login","parameters":{"website":"https://github.com"},"reason":"Work account"},{"type":"login","parameters":{"website":"https://github.com"},"reason":"Personal account"}]}`
+	preResolved := `{"provider":"1password","access_token":"token-secret","integration_key":"key-secret","access_request_id":"request-approved","requests":{"version":2,"entries":[{"id":"entry-work","type":"login","parameters":{"website":"https://github.com"}},{"id":"entry-personal","type":"login","parameters":{"website":"https://github.com"}}]},"resolved":[{"reference":"op://Private/GitHub Work/login","entryId":"entry-work"},{"reference":"op://Private/GitHub Personal/login","entryId":"entry-personal"}]}`
 	entry := `{"type":"login","parameters":{"website":"https://github.com"}}`
 	for _, spec := range []string{
 		`{"provider":"1password","account":"onepassword",` + requests + `}`,
 		`{"provider":"1password","access_token":"token-secret","integration_key":"key-secret",` + requests + `}`,
+		preResolved,
 	} {
 		calls := 0
 		client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -295,6 +297,15 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 	}
 	assert.Contains(t, credentials.Long, "stored-token 1Password credentials (developer integrations only")
 	assert.Contains(t, credentials.Long, "never ask an end user for them")
+	assert.Contains(t, credentials.Long, "omit access_request_id, resolved, and request entry ids")
+	assert.Contains(t, credentials.Long, "supply access_request_id, 1-5 resolved")
+	assert.Contains(t, credentials.Long, "an id on every requests entry")
+	assert.Contains(t, credentials.Long, "access_request_id and every entry id must be non-empty and at most 128 characters")
+	assert.Contains(t, credentials.Long, "entryId may be omitted only when requests has one entry")
+	assert.Contains(t, credentials.Long, "item starts ready and KERNEL does not create another access request")
+	assert.Contains(t, credentials.Long, "1Password checks them during 1pw_fill")
+	require.NotNil(t, credentials.Flag("spec-file"))
+	assert.Contains(t, credentials.Flag("spec-file").Usage, "access_request_id/resolved")
 	assert.NotContains(t, connect.Long, "stored-token")
 	assert.Contains(t, connect.Long, "credential_account")
 	assert.Contains(t, credentials.Example, `"provider":"1password","account":"onepassword"`)
