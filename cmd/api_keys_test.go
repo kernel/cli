@@ -207,6 +207,20 @@ func TestAPIKeysListPassesPaginationAndRendersRows(t *testing.T) {
 	assert.Contains(t, out, util.FormatLocal(key.LastUsedAt))
 }
 
+func TestAPIKeysListSupportsLastUsedAtSort(t *testing.T) {
+	capturePtermOutput(t)
+	fake := &FakeAPIKeysService{
+		ListFunc: func(ctx context.Context, query kernel.APIKeyListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.APIKey], error) {
+			assert.Equal(t, kernel.APIKeyListParamsSortByLastUsedAt, query.SortBy)
+			return &pagination.OffsetPagination[kernel.APIKey]{Items: []kernel.APIKey{}}, nil
+		},
+	}
+	c := APIKeysCmd{apiKeys: fake}
+
+	err := c.List(context.Background(), APIKeysListInput{SortBy: "last_used_at"})
+	require.NoError(t, err)
+}
+
 func TestFormatAPIKeyLastUsedAtHandlesUnrecordedUse(t *testing.T) {
 	key := apiKeyFromJSON(`{"last_used_at":null}`)
 	assert.Equal(t, "-", formatAPIKeyLastUsedAt(*key))

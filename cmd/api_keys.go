@@ -152,8 +152,10 @@ func (c APIKeysCmd) List(ctx context.Context, in APIKeysListInput) error {
 			params.SortBy = kernel.APIKeyListParamsSortByName
 		case "expires_at":
 			params.SortBy = kernel.APIKeyListParamsSortByExpiresAt
+		case "last_used_at":
+			params.SortBy = kernel.APIKeyListParamsSortByLastUsedAt
 		default:
-			return fmt.Errorf("invalid --sort-by value: %s (must be 'created_at', 'name', or 'expires_at')", in.SortBy)
+			return fmt.Errorf("invalid --sort-by value: %s (must be 'created_at', 'name', 'expires_at', or 'last_used_at')", in.SortBy)
 		}
 	}
 	if in.SortDirection != "" {
@@ -555,7 +557,7 @@ func init() {
 	apiKeysListCmd.Flags().String("query", "", "Search API keys by name, creator, or project (identifiers and masked keys match by exact value or prefix)")
 	apiKeysListCmd.Flags().String("status", "", "Filter by status: 'active' (default), 'deleted', or 'all'")
 	apiKeysListCmd.Flags().Bool("include-deleted", false, "Deprecated: Use --status all instead. Include soft-deleted API keys in the results")
-	apiKeysListCmd.Flags().String("sort-by", "", "Sort by: created_at, name, or expires_at")
+	apiKeysListCmd.Flags().String("sort-by", "", "Sort by: created_at, name, expires_at, or last_used_at. Keys without an expiry sort last for expires_at; keys without recorded use sort last for last_used_at, in either direction")
 	apiKeysListCmd.Flags().String("sort-direction", "", "Sort direction: asc or desc")
 
 	addJSONOutputFlag(apiKeysGetCmd)
