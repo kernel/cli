@@ -220,7 +220,7 @@ func TestKernelRecoveryJSONAndStateGuidance(t *testing.T) {
 		switch status {
 		case "degraded", "reconnect_required":
 			assert.Contains(t, human, "delete the wallet only if the api permits it")
-			assert.Contains(t, human, "share the new card_enrollment")
+			assert.Contains(t, human, "reconnect_required: the wallet predates payment methods")
 		case "requested":
 			assert.Contains(t, human, "Visa may require")
 			assert.NotContains(t, human, "merchant decline")

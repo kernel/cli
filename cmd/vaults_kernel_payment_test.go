@@ -176,3 +176,192 @@ func TestKernelCardUpdateRejectedLocally(t *testing.T) {
 	_, _, err := executeVaultCommand(t, client, "vaults", "cards", "update", "checkout", "order-1", "--provider", "kernel", "--spec", `{}`)
 	require.ErrorContains(t, err, "kernel card updates are not supported")
 }
+
+const kernelMethodsWalletFixture = `{"id":"wallet-id","key":"cardholder","type":"wallet","spec":{"provider":"kernel"},"state":{"provider":"kernel","status":"connected"},"available_operations":[{"type":"add_payment_method","description":"Start hosted enrollment of a card in this wallet."},{"type":"remove_payment_method","description":"Remove one card from this wallet."}],"available_expansions":[{"type":"payment_methods","description":"List cards"}]}`
+const kernelAddedMethodFixture = `{"type":"add_payment_method","payment_method":{"id":"pm-2","provider":"kernel","type":"card","is_default":false,"status":"pending_enrollment","display":{},"capabilities":{"single_use_card":{"eligible":false,"reasons":["enrollment_pending"]}},"action":{"name":"card_enrollment","url":"https://vault.example/card#token=pm-2.opaque","capture_token":"CAPTURE_SECRET"},"expires_at":"2026-10-28T12:30:00Z"}}`
+
+func TestKernelAddPaymentMethod(t *testing.T) {
+	for _, args := range [][]string{
+		{"items", "invoke", "checkout", "cardholder", "add_payment_method"},
+		{"wallets", "add-payment-method", "checkout", "cardholder"},
+	} {
+		calls := 0
+		client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			response := kernelMethodsWalletFixture
+			if r.Method == http.MethodPost {
+				assert.Equal(t, "/vaults/checkout/items/cardholder/operations", r.URL.Path)
+				body, err := io.ReadAll(r.Body)
+				require.NoError(t, err)
+				assert.JSONEq(t, `{"type":"add_payment_method"}`, string(body))
+				response = kernelAddedMethodFixture
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, response)
+		})
+		out, human, err := executeVaultCommand(t, client, append([]string{"vaults"}, args...)...)
+		require.NoError(t, err)
+		assert.Equal(t, 2, calls)
+		for _, text := range []string{"pm-2", "pending_enrollment", "https://vault.example/card#token=pm-2.opaque", "never open it for them", "30 minutes"} {
+			assert.Contains(t, human, text)
+		}
+		assert.NotContains(t, out+human, "CAPTURE_SECRET")
+		out, _, err = executeVaultCommand(t, client, append(append([]string{"vaults"}, args...), "-o", "json")...)
+		require.NoError(t, err)
+		assert.Contains(t, out, `"status": "pending_enrollment"`)
+		assert.Contains(t, out, `"expires_at": "2026-10-28T12:30:00Z"`)
+		assert.Contains(t, out, `"url": "https://vault.example/card#token=pm-2.opaque"`)
+		assert.NotContains(t, out, "capture_token")
+		assert.NotContains(t, out, "CAPTURE_SECRET")
+	}
+}
+
+func TestKernelRemovePaymentMethod(t *testing.T) {
+	for _, args := range [][]string{
+		{"items", "invoke", "checkout", "cardholder", "remove_payment_method", "--params", `{"payment_method_id":"pm-2"}`},
+		{"wallets", "remove-payment-method", "checkout", "cardholder", "--payment-method-id", "pm-2", "--yes"},
+	} {
+		posts := 0
+		client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			response := kernelMethodsWalletFixture
+			if r.Method == http.MethodPost {
+				posts++
+				body, err := io.ReadAll(r.Body)
+				require.NoError(t, err)
+				assert.JSONEq(t, `{"type":"remove_payment_method","payment_method_id":"pm-2"}`, string(body))
+				response = `{"type":"remove_payment_method","payment_method_id":"pm-2","status":"removed"}`
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, response)
+		})
+		_, human, err := executeVaultCommand(t, client, append([]string{"vaults"}, args...)...)
+		require.NoError(t, err)
+		assert.Equal(t, 1, posts)
+		assert.Contains(t, human, "removed payment method pm-2")
+		assert.Contains(t, human, "not proof that a payment did not occur")
+		out, _, err := executeVaultCommand(t, client, append(append([]string{"vaults"}, args...), "-o", "json")...)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"type":"remove_payment_method","payment_method_id":"pm-2","status":"removed"}`, out)
+	}
+}
+
+func TestKernelPaymentMethodOperationsRequireAdvertisement(t *testing.T) {
+	for _, operation := range []string{"add_payment_method", "remove_payment_method"} {
+		client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, http.MethodGet, r.Method)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, strings.Replace(kernelWalletFixture, `"pending_authorization"`, `"connected"`, 1))
+		})
+		args := []string{"vaults", "items", "invoke", "checkout", "cardholder", operation}
+		if operation == "remove_payment_method" {
+			args = append(args, "--params", `{"payment_method_id":"card"}`)
+		}
+		_, _, err := executeVaultCommand(t, client, args...)
+		require.ErrorContains(t, err, "is not advertised")
+		assert.Contains(t, err.Error(), "vaults:write")
+		assert.Contains(t, err.Error(), "payment methods are enabled")
+	}
+}
+
+func TestKernelPaymentMethodOperationErrors(t *testing.T) {
+	for _, tc := range []struct {
+		operation, code, want string
+		status                int
+	}{
+		{"remove_payment_method", "purchase_unresolved", "reconcile the unresolved purchase", 409},
+		{"remove_payment_method", "provider_revocation_pending", "stays removal_pending", 409},
+		{"remove_payment_method", "provider_rate_limited", "Retry-After (30)", 429},
+		{"remove_payment_method", "insufficient_scope", "vaults:write in addition to vaults:use", 403},
+		{"add_payment_method", "insufficient_scope", "vaults:write in addition to vaults:use", 403},
+		{"add_payment_method", "conflict", "at most 10 payment methods and 3 open enrollment links", 409},
+	} {
+		t.Run(tc.operation+" "+tc.code, func(t *testing.T) {
+			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodGet {
+					_, _ = io.WriteString(w, kernelMethodsWalletFixture)
+					return
+				}
+				w.Header().Set("Retry-After", "30")
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, `{"code":"`+tc.code+`","message":"refused"}`)
+			})
+			args := []string{"vaults", "items", "invoke", "checkout", "cardholder", tc.operation}
+			if tc.operation == "remove_payment_method" {
+				args = append(args, "--params", `{"payment_method_id":"pm-2"}`)
+			}
+			_, _, err := executeVaultCommand(t, client, args...)
+			require.ErrorContains(t, err, tc.want)
+			assert.Contains(t, err.Error(), "refused")
+		})
+	}
+}
+
+func TestKernelPaymentMethodStatuses(t *testing.T) {
+	wallet := strings.TrimSuffix(kernelMethodsWalletFixture, "}") + `,"expanded":{"payment_methods":[
+		{"id":"card","provider":"kernel","type":"card","is_default":true,"status":"active","display":{"brand":"visa","last4":"1234"},"capabilities":{"single_use_card":{"eligible":true,"reasons":[]}}},
+		{"id":"pm-2","provider":"kernel","type":"card","is_default":false,"status":"pending_enrollment","display":{},"capabilities":{"single_use_card":{"eligible":false,"reasons":["enrollment_pending"]}},"action":{"name":"card_enrollment","url":"https://vault.example/card#token=pm-2.opaque","capture_token":"CAPTURE_SECRET"},"expires_at":"2026-10-28T12:30:00Z"},
+		{"id":"pm-3","provider":"kernel","type":"card","is_default":false,"status":"recovery_required","status_reason":"provider outcome unknown; remove this payment method","display":{},"capabilities":{"single_use_card":{"eligible":false,"reasons":[]}}}
+	]}}`
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "payment_methods", r.URL.Query().Get("expand"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, wallet)
+	})
+	out, human, err := executeVaultCommand(t, client, "vaults", "wallets", "payment-methods", "checkout", "cardholder")
+	require.NoError(t, err)
+	for _, text := range []string{"status", "active", "pending_enrollment", "recovery_required", "pm-3 status reason: provider outcome unknown", "card enrollment url for pm-2", "https://vault.example/card#token=pm-2.opaque", "payment_request items require payment_method_id", "--params '<json>'"} {
+		assert.Contains(t, human, text)
+	}
+	assert.NotContains(t, out+human, "CAPTURE_SECRET")
+	out, _, err = executeVaultCommand(t, client, "vaults", "wallets", "payment-methods", "checkout", "cardholder", "-o", "json")
+	require.NoError(t, err)
+	for _, text := range []string{`"status": "recovery_required"`, `"status_reason": "provider outcome unknown; remove this payment method"`, `"expires_at": "2026-10-28T12:30:00Z"`, `"name": "card_enrollment"`} {
+		assert.Contains(t, out, text)
+	}
+	assert.NotContains(t, out, "CAPTURE_SECRET")
+}
+
+func TestKernelPaymentRequestCreate(t *testing.T) {
+	spec := `{"wallet":"cardholder","payment_method_id":"pm-2","amount":1200,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://shop.example/checkout","merchant_country":"US"}`
+	fixture := strings.Replace(strings.Replace(kernelCardFixture, `"type":"card"`, `"type":"payment_request"`, 1), `"status":"requested"`, `"status":"requested","payment_method_id":"pm-2","funding_status":"removed"`, 1)
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPut, r.Method)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"type":"payment_request","spec":{"provider":"kernel",`+spec[1:]+`}`, string(body))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, fixture)
+	})
+	args := []string{"vaults", "cards", "create", "checkout", "order-1", "--type", "payment_request", "--provider", "kernel", "--spec", spec}
+	_, human, err := executeVaultCommand(t, client, args...)
+	require.NoError(t, err)
+	for _, text := range []string{"payment_request", "payment method id", "pm-2", "funding status", "funding_status removed", "Example Shop"} {
+		assert.Contains(t, human, text)
+	}
+	assert.NotContains(t, human, "a connected kernel wallet holds")
+	out, _, err := executeVaultCommand(t, client, append(args, "-o", "json")...)
+	require.NoError(t, err)
+	assert.Contains(t, out, `"funding_status": "removed"`)
+	assert.Contains(t, out, `"payment_method_id": "pm-2"`)
+}
+
+func TestKernelPaymentRequestFlagValidation(t *testing.T) {
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Fatal("invalid request reached API") })
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"cards", "create", "checkout", "order-1", "--type", "purchase", "--provider", "link", "--spec", "{}"}, "--type must be card or payment_request"},
+		{[]string{"cards", "create", "checkout", "order-1", "--type", "payment_request", "--provider", "agentcard", "--spec", "{}"}, "AgentCard reusable cards remain card items"},
+		{[]string{"cards", "update", "checkout", "order-1", "--type", "payment_request", "--provider", "kernel", "--spec", "{}"}, "kernel card updates are not supported"},
+		{[]string{"items", "invoke", "checkout", "cardholder", "remove_payment_method"}, "requires --params or --spec-file with payment_method_id"},
+		{[]string{"items", "invoke", "checkout", "cardholder", "remove_payment_method", "--params", `{"payment_method_id":""}`}, "payment_method_id must be a non-empty id"},
+		{[]string{"items", "invoke", "checkout", "cardholder", "remove_payment_method", "--params", `{"payment_method_id":"pm-2","force":true}`}, "only supported, non-duplicate properties"},
+		{[]string{"items", "invoke", "checkout", "cardholder", "add_payment_method", "--params", `{}`}, "add_payment_method take no parameters"},
+		{[]string{"wallets", "remove-payment-method", "checkout", "cardholder", "--payment-method-id", " ", "--yes"}, "payment_method_id must be a non-empty id"},
+	} {
+		_, _, err := executeVaultCommand(t, client, append([]string{"vaults"}, tc.args...)...)
+		require.ErrorContains(t, err, tc.want)
+	}
+}

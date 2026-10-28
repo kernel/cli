@@ -124,6 +124,45 @@ func TestVaultOutputKernelCardMerchantCountry(t *testing.T) {
 	assert.JSONEq(t, `"US"`, string(decoded.Spec["merchant_country"]))
 }
 
+func TestVaultOutputKernelPurchaseFunding(t *testing.T) {
+	for _, tc := range []struct {
+		state, want string
+	}{
+		{`"status":"ready"`, ""},
+		{`"status":"ready","payment_method_id":"card","funding_status":"available"`, ""},
+		{`"status":"ready","payment_method_id":"pm-2","funding_status":"unavailable"`, "funding_status unavailable"},
+		{`"status":"consumed","payment_method_id":"pm-2","funding_status":"removed"`, "funding_status removed"},
+	} {
+		var item kernel.VaultItemUnion
+		require.NoError(t, json.Unmarshal([]byte(`{
+			"id":"card-id","key":"order-1","type":"card",
+			"spec":{"provider":"kernel","wallet":"wallet-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://shop.example/checkout"},
+			"state":{"provider":"kernel",`+tc.state+`},
+			"available_operations":[],"available_expansions":[]
+		}`), &item))
+		buf := capturePtermOutput(t)
+		require.NoError(t, printVaultItem(&item, ""))
+		if tc.want == "" {
+			assert.NotContains(t, buf.String(), "funding_status")
+		} else {
+			assert.Contains(t, buf.String(), tc.want)
+			assert.Contains(t, buf.String(), "pm-2")
+		}
+		out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
+		var decoded struct {
+			State vaultJSON `json:"state"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &decoded))
+		if strings.Contains(tc.state, "funding_status") {
+			assert.NotEmpty(t, decoded.State["funding_status"])
+			assert.NotEmpty(t, decoded.State["payment_method_id"])
+		} else {
+			assert.NotContains(t, decoded.State, "funding_status")
+			assert.NotContains(t, buf.String(), "payment method id")
+		}
+	}
+}
+
 func TestVaultOutputAgentCardAuthorizationIsNotPaymentSuccess(t *testing.T) {
 	var item kernel.VaultItemUnion
 	require.NoError(t, json.Unmarshal([]byte(`{

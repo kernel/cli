@@ -31,10 +31,17 @@ var onePasswordRequestEntryFields = vaultOutputFields{
 	"parameters": vaultFieldsOf("website"),
 }
 var onePasswordRequestFields = vaultOutputFields{"version": nil, "goal": nil, "entries": onePasswordRequestEntryFields}
+
+// Enrollment actions omit capture_token, a bearer capability for embedded capture.
 var vaultMethodFields = vaultOutputFields{
-	"id": nil, "provider": nil, "type": nil, "is_default": nil,
+	"id": nil, "provider": nil, "type": nil, "is_default": nil, "status": nil, "status_reason": nil, "expires_at": nil,
 	"display":      vaultFieldsOf("label brand last4"),
 	"capabilities": {"single_use_card": vaultFieldsOf("eligible reasons")},
+	"action":       vaultFieldsOf("name url"),
+}
+var vaultMethodOperationFields = vaultOutputFields{
+	"type": nil, "payment_method_id": nil, "status": nil,
+	"payment_method": vaultMethodFields,
 }
 var vaultLinkUserInfoFields = vaultOutputFields{
 	"id": nil, "email": nil, "name": nil, "first_name": nil, "last_name": nil, "phone": nil,
@@ -79,6 +86,7 @@ var vaultItemFields = vaultOutputFields{
 	},
 	"state": {
 		"provider": nil, "status": nil, "status_reason": nil, "user_id": nil, "domains": nil, "access_request_id": nil,
+		"payment_method_id": nil, "funding_status": nil,
 		"access_request": {
 			"id": nil, "state": nil, "goal": nil, "createdAt": nil, "has_autofill_token": nil, "granted_count": nil,
 			"request": onePasswordRequestFields, "entries": onePasswordRequestEntryFields,
@@ -92,7 +100,7 @@ var vaultItemFields = vaultOutputFields{
 }
 var vaultEventFields = vaultOutputFields{
 	"id": nil, "name": nil, "created_at": nil, "browser_id": nil,
-	"data": vaultFieldsOf("reason operation status authorization_id preparation_id vault_session_id request_kind outcome_reason provider_status provider_code provider_request_id provider_payment_status provider_error_type provider_error_code provider_decline_code provider_error_param provider_http_status provider_response_bytes provider_latency_ms payment_intent_id payment_method_id checkout_session_id replay_attempted replay_delivered charged_amount_cents charged_currency charged_kind expected_cents actual_cents currency actual_currency intent_status amount_verified psp_error_code"),
+	"data": vaultFieldsOf("reason operation status authorization_id preparation_id vault_session_id request_kind outcome_reason provider_status provider_code provider_request_id provider_payment_status provider_error_type provider_error_code provider_decline_code provider_error_param provider_http_status provider_response_bytes provider_latency_ms payment_intent_id payment_method_id payment_method_id_present item_type provider checkout_session_id replay_attempted replay_delivered charged_amount_cents charged_currency charged_kind expected_cents actual_cents currency actual_currency intent_status amount_verified psp_error_code"),
 }
 
 // Vault output is a display-safe projection, not raw provider JSON. Keep presence
@@ -366,7 +374,7 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 				command += " --field '<passkey-field>'"
 			}
 		}
-		if op.Type == "authorize" && item.Type == "card" && item.Spec.Provider == "link" && item.State.Status == "requested" {
+		if op.Type == "authorize" && isVaultPurchase(item) && item.Spec.Provider == "link" && item.State.Status == "requested" {
 			command += " --browser-id '<browser-session-id>' --page-url '<checkout-page-url>'"
 		}
 		pterm.Printf("invoke: %s -- %s %s %s\n", command, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
@@ -444,7 +452,7 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	if item.State.StatusReason != "" {
 		rows = append(rows, []string{"status reason", item.State.StatusReason})
 	}
-	if item.Type == "card" {
+	if isVaultPurchase(item) {
 		merchant := item.Spec.MerchantName
 		if item.Spec.Provider == "agentcard" {
 			merchant = item.Spec.Merchant
@@ -465,6 +473,18 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		}
 		if item.Spec.Provider == "agentcard" && item.Spec.CheckoutOrigin != "" {
 			rows = append(rows, []string{"checkout origin", item.Spec.CheckoutOrigin})
+		}
+		if item.Spec.Provider == "kernel" {
+			methodID := item.State.PaymentMethodID
+			if methodID == "" {
+				methodID = item.Spec.PaymentMethodID
+			}
+			if methodID != "" {
+				rows = append(rows, []string{"payment method id", methodID})
+			}
+			if item.State.FundingStatus != "" {
+				rows = append(rows, []string{"funding status", string(item.State.FundingStatus)})
+			}
 		}
 		if item.Spec.Provider == "kernel" && item.Spec.MerchantURL != "" {
 			rows = append(rows, []string{"merchant url", item.Spec.MerchantURL})
@@ -573,8 +593,14 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		pterm.Info.Println("ready means required fields are populated, not that login succeeded. fill only when advertised; fill does not submit the form. passkey fields are never filled: use register_passkey, arm_passkey, and disarm_passkey only when advertised.")
 		return
 	}
-	if item.Type == "card" {
+	if isVaultPurchase(item) {
 		if item.Spec.Provider == "kernel" {
+			switch item.State.FundingStatus {
+			case "unavailable":
+				pterm.Warning.Println("funding_status unavailable: the payment method is being removed or awaits recovery, so authorize, fill and confirm_transaction are refused until it recovers. status still reports what already happened to this purchase.")
+			case "removed":
+				pterm.Warning.Println("funding_status removed: the payment method was removed from its wallet, so this purchase can no longer be paid. create a new purchase with another active, eligible payment method; status still reports what already happened to this purchase.")
+			}
 			switch item.State.Status {
 			case "requested", "pending_authorization", "ready":
 				pterm.Info.Println("Visa may require passkey approval through spend_approval; an alias-mode card may instead require fresh security-code collection. share the link privately and never open it for the cardholder; an unused link expires after 30 minutes. alias-mode cards normally expire five minutes after collection. ready means card details are available, not that the merchant charged the card; fill and submit before expires_at.")
@@ -640,23 +666,96 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 func printVaultPaymentMethods(provider string, methods []kernel.VaultPaymentMethod) {
 	if len(methods) == 0 {
 		pterm.Info.Println("no payment methods returned")
+		if provider == "kernel" {
+			pterm.Info.Println("a connected kernel wallet may hold no cards; add one with wallets add-payment-method when add_payment_method is advertised.")
+		}
 		return
 	}
-	rows := pterm.TableData{{"payment method id", "provider", "type", "label", "brand", "last4", "default", "single-use eligible", "reasons"}}
+	rows := pterm.TableData{{"payment method id", "status", "provider", "type", "label", "brand", "last4", "default", "single-use eligible", "reasons"}}
 	for _, m := range methods {
 		capability := m.Capabilities.SingleUseCard
 		eligible := "unknown"
 		if capability.JSON.Eligible.Valid() {
 			eligible = fmt.Sprint(capability.Eligible)
 		}
-		rows = append(rows, []string{m.ID, m.Provider, m.Type, m.Display.Label, m.Display.Brand, m.Display.Last4, fmt.Sprint(m.IsDefault), eligible, strings.Join(capability.Reasons, ", ")})
+		rows = append(rows, []string{m.ID, util.OrDash(string(m.Status)), m.Provider, m.Type, m.Display.Label, m.Display.Brand, m.Display.Last4, fmt.Sprint(m.IsDefault), eligible, strings.Join(capability.Reasons, ", ")})
 	}
 	PrintTableNoPad(rows, true)
+	for _, m := range methods {
+		if m.StatusReason != "" {
+			pterm.Printf("payment method %s status reason: %s\n", m.ID, m.StatusReason)
+		}
+		printVaultEnrollmentAction(m)
+	}
 	if provider == "kernel" {
-		pterm.Info.Println("kernel cards use the wallet key, not a payment method id. " + kernelEligibilityHelp)
+		pterm.Info.Println(kernelPaymentMethodHelp + ". " + kernelEligibilityHelp)
 	} else {
 		pterm.Info.Println("select an id explicitly in the card --spec json: Link uses payment_method_id; AgentCard uses card_id (or omit it for cardholder selection). capabilities are advisory; missing means unknown, not ineligible.")
 	}
+}
+
+// printVaultEnrollmentAction prints a pending method's card_enrollment url and returns it.
+func printVaultEnrollmentAction(m kernel.VaultPaymentMethod) string {
+	if m.Action.Name != "card_enrollment" || m.Action.URL == "" {
+		return ""
+	}
+	label := "card enrollment url for " + m.ID
+	if !m.ExpiresAt.IsZero() {
+		label += " (expires " + util.FormatLocal(m.ExpiresAt) + ")"
+	}
+	pterm.Printf("%s:\n%s\n", label, m.Action.URL)
+	return m.Action.URL
+}
+
+// printVaultPaymentMethodOperationResult prints an add_payment_method or remove_payment_method
+// result and returns the enrollment url an added method returned, if display-safe.
+func printVaultPaymentMethodOperationResult(response *kernel.VaultItemOperationResponseUnion, operation, output string) (string, error) {
+	invalid := fmt.Errorf("unexpected %s response; %s", operation, kernelVaultRetryGuidance(operation))
+	if response == nil || response.Type != operation {
+		return "", invalid
+	}
+	raw, err := filterVaultJSON(json.RawMessage(response.RawJSON()), vaultMethodOperationFields)
+	if err != nil {
+		return "", invalid
+	}
+	var result struct {
+		PaymentMethodID string                    `json:"payment_method_id"`
+		Status          string                    `json:"status"`
+		PaymentMethod   kernel.VaultPaymentMethod `json:"payment_method"`
+	}
+	if json.Unmarshal(raw, &result) != nil {
+		return "", invalid
+	}
+	if operation == "remove_payment_method" {
+		if result.PaymentMethodID == "" || result.Status != "removed" {
+			return "", invalid
+		}
+		if output == "json" {
+			return "", printVaultJSON(raw)
+		}
+		pterm.Success.Println("removed payment method " + result.PaymentMethodID)
+		pterm.Info.Println(kernelRemovedPaymentMethodHelp)
+		return "", nil
+	}
+	method := result.PaymentMethod
+	if method.ID == "" {
+		return "", invalid
+	}
+	actionURL := ""
+	if method.Action.Name == "card_enrollment" {
+		actionURL = method.Action.URL
+	}
+	if output == "json" {
+		return actionURL, printVaultJSON(raw)
+	}
+	PrintTableNoPad(pterm.TableData{
+		{"property", "value"}, {"payment method id", method.ID}, {"status", util.OrDash(string(method.Status))},
+	}, true)
+	if printVaultEnrollmentAction(method) == "" {
+		pterm.Info.Println("no enrollment url returned; inspect the wallet with wallets payment-methods")
+	}
+	pterm.Info.Println(kernelEnrollmentHelp)
+	return actionURL, nil
 }
 
 func vaultExpandedString(value, raw string) string {
