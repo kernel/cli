@@ -86,9 +86,7 @@ func TestPlaywrightExecuteExecutorParam(t *testing.T) {
 				calls++
 				w.Header().Set("Content-Type", "application/json")
 				switch {
-				case r.Method == http.MethodGet && r.URL.Path == "/browsers/my-browser":
-					fmt.Fprint(w, `{"session_id":"session123"}`)
-				case r.Method == http.MethodPost && r.URL.Path == "/browsers/session123/playwright/execute":
+				case r.Method == http.MethodPost && r.URL.Path == "/browsers/my-browser/playwright/execute":
 					require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 					fmt.Fprint(w, `{"success":true,"result":{"title":"Example"},"tab":{"target_id":"ABCDEF0123456789","created":true}}`)
 				default:
@@ -96,7 +94,7 @@ func TestPlaywrightExecuteExecutorParam(t *testing.T) {
 				}
 			}, append([]string{"execute", "my-browser", "return await page.title()", "--timeout", "30"}, tc.flags...)...)
 			require.NoError(t, err)
-			assert.Equal(t, 2, calls)
+			assert.Equal(t, 1, calls)
 			assert.Equal(t, "return await page.title()", body.Code)
 			if tc.executor == "" {
 				assert.Nil(t, body.Executor)
@@ -119,11 +117,9 @@ func TestPlaywrightExecuteOutput(t *testing.T) {
 		name     string
 		response string
 		json     bool
-		wantTab  bool
 	}{
-		{"without tab", `{"success":false,"error":"boom"}`, false, false},
-		{"with tab", `{"success":true,"tab":{"target_id":"ABCDEF0123456789","created":false}}`, false, true},
-		{"json", `{"success":true,"result":42,"tab":{"target_id":"ABCDEF0123456789","created":true}}`, true, false},
+		{"with tab", `{"success":true,"tab":{"target_id":"ABCDEF0123456789","created":false}}`, false},
+		{"json", `{"success":true,"result":42,"tab":{"target_id":"ABCDEF0123456789","created":true}}`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := []string{"execute", "session123", "return 1"}
@@ -132,10 +128,6 @@ func TestPlaywrightExecuteOutput(t *testing.T) {
 			}
 			stdout, table, err := executePlaywrightCommand(t, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				if r.Method == http.MethodGet {
-					fmt.Fprint(w, `{"session_id":"session123"}`)
-					return
-				}
 				fmt.Fprint(w, tc.response)
 			}, args...)
 			require.NoError(t, err)
@@ -144,25 +136,57 @@ func TestPlaywrightExecuteOutput(t *testing.T) {
 				assert.Empty(t, table)
 				return
 			}
-			if tc.wantTab {
-				assert.Contains(t, table, "Tab Target ID")
-				assert.Contains(t, table, "ABCDEF0123456789")
-				assert.Contains(t, table, "Tab Created")
-			} else {
-				assert.NotContains(t, table, "Tab Target ID")
-				assert.Contains(t, table, "boom")
-			}
+			assert.Contains(t, table, "Tab Target ID")
+			assert.Contains(t, table, "ABCDEF0123456789")
+			assert.Contains(t, table, "Tab Created")
 		})
 	}
+}
+
+func TestPlaywrightExecuteFailureExitsNonzero(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		response string
+		json     bool
+		wantErr  string
+	}{
+		{"table", `{"success":false,"error":"boom"}`, false, "boom"},
+		{"table without message", `{"success":false}`, false, "playwright execution failed"},
+		{"json", `{"success":false,"error":"boom"}`, true, "playwright execution failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{"execute", "session123", "return 1"}
+			if tc.json {
+				args = append(args, "-o", "json")
+			}
+			stdout, table, err := executePlaywrightCommand(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, tc.response)
+			}, args...)
+			require.EqualError(t, err, tc.wantErr)
+			// The error is printed by the command, so the root handler must not print it again.
+			var silent interface{ Silent() bool }
+			require.ErrorAs(t, err, &silent)
+			assert.True(t, silent.Silent())
+			if tc.json {
+				assert.JSONEq(t, tc.response, stdout)
+				return
+			}
+			assert.Contains(t, table, "false")
+		})
+	}
+}
+
+func TestStackFrames(t *testing.T) {
+	stack := "page.click: Timeout 2000ms exceeded.\nCall log:\n  - waiting for locator('#x')\n\n    at eval (<anonymous>:5:14)\n    at async executeCode (daemon.js:409:20)"
+	assert.Equal(t, "    at eval (<anonymous>:5:14)\n    at async executeCode (daemon.js:409:20)", stackFrames(stack))
+	assert.Equal(t, "", stackFrames("Error: boom"))
+	assert.Equal(t, "", stackFrames(""))
 }
 
 func TestPlaywrightExecuteExecutorLimit(t *testing.T) {
 	_, _, err := executePlaywrightCommand(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodGet {
-			fmt.Fprint(w, `{"session_id":"session123"}`)
-			return
-		}
 		w.WriteHeader(http.StatusConflict)
 		fmt.Fprint(w, `{"message":"Browser already has 8 named Playwright executors.",`+
 			`"executors":[{"name":"default","busy":false,"created_at":"2026-01-02T03:04:05Z","last_used_at":"2026-01-02T03:04:05Z"}]}`)
@@ -190,10 +214,6 @@ func TestPlaywrightExecuteOtherErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := executePlaywrightCommand(t, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				if r.Method == http.MethodGet {
-					fmt.Fprint(w, `{"session_id":"session123"}`)
-					return
-				}
 				w.WriteHeader(tc.status)
 				fmt.Fprint(w, tc.body)
 			}, append([]string{"execute", "session123", "return 1"}, tc.flags...)...)

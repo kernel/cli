@@ -951,8 +951,13 @@ func TestBrowsersCreate_WithMemory(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), "memory")
 
+	// Headless sizes are accepted.
+	err = b.Create(context.Background(), BrowsersCreateInput{Headless: BoolFlag{Set: true, Value: true}, Memory: "2GiB"})
+	require.NoError(t, err)
+	assert.Equal(t, kernel.BrowserMemoryRequest2GiB, captured.Memory)
+
 	// An unsupported size is rejected before the request is made.
-	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{Memory: "4GiB"}))
+	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{Memory: "3GiB"}))
 }
 
 func TestBrowsersCreate_WithVideoMemory(t *testing.T) {
@@ -1984,6 +1989,26 @@ func TestBrowsersProcessExec_MapsEnv(t *testing.T) {
 		Env:        []string{"FOO=bar", "HELLO=world"},
 	})
 	assert.NoError(t, err)
+}
+
+func TestBrowsersProcessExec_NonzeroExit(t *testing.T) {
+	for _, output := range []string{"", "json"} {
+		t.Run("output="+output, func(t *testing.T) {
+			setupStdoutCapture(t)
+			fake := &FakeProcessService{
+				ExecFunc: func(ctx context.Context, id string, body kernel.BrowserProcessExecParams, opts ...option.RequestOption) (*kernel.BrowserProcessExecResponse, error) {
+					assert.Equal(t, "my-browser", id)
+					return &kernel.BrowserProcessExecResponse{ExitCode: 3}, nil
+				},
+			}
+			b := BrowsersCmd{process: fake}
+			err := b.ProcessExec(context.Background(), BrowsersProcessExecInput{Identifier: "my-browser", Command: "false", Output: output})
+			require.EqualError(t, err, "process exited with code 3")
+			var silent interface{ Silent() bool }
+			require.ErrorAs(t, err, &silent)
+			assert.True(t, silent.Silent())
+		})
+	}
 }
 
 func TestBrowsersProcessSpawn_PrintsInfo(t *testing.T) {

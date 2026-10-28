@@ -180,15 +180,15 @@ func parseRegionFlag(region string) (string, error) {
 	return "", fmt.Errorf("invalid --region value: %s (must be one of %s)", region, strings.Join(availableRegions(), ", "))
 }
 
-// availableMemorySizes returns the memory sizes the API accepts when creating a
-// browser session. Only headful, non-GPU sessions can request memory; every
-// other configuration gets a fixed allocation.
+// availableMemorySizes returns the memory sizes the API accepts for non-GPU
+// browsers: 1GiB, 2GiB or 4GiB when headless, 8GiB or 16GiB when headful. The
+// API rejects a size that does not match the browser's mode.
 func availableMemorySizes() []string {
-	return []string{"8GiB", "16GiB"}
+	return []string{"1GiB", "2GiB", "4GiB", "8GiB", "16GiB"}
 }
 
 // parseMemoryFlag validates a --memory value. An empty value means the flag was
-// not set, which lets the API apply its default (8GiB).
+// not set, which lets the API apply its default (1GiB headless, 8GiB headful).
 func parseMemoryFlag(memory string) (kernel.BrowserMemoryRequest, error) {
 	if memory == "" {
 		return "", nil
@@ -2137,10 +2137,6 @@ func (b BrowsersCmd) ProcessExec(ctx context.Context, in BrowsersProcessExecInpu
 		pterm.Error.Println("process service not available")
 		return nil
 	}
-	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
 	params := kernel.BrowserProcessExecParams{Command: in.Command}
 	if len(in.Args) > 0 {
 		params.Args = in.Args
@@ -2164,13 +2160,16 @@ func (b BrowsersCmd) ProcessExec(ctx context.Context, in BrowsersProcessExecInpu
 	if len(env) > 0 {
 		params.Env = env
 	}
-	res, err := b.process.Exec(ctx, br.SessionID, params)
+	res, err := b.process.Exec(ctx, in.Identifier, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
 
 	if in.Output == "json" {
-		return util.PrintPrettyJSON(res)
+		if err := util.PrintPrettyJSON(res); err != nil {
+			return err
+		}
+		return processExitError(res.ExitCode)
 	}
 
 	rows := pterm.TableData{{"Property", "Value"}, {"Exit Code", fmt.Sprintf("%d", res.ExitCode)}, {"Duration (ms)", fmt.Sprintf("%d", res.DurationMs)}}
@@ -2199,7 +2198,16 @@ func (b BrowsersCmd) ProcessExec(ctx context.Context, in BrowsersProcessExecInpu
 			}
 		}
 	}
-	return nil
+	return processExitError(res.ExitCode)
+}
+
+// processExitError exits nonzero when the remote process did. The exit code has
+// already been printed with the rest of the result.
+func processExitError(exitCode int64) error {
+	if exitCode == 0 {
+		return nil
+	}
+	return silentExitError{fmt.Errorf("process exited with code %d", exitCode)}
 }
 
 func (b BrowsersCmd) ProcessSpawn(ctx context.Context, in BrowsersProcessSpawnInput) error {
@@ -3365,7 +3373,7 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().BoolP("stealth", "s", false, "Launch browser in stealth mode to avoid detection")
 	browsersCreateCmd.Flags().BoolP("headless", "H", false, "Launch browser without GUI access")
 	browsersCreateCmd.Flags().Bool("gpu", false, "Launch browser with hardware-accelerated GPU rendering")
-	browsersCreateCmd.Flags().String("memory", "", "Memory for a headful, non-GPU browser session: '8GiB' (default) or '16GiB'")
+	browsersCreateCmd.Flags().String("memory", "", "Memory for a non-GPU browser session. Headless: '1GiB' (default), '2GiB' or '4GiB'. Headful: '8GiB' (default) or '16GiB'")
 	browsersCreateCmd.Flags().String("video-memory", "", "Video memory (VRAM) for a GPU browser session (requires --gpu): '2GiB' (default, 4 vCPU/6GiB memory) or '4GiB' (8 vCPU/12GiB memory)")
 	browsersCreateCmd.Flags().String("invocation-id", "", "Associate the browser session with an invocation")
 	browsersCreateCmd.Flags().Bool("kiosk", false, "Launch browser in kiosk mode")
@@ -4363,6 +4371,15 @@ type BrowsersCurlInput struct {
 	Fail       bool
 	Silent     bool
 }
+
+// silentExitError gives a nonzero exit status for a failure whose result has
+// already been printed.
+type silentExitError struct {
+	err error
+}
+
+func (e silentExitError) Error() string { return e.err.Error() }
+func (e silentExitError) Silent() bool  { return true }
 
 type silentCurlError struct {
 	err error

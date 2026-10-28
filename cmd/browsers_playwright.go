@@ -75,10 +75,6 @@ func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrigh
 		pterm.Error.Println("playwright service not available")
 		return nil
 	}
-	br, err := b.browsers.Get(ctx, in.Identifier, kernel.BrowserGetParams{})
-	if err != nil {
-		return util.CleanedUpSdkError{Err: err}
-	}
 	params := kernel.BrowserPlaywrightExecuteParams{Code: in.Code}
 	if in.Executor != "" {
 		params.Executor = kernel.Opt(in.Executor)
@@ -86,13 +82,19 @@ func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrigh
 	if in.Timeout > 0 {
 		params.TimeoutSec = kernel.Opt(in.Timeout)
 	}
-	res, err := b.playwright.Execute(ctx, br.SessionID, params)
+	res, err := b.playwright.Execute(ctx, in.Identifier, params)
 	if err != nil {
 		return playwrightExecuteError(err, in)
 	}
 
 	if in.Output == "json" {
-		return util.PrintPrettyJSON(res)
+		if err := util.PrintPrettyJSON(res); err != nil {
+			return err
+		}
+		if !res.Success {
+			return silentExitError{errors.New("playwright execution failed")}
+		}
+		return nil
 	}
 
 	rows := pterm.TableData{{"Property", "Value"}, {"Success", fmt.Sprintf("%t", res.Success)}}
@@ -105,6 +107,19 @@ func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrigh
 		pterm.Info.Println("stdout:")
 		fmt.Println(res.Stdout)
 	}
+	if !res.Success {
+		msg := res.Error
+		if msg == "" {
+			msg = "playwright execution failed"
+		}
+		// Printed here rather than returned: the root error handler would
+		// reflow the multi-line call log Playwright errors carry.
+		pterm.Error.WithWriter(os.Stderr).Println(msg)
+		if frames := stackFrames(res.Stderr); frames != "" {
+			fmt.Fprintln(os.Stderr, frames)
+		}
+		return silentExitError{errors.New(msg)}
+	}
 	if res.Stderr != "" {
 		pterm.Info.Println("stderr:")
 		fmt.Fprintln(os.Stderr, res.Stderr)
@@ -116,10 +131,19 @@ func (b BrowsersCmd) PlaywrightExecute(ctx context.Context, in BrowsersPlaywrigh
 			fmt.Println(string(bs))
 		}
 	}
-	if !res.Success && res.Error != "" {
-		pterm.Error.Printf("error: %s\n", res.Error)
-	}
 	return nil
+}
+
+// stackFrames returns the "at" frames of a JavaScript stack trace, dropping the
+// leading message lines that repeat the error.
+func stackFrames(stack string) string {
+	lines := strings.Split(stack, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "at ") {
+			return strings.Join(lines[i:], "\n")
+		}
+	}
+	return ""
 }
 
 // playwrightExecuteError points at the executors commands when a named
