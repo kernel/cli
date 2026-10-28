@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 
 	kernel "github.com/kernel/kernel-go-sdk"
 )
@@ -17,9 +18,11 @@ type vaultOperationParams struct {
 	WebMCP             *kernel.WebmcpInvokeVaultItemOperationRequestParam
 	Checkout           *kernel.VaultCheckoutContextParam
 	ConfirmTransaction *vaultConfirmTransactionParams
-	// Passkey and OnePassword are complete operation request bodies; Invoke supplies the vault.
-	Passkey     *kernel.VaultItemPerformOperationParams
-	OnePassword *kernel.VaultItemPerformOperationParams
+	// Passkey, OnePassword, and PaymentMethod are complete operation request bodies;
+	// Invoke supplies the vault.
+	Passkey       *kernel.VaultItemPerformOperationParams
+	OnePassword   *kernel.VaultItemPerformOperationParams
+	PaymentMethod *kernel.VaultItemPerformOperationParams
 }
 
 func isOnePasswordOperation(operation string) bool {
@@ -28,7 +31,7 @@ func isOnePasswordOperation(operation string) bool {
 
 // vaultOperationTakesParams reports whether an operation accepts --params or --spec-file.
 func vaultOperationTakesParams(operation string) bool {
-	return operation == "fill" || operation == "webmcp_invoke" || operation == "prepare_checkout" || operation == "confirm_transaction" || (isOnePasswordOperation(operation) && operation != "1pw_recover")
+	return operation == "fill" || operation == "webmcp_invoke" || operation == "prepare_checkout" || operation == "confirm_transaction" || operation == "remove_payment_method" || (isOnePasswordOperation(operation) && operation != "1pw_recover")
 }
 
 type vaultFillParams struct {
@@ -120,6 +123,33 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 		}
 		return &vaultOperationParams{OnePassword: request}, nil
 	}
+	if operation == "add_payment_method" {
+		if paramsSet {
+			return nil, fmt.Errorf("add_payment_method takes no parameters")
+		}
+		return &vaultOperationParams{PaymentMethod: &kernel.VaultItemPerformOperationParams{
+			OfAddPaymentMethod: &kernel.AddPaymentMethodVaultItemOperationRequestParam{Type: kernel.AddPaymentMethodVaultItemOperationRequestTypeAddPaymentMethod},
+		}}, nil
+	}
+	if operation == "remove_payment_method" {
+		if !paramsSet {
+			return nil, fmt.Errorf("remove_payment_method requires --params or --spec-file with payment_method_id")
+		}
+		object, err := vaultParamsObject(raw, "payment_method_id")
+		if err != nil {
+			return nil, err
+		}
+		var paymentMethodID string
+		if json.Unmarshal(object["payment_method_id"], &paymentMethodID) != nil || strings.TrimSpace(paymentMethodID) == "" || len(paymentMethodID) > 128 {
+			return nil, fmt.Errorf("payment_method_id must be a non-empty string of at most 128 bytes")
+		}
+		return &vaultOperationParams{PaymentMethod: &kernel.VaultItemPerformOperationParams{
+			OfRemovePaymentMethod: &kernel.RemovePaymentMethodVaultItemOperationRequestParam{
+				Type:            kernel.RemovePaymentMethodVaultItemOperationRequestTypeRemovePaymentMethod,
+				PaymentMethodID: paymentMethodID,
+			},
+		}}, nil
+	}
 	if operation == "confirm_transaction" {
 		if !paramsSet {
 			return nil, fmt.Errorf("confirm_transaction requires --params or --spec-file")
@@ -152,7 +182,7 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 	}
 	if operation != "fill" {
 		if paramsSet {
-			return nil, fmt.Errorf("--params is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, and 1Password operations; authorize takes --browser-id and --page-url, passkey operations take --browser-id and optional --field, and restart_verification takes no parameters")
+			return nil, fmt.Errorf("--params is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, remove_payment_method, and 1Password operations; authorize takes --browser-id and --page-url, passkey operations take --browser-id and optional --field, and add_payment_method and restart_verification take no parameters")
 		}
 		return nil, nil
 	}
@@ -225,8 +255,8 @@ func parseOnePasswordOperationParams(operation, raw string) (*kernel.VaultItemPe
 	allowed := map[string]string{
 		"1pw_create_access_request": "goal reason keywords",
 		"1pw_access_request_status": "timeout_seconds",
-		"1pw_fill":                  "browser_id page_url entry_id timeout_ms",
-		"1pw_update_access_token":   "access_token",
+		"1pw_fill":                  "browser_id page_url target_id entry_id timeout_ms",
+		"1pw_update_access_token":   "access_token access_token_expires_at",
 	}[operation]
 	if allowed == "" {
 		return nil, fmt.Errorf("unsupported 1Password operation %q", operation)
@@ -239,6 +269,17 @@ func parseOnePasswordOperationParams(operation, raw string) (*kernel.VaultItemPe
 		var request kernel.VaultItemPerformOperationParamsBody1pwUpdateAccessToken
 		if json.Unmarshal(object["access_token"], &request.AccessToken) != nil || strings.TrimSpace(request.AccessToken) == "" || len(request.AccessToken) > 16384 {
 			return nil, fmt.Errorf("access_token must be a non-empty string of at most 16384 bytes")
+		}
+		if value, ok := object["access_token_expires_at"]; ok {
+			var text string
+			if json.Unmarshal(value, &text) != nil {
+				return nil, fmt.Errorf("access_token_expires_at must be an RFC3339 date-time")
+			}
+			expiresAt, err := time.Parse(time.RFC3339, text)
+			if err != nil {
+				return nil, fmt.Errorf("access_token_expires_at must be an RFC3339 date-time")
+			}
+			request.AccessTokenExpiresAt = kernel.Opt(expiresAt)
 		}
 		return &kernel.VaultItemPerformOperationParams{Of1pwUpdateAccessToken: &request}, nil
 	}
@@ -290,6 +331,13 @@ func parseOnePasswordOperationParams(operation, raw string) (*kernel.VaultItemPe
 				return nil, fmt.Errorf("timeout_ms must be an integer between 1 and 30000")
 			}
 			request.TimeoutMs = kernel.Opt(*timeout)
+		}
+		if value, ok := object["target_id"]; ok {
+			var targetID string
+			if json.Unmarshal(value, &targetID) != nil || strings.TrimSpace(targetID) == "" {
+				return nil, fmt.Errorf("target_id must be a non-empty CDP target ID for an open page")
+			}
+			request.TargetID = kernel.Opt(targetID)
 		}
 		if value, ok := object["entry_id"]; ok {
 			var entryID string

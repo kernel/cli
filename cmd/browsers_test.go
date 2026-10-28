@@ -67,6 +67,7 @@ type FakeBrowsersService struct {
 	HTTPClientFunc     func(id string, opts ...option.RequestOption) (*http.Client, error)
 	LoadExtensionsFunc func(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) error
 	ReplFunc           func(ctx context.Context, id string, body kernel.BrowserReplParams, opts ...option.RequestOption) (*kernel.BrowserReplResult, error)
+	SaveProfileFunc    func(ctx context.Context, id string, body kernel.BrowserSaveProfileParams, opts ...option.RequestOption) (*kernel.Profile, error)
 }
 
 func (f *FakeBrowsersService) Get(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
@@ -123,6 +124,66 @@ func (f *FakeBrowsersService) Repl(ctx context.Context, id string, body kernel.B
 		return f.ReplFunc(ctx, id, body, opts...)
 	}
 	return &kernel.BrowserReplResult{}, nil
+}
+
+func (f *FakeBrowsersService) SaveProfile(ctx context.Context, id string, body kernel.BrowserSaveProfileParams, opts ...option.RequestOption) (*kernel.Profile, error) {
+	if f.SaveProfileFunc != nil {
+		return f.SaveProfileFunc(ctx, id, body, opts...)
+	}
+	return &kernel.Profile{}, nil
+}
+
+func TestBrowsersSaveProfile(t *testing.T) {
+	created := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name     string
+		input    BrowsersSaveProfileInput
+		expected string
+	}{
+		{name: "existing id", input: BrowsersSaveProfileInput{Identifier: "browser-1", ProfileID: "profile-1", Output: "json"}, expected: `{"id":"profile-1"}`},
+		{name: "new name", input: BrowsersSaveProfileInput{Identifier: "browser-1", ProfileName: "checkout", Output: "json"}, expected: `{"name":"checkout"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			fake := &FakeBrowsersService{SaveProfileFunc: func(ctx context.Context, id string, body kernel.BrowserSaveProfileParams, opts ...option.RequestOption) (*kernel.Profile, error) {
+				calls++
+				assert.Equal(t, "browser-1", id)
+				raw, err := json.Marshal(body)
+				require.NoError(t, err)
+				assert.JSONEq(t, tc.expected, string(raw))
+				var profile kernel.Profile
+				require.NoError(t, json.Unmarshal([]byte(fmt.Sprintf(`{"id":"profile-1","name":"checkout","created_at":%q,"updated_at":%q,"last_used_at":%q}`, created.Format(time.RFC3339), created.Format(time.RFC3339), created.Format(time.RFC3339))), &profile))
+				return &profile, nil
+			}}
+			out := captureStdout(t, func() {
+				require.NoError(t, (BrowsersCmd{browsers: fake}).SaveProfile(context.Background(), tc.input))
+			})
+			assert.Equal(t, 1, calls)
+			assert.Contains(t, out, `"id": "profile-1"`)
+		})
+	}
+}
+
+func TestBrowsersSaveProfileValidationAndHelp(t *testing.T) {
+	fake := &FakeBrowsersService{SaveProfileFunc: func(ctx context.Context, id string, body kernel.BrowserSaveProfileParams, opts ...option.RequestOption) (*kernel.Profile, error) {
+		t.Fatal("invalid destination reached API")
+		return nil, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+	for _, input := range []BrowsersSaveProfileInput{
+		{Identifier: "browser-1"},
+		{Identifier: "browser-1", ProfileID: "profile-1", ProfileName: "checkout"},
+	} {
+		require.ErrorContains(t, b.SaveProfile(context.Background(), input), "exactly one")
+	}
+
+	cmd, _, err := rootCmd.Find([]string{"browsers", "save-profile"})
+	require.NoError(t, err)
+	assert.NotNil(t, cmd.Flags().Lookup("profile-id"))
+	assert.NotNil(t, cmd.Flags().Lookup("profile-name"))
+	for _, text := range []string{"Saving restarts the browser", "CDP", "WebDriver", "pages reload", "profile upload completes", "remain in the running browser", "does not attach", "save_changes", "refresh_on_profile_update", "completion time", "failed save leaves it unchanged", "browser_busy", "browser_lease_changed"} {
+		assert.Contains(t, cmd.Long, text)
+	}
 }
 
 func TestBrowsersCurlRawUsesBrowserHTTPClient(t *testing.T) {

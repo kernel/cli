@@ -42,6 +42,7 @@ type BrowsersService interface {
 	HTTPClient(id string, opts ...option.RequestOption) (*http.Client, error)
 	LoadExtensions(ctx context.Context, idOrName string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) (err error)
 	Repl(ctx context.Context, idOrName string, body kernel.BrowserReplParams, opts ...option.RequestOption) (res *kernel.BrowserReplResult, err error)
+	SaveProfile(ctx context.Context, idOrName string, body kernel.BrowserSaveProfileParams, opts ...option.RequestOption) (res *kernel.Profile, err error)
 }
 
 // BrowserReplaysService defines the subset we use for browser replays.
@@ -559,6 +560,13 @@ type BrowsersGetInput struct {
 	Identifier     string
 	IncludeDeleted bool
 	Output         string
+}
+
+type BrowsersSaveProfileInput struct {
+	Identifier  string
+	ProfileID   string
+	ProfileName string
+	Output      string
 }
 
 type BrowsersUpdateInput struct {
@@ -1081,6 +1089,44 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	}
 
 	PrintTableNoPad(tableData, true)
+	return nil
+}
+
+func (b BrowsersCmd) SaveProfile(ctx context.Context, in BrowsersSaveProfileInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+	if (in.ProfileID == "") == (in.ProfileName == "") {
+		return fmt.Errorf("specify exactly one of --profile-id or --profile-name")
+	}
+
+	destination := kernel.SaveProfileRequestParam{}
+	if in.ProfileID != "" {
+		destination.ID = kernel.Opt(in.ProfileID)
+	} else {
+		destination.Name = kernel.Opt(in.ProfileName)
+	}
+	profile, err := b.browsers.SaveProfile(ctx, in.Identifier, kernel.BrowserSaveProfileParams{SaveProfileRequest: destination})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(profile)
+	}
+
+	name := profile.Name
+	if name == "" {
+		name = "-"
+	}
+	PrintTableNoPad(pterm.TableData{
+		{"Property", "Value"},
+		{"ID", profile.ID},
+		{"Name", name},
+		{"Created At", util.FormatLocal(profile.CreatedAt)},
+		{"Updated At", util.FormatLocal(profile.UpdatedAt)},
+		{"Last Used At", util.FormatLocal(profile.LastUsedAt)},
+	}, true)
+	pterm.Info.Println("The browser restarted. Reconnect CDP clients; WebDriver clients must create a new session.")
 	return nil
 }
 
@@ -3002,6 +3048,38 @@ var browsersGetCmd = &cobra.Command{
 	RunE:  runBrowsersGet,
 }
 
+var browsersSaveProfileCmd = &cobra.Command{
+	Use:   "save-profile <id-or-name>",
+	Short: "Save the running browser state to a profile",
+	Long: `Save the running browser's current user-data state to an existing or new profile.
+
+Provide exactly one destination: --profile-id overwrites an existing profile;
+--profile-name overwrites a matching profile in the browser's project or creates it.
+
+Saving restarts the browser without ending the session. Active CDP and WebDriver
+connections close; reconnect CDP clients and create a new WebDriver session. Tabs are
+restored, but pages reload and in-memory page state is lost. The command returns after
+the restarted browser accepts CDP connections and the profile upload completes. Caches,
+Service Worker storage, and Google Drive IndexedDB data are excluded from the saved
+profile but remain in the running browser.
+
+This does not attach the destination profile to the browser or change save_changes.
+Other active browsers that already loaded the destination keep their in-memory state.
+Pools with refresh_on_profile_update flush idle sessions and replenish from this
+snapshot; other browsers receive it the next time they load the profile.
+
+Of overlapping saves made by this command to the same profile, the most recently
+started save wins. An automatic end-of-session save from save_changes is instead
+ordered against these saves by completion time. A successful save restarts the browser
+inactivity timeout; a failed save leaves it unchanged.
+
+A 409 can mean the browser is inactive, a pooled browser was released or reacquired
+(browser_lease_changed), or it is briefly busy (browser_busy). Retry only browser_busy,
+or resolve the current pooled-browser lease before making a new explicit save.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runBrowsersSaveProfile,
+}
+
 var browsersUpdateCmd = &cobra.Command{
 	Use:   "update <id-or-name>",
 	Short: "Update a browser session by ID or name",
@@ -3069,6 +3147,13 @@ func init() {
 	// view flags
 	addJSONOutputFlag(browsersViewCmd)
 
+	// save-profile flags
+	addJSONOutputFlag(browsersSaveProfileCmd)
+	browsersSaveProfileCmd.Flags().String("profile-id", "", "Existing profile ID to overwrite (mutually exclusive with --profile-name)")
+	browsersSaveProfileCmd.Flags().String("profile-name", "", "Profile name to overwrite or create (mutually exclusive with --profile-id)")
+	browsersSaveProfileCmd.MarkFlagsOneRequired("profile-id", "profile-name")
+	browsersSaveProfileCmd.MarkFlagsMutuallyExclusive("profile-id", "profile-name")
+
 	// update flags
 	addJSONOutputFlag(browsersUpdateCmd)
 	browsersUpdateCmd.Flags().String("proxy-id", "", "ID of the proxy to use for the browser session (mutually exclusive with --proxy-name and --proxy-mode)")
@@ -3100,6 +3185,7 @@ func init() {
 	browsersCmd.AddCommand(browsersDeleteCmd)
 	browsersCmd.AddCommand(browsersViewCmd)
 	browsersCmd.AddCommand(browsersGetCmd)
+	browsersCmd.AddCommand(browsersSaveProfileCmd)
 	browsersCmd.AddCommand(browsersUpdateCmd)
 
 	// ssh
@@ -3750,6 +3836,21 @@ func runBrowsersGet(cmd *cobra.Command, args []string) error {
 		Identifier:     args[0],
 		IncludeDeleted: includeDeleted,
 		Output:         out,
+	})
+}
+
+func runBrowsersSaveProfile(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	output, _ := cmd.Flags().GetString("output")
+	profileID, _ := cmd.Flags().GetString("profile-id")
+	profileName, _ := cmd.Flags().GetString("profile-name")
+
+	svc := client.Browsers
+	return (BrowsersCmd{browsers: &svc}).SaveProfile(cmd.Context(), BrowsersSaveProfileInput{
+		Identifier:  args[0],
+		ProfileID:   profileID,
+		ProfileName: profileName,
+		Output:      output,
 	})
 }
 

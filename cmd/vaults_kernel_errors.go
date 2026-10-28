@@ -10,10 +10,31 @@ import (
 
 	"github.com/kernel/cli/pkg/util"
 	kernel "github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/option"
 )
 
 var kernelVaultErrorURL = regexp.MustCompile(`(?i)https?://\S+`)
 var kernelVaultErrorCode = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`)
+
+// The SDK adds an Idempotency-Key to every non-GET request. Go's transport treats
+// that header plus GetBody as permission to replay a request after some connection
+// failures, independently of the SDK retry setting. Vault writes can have side
+// effects and must never be replayed implicitly, so remove the transport's replay
+// body factory. Keep the key on requests with bodies for server-side classification;
+// bodyless writes must drop it because the header alone makes them replayable.
+func vaultWriteRequestOptions() []option.RequestOption {
+	return []option.RequestOption{
+		option.WithMaxRetries(0),
+		option.WithMiddleware(func(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+			req.GetBody = nil
+			if req.Body == nil || req.Body == http.NoBody {
+				req.Header.Del("Idempotency-Key")
+				req.Header.Del("X-Idempotency-Key")
+			}
+			return next(req)
+		}),
+	}
+}
 
 type kernelVaultTransportError struct {
 	message string
@@ -57,6 +78,10 @@ func kernelVaultRetryGuidance(operation string) string {
 	switch operation {
 	case "create":
 		return "retry create once with the identical key and identical spec; it retrieves the existing item if creation succeeded. do not use a new key to recover a lost create response"
+	case "add_payment_method":
+		return "re-get the wallet with payment_methods expanded before another call; each call creates a separate enrollment link, so never repeat automatically"
+	case "remove_payment_method":
+		return "re-get the wallet with payment_methods expanded; retry removal only when the same method remains removal_pending and remove_payment_method is freshly advertised. reconcile any unresolved purchase first"
 	case "authorize", "confirm_transaction", "restart_verification":
 		guidance := "re-get the item and inspect state/events; invoke " + operation + " once more only if freshly advertised in available_operations, never in an automatic loop. otherwise follow the current state. never replay merchant checkout"
 		if operation == "restart_verification" {
@@ -108,14 +133,16 @@ func retryAfterWait(apiErr *kernel.Error) string {
 	return "wait for the rate limit to clear"
 }
 
-const kernelSupportGuidance = "do not retry payment, delete, or replace the item. contact support@kernel.sh privately with project, vault, item key, status_reason and relevant event timestamps (never card data, api keys or capability urls) to reconcile the original operation and establish whether a new purchase is safe; do not assume a new card is safe or promise a resulting state"
+const kernelSupportGuidance = "do not retry payment, delete, or replace the item. contact support@kernel.sh privately with project, vault, item key, status_reason and relevant event timestamps (never card data, api keys or capability urls) to reconcile the original operation and establish whether a new purchase is safe; do not assume a replacement purchase is safe or promise a resulting state"
 
 const kernelTransactionHelp = "report one observed merchant outcome only when confirm_transaction is advertised. PENDING means the merchant explicitly confirms an accepted transaction is pending; ERROR means an explicit merchant transaction error, not transport loss or an ambiguous processing page. these are final reports, not polling states. unknown means no reliable merchant outcome: ask the user to check order confirmation, merchant account or statement, then report the confirmed outcome even after card expiry. never infer success from fill. if reporting fails or the response is lost, re-get and send the identical observed report once more only if confirm_transaction is freshly advertised; otherwise observe state/events (recorded, in flight or recovery). never repeat merchant checkout"
 
 const kernelEligibilityHelp = "eligible=false means do not authorize. for network_token_pending, re-check later at most once in this attempt; network_token_unsupported or network_token_failed needs a different card. if still ineligible or unknown, ask the cardholder before enrolling a different card under a new wallet key; do not poll indefinitely or replay an uncertain purchase"
 
-const kernelWalletHelp = "share card_enrollment only with the intended cardholder privately, never open it for them. reconnect_required: share the new card_enrollment action. degraded: with user confirmation, delete the wallet only if the api permits it before creating a new wallet under a new key for one enrollment; reconcile unresolved child cards first. connected does not imply token eligibility; inspect wallets payment-methods"
+const kernelFundingStatusHelp = "funding_status is separate from purchase status. unavailable means the selected payment method is being removed or needs recovery, so authorize, fill, and confirmation are refused until it recovers. removed means the method is gone and this purchase cannot be paid; reconcile its prior outcome before creating a new purchase with another method. neither value rewrites what already happened to the purchase"
 
-const kernelReplacementHelp = "after user confirmation, delete only if the api permits it and create one new card under a new key for a new purchase; reconcile unresolved outcomes first"
+const kernelWalletHelp = "share card_enrollment only with the intended cardholder privately, never open it for them. where add_payment_method is advertised, use it to enroll each card; remove_payment_method removes one method without disconnecting the wallet. reconnect_required marks a legacy wallet awaiting an operator upgrade; reads preserve its state, and payments and deletion are refused until the upgrade. degraded: with user confirmation, delete the wallet only if the api permits it before creating a new wallet under a new key; reconcile unresolved child purchases first. connected may have zero cards and does not imply token eligibility; inspect wallets payment-methods"
+
+const kernelReplacementHelp = "after user confirmation, delete only if the api permits it and create one new purchase item under a new key; reconcile unresolved outcomes first"
 
 const kernelTerminalHelp = "merchant decline: report the observed DECLINED outcome when confirm_transaction is advertised. expired approval link or code before checkout: do not submit. if checkout was submitted, reconcile and report the observed outcome first (reporting may remain available after expiry). if never submitted, or after a confirmed decline, " + kernelReplacementHelp + "; ask for a different card or merchant after decline. unknown outcome: ask the user to check the merchant order page, email or statement and report only after they confirm; never guess or repeat checkout"

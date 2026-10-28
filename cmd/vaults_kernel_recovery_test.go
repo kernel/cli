@@ -218,16 +218,19 @@ func TestKernelRecoveryJSONAndStateGuidance(t *testing.T) {
 		_, human, err := executeVaultCommand(t, client, "vaults", "items", "get", "checkout", "order-1")
 		require.NoError(t, err)
 		switch status {
-		case "degraded", "reconnect_required":
-			assert.Contains(t, human, "delete the wallet only if the api permits it")
-			assert.Contains(t, human, "share the new card_enrollment")
+		case "degraded":
+			assert.Contains(t, human, "degraded: with user confirmation, delete the wallet only if the api permits it")
+		case "reconnect_required":
+			assert.Contains(t, human, "legacy wallet awaiting an operator upgrade")
+			assert.Contains(t, human, "payments and deletion are refused until the upgrade")
+			assert.NotContains(t, human, "share the new card_enrollment")
 		case "requested":
 			assert.Contains(t, human, "Visa may require")
 			assert.NotContains(t, human, "merchant decline")
 		case "recovery_required":
 			assert.Contains(t, human, "support@kernel.sh")
 			assert.Contains(t, human, "project, vault, item key")
-			assert.Contains(t, human, "do not assume a new card is safe")
+			assert.Contains(t, human, "do not assume a replacement purchase is safe")
 			out, _, err := executeVaultCommand(t, client, "vaults", "items", "get", "checkout", "order-1", "-o", "json")
 			require.NoError(t, err)
 			assert.NotContains(t, out, `"authorize"`)

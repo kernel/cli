@@ -55,7 +55,8 @@ func newVaultsCommand() *cobra.Command {
 		Long: `collect user credentials and manage payment credentials.
 
 do not use credential items to store, collect, or fill credit card data.
-use wallet and card item types for credit cards and payment checkout instead.
+use wallet and card item types for credit cards and payment checkout instead; where enabled,
+use payment_request items for one Link or KERNEL purchase.
 
 ` + vaultCredentialPathsHelp + `
 
@@ -87,36 +88,41 @@ vault names, item keys, and project ownership are immutable.
 
 1. create/select a vault, then create a provider wallet and follow its returned action.
    for kernel, share the hosted card_enrollment url; card details stay on that page.
-2. inspect wallets payment-methods for eligibility and reasons before creating a card.
+2. inspect wallets payment-methods for eligibility and reasons before creating a purchase.
    for Link, select a payment method id explicitly.
 3. attach the vault with browsers create --vault <id-or-name>; attachment is required for
-   authorizing a Link card at a checkout and for fill. for Link, reach the final checkout
-   page before creating the card.
-4. create a card request with --provider and --spec json.
+   authorizing a Link card at a checkout and for fill; the same applies to a Link
+   payment_request. for Link, reach the final checkout
+   page before creating the purchase.
+4. create a purchase with cards create, or where enabled use payment-requests create
+   for a Link or KERNEL purchase. pass --provider and --spec json.
 5. inspect items get, then use items invoke <vault> <key> <operation> only when advertised.
    follow the operation description and any returned provider action.
-6. ready Link and kernel cards use only advertised fill with --params for browser checkout.
-   neither exposes aliases or supports egress substitution. kernel fill is locked to
-   merchant_url's origin; submit the merchant checkout before the card expires.
-   kernel cards have no stored billing fields; enter billing details on the merchant page.
+6. ready Link and kernel cards use only advertised fill with --params for browser checkout;
+   equivalent payment_request items do too. neither exposes aliases or supports egress
+   substitution. kernel fill is locked to merchant_url's origin; submit the merchant
+   checkout before the purchase expires.
+   KERNEL card and payment_request purchases have no stored billing fields; enter billing
+   details on the merchant page.
    AgentCard-only checkout aliases support egress substitution with checkout hold,
    approval, and replay; they are not a fallback after fill.
-7. after the user submits kernel card checkout, report the observed outcome once with
-   confirm_transaction when advertised. ` + kernelTransactionHelp + `.
+7. after the user submits KERNEL card or payment_request checkout, report the observed
+   outcome once with confirm_transaction when advertised. ` + kernelTransactionHelp + `.
    in recovery_required, ` + vaultRecoveryHelp + `
 
 ` + linkCardFlowHelp + `
 
-permitted checkout domains are displayed when returned. Link card fill is limited to the
-origin of the checkout it was authorized at (or merchant_url's origin for a virtual card
-authorized without a checkout); kernel card fill uses the exact origin of merchant_url;
+permitted checkout domains are displayed when returned. Link card and payment_request fill
+is limited to the origin where the purchase was authorized (or merchant_url's origin for a
+virtual card authorized without a checkout); kernel card and payment_request fill uses the
+exact origin of merchant_url;
 AgentCard domains are provider-assigned. there is no domain-setting api.
 never supply card data, OAuth codes, ciphertext, or secrets in shell arguments.
 use vault-provider-configs for client credentials and wallets create --tokens-file
 for imported Link grants; both accept protected files or stdin.
 do not automatically repeat failed, timed-out, rejected, or indeterminate payments: inspect
 the item, its events, and the merchant's order history, then follow the advertised operations.
-when an item explicitly permits user-confirmed abandonment, delete that card before creating a replacement.
+when an item explicitly permits user-confirmed abandonment, delete that purchase item before creating a replacement.
 json output preserves returned public fields but omits unknown/opaque provider data.`,
 		Run: func(cmd *cobra.Command, args []string) { _ = cmd.Help() },
 	}
@@ -166,7 +172,7 @@ each vault has its own key; it is created on first request and may be cached.`,
 	addJSONOutputFlag(encryptionKey)
 	cmd.AddCommand(create, list, get, encryptionKey, newVaultDeleteCommand(false))
 
-	items := &cobra.Command{Use: "items", Short: "inspect item readiness or invoke advertised credential and payment operations", Long: "use get --wait 60 to observe readiness and get -o json for schema/version/presence.\nuse invoke collect to obtain a collection url, invoke fill --spec-file to fill a browser, or invoke advertised passkey operations with --browser-id.\nuse webmcp invoke to call a live WebMCP tool with item fields bound to null input slots.\n1Password credentials use the advertised 1pw_* operations instead of collect/fill/webmcp_invoke.\ncreate and edit credentials with vaults credentials; payment items use wallets/cards."}
+	items := &cobra.Command{Use: "items", Short: "inspect item readiness or invoke advertised credential and payment operations", Long: "use get --wait 60 to observe readiness and get -o json for schema/version/presence.\nuse invoke collect to obtain a collection url, invoke fill --spec-file to fill a browser, or invoke advertised passkey operations with --browser-id.\nuse webmcp invoke to call a live WebMCP tool with item fields bound to null input slots.\n1Password credentials use the advertised 1pw_* operations instead of collect/fill/webmcp_invoke.\ncreate and edit credentials with vaults credentials; payment items use wallets/cards/payment-requests."}
 	itemList := &cobra.Command{Use: "list <vault>", Short: "list items by vault id or name", Args: cobra.ExactArgs(1), PreRunE: vaultPreRun,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return getVaultsHandler(cmd).ListItems(cmd.Context(), args[0], vaultOutput(cmd))
@@ -198,27 +204,29 @@ each vault has its own key; it is created on first request and may be cached.`,
 	invoke := &cobra.Command{Use: "invoke <vault> <key> <operation>", Short: "invoke an operation advertised by an item", Args: cobra.ExactArgs(3), PreRunE: vaultPreRun,
 		Long: `retrieve the item and invoke only an operation listed in available_operations.
 collect returns a time-scoped url for the full credential form without clearing values.
-authorize sends {"type":"authorize"} for payment authorization. for a Link card at the final
-checkout page, add --browser-id and --page-url (both or neither) to send browser_id and
-page_url; see Link card checkout below.
+authorize sends {"type":"authorize"} for payment authorization. for a Link card or
+payment_request at the final checkout page, add --browser-id and --page-url (both or
+neither) to send browser_id and page_url; see Link checkout below.
 read the operation description and follow any approval requirements before invoking.
 fill requires --params json or --spec-file <path|-> with browser_id (session id, not name)
 and the inputs the item's advertised fill description asks for: 1-32 ordered fields
-(field, selector) for credentials, kernel cards, and Link virtual cards; no fields for a
-Link Pay Token. do not include type, values, or frame ids.
+(field, selector) for credentials, kernel card/payment_request items, and Link virtual
+cards/payment requests; no fields for a Link Pay Token. do not include type, values, or frame ids.
 the vault must already be attached to the browser. page_url selects an existing page;
 fill never navigates. credentials use declared field names, must omit format, and may
 omit page_url only when the api can resolve a unique page. totp codes stay server-generated.
-cards require an exact https page_url. Link virtual card fields: number, cvc, exp_month (MM),
+payment card and payment_request items require an exact https page_url. Link virtual card fields: number, cvc, exp_month (MM),
 exp_year (YYYY), billing_name, billing_line1, billing_line2, billing_city,
 billing_state, billing_postal_code, billing_country. expiration requires format MM/YY
 or MM/YYYY. deprecated timeout_ms is accepted for compatibility but ignored; fill sets no operation deadline and adapts typing pace to value length.
-kernel cards support number, expiration (format MM/YY or MM/YYYY), cvc, exp_month, and exp_year.
-kernel cards have no stored billing fields: billing_* returns field_unavailable (400) before
+kernel card and payment_request items support number, expiration (format MM/YY or MM/YYYY), cvc, exp_month, and exp_year.
+kernel cards have no stored billing fields; kernel payment_request items have the same boundary: billing_* returns field_unavailable (400) before
 any write. enter billing details on the merchant page.
 the api searches the page and descendant frames, including payment iframes.
 fill is available for credential items and ready Link or kernel cards when advertised, not AgentCard.
-Link and kernel cards do not expose aliases or support egress substitution. kernel card fill
+equivalent Link and kernel payment_request items also use fill when advertised.
+Link and kernel cards do not expose aliases or support egress substitution; payment_request
+items have the same boundary. kernel fill
 is locked to merchant_url's origin and its one-time code expires; submit checkout before expiry.
 fill writes real values into the browser; unrestricted browser/cdp access can read them.
 fill never explicitly submits forms or clicks buttons, but input/change events may trigger site behavior.
@@ -247,6 +255,15 @@ AUTHORIZATION, CAPTURE, REFUND, REVERSAL, VERIFICATION, CHARGEBACK, FRAUD), amou
 (integer minor units 0..1000000, no greater than the approved amount), currency (three
 uppercase letters matching the approved purchase currency), and occurred_at (RFC3339).
 no other fields are accepted. ` + kernelTransactionHelp + `.
+add_payment_method takes no parameters and is valid only when advertised by a connected
+KERNEL wallet. each call creates a separate pending enrollment with a single-use url that
+expires after 30 minutes; share it only with the cardholder and never retry automatically.
+a failed or expired enrollment does not affect other methods. remove_payment_method
+requires {"payment_method_id":"<id>"}. it blocks new purchases, fills, and confirmations
+funded by that method without disconnecting the wallet or changing other methods. an
+unresolved purchase can block removal; an uncertain provider outcome leaves removal_pending
+and must be re-checked before an explicit retry. removal is not proof that a payment did
+not occur. scoped keys need both vaults:use and vaults:write.
 restart_verification takes no parameters. in recovery_required, ` + vaultRecoveryHelp + `
 it rotates the approval link without a provider call, only after a classified initial
 attestation failure with proof no intent was dispatched. other recovery states must not be retried.
@@ -258,7 +275,7 @@ completed exits 0, failed/unknown exit nonzero with valid json retained on stdou
 
 ` + vaultPasskeyOperationHelp + `
 
-webmcp_invoke (credential items and ready Link cards when advertised; see items webmcp invoke --help
+webmcp_invoke (credential items and ready Link card/payment_request items when advertised; see items webmcp invoke --help
 for the flag-based form) requires browser_id, the opaque live tool_ref and exact source.page_url
 from browsers webmcp list, input (public json object with a null at each bound slot; never vault
 values), and 1-32 bindings (field, input_path as an rfc 6901 json pointer to an existing null in
@@ -278,14 +295,15 @@ and never retry automatically. 400/403/404/409 rejections mean the tool was not 
   owner unchanged; invoke it once per credential.
 1pw_access_request_status: no browser needed; optional timeout_seconds 0-120 (default 10).
   check status after the account owner has the approval link.
-1pw_fill: browser_id and the exact page_url of one open login page on a requested
-  origin; entry_id when several approved entries share that origin; optional
-  timeout_ms 1-30000. the extension selects fields and submits. fill_submitted exits 0
+1pw_fill: browser_id and the exact page_url of an open login page on a requested
+  origin; target_id when several open pages have that exact url; entry_id when several
+  approved entries share that origin; optional timeout_ms 1-30000. the extension selects fields and submits. fill_submitted exits 0
   and does not confirm sign-in; inspect the page. fill_failed and fill_unknown exit
   nonzero. 1pw_fill can submit the form, so never retry automatically. check the page
   first before retrying.
 1pw_update_access_token (stored-token credentials only): --spec-file, never --params,
-  with access_token only.
+  with access_token and optional access_token_expires_at (RFC3339). omitting the
+  expiry clears the previously supplied expiry.
 1pw_recover (credential accounts, no parameters): returns a new 1Password link that
   recovers a failed account connection. share it with the account owner, then run
   credentials connect again with the same key; never delete the item to recover.
@@ -304,7 +322,9 @@ JSON
   kernel vaults items invoke user-vault github 1pw_create_access_request --params '{"reason":"Sign in to GitHub"}'
   kernel vaults items invoke user-vault github 1pw_access_request_status --params '{"timeout_seconds":60}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login"}'
-  kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login","entry_id":"<entry-id>"}'
+  kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login","entry_id":"<entry-id>","target_id":"<cdp-target-id>"}'
+  kernel vaults items invoke checkout cardholder add_payment_method
+  kernel vaults items invoke checkout cardholder remove_payment_method --params '{"payment_method_id":"<payment-method-id>"}'
   kernel vaults items invoke user-vault login register_passkey --browser-id <browser-session-id> --field passkey
   kernel vaults items invoke user-vault login arm_passkey --browser-id <browser-session-id> --field passkey
   kernel vaults items invoke user-vault login disarm_passkey --browser-id <browser-session-id>
@@ -320,7 +340,7 @@ JSON
 			}
 			if cmd.Flags().Changed("spec-file") {
 				if !vaultOperationTakesParams(args[2]) {
-					return fmt.Errorf("--spec-file is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, and 1Password operations with parameters; passkey operations use --browser-id and optional --field")
+					return fmt.Errorf("--spec-file is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, remove_payment_method, and 1Password operations with parameters; passkey operations use --browser-id and optional --field")
 				}
 				data, err := readVaultJSONFile(cmd, "spec-file")
 				if err != nil {
@@ -347,7 +367,7 @@ JSON
 			}
 			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], params, vaultOutput(cmd), open)
 		}}
-	invoke.Flags().String("params", "", "operation parameters json for fill, webmcp_invoke, prepare_checkout, confirm_transaction, or 1pw_* (maximum 128 KiB); omit type and credential values; 1pw_update_access_token requires --spec-file")
+	invoke.Flags().String("params", "", "operation parameters json for fill, webmcp_invoke, prepare_checkout, confirm_transaction, remove_payment_method, or 1pw_* (maximum 128 KiB); omit type and credential values; 1pw_update_access_token requires --spec-file")
 	invoke.Flags().String("spec-file", "", "operation parameters json file (use '-' for stdin; maximum 128 KiB)")
 	invoke.MarkFlagsMutuallyExclusive("params", "spec-file")
 	invoke.Flags().Bool("open", false, "open a returned https action url; cardholder links are human-only, agents must share privately")
@@ -359,7 +379,7 @@ JSON
 
 	wallets := &cobra.Command{Use: "wallets", Short: "connect provider wallets and inspect funding methods"}
 	walletCreate := &cobra.Command{Use: "create <vault> <key> --provider <link|agentcard|kernel> --spec '<json>'", Short: "create a wallet and display its connection or enrollment action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: "create a wallet at an immutable key and follow the returned provider action.\na connected Link wallet pays at checkout through cards; its returned description and the flow below describe how.\n" + vaultSpecHelp + vaultWalletSpecHelp + "\n" + linkCardFlowHelp,
+		Long: "create a wallet at an immutable key and follow the returned provider action.\na connected Link wallet pays at checkout through card or payment_request items; its returned description and the flow below describe how.\n" + vaultSpecHelp + vaultWalletSpecHelp + "\n" + linkCardFlowHelp,
 		Example: `  kernel vaults wallets create checkout wallet-1 \
     --provider link --spec '{
       "authorization": {
@@ -408,7 +428,9 @@ JSON
 
 	cards := &cobra.Command{Use: "cards", Short: "configure card requests"}
 	cards.AddCommand(newVaultCardCommand(false), newVaultCardCommand(true))
-	cmd.AddCommand(items, wallets, cards, newVaultCredentialsCommand())
+	paymentRequests := &cobra.Command{Use: "payment-requests", Short: "configure one-purchase Link or KERNEL payment requests"}
+	paymentRequests.AddCommand(newVaultPaymentRequestCommand(false), newVaultPaymentRequestCommand(true))
+	cmd.AddCommand(items, wallets, cards, paymentRequests, newVaultCredentialsCommand())
 	return cmd
 }
 
@@ -469,6 +491,50 @@ an AgentCard recovery item that permits abandonment must be deleted after explic
 			return getVaultsHandler(cmd).SaveCard(cmd.Context(), args[0], args[1], param.Override[kernel.CardVaultItemSpecUnionParam](spec), update, vaultOutput(cmd))
 		}}
 	addVaultSpecFlags(cmd)
+	addVaultJSONOutputFlag(cmd)
+	return cmd
+}
+
+func newVaultPaymentRequestCommand(update bool) *cobra.Command {
+	use, short := "create", "create a one-purchase payment request without authorizing it"
+	if update {
+		use, short = "update", "update a payment request spec before checkout authorization"
+	}
+	cmd := &cobra.Command{
+		Use:     use + " <vault> <key> --provider <link|kernel> --spec '<json>'",
+		Short:   short,
+		Args:    cobra.ExactArgs(2),
+		PreRunE: vaultPreRun,
+		Long: short + `. payment_request is available only where enabled for the organization.
+Link and KERNEL payment requests are parented by their wallet and otherwise follow the
+same purchase lifecycle and advertised operations as the corresponding card item.
+AgentCard reusable cards remain card items. identical creates retrieve existing state;
+never create another request to retry an uncertain payment.
+
+` + linkCardFlowHelp + "\n" + vaultSpecHelp + vaultPaymentRequestSpecHelp,
+		Example: "  kernel vaults payment-requests " + use + ` checkout order-1 \
+    --provider kernel --spec '{
+      "wallet": "cardholder",
+      "payment_method_id": "<payment-method-id>",
+      "amount": 1234,
+      "currency": "usd",
+      "merchant_name": "Example Shop",
+      "merchant_url": "https://shop.example/checkout",
+      "merchant_country": "US"
+    }'`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			spec, err := vaultSpecFromFlags(cmd)
+			if err != nil {
+				return err
+			}
+			if string(spec["provider"]) == `"agentcard"` {
+				return fmt.Errorf("payment_request items support only link or kernel; AgentCard reusable cards use vaults cards")
+			}
+			return getVaultsHandler(cmd).SavePaymentRequest(cmd.Context(), args[0], args[1], param.Override[kernel.PaymentRequestVaultItemSpecUnionParam](spec), update, vaultOutput(cmd))
+		},
+	}
+	addVaultSpecFlags(cmd)
+	cmd.Flags().Lookup("provider").Usage = "provider: link or kernel (required)"
 	addVaultJSONOutputFlag(cmd)
 	return cmd
 }

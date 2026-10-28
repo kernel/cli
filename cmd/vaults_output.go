@@ -33,6 +33,8 @@ var onePasswordRequestEntryFields = vaultOutputFields{
 var onePasswordRequestFields = vaultOutputFields{"version": nil, "goal": nil, "entries": onePasswordRequestEntryFields}
 var vaultMethodFields = vaultOutputFields{
 	"id": nil, "provider": nil, "type": nil, "is_default": nil,
+	"status": nil, "status_reason": nil, "expires_at": nil,
+	"action":       vaultFieldsOf("name url"),
 	"display":      vaultFieldsOf("label brand last4"),
 	"capabilities": {"single_use_card": vaultFieldsOf("eligible reasons")},
 }
@@ -82,12 +84,15 @@ var vaultItemFields = vaultOutputFields{
 		"access_request": {
 			"id": nil, "state": nil, "goal": nil, "createdAt": nil, "has_autofill_token": nil, "granted_count": nil,
 			"request": onePasswordRequestFields, "entries": onePasswordRequestEntryFields,
+			"resolved": vaultFieldsOf("reference entryId"),
 		},
-		"fields":        {"*": vaultFieldsOf("has_value type")},
-		"masks":         vaultFieldsOf("brand last4 token_last4"),
-		"aliases":       vaultFieldsOf("number cvc exp_month exp_year"),
-		"preparation":   vaultFieldsOf("id status browser_id merchant_origin environment psp created_at expires_at approval_url"),
-		"authorization": vaultFieldsOf("id status psp merchant amount amount_cents currency created_at expires_at approval_url browser_id reason psp_error_code expected_cents actual_cents amount_authority amount_verified charged_amount_cents charged_currency charged_kind replay_attempted replay_status replay_delivered"),
+		"funding_status":    nil,
+		"payment_method_id": nil,
+		"fields":            {"*": vaultFieldsOf("has_value type")},
+		"masks":             vaultFieldsOf("brand last4 token_last4"),
+		"aliases":           vaultFieldsOf("number cvc exp_month exp_year"),
+		"preparation":       vaultFieldsOf("id status browser_id merchant_origin environment psp created_at expires_at approval_url"),
+		"authorization":     vaultFieldsOf("id status psp merchant amount amount_cents currency created_at expires_at approval_url browser_id reason psp_error_code expected_cents actual_cents amount_authority amount_verified charged_amount_cents charged_currency charged_kind replay_attempted replay_status replay_delivered"),
 	},
 }
 var vaultEventFields = vaultOutputFields{
@@ -366,7 +371,7 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 				command += " --field '<passkey-field>'"
 			}
 		}
-		if op.Type == "authorize" && item.Type == "card" && item.Spec.Provider == "link" && item.State.Status == "requested" {
+		if op.Type == "authorize" && (item.Type == "card" || item.Type == "payment_request") && item.Spec.Provider == "link" && item.State.Status == "requested" {
 			command += " --browser-id '<browser-session-id>' --page-url '<checkout-page-url>'"
 		}
 		pterm.Printf("invoke: %s -- %s %s %s\n", command, vaultShellArgument(vault), vaultShellArgument(key), vaultShellArgument(op.Type))
@@ -421,6 +426,13 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 						entryRow(entry.ID, entry.Parameters.Website)
 					}
 				}
+				for _, resolved := range item.State.AccessRequest.Resolved {
+					label := resolved.Reference
+					if resolved.EntryID != "" {
+						label += " (entry " + resolved.EntryID + ")"
+					}
+					rows = append(rows, []string{"resolved 1Password reference", label})
+				}
 			}
 		} else if item.Spec.Provider == "managed_auth" {
 			rows = append(rows, []string{"managed auth connection (immutable)", item.Spec.ConnectionID})
@@ -444,24 +456,24 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	if item.State.StatusReason != "" {
 		rows = append(rows, []string{"status reason", item.State.StatusReason})
 	}
-	if item.Type == "card" {
+	if item.Type == "card" || item.Type == "payment_request" {
 		merchant := item.Spec.MerchantName
 		if item.Spec.Provider == "agentcard" {
 			merchant = item.Spec.Merchant
 		}
 		rows = append(rows, []string{"wallet key", item.Spec.Wallet}, []string{"merchant", merchant}, []string{"amount (minor units)", fmt.Sprintf("%d %s", item.Spec.Amount, item.Spec.Currency)})
-		if item.Spec.Provider == "link" {
+		if item.Spec.PaymentMethodID != "" {
 			rows = append(rows, []string{"payment method id", item.Spec.PaymentMethodID})
-			if item.Spec.JSON.Recurring.Valid() {
-				intervalCount := "1 (default)"
-				if item.Spec.Recurring.JSON.IntervalCount.Valid() {
-					intervalCount = fmt.Sprint(item.Spec.Recurring.IntervalCount)
-				}
-				rows = append(rows,
-					[]string{"recurring interval", item.Spec.Recurring.Interval},
-					[]string{"recurring interval count", intervalCount},
-				)
+		}
+		if item.Spec.Provider == "link" && item.Spec.JSON.Recurring.Valid() {
+			intervalCount := "1 (default)"
+			if item.Spec.Recurring.JSON.IntervalCount.Valid() {
+				intervalCount = fmt.Sprint(item.Spec.Recurring.IntervalCount)
 			}
+			rows = append(rows,
+				[]string{"recurring interval", item.Spec.Recurring.Interval},
+				[]string{"recurring interval count", intervalCount},
+			)
 		}
 		if item.Spec.Provider == "agentcard" && item.Spec.CheckoutOrigin != "" {
 			rows = append(rows, []string{"checkout origin", item.Spec.CheckoutOrigin})
@@ -471,6 +483,12 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		}
 		if item.Spec.Provider == "kernel" && item.Spec.MerchantCountry != "" {
 			rows = append(rows, []string{"merchant country", item.Spec.MerchantCountry})
+		}
+		if item.State.JSON.FundingStatus.Valid() {
+			rows = append(rows, []string{"funding status", string(item.State.FundingStatus)})
+		}
+		if item.State.JSON.PaymentMethodID.Valid() && item.State.PaymentMethodID != item.Spec.PaymentMethodID {
+			rows = append(rows, []string{"funding payment method id", item.State.PaymentMethodID})
 		}
 		if masks := item.State.Masks; masks.Last4 != "" || masks.TokenLast4 != "" {
 			rows = append(rows, []string{"card last4", util.OrDash(masks.Last4)})
@@ -569,11 +587,11 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		if actions.RequiredAction != "" {
 			pterm.Info.Println("share the collection url with the user to complete the credential form. observe readiness with items get --wait 60; for edits to an already-ready item, compare versions without --wait.")
 		}
-		pterm.Info.Println("do not use credential items for credit card data. use wallet and card item types for credit cards and payment checkout instead.")
+		pterm.Info.Println("do not use credential items for credit card data. use wallet and card item types for credit cards and payment checkout instead; where enabled, use payment_request for one Link or KERNEL purchase.")
 		pterm.Info.Println("ready means required fields are populated, not that login succeeded. fill only when advertised; fill does not submit the form. passkey fields are never filled: use register_passkey, arm_passkey, and disarm_passkey only when advertised.")
 		return
 	}
-	if item.Type == "card" {
+	if item.Type == "card" || item.Type == "payment_request" {
 		if item.Spec.Provider == "kernel" {
 			switch item.State.Status {
 			case "requested", "pending_authorization", "ready":
@@ -593,25 +611,35 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 			}
 			pterm.Info.Println("preparations are single-use, including after failure or expiry. preparation consumed means claimed, not payment success. do not retry automatically.")
 		}
-		card := item.AsCard()
-		for _, expansion := range card.AvailableExpansions {
-			pterm.Printf("available expansion: %s — %s\n", expansion.Type, expansion.Description)
+		if item.Type == "card" {
+			card := item.AsCard()
+			for _, expansion := range card.AvailableExpansions {
+				pterm.Printf("available expansion: %s — %s\n", expansion.Type, expansion.Description)
+			}
+		} else {
+			request := item.AsPaymentRequest()
+			for _, expansion := range request.AvailableExpansions {
+				pterm.Printf("available expansion: %s — %s\n", expansion.Type, expansion.Description)
+			}
 		}
 		if item.State.JSON.Aliases.Valid() {
 			pterm.Info.Println("aliases are non-secret checkout values. use only in a browser created with this vault attached; ready does not mean paid.")
 		}
 		switch item.Spec.Provider {
 		case "kernel":
-			pterm.Info.Println(kernelTransactionHelp + ". kernel cards have no stored billing fields; billing_* returns field_unavailable. enter billing details on the merchant page.")
+			pterm.Info.Println(kernelTransactionHelp + ". kernel card and payment_request purchases have no stored billing fields; billing_* returns field_unavailable. enter billing details on the merchant page.")
+			if item.State.JSON.FundingStatus.Valid() {
+				pterm.Info.Println(kernelFundingStatusHelp + ".")
+			}
 		case "link":
-			pterm.Info.Println("fill never submits payment; submit the checkout yourself. if the result of submitting payment is unclear, check the merchant's order confirmation or order history before paying again. if authorization is declined or expires, delete this card and create a new one.")
+			pterm.Info.Println("fill never submits payment; submit the checkout yourself. if the result of submitting payment is unclear, check the merchant's order confirmation or order history before paying again. if authorization is declined or expires, delete this purchase item and create a new one.")
 			if item.Spec.JSON.Recurring.Valid() {
-				pterm.Info.Println("this recurring card remains ready for merchant-scheduled charges until it expires or is deleted; do not create a new card each period. deleting the card, wallet, or vault revokes the Link credential but does not cancel the merchant subscription. if deletion returns 409 provider_revocation_pending, retry deletion.")
+				pterm.Info.Println("this recurring Link purchase remains ready for merchant-scheduled charges until it expires or is deleted; do not create a new card each period, or a new payment_request for the same recurring purchase. deleting the item, wallet, or vault revokes the Link credential but does not cancel the merchant subscription. if deletion returns 409 provider_revocation_pending, retry deletion.")
 			}
 		default:
-			pterm.Info.Println("inspect items events for payment outcomes. never retry automatically; if recovery permits abandonment, delete the card only after explicit user confirmation before creating a replacement.")
+			pterm.Info.Println("inspect items events for payment outcomes. never retry automatically; if recovery permits abandonment, delete the purchase item only after explicit user confirmation before creating a replacement.")
 		}
-	} else {
+	} else if item.Type == "wallet" {
 		wallet := item.AsWallet()
 		if item.Description != "" {
 			pterm.Info.Println(item.Description)
@@ -637,25 +665,66 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	}
 }
 
+var vaultAddPaymentMethodResultFields = vaultOutputFields{"type": nil, "payment_method": vaultMethodFields}
+var vaultRemovePaymentMethodResultFields = vaultFieldsOf("type status payment_method_id")
+
+func printVaultPaymentMethodOperationResult(response *kernel.VaultItemOperationResponseUnion, operation, output string) error {
+	if response == nil || response.Type != operation {
+		return fmt.Errorf("unexpected %s response; inspect the wallet before retrying", operation)
+	}
+	fields := vaultAddPaymentMethodResultFields
+	if operation == "remove_payment_method" {
+		fields = vaultRemovePaymentMethodResultFields
+	}
+	raw, err := filterVaultJSON(json.RawMessage(response.RawJSON()), fields)
+	if err != nil {
+		return fmt.Errorf("invalid %s response; inspect the wallet before retrying", operation)
+	}
+	if output == "json" {
+		return printVaultJSON(raw)
+	}
+	if operation == "add_payment_method" {
+		result := response.AsAddPaymentMethodVaultItemOperationResult()
+		pterm.Success.Println("Started payment method enrollment")
+		printVaultPaymentMethods("kernel", []kernel.VaultPaymentMethod{result.PaymentMethod})
+		pterm.Info.Println("share the single-use card_enrollment url only with the intended cardholder; it expires after 30 minutes. every call creates a separate link, so never retry automatically. observe completion with wallets payment-methods; an expired or failed enrollment does not affect other methods.")
+		return nil
+	}
+	result := response.AsRemovePaymentMethodVaultItemOperationResult()
+	pterm.Success.Printf("Removed payment method: %s\n", result.PaymentMethodID)
+	pterm.Info.Println("removal is not proof that an unresolved payment did not occur; reconcile the purchase separately.")
+	return nil
+}
+
 func printVaultPaymentMethods(provider string, methods []kernel.VaultPaymentMethod) {
 	if len(methods) == 0 {
 		pterm.Info.Println("no payment methods returned")
 		return
 	}
-	rows := pterm.TableData{{"payment method id", "provider", "type", "label", "brand", "last4", "default", "single-use eligible", "reasons"}}
+	rows := pterm.TableData{{"payment method id", "provider", "type", "label", "brand", "last4", "default", "status", "single-use eligible", "reasons", "status reason", "expires at"}}
 	for _, m := range methods {
 		capability := m.Capabilities.SingleUseCard
 		eligible := "unknown"
 		if capability.JSON.Eligible.Valid() {
 			eligible = fmt.Sprint(capability.Eligible)
 		}
-		rows = append(rows, []string{m.ID, m.Provider, m.Type, m.Display.Label, m.Display.Brand, m.Display.Last4, fmt.Sprint(m.IsDefault), eligible, strings.Join(capability.Reasons, ", ")})
+		expiresAt := ""
+		if m.JSON.ExpiresAt.Valid() && !m.ExpiresAt.IsZero() {
+			expiresAt = util.FormatLocal(m.ExpiresAt)
+		}
+		rows = append(rows, []string{m.ID, m.Provider, m.Type, m.Display.Label, m.Display.Brand, m.Display.Last4, fmt.Sprint(m.IsDefault), string(m.Status), eligible, strings.Join(capability.Reasons, ", "), m.StatusReason, expiresAt})
 	}
 	PrintTableNoPad(rows, true)
+	for _, method := range methods {
+		if method.Action.JSON.URL.Valid() && vaultDisplayURL(method.Action.URL) {
+			pterm.Printf("payment method %s %s url:\n%s\n", method.ID, method.Action.Name, method.Action.URL)
+		}
+	}
 	if provider == "kernel" {
-		pterm.Info.Println("kernel cards use the wallet key, not a payment method id. " + kernelEligibilityHelp)
+		pterm.Info.Println("select payment_method_id explicitly for payment_request items and for card items when the wallet has no default card. a legacy default card may be selected by omitting it only from a card spec. " + kernelEligibilityHelp)
+		pterm.Info.Println("pending_enrollment needs the returned cardholder action. removal_pending means retry remove_payment_method later; recovery_required handling depends on status_reason.")
 	} else {
-		pterm.Info.Println("select an id explicitly in the card --spec json: Link uses payment_method_id; AgentCard uses card_id (or omit it for cardholder selection). capabilities are advisory; missing means unknown, not ineligible.")
+		pterm.Info.Println("select an id explicitly in the purchase --spec json: Link uses payment_method_id; AgentCard cards use card_id (or omit it for cardholder selection). capabilities are advisory; missing means unknown, not ineligible.")
 	}
 }
 
