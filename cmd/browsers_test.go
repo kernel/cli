@@ -893,7 +893,7 @@ func TestBrowsersGet_ProxyRoutes(t *testing.T) {
 	fake := &FakeBrowsersService{
 		GetFunc: func(_ context.Context, _ string, _ kernel.BrowserGetParams, _ ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
 			var resp kernel.BrowserGetResponse
-			err := json.Unmarshal([]byte(`{"session_id":"sess-routes","network":{"private_hosts":["internal.example"],"proxy_routes":[{"hosts":["api.ipify.org"],"proxy":{"id":"resolved-proxy"}}]}}`), &resp)
+			err := json.Unmarshal([]byte(`{"session_id":"sess-routes","network":{"private_hosts":["internal.example"],"allowlist_state":{"revision":"rev-123","base_revision":"rev-122","mutation_id":"mutation-1"},"proxy_routes":[{"hosts":["api.ipify.org"],"proxy":{"id":"resolved-proxy"}}]}}`), &resp)
 			require.NoError(t, err)
 			return &resp, nil
 		},
@@ -903,6 +903,10 @@ func TestBrowsersGet_ProxyRoutes(t *testing.T) {
 	assert.Contains(t, outBuf.String(), "Private Hosts")
 	assert.Contains(t, outBuf.String(), "Proxy Routes")
 	assert.Contains(t, outBuf.String(), "api.ipify.org = resolved-proxy")
+	assert.Contains(t, outBuf.String(), "Allowlist Revision")
+	assert.Contains(t, outBuf.String(), "rev-123")
+	assert.Contains(t, outBuf.String(), "Allowlist Mutation ID")
+	assert.Contains(t, outBuf.String(), "mutation-1")
 	jsonOutput := captureStdout(t, func() {
 		require.NoError(t, b.Get(context.Background(), BrowsersGetInput{Identifier: "sess-routes", Output: "json"}))
 	})
@@ -1055,6 +1059,32 @@ func TestBrowsersCreate_WithVideoMemory(t *testing.T) {
 
 	// An unsupported size is rejected before the request is made.
 	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{VideoMemory: "8GiB"}))
+}
+
+func TestBrowsersCreate_WithFingerprintOS(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	calls := 0
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			calls++
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-fingerprint"}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{FingerprintOS: "macos"})
+	require.NoError(t, err)
+	assert.Equal(t, kernel.BrowserFingerprintOsMacos, captured.Fingerprint.Os)
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"fingerprint":{"os":"macos"}`)
+
+	err = b.Create(context.Background(), BrowsersCreateInput{FingerprintOS: "windows"})
+	require.ErrorContains(t, err, "--fingerprint-os")
+	assert.Equal(t, 1, calls)
 }
 
 func TestBrowsersCreate_WithChromePolicy(t *testing.T) {
@@ -3482,6 +3512,28 @@ func TestBrowsersUpdate_WithAllowedHosts_ForwardsParam(t *testing.T) {
 	assert.Contains(t, string(raw), `"network":{"allowed_hosts":["example.com","*.example.com"]}`)
 }
 
+func TestBrowsersUpdate_ConditionalAllowedHosts_ForwardsPrecondition(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier:                "session123",
+		AllowedHosts:              []string{"example.com"},
+		AllowedHostsProvided:      true,
+		ExpectedAllowlistRevision: "rev-123",
+		MutationID:                "mutation-123",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "rev-123", captured.Network.ExpectedAllowlistRevision.Value)
+	assert.Equal(t, "mutation-123", captured.Network.MutationID.Value)
+	raw, marshalErr := json.Marshal(*captured)
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(raw), `"expected_allowlist_revision":"rev-123"`)
+	assert.Contains(t, string(raw), `"mutation_id":"mutation-123"`)
+}
+
 func TestBrowsersUpdate_ClearAllowedHosts_SendsNull(t *testing.T) {
 	setupStdoutCapture(t)
 	fake, captured := captureUpdateParams(t)
@@ -3545,6 +3597,16 @@ func TestBrowsersUpdate_AllowedHostsValidation(t *testing.T) {
 			name:    "too many entries",
 			in:      BrowsersUpdateInput{Identifier: "s", AllowedHosts: tooMany, AllowedHostsProvided: true},
 			wantErr: "too many --allowed-host entries",
+		},
+		{
+			name:    "revision without mutation id",
+			in:      BrowsersUpdateInput{Identifier: "s", AllowedHosts: []string{"example.com"}, ExpectedAllowlistRevision: "rev-1"},
+			wantErr: "--expected-allowlist-revision and --mutation-id must be passed together",
+		},
+		{
+			name:    "conditional fields without allowlist change",
+			in:      BrowsersUpdateInput{Identifier: "s", Name: "new-name", SetName: true, ExpectedAllowlistRevision: "rev-1", MutationID: "mutation-1"},
+			wantErr: "require --allowed-host or --clear-allowed-hosts",
 		},
 	}
 	for _, tt := range tests {

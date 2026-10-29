@@ -442,10 +442,12 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	}
 	if item.Type == "wallet" {
 		configID, configName := item.Spec.ProviderConfig.ID, item.Spec.ProviderConfig.Name
-		if item.Spec.Provider == "link" {
+		if item.Spec.Provider == "link" || item.Spec.Provider == "shop_pay" {
 			client := item.Spec.Authorization.Client
 			rows = append(rows, []string{"OAuth client type", client.Type})
-			configID, configName = client.ProviderConfig.ID, client.ProviderConfig.Name
+			if item.Spec.Provider == "link" {
+				configID, configName = client.ProviderConfig.ID, client.ProviderConfig.Name
+			}
 		}
 		if configID != "" {
 			rows = append(rows, []string{"provider config id (immutable)", configID})
@@ -478,10 +480,10 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		if item.Spec.Provider == "agentcard" && item.Spec.CheckoutOrigin != "" {
 			rows = append(rows, []string{"checkout origin", item.Spec.CheckoutOrigin})
 		}
-		if item.Spec.Provider == "kernel" && item.Spec.MerchantURL != "" {
+		if (item.Spec.Provider == "kernel" || item.Spec.Provider == "shop_pay") && item.Spec.MerchantURL != "" {
 			rows = append(rows, []string{"merchant url", item.Spec.MerchantURL})
 		}
-		if item.Spec.Provider == "kernel" && item.Spec.MerchantCountry != "" {
+		if (item.Spec.Provider == "kernel" || item.Spec.Provider == "shop_pay") && item.Spec.MerchantCountry != "" {
 			rows = append(rows, []string{"merchant country", item.Spec.MerchantCountry})
 		}
 		if item.State.JSON.FundingStatus.Valid() {
@@ -543,6 +545,9 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemActions) {
 	if actions.RecoveryRequired {
 		guidance := kernelSupportGuidance
+		if item.Spec.Provider == "shop_pay" {
+			guidance = shopPayRecoveryHelp
+		}
 		if actions.advertises("restart_verification") {
 			guidance = vaultRecoveryHelp
 		}
@@ -636,6 +641,8 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 			if item.Spec.JSON.Recurring.Valid() {
 				pterm.Info.Println("this recurring Link purchase remains ready for merchant-scheduled charges until it expires or is deleted; do not create a new card each period, or a new payment_request for the same recurring purchase. deleting the item, wallet, or vault revokes the Link credential but does not cancel the merchant subscription. if deletion returns 409 provider_revocation_pending, retry deletion.")
 			}
+		case "shop_pay":
+			pterm.Info.Println("Shop Pay fill never submits payment. submit checkout yourself, then report the observed merchant outcome once with confirm_transaction when advertised; reporting consumes the card whatever the outcome. never infer success or repeat an unknown checkout. " + shopPayRecoveryHelp + ".")
 		default:
 			pterm.Info.Println("inspect items events for payment outcomes. never retry automatically; if recovery permits abandonment, delete the purchase item only after explicit user confirmation before creating a replacement.")
 		}
@@ -646,6 +653,9 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		}
 		if item.Spec.Provider == "kernel" {
 			pterm.Info.Println(kernelWalletHelp)
+		}
+		if item.Spec.Provider == "shop_pay" {
+			pterm.Info.Println("the connected wallet's payment_methods expansion lists the shopper's saved Shop Pay cards. create a separate card item for each purchase and follow its advertised authorize, fill, and confirm_transaction operations.")
 		}
 		for _, expansion := range wallet.AvailableExpansions {
 			pterm.Printf("available expansion: %s — %s\n", expansion.Type, expansion.Description)

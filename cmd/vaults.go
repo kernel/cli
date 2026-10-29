@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -343,6 +344,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	if !available {
 		if actions.RecoveryRequired {
 			message := "recovery_required: " + kernelSupportGuidance
+			if item.Spec.Provider == "shop_pay" {
+				message = "recovery_required: " + shopPayRecoveryHelp
+			}
 			if actions.advertises("restart_verification") {
 				message = "recovery_required: " + vaultRecoveryHelp
 			}
@@ -353,14 +357,22 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		}
 		return fmt.Errorf("operation %q is not advertised in available_operations; inspect the item", operation)
 	}
-	if operation == "confirm_transaction" && item.Spec.Provider == "kernel" {
+	if operation == "confirm_transaction" && (item.Spec.Provider == "kernel" || item.Spec.Provider == "shop_pay") {
 		if params.ConfirmTransaction.Currency != strings.ToUpper(item.Spec.Currency) || params.ConfirmTransaction.Amount > item.Spec.Amount {
 			return fmt.Errorf("confirm_transaction currency must match the approved purchase currency and amount must not exceed the approved purchase amount; operation was not invoked")
 		}
+		if item.Spec.Provider == "shop_pay" && !slices.Contains([]kernel.ConfirmTransactionVaultItemOperationRequestTransactionType{
+			kernel.ConfirmTransactionVaultItemOperationRequestTransactionTypePurchase,
+			kernel.ConfirmTransactionVaultItemOperationRequestTransactionTypeAuthorization,
+			kernel.ConfirmTransactionVaultItemOperationRequestTransactionTypeCapture,
+		}, params.ConfirmTransaction.TransactionType) {
+			return fmt.Errorf("Shop Pay confirm_transaction transaction_type must be PURCHASE, AUTHORIZATION, or CAPTURE; operation was not invoked")
+		}
 	}
 	linkPurchase := (item.Type == "card" || item.Type == "payment_request") && item.Spec.Provider == "link"
-	if params != nil && params.Authorize != nil && !linkPurchase {
-		return fmt.Errorf("--browser-id and --page-url only apply to Link cards or Link payment_request items; authorize was not invoked")
+	checkoutAuthorizedPurchase := linkPurchase || (item.Type == "card" && item.Spec.Provider == "shop_pay")
+	if params != nil && params.Authorize != nil && !checkoutAuthorizedPurchase {
+		return fmt.Errorf("--browser-id and --page-url only apply to Link cards or payment_request items and Shop Pay cards; authorize was not invoked")
 	}
 	if operation == "fill" {
 		if !linkPurchase && len(params.Fill.Fields) == 0 {
@@ -377,12 +389,7 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	request := kernel.VaultItemPerformOperationParams{IDOrName: vault}
 	opts := vaultWriteRequestOptions()
 	if operation == "confirm_transaction" {
-		// Replace with a typed SDK parameter once the operation is generated.
-		body, err := json.Marshal(params.ConfirmTransaction)
-		if err != nil {
-			return err
-		}
-		opts = append(opts, option.WithRequestBody("application/json", body))
+		request.OfConfirmTransaction = params.ConfirmTransaction
 	} else if params != nil && params.Passkey != nil {
 		request = *params.Passkey
 		request.IDOrName = vault
@@ -418,6 +425,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		}
 		if operation == "authorize" && linkPurchase {
 			return linkAuthorizeError(err, params != nil && params.Authorize != nil)
+		}
+		if operation == "authorize" && item.Type == "card" && item.Spec.Provider == "shop_pay" {
+			return shopPayAuthorizeError(err, params != nil && params.Authorize != nil)
 		}
 		return util.CleanedUpSdkError{Err: err}
 	}

@@ -17,7 +17,7 @@ type vaultOperationParams struct {
 	Fill               *vaultFillParams
 	WebMCP             *kernel.WebmcpInvokeVaultItemOperationRequestParam
 	Checkout           *kernel.VaultCheckoutContextParam
-	ConfirmTransaction *vaultConfirmTransactionParams
+	ConfirmTransaction *kernel.ConfirmTransactionVaultItemOperationRequestParam
 	// Passkey, OnePassword, and PaymentMethod are complete operation request bodies;
 	// Invoke supplies the vault.
 	Passkey       *kernel.VaultItemPerformOperationParams

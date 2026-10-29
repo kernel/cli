@@ -222,6 +222,18 @@ func parseVideoMemoryFlag(videoMemory string) (kernel.BrowserVideoMemory, error)
 	return "", fmt.Errorf("invalid --video-memory value: %s (must be one of %s)", videoMemory, strings.Join(availableVideoMemorySizes(), ", "))
 }
 
+// parseFingerprintOS validates the closed-beta browser fingerprint override.
+// Omission preserves the browser's default fingerprint.
+func parseFingerprintOS(os string) (kernel.BrowserFingerprintOs, error) {
+	if os == "" {
+		return "", nil
+	}
+	if os == string(kernel.BrowserFingerprintOsMacos) {
+		return kernel.BrowserFingerprintOsMacos, nil
+	}
+	return "", fmt.Errorf("invalid --fingerprint-os value: %s (must be macos)", os)
+}
+
 // maxPrivateHosts mirrors the API's cap on network.private_hosts entries.
 const maxPrivateHosts = 32
 
@@ -517,6 +529,7 @@ type BrowsersCreateInput struct {
 	GPU                  BoolFlag
 	Memory               string
 	VideoMemory          string
+	FingerprintOS        string
 	InvocationID         string
 	Kiosk                BoolFlag
 	ProfileID            string
@@ -600,10 +613,12 @@ type BrowsersUpdateInput struct {
 	ClearLocale   bool
 	// AllowedHosts replaces the session's egress allowlist when
 	// AllowedHostsProvided is set; ClearAllowedHosts removes it.
-	AllowedHosts         []string
-	AllowedHostsProvided bool
-	ClearAllowedHosts    bool
-	Output               string
+	AllowedHosts              []string
+	AllowedHostsProvided      bool
+	ClearAllowedHosts         bool
+	ExpectedAllowlistRevision string
+	MutationID                string
+	Output                    string
 }
 
 // BrowsersCmd is a cobra-independent command handler for browsers operations.
@@ -778,6 +793,13 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 	if videoMemory != "" {
 		params.VideoMemory = videoMemory
+	}
+	fingerprintOS, err := parseFingerprintOS(in.FingerprintOS)
+	if err != nil {
+		return err
+	}
+	if fingerprintOS != "" {
+		params.Fingerprint = kernel.BrowserFingerprintParam{Os: fingerprintOS}
 	}
 	if in.InvocationID != "" {
 		params.InvocationID = kernel.Opt(in.InvocationID)
@@ -1075,6 +1097,12 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	}
 	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)})
 	tableData = append(tableData, []string{"Allowed Hosts", formatAllowedHosts(browser.Network)})
+	if browser.Network.AllowlistState.JSON.Revision.Valid() {
+		tableData = append(tableData, []string{"Allowlist Revision", browser.Network.AllowlistState.Revision})
+		if browser.Network.AllowlistState.MutationID != "" {
+			tableData = append(tableData, []string{"Allowlist Mutation ID", browser.Network.AllowlistState.MutationID})
+		}
+	}
 	tableData = append(tableData, []string{"Proxy Routes", formatProxyRoutes(browser.Network)})
 	if vaults := formatVaultReferences(browser.Vaults); vaults != "" {
 		tableData = append(tableData, []string{"Vaults", vaults})
@@ -1258,6 +1286,13 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return err
 	}
 	hasAllowedHostsChange := len(allowedHosts) > 0 || in.ClearAllowedHosts
+	conditionalAllowlistUpdate := in.ExpectedAllowlistRevision != "" || in.MutationID != ""
+	if (in.ExpectedAllowlistRevision == "") != (in.MutationID == "") {
+		return fmt.Errorf("--expected-allowlist-revision and --mutation-id must be passed together")
+	}
+	if conditionalAllowlistUpdate && !hasAllowedHostsChange {
+		return fmt.Errorf("--expected-allowlist-revision and --mutation-id require --allowed-host or --clear-allowed-hosts")
+	}
 
 	// Validate --save-changes is only used with a profile
 	if in.ProfileSaveChanges.Set && !hasProfileChange {
@@ -1315,6 +1350,10 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		params.Network.AllowedHosts = param.NullSlice[[]string]()
 	} else if len(allowedHosts) > 0 {
 		params.Network.AllowedHosts = allowedHosts
+	}
+	if conditionalAllowlistUpdate {
+		params.Network.ExpectedAllowlistRevision = kernel.Opt(in.ExpectedAllowlistRevision)
+		params.Network.MutationID = kernel.Opt(in.MutationID)
 	}
 
 	// Handle proxy changes
@@ -3128,6 +3167,12 @@ Notes:
     without one. Omit to leave the list unchanged; an empty list is invalid.
   - --clear-allowed-hosts removes the allowlist and returns to unfiltered egress. Once removed,
     an allowlist cannot be added back to that browser.
+  - To make an allowlist update conditional, copy Allowlist Revision from 'browsers get'
+    (or network.allowlist_state.revision from JSON), generate a unique mutation ID, and pass
+    both --expected-allowlist-revision and --mutation-id. Reuse the same revision,
+    mutation ID, and allowlist payload when retrying an uncertain update. A stale precondition
+    returns 409 stale_network without changing the allowlist; a GET alone does not fence an
+    earlier unfinished update.
   - Allowlist changes apply without restarting the browser. New requests to destinations no
     longer allowed are normally refused within a few seconds, and open connections to them
     are closed within about 30 seconds. Propagation can take up to 10 minutes during a deployment.
@@ -3193,6 +3238,8 @@ func init() {
 	browsersUpdateCmd.Flags().Bool("clear-tags", false, "Remove all tags from the browser session")
 	browsersUpdateCmd.Flags().StringSlice("allowed-host", nil, "Replace an existing egress allowlist (repeat or comma-separated, max 100), using the same entry rules as 'browsers create --allowed-host'. Cannot add one to a browser created without one or after removal. Omit to leave unchanged; an empty list is invalid. Applies without restarting the browser; --start-url must be allowed by the new list. Requires proxy v3; on leased pooled browsers the pool's allowlist is restored on release (mutually exclusive with --clear-allowed-hosts). See notes for propagation timing")
 	browsersUpdateCmd.Flags().Bool("clear-allowed-hosts", false, "Remove the egress allowlist and return to unfiltered egress; an allowlist cannot be added back to this browser")
+	browsersUpdateCmd.Flags().String("expected-allowlist-revision", "", "Optimistic concurrency precondition from the last browser response's network.allowlist_state.revision; requires --mutation-id and an allowlist change")
+	browsersUpdateCmd.Flags().String("mutation-id", "", "Unique ID for this conditional allowlist update; requires --expected-allowlist-revision. Reuse it with the same revision and payload when retrying an uncertain update")
 	browsersUpdateCmd.Flags().String("timezone", "", "Set the session timezone (IANA, e.g. America/Los_Angeles) (mutually exclusive with --clear-timezone)")
 	browsersUpdateCmd.Flags().Bool("clear-timezone", false, "Clear the session timezone override and use the browser region's default")
 	browsersUpdateCmd.Flags().String("locale", "", "Set the session locale used for languages and date and number formatting (BCP 47, e.g. de-DE) (mutually exclusive with --clear-locale)")
@@ -3480,6 +3527,7 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().Bool("gpu", false, "Launch browser with hardware-accelerated GPU rendering")
 	browsersCreateCmd.Flags().String("memory", "", "Memory for a non-GPU browser session. Headless: '1GiB' (default), '2GiB' or '4GiB'. Headful: '8GiB' (default) or '16GiB'")
 	browsersCreateCmd.Flags().String("video-memory", "", "Video memory (VRAM) for a GPU browser session (requires --gpu): '2GiB' (default, 4 vCPU/6GiB memory) or '4GiB' (8 vCPU/12GiB memory)")
+	browsersCreateCmd.Flags().String("fingerprint-os", "", "Closed beta browser fingerprint OS override: macos. Contact Kernel to enable; requires --stealth=true, --headless=false, --gpu=false, and default memory")
 	browsersCreateCmd.Flags().String("invocation-id", "", "Associate the browser session with an invocation")
 	browsersCreateCmd.Flags().Bool("kiosk", false, "Launch browser in kiosk mode")
 	browsersCreateCmd.Flags().IntP("timeout", "t", 60, "Timeout in seconds for the browser session")
@@ -3623,6 +3671,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	gpuVal, _ := cmd.Flags().GetBool("gpu")
 	memory, _ := cmd.Flags().GetString("memory")
 	videoMemory, _ := cmd.Flags().GetString("video-memory")
+	fingerprintOS, _ := cmd.Flags().GetString("fingerprint-os")
 	invocationID, _ := cmd.Flags().GetString("invocation-id")
 	kioskVal, _ := cmd.Flags().GetBool("kiosk")
 	timeout, _ := cmd.Flags().GetInt("timeout")
@@ -3783,6 +3832,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		GPU:                  BoolFlag{Set: cmd.Flags().Changed("gpu"), Value: gpuVal},
 		Memory:               memory,
 		VideoMemory:          videoMemory,
+		FingerprintOS:        fingerprintOS,
 		InvocationID:         invocationID,
 		Kiosk:                BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kioskVal},
 		ProfileID:            profileID,
@@ -3899,40 +3949,44 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	clearLocale, _ := cmd.Flags().GetBool("clear-locale")
 	allowedHosts, _ := cmd.Flags().GetStringSlice("allowed-host")
 	clearAllowedHosts, _ := cmd.Flags().GetBool("clear-allowed-hosts")
+	expectedAllowlistRevision, _ := cmd.Flags().GetString("expected-allowlist-revision")
+	mutationID, _ := cmd.Flags().GetString("mutation-id")
 
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
 	return b.Update(cmd.Context(), BrowsersUpdateInput{
-		Identifier:           args[0],
-		ProxyID:              proxyID,
-		ProxyName:            proxyName,
-		ProxyMode:            proxyMode,
-		ClearProxy:           clearProxy,
-		DisableDefaultProxy:  BoolFlag{Set: cmd.Flags().Changed("disable-default-proxy"), Value: disableDefaultProxy},
-		ProfileID:            profileID,
-		ProfileName:          profileName,
-		ProfileSaveChanges:   BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
-		Viewport:             viewport,
-		Force:                force,
-		Telemetry:            telemetry,
-		TelemetryCdpExclude:  telemetryCdpExclude,
-		Name:                 name,
-		SetName:              cmd.Flags().Changed("name"),
-		ClearName:            clearName,
-		Tags:                 tags,
-		TagsProvided:         tagsProvided,
-		ClearTags:            clearTags,
-		StartURL:             startURL,
-		Timezone:             timezone,
-		SetTimezone:          cmd.Flags().Changed("timezone"),
-		ClearTimezone:        clearTimezone,
-		Locale:               locale,
-		SetLocale:            cmd.Flags().Changed("locale"),
-		ClearLocale:          clearLocale,
-		AllowedHosts:         allowedHosts,
-		AllowedHostsProvided: cmd.Flags().Changed("allowed-host"),
-		ClearAllowedHosts:    clearAllowedHosts,
-		Output:               out,
+		Identifier:                args[0],
+		ProxyID:                   proxyID,
+		ProxyName:                 proxyName,
+		ProxyMode:                 proxyMode,
+		ClearProxy:                clearProxy,
+		DisableDefaultProxy:       BoolFlag{Set: cmd.Flags().Changed("disable-default-proxy"), Value: disableDefaultProxy},
+		ProfileID:                 profileID,
+		ProfileName:               profileName,
+		ProfileSaveChanges:        BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
+		Viewport:                  viewport,
+		Force:                     force,
+		Telemetry:                 telemetry,
+		TelemetryCdpExclude:       telemetryCdpExclude,
+		Name:                      name,
+		SetName:                   cmd.Flags().Changed("name"),
+		ClearName:                 clearName,
+		Tags:                      tags,
+		TagsProvided:              tagsProvided,
+		ClearTags:                 clearTags,
+		StartURL:                  startURL,
+		Timezone:                  timezone,
+		SetTimezone:               cmd.Flags().Changed("timezone"),
+		ClearTimezone:             clearTimezone,
+		Locale:                    locale,
+		SetLocale:                 cmd.Flags().Changed("locale"),
+		ClearLocale:               clearLocale,
+		AllowedHosts:              allowedHosts,
+		AllowedHostsProvided:      cmd.Flags().Changed("allowed-host"),
+		ClearAllowedHosts:         clearAllowedHosts,
+		ExpectedAllowlistRevision: expectedAllowlistRevision,
+		MutationID:                mutationID,
+		Output:                    out,
 	})
 }
 

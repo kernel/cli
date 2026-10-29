@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
@@ -111,6 +112,62 @@ func TestAPIKeysCreateBuildsParamsAndPrintsPlaintextKey(t *testing.T) {
 	assert.Contains(t, out, "key_123")
 	assert.Contains(t, out, "sk_live_123")
 	assert.Contains(t, out, "Prod")
+}
+
+func TestAPIKeysCreateSupportsExactExpiryAndPolicy(t *testing.T) {
+	capturePtermOutput(t)
+	expiresAt := "2099-01-15T09:00:00Z"
+	fake := &FakeAPIKeysService{
+		NewFunc: func(ctx context.Context, body kernel.APIKeyNewParams, opts ...option.RequestOption) (*kernel.CreatedAPIKey, error) {
+			expectedExpiry, err := time.Parse(time.RFC3339, expiresAt)
+			require.NoError(t, err)
+			assert.True(t, body.ExpiresAt.Valid())
+			assert.Equal(t, expectedExpiry, body.ExpiresAt.Value)
+			require.Len(t, body.Policy.Statements, 2)
+			assert.Equal(t, "browsers:use", body.Policy.Statements[0].Action)
+			assert.Equal(t, "projects/proj_123/browsers/*", body.Policy.Statements[0].Resource)
+			assert.Equal(t, "vaults:read", body.Policy.Statements[1].Action)
+			return createdAPIKeyFromJSON(`{"id":"key_123","name":"ci","key":"sk_live_123","masked_key":"sk_...123","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123"},"expires_at":"2099-01-15T09:00:00Z","project_id":"proj_123"}`), nil
+		},
+	}
+	c := APIKeysCmd{apiKeys: fake}
+
+	err := c.Create(context.Background(), APIKeysCreateInput{
+		Name:      "ci",
+		ExpiresAt: expiresAt,
+		ProjectID: "proj_123",
+		Policy:    `{"statements":[{"action":"browsers:use","resource":"projects/proj_123/browsers/*"},{"action":"vaults:read","resource":"projects/proj_123/vaults/*"}]}`,
+	})
+	require.NoError(t, err)
+}
+
+func TestAPIKeysCreateRejectsInvalidExpiryAndPolicy(t *testing.T) {
+	called := false
+	fake := &FakeAPIKeysService{NewFunc: func(ctx context.Context, body kernel.APIKeyNewParams, opts ...option.RequestOption) (*kernel.CreatedAPIKey, error) {
+		called = true
+		return nil, nil
+	}}
+	c := APIKeysCmd{apiKeys: fake}
+	tests := []struct {
+		name    string
+		input   APIKeysCreateInput
+		wantErr string
+	}{
+		{"both expiry forms", APIKeysCreateInput{Name: "ci", DaysToExpire: Int64Flag{Set: true, Value: 30}, ExpiresAt: "2099-01-15T09:00:00Z"}, "mutually exclusive"},
+		{"invalid expiry", APIKeysCreateInput{Name: "ci", ExpiresAt: "tomorrow"}, "RFC3339"},
+		{"past expiry", APIKeysCreateInput{Name: "ci", ExpiresAt: "2020-01-01T00:00:00Z"}, "future"},
+		{"invalid policy json", APIKeysCreateInput{Name: "ci", Policy: "[]"}, "JSON object"},
+		{"empty statements", APIKeysCreateInput{Name: "ci", Policy: `{"statements":[]}`}, "between 1 and 256"},
+		{"empty statement field", APIKeysCreateInput{Name: "ci", Policy: `{"statements":[{"action":"","resource":"projects/*"}]}`}, "non-empty action and resource"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			called = false
+			err := c.Create(context.Background(), tt.input)
+			require.ErrorContains(t, err, tt.wantErr)
+			assert.False(t, called)
+		})
+	}
 }
 
 func TestAPIKeysCreateRejectsInvalidDaysToExpire(t *testing.T) {

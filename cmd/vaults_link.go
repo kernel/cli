@@ -126,3 +126,29 @@ func linkAuthorizeError(err error, checkout bool) error {
 	message := kernelVaultErrorURL.ReplaceAllString(body.Message, "[redacted url]")
 	return safeKernelAPIError(apiErr, body.Code, fmt.Sprintf("authorize failed (http %d): %s; %s", apiErr.StatusCode, message, guidance))
 }
+
+func shopPayAuthorizeError(err error, checkout bool) error {
+	var apiErr *kernel.Error
+	if !errors.As(err, &apiErr) {
+		cause := kernelVaultErrorURL.ReplaceAllString(err.Error(), "[redacted url]")
+		return kernelVaultTransportError{message: fmt.Sprintf("Shop Pay authorize result unavailable (%s); re-get the item and follow its advertised operations. once approval is requested, authorize only re-checks it", cause), cause: err}
+	}
+	var body struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	_ = json.Unmarshal([]byte(apiErr.RawJSON()), &body)
+	guidance := "re-get the item and follow its advertised operations"
+	switch {
+	case linkAuthorizeBrowserCodes[body.Code]:
+		guidance = "no Shop Pay purchase request was made. make sure the checkout is open in exactly one tab at page_url in a browser with this vault attached, then authorize again. if checkout inspection keeps failing, authorize without --browser-id and --page-url to use merchant_url"
+	case apiErr.StatusCode == 429:
+		guidance = retryAfterWait(apiErr) + ", then authorize again"
+	case checkout && apiErr.StatusCode >= 500:
+		guidance = linkAuthorizeServerErrorGuidance
+	case body.Code == "invalid_request":
+		guidance = "fix the reported input, then authorize again only if the item still advertises authorize"
+	}
+	message := kernelVaultErrorURL.ReplaceAllString(body.Message, "[redacted url]")
+	return safeKernelAPIError(apiErr, body.Code, fmt.Sprintf("Shop Pay authorize failed (http %d): %s; %s", apiErr.StatusCode, message, guidance))
+}
