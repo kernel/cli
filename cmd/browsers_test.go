@@ -465,12 +465,14 @@ func TestBrowsersList_PrintsTableWithRows(t *testing.T) {
 	setupStdoutCapture(t)
 
 	created := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+	leased := time.Date(2030, 6, 7, 8, 9, 10, 0, time.UTC)
 	rows := []kernel.BrowserListResponse{
 		{
 			SessionID:          "sess-1",
 			CdpWsURL:           "ws://cdp-1",
 			BrowserLiveViewURL: "http://view-1",
 			CreatedAt:          created,
+			LeasedAt:           leased,
 			Region:             kernel.BrowserListResponseRegionEuWest,
 		},
 		{
@@ -495,6 +497,8 @@ func TestBrowsersList_PrintsTableWithRows(t *testing.T) {
 	assert.Contains(t, out, "sess-2")
 	assert.Contains(t, out, "eu-west")
 	assert.Contains(t, out, "us-east")
+	assert.Contains(t, out, "Leased At")
+	assert.Contains(t, out, "2030")
 }
 
 func TestBrowsersList_PrintsErrorOnFailure(t *testing.T) {
@@ -1560,6 +1564,7 @@ func TestBrowsersGet_PrintsDetails(t *testing.T) {
 	setupStdoutCapture(t)
 
 	created := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+	leased := time.Date(2031, 6, 7, 8, 9, 10, 0, time.UTC)
 	fake := &FakeBrowsersService{
 		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
 			return &kernel.BrowserGetResponse{
@@ -1567,6 +1572,7 @@ func TestBrowsersGet_PrintsDetails(t *testing.T) {
 				CdpWsURL:           "ws://cdp-url",
 				BrowserLiveViewURL: "http://live-view",
 				CreatedAt:          created,
+				LeasedAt:           leased,
 				TimeoutSeconds:     300,
 				Headless:           false,
 				Stealth:            true,
@@ -1592,6 +1598,8 @@ func TestBrowsersGet_PrintsDetails(t *testing.T) {
 	assert.Contains(t, out, "my-profile")
 	assert.Contains(t, out, "my-proxy (proxy-123)")
 	assert.Contains(t, out, "eu-west")
+	assert.Contains(t, out, "Leased At")
+	assert.Contains(t, out, "2031")
 }
 
 func TestBrowsersGet_JSONOutput(t *testing.T) {
@@ -3036,7 +3044,12 @@ func captureUpdateParams(t *testing.T) (*FakeBrowsersService, *kernel.BrowserUpd
 	captured := &kernel.BrowserUpdateParams{}
 	fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
 		*captured = body
-		return &kernel.BrowserUpdateResponse{SessionID: "session123", Name: body.Name.Value, Tags: body.Tags}, nil
+		return &kernel.BrowserUpdateResponse{
+			SessionID: "session123",
+			Name:      body.Name.Value,
+			Tags:      body.Tags,
+			LeasedAt:  time.Date(2033, 6, 7, 8, 9, 10, 0, time.UTC),
+		}, nil
 	}}
 	return fake, captured
 }
@@ -3055,6 +3068,8 @@ func TestBrowsersUpdate_WithName_ForwardsParam(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, captured.Name.Valid())
 	assert.Equal(t, "new-name", captured.Name.Value)
+	assert.Contains(t, outBuf.String(), "Leased At")
+	assert.Contains(t, outBuf.String(), "2033")
 }
 
 func TestBrowsersUpdate_ClearName_SendsEmptyName(t *testing.T) {

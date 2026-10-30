@@ -749,6 +749,7 @@ func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInpu
 		{"Property", "Value"},
 		{"Session ID", resp.SessionID},
 	}
+	tableData = appendBrowserLeasedAtRow(tableData, resp.LeasedAt)
 	if resp.Name != "" {
 		tableData = append(tableData, []string{"Name", resp.Name})
 	}

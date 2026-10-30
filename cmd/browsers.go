@@ -707,8 +707,20 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 		return nil
 	}
 
-	// Prepare table data
-	headers := []string{"Browser ID", "Name", "Created At", "Region", "Profile", "Pool", "CDP WS URL", "Live View URL"}
+	// Prepare table data. leased_at is only present for leased pooled sessions,
+	// so keep the column out of the table when no returned browser has a lease.
+	showLeasedAt := false
+	for _, browser := range browsers {
+		if !browser.LeasedAt.IsZero() {
+			showLeasedAt = true
+			break
+		}
+	}
+	headers := []string{"Browser ID", "Name", "Created At"}
+	if showLeasedAt {
+		headers = append(headers, "Leased At")
+	}
+	headers = append(headers, "Region", "Profile", "Pool", "CDP WS URL", "Live View URL")
 	showDeletedAt := in.IncludeDeleted || in.Status == "deleted" || in.Status == "all"
 	if showDeletedAt {
 		headers = append(headers, "Deleted At")
@@ -734,12 +746,21 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 			browser.SessionID,
 			util.OrDash(browser.Name),
 			util.FormatLocal(browser.CreatedAt),
+		}
+		if showLeasedAt {
+			leasedAt := "-"
+			if !browser.LeasedAt.IsZero() {
+				leasedAt = util.FormatLocal(browser.LeasedAt)
+			}
+			row = append(row, leasedAt)
+		}
+		row = append(row,
 			util.OrDash(string(browser.Region)),
 			profile,
 			pool,
 			truncateURL(browser.CdpWsURL, 50),
 			truncateURL(browser.BrowserLiveViewURL, 50),
-		}
+		)
 
 		if showDeletedAt {
 			deletedAt := "-"
@@ -948,6 +969,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 
 	tableData := buildBrowserTableData(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.ProfileSaveChanges, browser.StartURL, browser.Name, browser.Tags)
+	tableData = appendBrowserLeasedAtRow(tableData, browser.LeasedAt)
 	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)}, []string{"Allowed Hosts", formatAllowedHosts(browser.Network)}, []string{"Proxy Routes", formatProxyRoutes(browser.Network)})
 	tableData = append(tableData, browserLocationRows(browser.Location)...)
 	PrintTableNoPad(tableData, true)
@@ -964,9 +986,17 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	return nil
 }
 
-func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, profileSaveChanges bool, startURL, name string, tags kernel.Tags) {
+func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, profileSaveChanges bool, startURL, name string, tags kernel.Tags, leasedAt time.Time) {
 	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, profile, profileSaveChanges, startURL, name, tags)
+	tableData = appendBrowserLeasedAtRow(tableData, leasedAt)
 	PrintTableNoPad(tableData, true)
+}
+
+func appendBrowserLeasedAtRow(tableData pterm.TableData, leasedAt time.Time) pterm.TableData {
+	if leasedAt.IsZero() {
+		return tableData
+	}
+	return append(tableData, []string{"Leased At", util.FormatLocal(leasedAt)})
 }
 
 // buildBrowserTableData creates a base table with common browser session fields.
@@ -1074,6 +1104,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 
 	// Append additional detailed fields
 	tableData = append(tableData, []string{"Created At", util.FormatLocal(browser.CreatedAt)})
+	tableData = appendBrowserLeasedAtRow(tableData, browser.LeasedAt)
 	tableData = append(tableData, []string{"Region", util.OrDash(string(browser.Region))})
 	tableData = append(tableData, browserLocationRows(browser.Location)...)
 	tableData = append(tableData, []string{"Timeout (seconds)", fmt.Sprintf("%d", browser.TimeoutSeconds)})
@@ -1421,6 +1452,9 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	pterm.Success.Printf("Updated browser %s\n", browser.SessionID)
+	if !browser.LeasedAt.IsZero() {
+		pterm.Info.Printf("Leased At: %s\n", util.FormatLocal(browser.LeasedAt))
+	}
 	if hasNameChange {
 		pterm.Info.Printf("Name: %s\n", util.OrDash(browser.Name))
 	}
@@ -3804,7 +3838,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if output == "json" {
 			return util.PrintPrettyJSON(resp)
 		}
-		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.ProfileSaveChanges, resp.StartURL, resp.Name, resp.Tags)
+		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.ProfileSaveChanges, resp.StartURL, resp.Name, resp.Tags, resp.LeasedAt)
 		return nil
 	}
 

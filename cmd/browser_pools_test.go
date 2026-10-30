@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
@@ -85,6 +86,7 @@ func TestBrowserPoolsAcquire_WithNameAndTags(t *testing.T) {
 				CdpWsURL:  "ws://cdp-acq",
 				Name:      "lease-name",
 				Tags:      kernel.Tags{"env": "prod"},
+				LeasedAt:  time.Date(2032, 6, 7, 8, 9, 10, 0, time.UTC),
 			}, nil
 		},
 	}
@@ -108,6 +110,8 @@ func TestBrowserPoolsAcquire_WithNameAndTags(t *testing.T) {
 	assert.Contains(t, out, "lease-name")
 	assert.Contains(t, out, "Tags")
 	assert.Contains(t, out, "env=prod")
+	assert.Contains(t, out, "Leased At")
+	assert.Contains(t, out, "2032")
 }
 
 func TestBrowserPoolsList_ForwardsLimitOffset(t *testing.T) {
