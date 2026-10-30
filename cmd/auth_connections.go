@@ -56,6 +56,7 @@ type AuthConnectionCreateInput struct {
 	HealthCheckInterval int
 	NoHealthChecks      bool
 	NoAutoReauth        bool
+	Hitl                BoolFlag
 	RecordSession       BoolFlag
 	Telemetry           string
 	TelemetryCdpExclude string
@@ -94,6 +95,7 @@ type AuthConnectionUpdateInput struct {
 	HealthCheckIntervalSet bool
 	HealthChecks           BoolFlag
 	AutoReauth             BoolFlag
+	Hitl                   BoolFlag
 	RecordSession          BoolFlag
 	Telemetry              string
 	TelemetryCdpExclude    string
@@ -251,6 +253,10 @@ func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateIn
 		params.ManagedAuthCreateRequest.AutoReauth = kernel.Opt(false)
 	}
 
+	if in.Hitl.Set {
+		params.ManagedAuthCreateRequest.Hitl = kernel.Opt(in.Hitl.Value)
+	}
+
 	if in.RecordSession.Set {
 		params.ManagedAuthCreateRequest.RecordSession = kernel.Opt(in.RecordSession.Value)
 	}
@@ -293,6 +299,7 @@ func printManagedAuthSummary(auth *kernel.ManagedAuth) {
 		{"Domain", auth.Domain},
 		{"Profile Name", auth.ProfileName},
 		{"Status", string(auth.Status)},
+		{"Human Intervention", fmt.Sprintf("%t", auth.Hitl)},
 		{"Can Reauth", fmt.Sprintf("%t", auth.CanReauth)},
 	}
 	if auth.CanReauthReason != "" {
@@ -359,6 +366,10 @@ func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateIn
 	}
 	if in.AutoReauth.Set {
 		params.ManagedAuthUpdateRequest.AutoReauth = kernel.Opt(in.AutoReauth.Value)
+		hasChanges = true
+	}
+	if in.Hitl.Set {
+		params.ManagedAuthUpdateRequest.Hitl = kernel.Opt(in.Hitl.Value)
 		hasChanges = true
 	}
 	if in.RecordSession.Set {
@@ -571,6 +582,7 @@ func (c AuthConnectionCmd) Get(ctx context.Context, in AuthConnectionGetInput) e
 		{"Domain", auth.Domain},
 		{"Profile Name", auth.ProfileName},
 		{"Status", string(auth.Status)},
+		{"Human Intervention", fmt.Sprintf("%t", auth.Hitl)},
 		{"Can Reauth", fmt.Sprintf("%t", auth.CanReauth)},
 	}
 	if auth.CanReauthReason != "" {
@@ -1191,6 +1203,9 @@ func (c AuthConnectionCmd) Follow(ctx context.Context, in AuthConnectionFollowIn
 			if state.InteractionID != "" {
 				pterm.Info.Printf("  Interaction ID: %s\n", state.InteractionID)
 			}
+			if state.LiveViewURL != "" {
+				pterm.Info.Printf("  Live View URL: %s\n", state.LiveViewURL)
+			}
 			if len(state.Fields) > 0 {
 				fields := make([]string, 0, len(state.Fields))
 				for _, f := range state.Fields {
@@ -1271,7 +1286,7 @@ var authConnectionsCreateCmd = &cobra.Command{
 var authConnectionsUpdateCmd = &cobra.Command{
 	Use:   "update <id>",
 	Short: "Update a managed auth connection",
-	Long:  "Update managed authentication settings like login URL, health checks, credential source, and proxy.",
+	Long:  "Update managed authentication settings like login URL, health checks, CAPTCHA human intervention, credential source, and proxy.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runAuthConnectionsUpdate,
 }
@@ -1314,12 +1329,20 @@ Canonical submissions (--field-value, --choice-id) are bound to the interaction
 they answer. The CLI reads the connection's current interaction ID for you; pass
 --interaction-id to pin the submission to a specific interaction instead.
 
+When --hitl moves a login to AWAITING_HUMAN_INTERVENTION for an unsolved
+CAPTCHA, complete the challenge at the Live View URL shown by
+kernel auth connections get or kernel auth connections follow, then submit the
+human_intervention choice with --choice-id to resume the login.
+
 Examples:
   # Submit canonical field values from the connection's fields list
   kernel auth connections submit <id> --field-value field_email=me@example.com --field-value field_password=secret
 
   # Answer a specific interaction (rejected if the flow has moved on)
   kernel auth connections submit <id> --choice-id mfa_sms --interaction-id mai_abc123xyz
+
+  # Resume after completing an --hitl CAPTCHA in the live view
+  kernel auth connections submit <id> --choice-id <human_intervention_choice_id>
 
   # Submit legacy field values
   kernel auth connections submit <id> --field username=myuser --field password=mypass
@@ -1369,6 +1392,7 @@ func init() {
 	authConnectionsCreateCmd.Flags().Int("health-check-interval", 0, "Interval in seconds between health checks. Defaults to 3600 or your plan minimum, whichever is larger. The maximum is 86400; the minimum depends on your plan (Enterprise 300, Startup 1200, Hobbyist 3600, Free 21600)")
 	authConnectionsCreateCmd.Flags().Bool("no-health-checks", false, "Disable periodic health checks (enabled by default)")
 	authConnectionsCreateCmd.Flags().Bool("no-auto-reauth", false, "Mark expired sessions as NEEDS_AUTH instead of attempting automatic re-authentication (auto re-auth is enabled by default)")
+	authConnectionsCreateCmd.Flags().Bool("hitl", false, "Pause an unsolved login CAPTCHA for a person to complete in the live view, then resume with 'kernel auth connections submit <id> --choice-id <choice-id>'; reauthentication never pauses (disabled by default)")
 	authConnectionsCreateCmd.Flags().Bool("record-session", false, "Record browser sessions for this connection by default (useful for debugging)")
 	authConnectionsCreateCmd.Flags().String("telemetry", "", "Configure telemetry for this connection's browser sessions (opt-in): --telemetry=all (default set), --telemetry=off (disable), or --telemetry=console,network (capture exactly those categories)")
 	authConnectionsCreateCmd.Flags().String("telemetry-export-otlp", "", "Export this connection's captured telemetry over OTLP to one of the org's configured destinations, by ID or name; --telemetry-export-otlp=off disables export. Implies --telemetry=all when --telemetry is not set, since export requires capture")
@@ -1401,6 +1425,7 @@ func init() {
 	authConnectionsUpdateCmd.Flags().Bool("no-health-checks", false, "Disable periodic health checks")
 	authConnectionsUpdateCmd.Flags().Bool("auto-reauth", false, "Permit automatic re-authentication when a health check detects an expired session")
 	authConnectionsUpdateCmd.Flags().Bool("no-auto-reauth", false, "Mark expired sessions as NEEDS_AUTH instead of attempting automatic re-authentication")
+	authConnectionsUpdateCmd.Flags().Bool("hitl", false, "Set whether an unsolved login CAPTCHA pauses for a person to complete in the live view instead of failing; resume with 'kernel auth connections submit <id> --choice-id <choice-id>'; use --hitl=false to disable; reauthentication never pauses")
 	authConnectionsUpdateCmd.Flags().Bool("record-session", false, "Set whether browser sessions are recorded by default; use --record-session=false to disable")
 	authConnectionsUpdateCmd.Flags().String("telemetry", "", "Update telemetry for future browser sessions: --telemetry=all (reset to default set), --telemetry=off (disable), or --telemetry=console,network (merge those categories into the current selection)")
 	authConnectionsUpdateCmd.Flags().String("telemetry-export-otlp", "", "Update where future sessions export captured telemetry over OTLP, by destination ID or name; --telemetry-export-otlp=off disables export. Naming a destination requires passing --telemetry in the same command, since export and capture are validated together")
@@ -1439,7 +1464,7 @@ func init() {
 	// Submit flags
 	addJSONOutputFlag(authConnectionsSubmitCmd)
 	authConnectionsSubmitCmd.Flags().StringArray("field-value", []string{}, "Canonical field-id=value pair from the connection's `fields` list (repeatable)")
-	authConnectionsSubmitCmd.Flags().String("choice-id", "", "Canonical choice ID from the connection's `choices` list")
+	authConnectionsSubmitCmd.Flags().String("choice-id", "", "Canonical choice ID from the connection's `choices` list; after completing an --hitl CAPTCHA in the live view, use its human_intervention choice")
 	authConnectionsSubmitCmd.Flags().String("interaction-id", "", "Canonical interaction ID the submitted values belong to; defaults to the connection's current interaction. Only valid with --field-value or --choice-id")
 	authConnectionsSubmitCmd.Flags().StringArray("field", []string{}, "Legacy field name=value pair (repeatable); prefer --field-value")
 	authConnectionsSubmitCmd.Flags().String("mfa-option-id", "", "MFA option ID if user selected an MFA method")
@@ -1514,6 +1539,7 @@ func runAuthConnectionsCreate(cmd *cobra.Command, args []string) error {
 		HealthCheckInterval: healthCheckInterval,
 		NoHealthChecks:      noHealthChecks,
 		NoAutoReauth:        noAutoReauth,
+		Hitl:                readBoolFlag(cmd.Flags(), "hitl"),
 		RecordSession:       readBoolFlag(cmd.Flags(), "record-session"),
 		Telemetry:           telemetry,
 		TelemetryCdpExclude: telemetryCdpExclude,
@@ -1606,6 +1632,7 @@ func runAuthConnectionsUpdate(cmd *cobra.Command, args []string) error {
 		HealthCheckIntervalSet: cmd.Flags().Changed("health-check-interval"),
 		HealthChecks:           togglePair("health-checks", "no-health-checks"),
 		AutoReauth:             togglePair("auto-reauth", "no-auto-reauth"),
+		Hitl:                   readBoolFlag(cmd.Flags(), "hitl"),
 		RecordSession:          readBoolFlag(cmd.Flags(), "record-session"),
 		Telemetry:              telemetry,
 		TelemetryCdpExclude:    telemetryCdpExclude,
