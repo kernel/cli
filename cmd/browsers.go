@@ -42,6 +42,7 @@ type BrowsersService interface {
 	HTTPClient(id string, opts ...option.RequestOption) (*http.Client, error)
 	LoadExtensions(ctx context.Context, idOrName string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) (err error)
 	Repl(ctx context.Context, idOrName string, body kernel.BrowserReplParams, opts ...option.RequestOption) (res *kernel.BrowserReplResult, err error)
+	SaveProfile(ctx context.Context, idOrName string, body kernel.BrowserSaveProfileParams, opts ...option.RequestOption) (res *kernel.Profile, err error)
 }
 
 // BrowserReplaysService defines the subset we use for browser replays.
@@ -219,6 +220,18 @@ func parseVideoMemoryFlag(videoMemory string) (kernel.BrowserVideoMemory, error)
 		}
 	}
 	return "", fmt.Errorf("invalid --video-memory value: %s (must be one of %s)", videoMemory, strings.Join(availableVideoMemorySizes(), ", "))
+}
+
+// parseFingerprintOS validates the closed-beta browser fingerprint override.
+// Omission preserves the browser's default fingerprint.
+func parseFingerprintOS(os string) (kernel.BrowserFingerprintOs, error) {
+	if os == "" {
+		return "", nil
+	}
+	if os == string(kernel.BrowserFingerprintOsMacos) {
+		return kernel.BrowserFingerprintOsMacos, nil
+	}
+	return "", fmt.Errorf("invalid --fingerprint-os value: %s (must be macos)", os)
 }
 
 // maxPrivateHosts mirrors the API's cap on network.private_hosts entries.
@@ -516,6 +529,7 @@ type BrowsersCreateInput struct {
 	GPU                  BoolFlag
 	Memory               string
 	VideoMemory          string
+	FingerprintOS        string
 	InvocationID         string
 	Kiosk                BoolFlag
 	ProfileID            string
@@ -561,6 +575,13 @@ type BrowsersGetInput struct {
 	Output         string
 }
 
+type BrowsersSaveProfileInput struct {
+	Identifier  string
+	ProfileID   string
+	ProfileName string
+	Output      string
+}
+
 type BrowsersUpdateInput struct {
 	Identifier          string
 	ProxyID             string
@@ -592,10 +613,12 @@ type BrowsersUpdateInput struct {
 	ClearLocale   bool
 	// AllowedHosts replaces the session's egress allowlist when
 	// AllowedHostsProvided is set; ClearAllowedHosts removes it.
-	AllowedHosts         []string
-	AllowedHostsProvided bool
-	ClearAllowedHosts    bool
-	Output               string
+	AllowedHosts              []string
+	AllowedHostsProvided      bool
+	ClearAllowedHosts         bool
+	ExpectedAllowlistRevision string
+	MutationID                string
+	Output                    string
 }
 
 // BrowsersCmd is a cobra-independent command handler for browsers operations.
@@ -684,8 +707,20 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 		return nil
 	}
 
-	// Prepare table data
-	headers := []string{"Browser ID", "Name", "Created At", "Region", "Profile", "Pool", "CDP WS URL", "Live View URL"}
+	// Prepare table data. leased_at is only present for leased pooled sessions,
+	// so keep the column out of the table when no returned browser has a lease.
+	showLeasedAt := false
+	for _, browser := range browsers {
+		if !browser.LeasedAt.IsZero() {
+			showLeasedAt = true
+			break
+		}
+	}
+	headers := []string{"Browser ID", "Name", "Created At"}
+	if showLeasedAt {
+		headers = append(headers, "Leased At")
+	}
+	headers = append(headers, "Region", "Profile", "Pool", "CDP WS URL", "Live View URL")
 	showDeletedAt := in.IncludeDeleted || in.Status == "deleted" || in.Status == "all"
 	if showDeletedAt {
 		headers = append(headers, "Deleted At")
@@ -711,12 +746,21 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 			browser.SessionID,
 			util.OrDash(browser.Name),
 			util.FormatLocal(browser.CreatedAt),
+		}
+		if showLeasedAt {
+			leasedAt := "-"
+			if !browser.LeasedAt.IsZero() {
+				leasedAt = util.FormatLocal(browser.LeasedAt)
+			}
+			row = append(row, leasedAt)
+		}
+		row = append(row,
 			util.OrDash(string(browser.Region)),
 			profile,
 			pool,
 			truncateURL(browser.CdpWsURL, 50),
 			truncateURL(browser.BrowserLiveViewURL, 50),
-		}
+		)
 
 		if showDeletedAt {
 			deletedAt := "-"
@@ -770,6 +814,13 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 	if videoMemory != "" {
 		params.VideoMemory = videoMemory
+	}
+	fingerprintOS, err := parseFingerprintOS(in.FingerprintOS)
+	if err != nil {
+		return err
+	}
+	if fingerprintOS != "" {
+		params.Fingerprint = kernel.BrowserFingerprintParam{Os: fingerprintOS}
 	}
 	if in.InvocationID != "" {
 		params.InvocationID = kernel.Opt(in.InvocationID)
@@ -918,6 +969,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 
 	tableData := buildBrowserTableData(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.ProfileSaveChanges, browser.StartURL, browser.Name, browser.Tags)
+	tableData = appendBrowserLeasedAtRow(tableData, browser.LeasedAt)
 	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)}, []string{"Allowed Hosts", formatAllowedHosts(browser.Network)}, []string{"Proxy Routes", formatProxyRoutes(browser.Network)})
 	tableData = append(tableData, browserLocationRows(browser.Location)...)
 	PrintTableNoPad(tableData, true)
@@ -934,9 +986,17 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	return nil
 }
 
-func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, profileSaveChanges bool, startURL, name string, tags kernel.Tags) {
+func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, profileSaveChanges bool, startURL, name string, tags kernel.Tags, leasedAt time.Time) {
 	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, profile, profileSaveChanges, startURL, name, tags)
+	tableData = appendBrowserLeasedAtRow(tableData, leasedAt)
 	PrintTableNoPad(tableData, true)
+}
+
+func appendBrowserLeasedAtRow(tableData pterm.TableData, leasedAt time.Time) pterm.TableData {
+	if leasedAt.IsZero() {
+		return tableData
+	}
+	return append(tableData, []string{"Leased At", util.FormatLocal(leasedAt)})
 }
 
 // buildBrowserTableData creates a base table with common browser session fields.
@@ -1044,6 +1104,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 
 	// Append additional detailed fields
 	tableData = append(tableData, []string{"Created At", util.FormatLocal(browser.CreatedAt)})
+	tableData = appendBrowserLeasedAtRow(tableData, browser.LeasedAt)
 	tableData = append(tableData, []string{"Region", util.OrDash(string(browser.Region))})
 	tableData = append(tableData, browserLocationRows(browser.Location)...)
 	tableData = append(tableData, []string{"Timeout (seconds)", fmt.Sprintf("%d", browser.TimeoutSeconds)})
@@ -1067,6 +1128,12 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	}
 	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)})
 	tableData = append(tableData, []string{"Allowed Hosts", formatAllowedHosts(browser.Network)})
+	if browser.Network.AllowlistState.JSON.Revision.Valid() {
+		tableData = append(tableData, []string{"Allowlist Revision", browser.Network.AllowlistState.Revision})
+		if browser.Network.AllowlistState.MutationID != "" {
+			tableData = append(tableData, []string{"Allowlist Mutation ID", browser.Network.AllowlistState.MutationID})
+		}
+	}
 	tableData = append(tableData, []string{"Proxy Routes", formatProxyRoutes(browser.Network)})
 	if vaults := formatVaultReferences(browser.Vaults); vaults != "" {
 		tableData = append(tableData, []string{"Vaults", vaults})
@@ -1082,6 +1149,60 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 
 	PrintTableNoPad(tableData, true)
 	return nil
+}
+
+func (b BrowsersCmd) SaveProfile(ctx context.Context, in BrowsersSaveProfileInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+	if (in.ProfileID == "") == (in.ProfileName == "") {
+		return fmt.Errorf("specify exactly one of --profile-id or --profile-name")
+	}
+
+	destination := kernel.SaveProfileRequestParam{}
+	if in.ProfileID != "" {
+		destination.ID = kernel.Opt(in.ProfileID)
+	} else {
+		destination.Name = kernel.Opt(in.ProfileName)
+	}
+	// A retry after a failed or timed-out save would start a second save and
+	// restart the browser again.
+	var res *http.Response
+	profile, err := b.browsers.SaveProfile(ctx, in.Identifier, kernel.BrowserSaveProfileParams{SaveProfileRequest: destination}, option.WithMaxRetries(0), option.WithResponseInto(&res))
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(profile)
+	}
+
+	name := profile.Name
+	if name == "" {
+		name = "-"
+	}
+	PrintTableNoPad(pterm.TableData{
+		{"Property", "Value"},
+		{"ID", profile.ID},
+		{"Name", name},
+		{"Created At", util.FormatLocal(profile.CreatedAt)},
+		{"Updated At", util.FormatLocal(profile.UpdatedAt)},
+		{"Last Used At", util.FormatLocal(profile.LastUsedAt)},
+	}, true)
+	pterm.Success.Println(saveProfileOutcome(res))
+	pterm.Info.Println("The browser restarted. Reconnect CDP clients; WebDriver clients must create a new session.")
+	return nil
+}
+
+// saveProfileOutcome reports whether the save created the profile (201) or
+// overwrote an existing one (200).
+func saveProfileOutcome(res *http.Response) string {
+	if res != nil && res.StatusCode == http.StatusCreated {
+		return "Created profile"
+	}
+	if res != nil && res.StatusCode == http.StatusOK {
+		return "Overwrote profile"
+	}
+	return "Saved profile"
 }
 
 // browserUpdateProxySelection folds every proxy flag `browsers update` accepts
@@ -1196,6 +1317,13 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		return err
 	}
 	hasAllowedHostsChange := len(allowedHosts) > 0 || in.ClearAllowedHosts
+	conditionalAllowlistUpdate := in.ExpectedAllowlistRevision != "" || in.MutationID != ""
+	if (in.ExpectedAllowlistRevision == "") != (in.MutationID == "") {
+		return fmt.Errorf("--expected-allowlist-revision and --mutation-id must be passed together")
+	}
+	if conditionalAllowlistUpdate && !hasAllowedHostsChange {
+		return fmt.Errorf("--expected-allowlist-revision and --mutation-id require --allowed-host or --clear-allowed-hosts")
+	}
 
 	// Validate --save-changes is only used with a profile
 	if in.ProfileSaveChanges.Set && !hasProfileChange {
@@ -1253,6 +1381,10 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 		params.Network.AllowedHosts = param.NullSlice[[]string]()
 	} else if len(allowedHosts) > 0 {
 		params.Network.AllowedHosts = allowedHosts
+	}
+	if conditionalAllowlistUpdate {
+		params.Network.ExpectedAllowlistRevision = kernel.Opt(in.ExpectedAllowlistRevision)
+		params.Network.MutationID = kernel.Opt(in.MutationID)
 	}
 
 	// Handle proxy changes
@@ -1320,6 +1452,9 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	pterm.Success.Printf("Updated browser %s\n", browser.SessionID)
+	if !browser.LeasedAt.IsZero() {
+		pterm.Info.Printf("Leased At: %s\n", util.FormatLocal(browser.LeasedAt))
+	}
 	if hasNameChange {
 		pterm.Info.Printf("Name: %s\n", util.OrDash(browser.Name))
 	}
@@ -3002,6 +3137,41 @@ var browsersGetCmd = &cobra.Command{
 	RunE:  runBrowsersGet,
 }
 
+var browsersSaveProfileCmd = &cobra.Command{
+	Use:   "save-profile <id-or-name>",
+	Short: "Save the running browser state to a profile",
+	Long: `Save the running browser's current user-data state to an existing or new profile.
+
+Provide exactly one destination: --profile-id overwrites an existing profile;
+--profile-name overwrites a matching profile in the browser's project or creates it.
+
+Saving restarts the browser without ending the session. Active CDP (including Playwright)
+and WebDriver connections close; reconnect CDP clients and create a new WebDriver session.
+Tabs are restored, but pages reload and in-memory page state is lost, so save at a stable
+point, such as right after a login completes. The command returns after
+the restarted browser accepts CDP connections and the profile upload completes. Caches,
+Service Worker storage, and Google Drive IndexedDB data are excluded from the saved
+profile but remain in the running browser.
+
+This does not attach the destination profile to the browser or change save_changes.
+Other active browsers that already loaded the destination keep their in-memory state.
+Pools with refresh_on_profile_update flush idle sessions and replenish from this
+snapshot; other browsers receive it the next time they load the profile.
+
+Of overlapping saves made by this command to the same profile, the most recently
+started save wins. An automatic end-of-session save from save_changes is instead
+ordered against these saves by completion time. A successful save restarts the browser
+inactivity timeout; a failed save leaves it unchanged.
+
+A 409 can mean the browser is no longer running (browser_not_active), a pooled browser
+was released or reacquired (browser_lease_changed), or it is briefly busy (browser_busy).
+Retry only browser_busy, or resolve the current pooled-browser lease before making a new
+explicit save. The command doesn't retry on its own; if it is interrupted, the save may
+still finish, so check the profile before saving again.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runBrowsersSaveProfile,
+}
+
 var browsersUpdateCmd = &cobra.Command{
 	Use:   "update <id-or-name>",
 	Short: "Update a browser session by ID or name",
@@ -3031,6 +3201,12 @@ Notes:
     without one. Omit to leave the list unchanged; an empty list is invalid.
   - --clear-allowed-hosts removes the allowlist and returns to unfiltered egress. Once removed,
     an allowlist cannot be added back to that browser.
+  - To make an allowlist update conditional, copy Allowlist Revision from 'browsers get'
+    (or network.allowlist_state.revision from JSON), generate a unique mutation ID, and pass
+    both --expected-allowlist-revision and --mutation-id. Reuse the same revision,
+    mutation ID, and allowlist payload when retrying an uncertain update. A stale precondition
+    returns 409 stale_network without changing the allowlist; a GET alone does not fence an
+    earlier unfinished update.
   - Allowlist changes apply without restarting the browser. New requests to destinations no
     longer allowed are normally refused within a few seconds, and open connections to them
     are closed within about 30 seconds. Propagation can take up to 10 minutes during a deployment.
@@ -3069,6 +3245,13 @@ func init() {
 	// view flags
 	addJSONOutputFlag(browsersViewCmd)
 
+	// save-profile flags
+	addJSONOutputFlag(browsersSaveProfileCmd)
+	browsersSaveProfileCmd.Flags().String("profile-id", "", "Existing profile ID to overwrite (mutually exclusive with --profile-name)")
+	browsersSaveProfileCmd.Flags().String("profile-name", "", "Profile name to overwrite or create (mutually exclusive with --profile-id)")
+	browsersSaveProfileCmd.MarkFlagsOneRequired("profile-id", "profile-name")
+	browsersSaveProfileCmd.MarkFlagsMutuallyExclusive("profile-id", "profile-name")
+
 	// update flags
 	addJSONOutputFlag(browsersUpdateCmd)
 	browsersUpdateCmd.Flags().String("proxy-id", "", "ID of the proxy to use for the browser session (mutually exclusive with --proxy-name and --proxy-mode)")
@@ -3089,6 +3272,8 @@ func init() {
 	browsersUpdateCmd.Flags().Bool("clear-tags", false, "Remove all tags from the browser session")
 	browsersUpdateCmd.Flags().StringSlice("allowed-host", nil, "Replace an existing egress allowlist (repeat or comma-separated, max 100), using the same entry rules as 'browsers create --allowed-host'. Cannot add one to a browser created without one or after removal. Omit to leave unchanged; an empty list is invalid. Applies without restarting the browser; --start-url must be allowed by the new list. Requires proxy v3; on leased pooled browsers the pool's allowlist is restored on release (mutually exclusive with --clear-allowed-hosts). See notes for propagation timing")
 	browsersUpdateCmd.Flags().Bool("clear-allowed-hosts", false, "Remove the egress allowlist and return to unfiltered egress; an allowlist cannot be added back to this browser")
+	browsersUpdateCmd.Flags().String("expected-allowlist-revision", "", "Optimistic concurrency precondition from the last browser response's network.allowlist_state.revision; requires --mutation-id and an allowlist change")
+	browsersUpdateCmd.Flags().String("mutation-id", "", "Unique ID for this conditional allowlist update; requires --expected-allowlist-revision. Reuse it with the same revision and payload when retrying an uncertain update")
 	browsersUpdateCmd.Flags().String("timezone", "", "Set the session timezone (IANA, e.g. America/Los_Angeles) (mutually exclusive with --clear-timezone)")
 	browsersUpdateCmd.Flags().Bool("clear-timezone", false, "Clear the session timezone override and use the browser region's default")
 	browsersUpdateCmd.Flags().String("locale", "", "Set the session locale used for languages and date and number formatting (BCP 47, e.g. de-DE) (mutually exclusive with --clear-locale)")
@@ -3100,6 +3285,7 @@ func init() {
 	browsersCmd.AddCommand(browsersDeleteCmd)
 	browsersCmd.AddCommand(browsersViewCmd)
 	browsersCmd.AddCommand(browsersGetCmd)
+	browsersCmd.AddCommand(browsersSaveProfileCmd)
 	browsersCmd.AddCommand(browsersUpdateCmd)
 
 	// ssh
@@ -3375,6 +3561,7 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().Bool("gpu", false, "Launch browser with hardware-accelerated GPU rendering")
 	browsersCreateCmd.Flags().String("memory", "", "Memory for a non-GPU browser session. Headless: '1GiB' (default), '2GiB' or '4GiB'. Headful: '8GiB' (default) or '16GiB'")
 	browsersCreateCmd.Flags().String("video-memory", "", "Video memory (VRAM) for a GPU browser session (requires --gpu): '2GiB' (default, 4 vCPU/6GiB memory) or '4GiB' (8 vCPU/12GiB memory)")
+	browsersCreateCmd.Flags().String("fingerprint-os", "", "Closed beta browser fingerprint OS override: macos. Contact Kernel to enable; requires --stealth=true, --headless=false, --gpu=false, and default memory")
 	browsersCreateCmd.Flags().String("invocation-id", "", "Associate the browser session with an invocation")
 	browsersCreateCmd.Flags().Bool("kiosk", false, "Launch browser in kiosk mode")
 	browsersCreateCmd.Flags().IntP("timeout", "t", 60, "Timeout in seconds for the browser session")
@@ -3518,6 +3705,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	gpuVal, _ := cmd.Flags().GetBool("gpu")
 	memory, _ := cmd.Flags().GetString("memory")
 	videoMemory, _ := cmd.Flags().GetString("video-memory")
+	fingerprintOS, _ := cmd.Flags().GetString("fingerprint-os")
 	invocationID, _ := cmd.Flags().GetString("invocation-id")
 	kioskVal, _ := cmd.Flags().GetBool("kiosk")
 	timeout, _ := cmd.Flags().GetInt("timeout")
@@ -3650,7 +3838,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if output == "json" {
 			return util.PrintPrettyJSON(resp)
 		}
-		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.ProfileSaveChanges, resp.StartURL, resp.Name, resp.Tags)
+		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.ProfileSaveChanges, resp.StartURL, resp.Name, resp.Tags, resp.LeasedAt)
 		return nil
 	}
 
@@ -3678,6 +3866,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		GPU:                  BoolFlag{Set: cmd.Flags().Changed("gpu"), Value: gpuVal},
 		Memory:               memory,
 		VideoMemory:          videoMemory,
+		FingerprintOS:        fingerprintOS,
 		InvocationID:         invocationID,
 		Kiosk:                BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kioskVal},
 		ProfileID:            profileID,
@@ -3753,6 +3942,21 @@ func runBrowsersGet(cmd *cobra.Command, args []string) error {
 	})
 }
 
+func runBrowsersSaveProfile(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	output, _ := cmd.Flags().GetString("output")
+	profileID, _ := cmd.Flags().GetString("profile-id")
+	profileName, _ := cmd.Flags().GetString("profile-name")
+
+	svc := client.Browsers
+	return (BrowsersCmd{browsers: &svc}).SaveProfile(cmd.Context(), BrowsersSaveProfileInput{
+		Identifier:  args[0],
+		ProfileID:   profileID,
+		ProfileName: profileName,
+		Output:      output,
+	})
+}
+
 func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	out, _ := cmd.Flags().GetString("output")
@@ -3779,40 +3983,44 @@ func runBrowsersUpdate(cmd *cobra.Command, args []string) error {
 	clearLocale, _ := cmd.Flags().GetBool("clear-locale")
 	allowedHosts, _ := cmd.Flags().GetStringSlice("allowed-host")
 	clearAllowedHosts, _ := cmd.Flags().GetBool("clear-allowed-hosts")
+	expectedAllowlistRevision, _ := cmd.Flags().GetString("expected-allowlist-revision")
+	mutationID, _ := cmd.Flags().GetString("mutation-id")
 
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
 	return b.Update(cmd.Context(), BrowsersUpdateInput{
-		Identifier:           args[0],
-		ProxyID:              proxyID,
-		ProxyName:            proxyName,
-		ProxyMode:            proxyMode,
-		ClearProxy:           clearProxy,
-		DisableDefaultProxy:  BoolFlag{Set: cmd.Flags().Changed("disable-default-proxy"), Value: disableDefaultProxy},
-		ProfileID:            profileID,
-		ProfileName:          profileName,
-		ProfileSaveChanges:   BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
-		Viewport:             viewport,
-		Force:                force,
-		Telemetry:            telemetry,
-		TelemetryCdpExclude:  telemetryCdpExclude,
-		Name:                 name,
-		SetName:              cmd.Flags().Changed("name"),
-		ClearName:            clearName,
-		Tags:                 tags,
-		TagsProvided:         tagsProvided,
-		ClearTags:            clearTags,
-		StartURL:             startURL,
-		Timezone:             timezone,
-		SetTimezone:          cmd.Flags().Changed("timezone"),
-		ClearTimezone:        clearTimezone,
-		Locale:               locale,
-		SetLocale:            cmd.Flags().Changed("locale"),
-		ClearLocale:          clearLocale,
-		AllowedHosts:         allowedHosts,
-		AllowedHostsProvided: cmd.Flags().Changed("allowed-host"),
-		ClearAllowedHosts:    clearAllowedHosts,
-		Output:               out,
+		Identifier:                args[0],
+		ProxyID:                   proxyID,
+		ProxyName:                 proxyName,
+		ProxyMode:                 proxyMode,
+		ClearProxy:                clearProxy,
+		DisableDefaultProxy:       BoolFlag{Set: cmd.Flags().Changed("disable-default-proxy"), Value: disableDefaultProxy},
+		ProfileID:                 profileID,
+		ProfileName:               profileName,
+		ProfileSaveChanges:        BoolFlag{Set: cmd.Flags().Changed("save-changes"), Value: saveChanges},
+		Viewport:                  viewport,
+		Force:                     force,
+		Telemetry:                 telemetry,
+		TelemetryCdpExclude:       telemetryCdpExclude,
+		Name:                      name,
+		SetName:                   cmd.Flags().Changed("name"),
+		ClearName:                 clearName,
+		Tags:                      tags,
+		TagsProvided:              tagsProvided,
+		ClearTags:                 clearTags,
+		StartURL:                  startURL,
+		Timezone:                  timezone,
+		SetTimezone:               cmd.Flags().Changed("timezone"),
+		ClearTimezone:             clearTimezone,
+		Locale:                    locale,
+		SetLocale:                 cmd.Flags().Changed("locale"),
+		ClearLocale:               clearLocale,
+		AllowedHosts:              allowedHosts,
+		AllowedHostsProvided:      cmd.Flags().Changed("allowed-host"),
+		ClearAllowedHosts:         clearAllowedHosts,
+		ExpectedAllowlistRevision: expectedAllowlistRevision,
+		MutationID:                mutationID,
+		Output:                    out,
 	})
 }
 

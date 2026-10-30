@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
@@ -85,6 +86,7 @@ func TestBrowserPoolsAcquire_WithNameAndTags(t *testing.T) {
 				CdpWsURL:  "ws://cdp-acq",
 				Name:      "lease-name",
 				Tags:      kernel.Tags{"env": "prod"},
+				LeasedAt:  time.Date(2032, 6, 7, 8, 9, 10, 0, time.UTC),
 			}, nil
 		},
 	}
@@ -108,6 +110,8 @@ func TestBrowserPoolsAcquire_WithNameAndTags(t *testing.T) {
 	assert.Contains(t, out, "lease-name")
 	assert.Contains(t, out, "Tags")
 	assert.Contains(t, out, "env=prod")
+	assert.Contains(t, out, "Leased At")
+	assert.Contains(t, out, "2032")
 }
 
 func TestBrowserPoolsList_ForwardsLimitOffset(t *testing.T) {
@@ -369,6 +373,42 @@ func TestBrowserPoolsUpdate_WithRefreshOnProfileUpdate(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, captured.RefreshOnProfileUpdate.Valid())
 	assert.False(t, captured.RefreshOnProfileUpdate.Value)
+}
+
+func TestBrowserPoolsUpdate_WithExpectedNetwork(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserPoolUpdateParams
+	fake := &FakeBrowserPoolsService{
+		UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			captured = body
+			return &kernel.BrowserPool{ID: id}, nil
+		},
+	}
+
+	rawNetwork := `{"private_hosts":[],"allowed_hosts":["example.com"],"proxy_routes":[{"hosts":["api.example.com"],"proxy":{"id":"proxy-1"}}]}`
+	c := BrowserPoolsCmd{client: fake}
+	err := c.Update(context.Background(), BrowserPoolsUpdateInput{
+		IDOrName:           "pool-1",
+		Name:               "new-name",
+		ExpectedNetwork:    rawNetwork,
+		ExpectedNetworkSet: true,
+	})
+	require.NoError(t, err)
+	body, err := json.Marshal(captured)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"name":"new-name","expected_network":`+rawNetwork+`}`, string(body))
+
+	for _, raw := range []string{"", "null", "[]", "not-json"} {
+		called := false
+		fake.UpdateFunc = func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			called = true
+			return &kernel.BrowserPool{ID: id}, nil
+		}
+		err := c.Update(context.Background(), BrowserPoolsUpdateInput{IDOrName: "pool-1", ExpectedNetwork: raw, ExpectedNetworkSet: true})
+		require.ErrorContains(t, err, "--expected-network")
+		assert.False(t, called)
+	}
 }
 
 func TestBrowserPoolsCreate_WithChromePolicy(t *testing.T) {

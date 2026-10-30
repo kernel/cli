@@ -17,9 +17,9 @@ func TestVaultPaymentHelpProviderBoundaries(t *testing.T) {
 		{
 			name: "vaults",
 			want: []string{
-				"attachment is required for authorizing a Link card at a checkout and for fill",
-				"ready Link and kernel cards use only advertised fill",
-				"neither exposes aliases or supports egress substitution",
+				"attachment is required for authorizing a Link or Shop Pay card at a checkout and for fill",
+				"ready Link, KERNEL, and Shop Pay cards use only advertised fill",
+				"none exposes aliases or supports egress substitution",
 				"AgentCard-only checkout aliases support egress substitution with checkout hold, approval, and replay",
 				"not a fallback after fill",
 			},
@@ -34,8 +34,8 @@ func TestVaultPaymentHelpProviderBoundaries(t *testing.T) {
 			path: []string{"items", "invoke"},
 			want: []string{
 				"the vault must already be attached to the browser",
-				"fill is available for credential items and ready Link or kernel cards when advertised, not AgentCard",
-				"Link and kernel cards do not expose aliases or support egress substitution",
+				"fill is available for credential items and ready Link, KERNEL, or Shop Pay cards when advertised, not AgentCard",
+				"Link, KERNEL, and Shop Pay cards do not expose aliases or support egress substitution",
 				"fill writes real values into the browser; unrestricted browser/cdp access can read them",
 				"fill never explicitly submits forms or clicks buttons",
 				"input/change events may trigger site behavior",
@@ -47,7 +47,7 @@ func TestVaultPaymentHelpProviderBoundaries(t *testing.T) {
 				"report one observed merchant outcome",
 				"unknown means no reliable merchant outcome",
 				"restart_verification takes no parameters",
-				"kernel cards have no stored billing fields",
+				"KERNEL cards have no stored billing fields",
 				"billing_* returns field_unavailable (400) before any write",
 				"enter billing details on the merchant page",
 			},

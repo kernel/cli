@@ -50,10 +50,12 @@ func TestCredentialConnectOnePassword(t *testing.T) {
 func TestCredentialCreateOnePassword(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
 	requests := `"requests":{"version":2,"entries":[{"type":"login","parameters":{"website":"https://github.com"},"reason":"Work account"},{"type":"login","parameters":{"website":"https://github.com"},"reason":"Personal account"}]}`
+	preResolved := `{"provider":"1password","access_token":"token-secret","integration_key":"key-secret","access_request_id":"request-approved","requests":{"version":2,"entries":[{"id":"entry-work","type":"login","parameters":{"website":"https://github.com"}},{"id":"entry-personal","type":"login","parameters":{"website":"https://github.com"}}]},"resolved":[{"reference":"op://Private/GitHub Work/login","entryId":"entry-work"},{"reference":"op://Private/GitHub Personal/login","entryId":"entry-personal"}]}`
 	entry := `{"type":"login","parameters":{"website":"https://github.com"}}`
 	for _, spec := range []string{
 		`{"provider":"1password","account":"onepassword",` + requests + `}`,
 		`{"provider":"1password","access_token":"token-secret","integration_key":"key-secret",` + requests + `}`,
+		preResolved,
 	} {
 		calls := 0
 		client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -179,6 +181,7 @@ func TestOnePasswordOperationValidation(t *testing.T) {
 		{"1pw_fill", `{"browser_id":"b"}`, "page_url"},
 		{"1pw_fill", `{"browser_id":"b","page_url":"https://github.com/login","timeout_ms":0}`, "timeout_ms"},
 		{"1pw_fill", `{"browser_id":"b","page_url":"https://github.com/login","entry_id":""}`, "entry_id"},
+		{"1pw_fill", `{"browser_id":"b","page_url":"https://github.com/login","target_id":""}`, "target_id"},
 		{"1pw_update_access_token", `{"access_token":"token-secret"}`, "only through --spec-file"},
 		{"1pw_recover", `{}`, "takes no parameters"},
 	} {
@@ -294,6 +297,15 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 	}
 	assert.Contains(t, credentials.Long, "stored-token 1Password credentials (developer integrations only")
 	assert.Contains(t, credentials.Long, "never ask an end user for them")
+	assert.Contains(t, credentials.Long, "omit access_request_id, resolved, and request entry ids")
+	assert.Contains(t, credentials.Long, "supply access_request_id, 1-5 resolved")
+	assert.Contains(t, credentials.Long, "an id on every requests entry")
+	assert.Contains(t, credentials.Long, "access_request_id and every entry id must be non-empty and at most 128 characters")
+	assert.Contains(t, credentials.Long, "entryId may be omitted only when requests has one entry")
+	assert.Contains(t, credentials.Long, "item starts ready and KERNEL does not create another access request")
+	assert.Contains(t, credentials.Long, "1Password checks them during 1pw_fill")
+	require.NotNil(t, credentials.Flag("spec-file"))
+	assert.Contains(t, credentials.Flag("spec-file").Usage, "access_request_id/resolved")
 	assert.NotContains(t, connect.Long, "stored-token")
 	assert.Contains(t, connect.Long, "credential_account")
 	assert.Contains(t, credentials.Example, `"provider":"1password","account":"onepassword"`)
@@ -302,8 +314,12 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 	}
 	assert.Contains(t, invoke.Long, "--spec-file, never --params")
 	assert.Contains(t, invoke.Example, `"entry_id":"<entry-id>"`)
+	assert.Contains(t, invoke.Example, `"target_id":"<cdp-target-id>"`)
+	assert.Contains(t, invoke.Long, "target_id when several open pages")
+	assert.Contains(t, invoke.Long, "optional access_token_expires_at (RFC3339)")
+	assert.Contains(t, invoke.Long, "expiry clears the previously supplied expiry")
 	for _, help := range []string{invoke.Long, invoke.Example, credentials.Long, credentials.Example, connect.Long} {
-		for _, removed := range []string{"1pw_request_access", "1pw_poll_access", "1pw_reconcile", "account_id", "Family", "customer_managed", "access_token_expires_at", "RFC 3339"} {
+		for _, removed := range []string{"1pw_request_access", "1pw_poll_access", "1pw_reconcile", "account_id", "Family", "customer_managed", "RFC 3339"} {
 			assert.NotContains(t, help, removed)
 		}
 	}
@@ -345,8 +361,8 @@ func TestOnePasswordFillEntryAndTokenUpdateRequests(t *testing.T) {
 	for _, tc := range []struct {
 		operation, params, body, response string
 	}{
-		{"1pw_fill", `{"browser_id":"browser-1","page_url":"https://github.com/login","entry_id":"entry-1"}`, `{"type":"1pw_fill","browser_id":"browser-1","page_url":"https://github.com/login","entry_id":"entry-1"}`, `{"type":"1pw_fill","status":"fill_submitted"}`},
-		{"1pw_update_access_token", `{"access_token":"token-secret"}`, `{"type":"1pw_update_access_token","access_token":"token-secret"}`, onePasswordCredentialWithOperation("1pw_update_access_token")},
+		{"1pw_fill", `{"browser_id":"browser-1","page_url":"https://github.com/login","entry_id":"entry-1","target_id":"target-1"}`, `{"type":"1pw_fill","browser_id":"browser-1","page_url":"https://github.com/login","entry_id":"entry-1","target_id":"target-1"}`, `{"type":"1pw_fill","status":"fill_submitted"}`},
+		{"1pw_update_access_token", `{"access_token":"token-secret","access_token_expires_at":"2026-10-01T00:00:00Z"}`, `{"type":"1pw_update_access_token","access_token":"token-secret","access_token_expires_at":"2026-10-01T00:00:00Z"}`, onePasswordCredentialWithOperation("1pw_update_access_token")},
 	} {
 		t.Run(tc.operation, func(t *testing.T) {
 			posts := 0
@@ -371,7 +387,7 @@ func TestOnePasswordFillEntryAndTokenUpdateRequests(t *testing.T) {
 
 	calls := 0
 	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) { calls++ })
-	for _, params := range []string{`{"access_token":""}`, `{"access_token":"token-secret","access_token_expires_at":"2026-10-01T00:00:00Z"}`, `{"access_token":"token-secret","integration_key":"key-secret"}`} {
+	for _, params := range []string{`{"access_token":""}`, `{"access_token":"token-secret","access_token_expires_at":""}`, `{"access_token":"token-secret","access_token_expires_at":"not-a-date"}`, `{"access_token":"token-secret","access_token_expires_at":null}`, `{"access_token":"token-secret","integration_key":"key-secret"}`} {
 		_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "user", "github", "1pw_update_access_token", "--spec-file", credentialSpecFile(t, params))
 		require.Error(t, err, params)
 		assert.NotContains(t, err.Error(), "-secret")

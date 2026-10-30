@@ -6,7 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
+	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
@@ -112,6 +114,62 @@ func TestAPIKeysCreateBuildsParamsAndPrintsPlaintextKey(t *testing.T) {
 	assert.Contains(t, out, "Prod")
 }
 
+func TestAPIKeysCreateSupportsExactExpiryAndPolicy(t *testing.T) {
+	capturePtermOutput(t)
+	expiresAt := "2099-01-15T09:00:00Z"
+	fake := &FakeAPIKeysService{
+		NewFunc: func(ctx context.Context, body kernel.APIKeyNewParams, opts ...option.RequestOption) (*kernel.CreatedAPIKey, error) {
+			expectedExpiry, err := time.Parse(time.RFC3339, expiresAt)
+			require.NoError(t, err)
+			assert.True(t, body.ExpiresAt.Valid())
+			assert.Equal(t, expectedExpiry, body.ExpiresAt.Value)
+			require.Len(t, body.Policy.Statements, 2)
+			assert.Equal(t, "browsers:use", body.Policy.Statements[0].Action)
+			assert.Equal(t, "projects/proj_123/browsers/*", body.Policy.Statements[0].Resource)
+			assert.Equal(t, "vaults:read", body.Policy.Statements[1].Action)
+			return createdAPIKeyFromJSON(`{"id":"key_123","name":"ci","key":"sk_live_123","masked_key":"sk_...123","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123"},"expires_at":"2099-01-15T09:00:00Z","project_id":"proj_123"}`), nil
+		},
+	}
+	c := APIKeysCmd{apiKeys: fake}
+
+	err := c.Create(context.Background(), APIKeysCreateInput{
+		Name:      "ci",
+		ExpiresAt: expiresAt,
+		ProjectID: "proj_123",
+		Policy:    `{"statements":[{"action":"browsers:use","resource":"projects/proj_123/browsers/*"},{"action":"vaults:read","resource":"projects/proj_123/vaults/*"}]}`,
+	})
+	require.NoError(t, err)
+}
+
+func TestAPIKeysCreateRejectsInvalidExpiryAndPolicy(t *testing.T) {
+	called := false
+	fake := &FakeAPIKeysService{NewFunc: func(ctx context.Context, body kernel.APIKeyNewParams, opts ...option.RequestOption) (*kernel.CreatedAPIKey, error) {
+		called = true
+		return nil, nil
+	}}
+	c := APIKeysCmd{apiKeys: fake}
+	tests := []struct {
+		name    string
+		input   APIKeysCreateInput
+		wantErr string
+	}{
+		{"both expiry forms", APIKeysCreateInput{Name: "ci", DaysToExpire: Int64Flag{Set: true, Value: 30}, ExpiresAt: "2099-01-15T09:00:00Z"}, "mutually exclusive"},
+		{"invalid expiry", APIKeysCreateInput{Name: "ci", ExpiresAt: "tomorrow"}, "RFC3339"},
+		{"past expiry", APIKeysCreateInput{Name: "ci", ExpiresAt: "2020-01-01T00:00:00Z"}, "future"},
+		{"invalid policy json", APIKeysCreateInput{Name: "ci", Policy: "[]"}, "JSON object"},
+		{"empty statements", APIKeysCreateInput{Name: "ci", Policy: `{"statements":[]}`}, "between 1 and 256"},
+		{"empty statement field", APIKeysCreateInput{Name: "ci", Policy: `{"statements":[{"action":"","resource":"projects/*"}]}`}, "non-empty action and resource"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			called = false
+			err := c.Create(context.Background(), tt.input)
+			require.ErrorContains(t, err, tt.wantErr)
+			assert.False(t, called)
+		})
+	}
+}
+
 func TestAPIKeysCreateRejectsInvalidDaysToExpire(t *testing.T) {
 	c := APIKeysCmd{apiKeys: &FakeAPIKeysService{}}
 
@@ -183,7 +241,7 @@ func TestAPIKeysRejectInvalidOutputBeforeCallingAPI(t *testing.T) {
 
 func TestAPIKeysListPassesPaginationAndRendersRows(t *testing.T) {
 	buf := capturePtermOutput(t)
-	key := *apiKeyFromJSON(`{"id":"key_123","name":"ci","masked_key":"sk_...123","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123","email":"dev@example.com","name":"Dev"},"expires_at":null,"project_id":null,"project_name":null}`)
+	key := *apiKeyFromJSON(`{"id":"key_123","name":"ci","masked_key":"sk_...123","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123","email":"dev@example.com","name":"Dev"},"expires_at":null,"last_used_at":"2026-05-28T13:30:00Z","project_id":null,"project_name":null}`)
 	fake := &FakeAPIKeysService{
 		ListFunc: func(ctx context.Context, query kernel.APIKeyListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.APIKey], error) {
 			assert.True(t, query.Limit.Valid())
@@ -202,6 +260,27 @@ func TestAPIKeysListPassesPaginationAndRendersRows(t *testing.T) {
 	assert.Contains(t, out, "key_123")
 	assert.Contains(t, out, "ci")
 	assert.Contains(t, out, "Never")
+	assert.Contains(t, out, "Last Used At")
+	assert.Contains(t, out, util.FormatLocal(key.LastUsedAt))
+}
+
+func TestAPIKeysListSupportsLastUsedAtSort(t *testing.T) {
+	capturePtermOutput(t)
+	fake := &FakeAPIKeysService{
+		ListFunc: func(ctx context.Context, query kernel.APIKeyListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.APIKey], error) {
+			assert.Equal(t, kernel.APIKeyListParamsSortByLastUsedAt, query.SortBy)
+			return &pagination.OffsetPagination[kernel.APIKey]{Items: []kernel.APIKey{}}, nil
+		},
+	}
+	c := APIKeysCmd{apiKeys: fake}
+
+	err := c.List(context.Background(), APIKeysListInput{SortBy: "last_used_at"})
+	require.NoError(t, err)
+}
+
+func TestFormatAPIKeyLastUsedAtHandlesUnrecordedUse(t *testing.T) {
+	key := apiKeyFromJSON(`{"last_used_at":null}`)
+	assert.Equal(t, "-", formatAPIKeyLastUsedAt(*key))
 }
 
 func TestAPIKeysUpdateRequiresName(t *testing.T) {
@@ -338,12 +417,13 @@ func TestAPIKeysRotateOmitsUnsetParams(t *testing.T) {
 }
 
 func TestAPIKeysGetPassesIncludeDeleted(t *testing.T) {
-	capturePtermOutput(t)
+	buf := capturePtermOutput(t)
+	key := apiKeyFromJSON(`{"id":"key_123","name":"default","masked_key":"sk_...test","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123","email":"dev@example.com","name":"Dev"},"expires_at":null,"last_used_at":"2026-05-28T13:30:00Z","project_id":null,"project_name":null}`)
 	var captured kernel.APIKeyGetParams
 	fake := &FakeAPIKeysService{
 		GetFunc: func(ctx context.Context, id string, query kernel.APIKeyGetParams, opts ...option.RequestOption) (*kernel.APIKey, error) {
 			captured = query
-			return apiKeyFromJSON(`{"id":"` + id + `","name":"default","masked_key":"sk_...test","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123","email":"dev@example.com","name":"Dev"},"expires_at":null,"project_id":null,"project_name":null}`), nil
+			return key, nil
 		},
 	}
 	c := APIKeysCmd{apiKeys: fake}
@@ -351,4 +431,6 @@ func TestAPIKeysGetPassesIncludeDeleted(t *testing.T) {
 	require.NoError(t, c.Get(context.Background(), APIKeysGetInput{ID: "key_123", IncludeDeleted: true}))
 	assert.True(t, captured.IncludeDeleted.Valid())
 	assert.True(t, captured.IncludeDeleted.Value)
+	assert.Contains(t, buf.String(), "Last Used At")
+	assert.Contains(t, buf.String(), util.FormatLocal(key.LastUsedAt))
 }
