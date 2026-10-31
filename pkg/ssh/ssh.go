@@ -129,6 +129,38 @@ func ExtractVMDomain(cdpURL string) (string, error) {
 	return claims.Session.FQDN, nil
 }
 
+// ProxyURL derives the metro-api SSH WebSocket URL from a CDP WebSocket URL.
+// Both routes share the same metro-api endpoint and session JWT.
+// Example: wss://proxy.xxx.dev.onkernel.com:8443/browser/cdp?jwt=eyJ...
+// becomes  wss://proxy.xxx.dev.onkernel.com:8443/browser/ssh?jwt=eyJ...
+func ProxyURL(cdpURL string) (string, error) {
+	parsed, err := url.Parse(cdpURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse URL: %w", err)
+	}
+	if !strings.HasSuffix(parsed.Path, "/browser/cdp") {
+		return "", fmt.Errorf("unexpected CDP URL path: %s", parsed.Path)
+	}
+	jwt := parsed.Query().Get("jwt")
+	if jwt == "" {
+		return "", fmt.Errorf("no jwt in CDP URL")
+	}
+
+	proxyURL := url.URL{
+		Scheme:   parsed.Scheme,
+		Host:     parsed.Host,
+		Path:     strings.TrimSuffix(parsed.Path, "/browser/cdp") + "/browser/ssh",
+		RawQuery: url.Values{"jwt": {jwt}}.Encode(),
+	}
+	return proxyURL.String(), nil
+}
+
+// ProxyCommand returns the websocat command ssh uses to reach the VM's SSH bridge.
+// The URL is quoted because ssh runs ProxyCommand through a shell.
+func ProxyCommand(proxyURL string) string {
+	return fmt.Sprintf("websocat --binary '%s'", proxyURL)
+}
+
 // CheckWebsocatInstalled verifies websocat is available in PATH.
 // Returns nil if found, error with install instructions if not.
 func CheckWebsocatInstalled() error {
@@ -175,12 +207,9 @@ func WriteTempKey(privateKeyPEM string, sessionID string) (string, error) {
 }
 
 // BuildSSHCommand constructs the SSH command with websocat ProxyCommand.
-func BuildSSHCommand(vmDomain, keyFile string, cfg Config) *exec.Cmd {
-	// Build websocat ProxyCommand - connect to port 2222 for SSH websocket bridge
-	proxyCmd := fmt.Sprintf("websocat --binary wss://%s:2222", vmDomain)
-
+func BuildSSHCommand(proxyURL, keyFile string, cfg Config) *exec.Cmd {
 	args := []string{
-		"-o", fmt.Sprintf("ProxyCommand=%s", proxyCmd),
+		"-o", fmt.Sprintf("ProxyCommand=%s", ProxyCommand(proxyURL)),
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR", // Suppress warnings about host key
