@@ -119,6 +119,10 @@ func connectSSH(ctx context.Context, client kernel.Client, cfg ssh.Config) error
 	if err != nil {
 		return fmt.Errorf("failed to extract VM domain: %w", err)
 	}
+	proxyURL, err := ssh.ProxyURL(browser.CdpWsURL)
+	if err != nil {
+		return fmt.Errorf("failed to build SSH proxy URL: %w", err)
+	}
 	if !jsonOutput {
 		pterm.Info.Printf("VM domain: %s\n", vmDomain)
 	}
@@ -185,8 +189,8 @@ func connectSSH(ctx context.Context, client kernel.Client, cfg ssh.Config) error
 
 	if cfg.SetupOnly {
 		if jsonOutput {
-			proxyCmd := fmt.Sprintf("websocat --binary wss://%s:2222", vmDomain)
-			sshCommand := fmt.Sprintf("ssh -o 'ProxyCommand=%s' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i %s root@localhost", proxyCmd, keyFile)
+			proxyCmd := ssh.ProxyCommand(proxyURL)
+			sshCommand := fmt.Sprintf("ssh -o \"ProxyCommand=%s\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i %s root@localhost", proxyCmd, keyFile)
 			result := sshSetupResult{
 				VMDomain:     vmDomain,
 				SessionID:    browser.SessionID,
@@ -200,13 +204,13 @@ func connectSSH(ctx context.Context, client kernel.Client, cfg ssh.Config) error
 		}
 		pterm.Info.Println("\n--setup-only specified, not connecting.")
 		pterm.Info.Printf("To connect manually:\n")
-		pterm.Info.Printf("  ssh -o 'ProxyCommand=websocat --binary wss://%s:2222' -i %s root@localhost\n", vmDomain, keyFile)
+		pterm.Info.Printf("  ssh -o \"ProxyCommand=%s\" -i %s root@localhost\n", ssh.ProxyCommand(proxyURL), keyFile)
 		return nil
 	}
 
 	// Build and run SSH command
 	pterm.Info.Println("Connecting via SSH...")
-	sshCmd := ssh.BuildSSHCommand(vmDomain, keyFile, cfg)
+	sshCmd := ssh.BuildSSHCommand(proxyURL, keyFile, cfg)
 
 	// Connect stdin/stdout/stderr
 	sshCmd.Stdin = os.Stdin
@@ -230,7 +234,7 @@ func connectSSH(ctx context.Context, client kernel.Client, cfg ssh.Config) error
 		// Exit code 255 is common for SSH errors, provide more context
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			if exitErr.ExitCode() == 255 {
-				return fmt.Errorf("SSH connection failed (exit 255). Check that:\n  1. websocat is installed and working\n  2. The browser VM is still running\n  3. Port 2222 is accessible on the VM")
+				return fmt.Errorf("SSH connection failed (exit 255). Check that:\n  1. websocat is installed and working\n  2. The browser VM is still running\n  3. The browser's metro endpoint is reachable")
 			}
 		}
 		return fmt.Errorf("SSH session ended with error: %w", err)
