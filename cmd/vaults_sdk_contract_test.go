@@ -172,3 +172,43 @@ func TestCredentialFieldsRequireNames(t *testing.T) {
 	assert.Contains(t, err.Error(), "name")
 	assert.NotContains(t, err.Error(), "secret-echo")
 }
+
+func TestLinkPaymentRequestUpdateAndAuthorize(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	fixture := strings.Replace(requestedCardFixture, `"type":"card"`, `"type":"payment_request"`, 1)
+	spec := `{"wallet":"wallet-1","payment_method_id":"pm-1","amount":1500,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://shop.example","context":"Purchase description"}`
+	var bodies []string
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			var body json.RawMessage
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			bodies = append(bodies, r.Method+" "+string(body))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, fixture)
+	})
+	_, human, err := executeVaultCommand(t, client, "vaults", "cards", "update", "checkout", "order-1", "--type", "payment_request", "--provider", "link", "--spec", spec)
+	require.NoError(t, err)
+	assert.Contains(t, human, "payment_request")
+	assert.Contains(t, human, "fill never submits payment")
+	_, _, err = executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "authorize", "--browser-id", "browser-1", "--page-url", "https://shop.example/checkout")
+	require.NoError(t, err)
+	require.Len(t, bodies, 2)
+	assert.True(t, strings.HasPrefix(bodies[0], "PATCH "))
+	assert.JSONEq(t, `{"type":"payment_request","spec":{"provider":"link",`+spec[1:]+`}`, strings.TrimPrefix(bodies[0], "PATCH "))
+	assert.JSONEq(t, `{"type":"authorize","browser_id":"browser-1","page_url":"https://shop.example/checkout"}`, strings.TrimPrefix(bodies[1], "POST "))
+}
+
+func TestVaultPurchaseEventsAreProjected(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `[{"id":"event-1","name":"purchase_created","created_at":"2026-10-28T00:00:00Z","data":{"item_type":"payment_request","provider":"kernel","payment_method_id_present":true,"provider_secret":"never-print"}},{"id":"event-2","name":"payment_method_removed","created_at":"2026-10-28T00:01:00Z","data":{"payment_method_id":"pm-2"}}]`)
+	})
+	out, _, err := executeVaultCommand(t, client, "vaults", "items", "events", "checkout", "order-1", "-o", "json")
+	require.NoError(t, err)
+	for _, text := range []string{`"item_type": "payment_request"`, `"provider": "kernel"`, `"payment_method_id_present": true`, `"payment_method_id": "pm-2"`} {
+		assert.Contains(t, out, text)
+	}
+	assert.NotContains(t, out, "never-print")
+}

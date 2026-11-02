@@ -15,10 +15,14 @@ or normalization. never include card data, OAuth tokens, or provider secrets in 
 const vaultRecoveryHelp = "only if restart_verification is advertised in available_operations, invoke it with explicit user approval each time to get a fresh spend_approval link. restart grants no spend consent: the cardholder must verify and explicitly approve spending again on the new link. if the result is unclear, re-get and share the new action if present; invoke once more only if restart_verification is still advertised and the user approves again. otherwise " + kernelSupportGuidance
 
 const vaultWalletSpecHelp = `
-for --provider kernel, use --spec '{}'. share the returned card_enrollment url
-with the cardholder; never enter card details in the cli. use wallets get --wait 60
-to observe connection, then wallets payment-methods to inspect token eligibility.
-a connected wallet may still be ineligible while network token enrollment runs.
+for --provider kernel, use --spec '{}'. when payment methods are enabled for the
+organization, creation returns an empty connected wallet that advertises
+add_payment_method: add each card with wallets add-payment-method and share its
+card_enrollment url with the cardholder. otherwise creation returns the default
+card's card_enrollment url; share it and use wallets get --wait 60 to observe
+connection. never enter card details in the cli. use wallets payment-methods to
+inspect each card's status and token eligibility; a card may still be ineligible
+while network token enrollment runs.
 ` + kernelWalletHelp + `. ` + kernelEligibilityHelp + `.
 kernel wallets accept neither provider configuration flags nor --tokens-file.
 for Link and AgentCard, omit config selection to preserve managed defaults.
@@ -54,11 +58,19 @@ type AgentCardWalletSpec = {
   user_id?: string; // usr_...; enrolled in this organization under the same config
 };
 
-// one card stored with KERNEL-managed credentials. creation returns a card_enrollment
-// action: the cardholder enters the card on a KERNEL-hosted page, and the wallet
-// connects once the card is stored. KERNEL then enrolls it for an agentic network
-// token when the issuer supports it; until then payment-methods reports
+// zero or more cards stored with KERNEL-managed credentials, each a payment method of
+// the wallet. each card is enrolled through a card_enrollment action: the cardholder
+// enters the card on a KERNEL-hosted page. when the wallet advertises
+// add_payment_method, creation returns an empty connected wallet and each card is
+// added with add_payment_method (at most 10 methods and 3 open enrollment links)
+// and removed with remove_payment_method; scoped api keys need vaults:write in
+// addition to vaults:use for both. otherwise creation returns the card_enrollment
+// action of the wallet's default card, payment method id card, and the wallet
+// connects once that card is stored. KERNEL then enrolls each card for an agentic
+// network token when the issuer supports it; until then payment-methods reports
 // capabilities.single_use_card.eligible=false and authorize returns 400.
+// payment-methods reports each card's status: pending_enrollment (link open),
+// active, removal_pending (retry the removal) or recovery_required (see status_reason).
 // the card number never reaches KERNEL or the cli. no provider config or tokens.
 type KernelWalletSpec = {
   provider: "kernel";
@@ -107,6 +119,8 @@ type AgentCardCardSpec = {
 type KernelCardSpec = {
   provider: "kernel";
   wallet: string;             // KERNEL wallet item key
+  payment_method_id?: string; // from wallets payment-methods; omit for the default card, id card.
+                              // never falls back to another card; required by --type payment_request
   amount: number;             // integer minor units; 1..1000000
   currency: string;           // iso 4217 three letters
   merchant_name: string;      // 1..255 characters
@@ -140,6 +154,16 @@ deleted; do not create a new card each period. deleting the card, its wallet, or
 first revokes the Link credential so later charges decline. if deletion returns 409
 provider_revocation_pending, retry deletion. deletion does not cancel the merchant subscription. recurring
 terms cannot be changed after authorization.
+
+--type payment_request creates a Link or kernel purchase as a payment_request item,
+where payment requests are enabled for the organization. it takes the same LinkCardSpec
+or KernelCardSpec, has the same operations, and kernel requests must name an active,
+eligible payment_method_id. AgentCard reusable cards remain card items. an update must
+use the stored item's type. a kernel purchase stays bound to its wallet and payment method.
+kernel purchases report state.payment_method_id and state.funding_status: available;
+unavailable while the method is being removed or awaits recovery (authorize, fill and
+confirm_transaction are refused); removed once the method is removed (create a new
+purchase with another method). funding_status never changes the purchase's status.
 
 kernel cards cannot be updated. ` + kernelReplacementHelp + `.
 in recovery_required, ` + vaultRecoveryHelp + `

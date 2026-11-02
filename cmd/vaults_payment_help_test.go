@@ -50,6 +50,31 @@ func TestVaultPaymentHelpProviderBoundaries(t *testing.T) {
 				"kernel cards have no stored billing fields",
 				"billing_* returns field_unavailable (400) before any write",
 				"enter billing details on the merchant page",
+				"add_payment_method (kernel wallets, no parameters)",
+				"remove_payment_method (kernel wallets) requires --params or --spec-file with payment_method_id",
+				"409 purchase_unresolved",
+				"409 provider_revocation_pending",
+				"vaults:write in addition to vaults:use",
+			},
+		},
+		{
+			name: "wallets create",
+			path: []string{"wallets", "create"},
+			want: []string{
+				"creation returns an empty connected wallet that advertises add_payment_method",
+				"otherwise creation returns the default card's card_enrollment url",
+				"pending_enrollment (link open)",
+			},
+		},
+		{
+			name: "cards create",
+			path: []string{"cards", "create"},
+			want: []string{
+				"payment_method_id?: string; // from wallets payment-methods; omit for the default card, id card.",
+				"--type payment_request creates a Link or kernel purchase",
+				"kernel requests must name an active, eligible payment_method_id",
+				"AgentCard reusable cards remain card items",
+				"funding_status never changes the purchase's status",
 			},
 		},
 	} {

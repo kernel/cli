@@ -63,6 +63,10 @@ func kernelVaultRetryGuidance(operation string) string {
 			guidance += ". share any new spend_approval privately; obtain user approval each time and new cardholder spend consent"
 		}
 		return guidance
+	case "add_payment_method":
+		return "list the wallet's payment methods with wallets payment-methods before adding another; a lost response may have created a pending_enrollment method, listed with its link until the link expires after 30 minutes. never add payment methods in an automatic loop"
+	case "remove_payment_method":
+		return "list the wallet's payment methods with wallets payment-methods; invoke remove_payment_method again only if the method is still listed, never in an automatic loop. removal is not proof that a payment did not occur"
 	default:
 		return "inspect item state and events before taking further action; no automatic retries"
 	}
@@ -82,6 +86,14 @@ func kernelVaultRequestError(err error, operation string) error {
 	_ = json.Unmarshal([]byte(apiErr.RawJSON()), &body)
 	detail := kernelVaultErrorURL.ReplaceAllString(body.Message, "[redacted url]")
 	switch {
+	case apiErr.StatusCode == 403 && body.Code == "insufficient_scope" && (operation == "add_payment_method" || operation == "remove_payment_method"):
+		guidance = "nothing was changed. adding or removing payment methods requires an api key with vaults:write in addition to vaults:use on this vault"
+	case apiErr.StatusCode == 409 && body.Code == "purchase_unresolved":
+		guidance = "the payment method was not removed. reconcile the unresolved purchase it funded first: inspect that item and its events, report the observed outcome with confirm_transaction when advertised, or delete the purchase if the api permits it. then retry the removal once"
+	case apiErr.StatusCode == 409 && body.Code == "provider_revocation_pending":
+		guidance = "the payment method stays removal_pending and refuses payments; invoke remove_payment_method again later, never in an automatic loop. removal is not proof that a payment did not occur"
+	case apiErr.StatusCode == 409 && operation == "add_payment_method":
+		guidance = "no enrollment was started. a wallet holds at most 10 payment methods and 3 open enrollment links; remove an unused method or let open links expire before adding another. " + guidance
 	case apiErr.StatusCode == 429:
 		guidance = retryAfterWait(apiErr) + "; " + guidance
 	case apiErr.StatusCode == 409 && operation == "authorize":
@@ -112,9 +124,15 @@ const kernelSupportGuidance = "do not retry payment, delete, or replace the item
 
 const kernelTransactionHelp = "report one observed merchant outcome only when confirm_transaction is advertised. PENDING means the merchant explicitly confirms an accepted transaction is pending; ERROR means an explicit merchant transaction error, not transport loss or an ambiguous processing page. these are final reports, not polling states. unknown means no reliable merchant outcome: ask the user to check order confirmation, merchant account or statement, then report the confirmed outcome even after card expiry. never infer success from fill. if reporting fails or the response is lost, re-get and send the identical observed report once more only if confirm_transaction is freshly advertised; otherwise observe state/events (recorded, in flight or recovery). never repeat merchant checkout"
 
-const kernelEligibilityHelp = "eligible=false means do not authorize. for network_token_pending, re-check later at most once in this attempt; network_token_unsupported or network_token_failed needs a different card. if still ineligible or unknown, ask the cardholder before enrolling a different card under a new wallet key; do not poll indefinitely or replay an uncertain purchase"
+const kernelEligibilityHelp = "eligible=false means do not authorize. for network_token_pending, re-check later at most once in this attempt; network_token_unsupported or network_token_failed needs a different card. if still ineligible or unknown, ask the cardholder before enrolling a different card, with add_payment_method when the wallet advertises it or otherwise under a new wallet key; do not poll indefinitely or replay an uncertain purchase"
 
-const kernelWalletHelp = "share card_enrollment only with the intended cardholder privately, never open it for them. reconnect_required: share the new card_enrollment action. degraded: with user confirmation, delete the wallet only if the api permits it before creating a new wallet under a new key for one enrollment; reconcile unresolved child cards first. connected does not imply token eligibility; inspect wallets payment-methods"
+const kernelWalletHelp = "a connected kernel wallet holds zero or more cards as payment methods; connected does not imply that any card can pay, so inspect wallets payment-methods. when the wallet advertises add_payment_method and remove_payment_method, add each card with wallets add-payment-method and remove one with wallets remove-payment-method; scoped api keys need vaults:write in addition to vaults:use for both. otherwise the wallet enrolls one default card (payment method id card) through the card_enrollment action returned at creation and connects once it is stored. share card_enrollment only with the intended cardholder privately, never open it for them. degraded: the default card's enrollment outcome is unknown; with user confirmation, delete the wallet only if the api permits it before creating a new wallet under a new key; reconcile unresolved child cards first. reconnect_required: the wallet predates payment methods, and payment and deletion are refused until it is upgraded"
+
+const kernelPaymentMethodHelp = "kernel card items select a method with optional payment_method_id; omitting it selects the default card, id card, and never falls back to another card. payment_request items require payment_method_id. only an active method with single_use_card.eligible=true can fund a new purchase, and a purchase stays bound to its method. pending_enrollment: share its card_enrollment url privately with the cardholder. removal_pending: invoke remove_payment_method again later. recovery_required: read status_reason; remove the method if its enrollment outcome is unknown, or contact support@kernel.sh if its stored card cannot be read"
+
+const kernelEnrollmentHelp = "share the card_enrollment url only with the intended cardholder privately, never open it for them; it is single-use and expires after 30 minutes. card details go to KERNEL's hosted page, never to the cli. a failed or expired enrollment does not affect the wallet's other payment methods. observe the method with wallets payment-methods until it is active and eligible; an unused link expires on its own, so add another only when the cardholder needs a new link"
+
+const kernelRemovedPaymentMethodHelp = "removal blocks new purchases, fills and confirmations funded by this payment method; other payment methods are unaffected and the wallet stays connected. purchases it funded report funding_status removed and keep their status. removal is not proof that a payment did not occur"
 
 const kernelReplacementHelp = "after user confirmation, delete only if the api permits it and create one new card under a new key for a new purchase; reconcile unresolved outcomes first"
 
