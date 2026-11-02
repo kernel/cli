@@ -134,6 +134,27 @@ func TestKernelCardCreateAuthorizeAndApproval(t *testing.T) {
 	assert.Equal(t, 3, calls)
 }
 
+func TestKernelCardSelectsPaymentMethod(t *testing.T) {
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Spec map[string]json.RawMessage `json:"spec"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.JSONEq(t, `"card-2"`, string(body.Spec["payment_method_id"]))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, strings.Replace(kernelCardFixture, `"merchant_country":"US"`, `"merchant_country":"US","payment_method_id":"card-2"`, 1))
+	})
+	spec := `{"wallet":"cardholder","payment_method_id":"card-2","amount":1200,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://shop.example/checkout","merchant_country":"US"}`
+	out, _, err := executeVaultCommand(t, client, "vaults", "cards", "create", "checkout", "order-1", "--provider", "kernel", "--spec", spec, "-o", "json")
+	require.NoError(t, err)
+	assert.Contains(t, out, `"payment_method_id": "card-2"`)
+
+	cmd, _, err := newVaultsCommand().Find([]string{"cards", "create"})
+	require.NoError(t, err)
+	assert.Contains(t, cmd.Long, "payment_method_id?: string")
+	assert.Contains(t, cmd.Long, "wallet with no default card")
+}
+
 func TestKernelReadyCardUsesAdvertisedFill(t *testing.T) {
 	ready := strings.Replace(kernelCardFixture, `"status":"requested"`, `"status":"ready"`, 1)
 	ready = strings.Replace(ready, `"type":"authorize","description":"Authorize this purchase"`, `"type":"fill","description":"Fill checkout fields"`, 1)

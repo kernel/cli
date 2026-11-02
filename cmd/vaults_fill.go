@@ -8,7 +8,6 @@ import (
 	"strconv"
 
 	kernel "github.com/kernel/kernel-go-sdk"
-	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/pterm/pterm"
 )
 
@@ -114,7 +113,7 @@ func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFil
 		}
 		request.Fields = append(request.Fields, binding)
 	}
-	response, err := c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, OfFill: &request}, option.WithMaxRetries(0))
+	response, err := c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, OfFill: &request}, vaultWriteRequestOptions()...)
 	if err != nil {
 		messages := vaultFillErrorMessages
 		if provider == "kernel" {
@@ -224,7 +223,7 @@ const onePasswordFillNotSubmitted = "nothing was submitted by this request; insp
 // Only these statuses are returned before the extension is invoked.
 var onePasswordFillRejected = map[int]string{
 	400: onePasswordFillNotSubmitted, 403: onePasswordFillNotSubmitted, 404: onePasswordFillNotSubmitted,
-	409: "nothing was submitted by this request; if several approved entries match this page, pass entry_id from items get -o json. 1pw_fill can submit the form, so never retry automatically. check the page first before retrying.",
+	409: "nothing was submitted by this request; if several open pages have page_url, pass target_id, and if several approved entries match its origin, pass entry_id from items get -o json. 1pw_fill can submit the form, so never retry automatically. check the page first before retrying.",
 }
 
 var onePasswordFillResultFields = vaultFieldsOf("type status error_code")
@@ -232,7 +231,7 @@ var onePasswordFillResultFields = vaultFieldsOf("type status error_code")
 func (c VaultsCmd) onePasswordFill(ctx context.Context, vault, key string, request *kernel.VaultItemPerformOperationParams, output string) error {
 	params := *request
 	params.IDOrName = vault
-	response, err := c.vaults.Items.PerformOperation(ctx, key, params, option.WithMaxRetries(0))
+	response, err := c.vaults.Items.PerformOperation(ctx, key, params, vaultWriteRequestOptions()...)
 	if err != nil {
 		var apiErr *kernel.Error
 		if errors.As(err, &apiErr) && apiErr.StatusCode == 503 {

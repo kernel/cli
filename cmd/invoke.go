@@ -590,7 +590,19 @@ func runInvocationBrowsers(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	table := pterm.TableData{{"Session ID", "Created At", "Region", "Headless", "Stealth", "Timeout", "CDP WS URL", "Live View URL"}}
+	showLeasedAt := false
+	for _, browser := range resp.Browsers {
+		if !browser.LeasedAt.IsZero() {
+			showLeasedAt = true
+			break
+		}
+	}
+	headers := []string{"Session ID", "Created At"}
+	if showLeasedAt {
+		headers = append(headers, "Leased At")
+	}
+	headers = append(headers, "Region", "Headless", "Stealth", "Timeout", "CDP WS URL", "Live View URL")
+	table := pterm.TableData{headers}
 
 	for _, browser := range resp.Browsers {
 		created := util.FormatLocal(browser.CreatedAt)
@@ -599,16 +611,23 @@ func runInvocationBrowsers(cmd *cobra.Command, args []string) error {
 			liveView = "-"
 		}
 
-		table = append(table, []string{
-			browser.SessionID,
-			created,
+		row := []string{browser.SessionID, created}
+		if showLeasedAt {
+			leasedAt := "-"
+			if !browser.LeasedAt.IsZero() {
+				leasedAt = util.FormatLocal(browser.LeasedAt)
+			}
+			row = append(row, leasedAt)
+		}
+		row = append(row,
 			util.OrDash(browser.Region),
 			fmt.Sprintf("%v", browser.Headless),
 			fmt.Sprintf("%v", browser.Stealth),
 			fmt.Sprintf("%d", browser.TimeoutSeconds),
 			truncateURL(browser.CdpWsURL, 40),
 			truncateURL(liveView, 40),
-		})
+		)
+		table = append(table, row)
 	}
 
 	pterm.Info.Printf("Browsers for invocation %s:\n", invocationID)

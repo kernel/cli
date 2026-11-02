@@ -14,13 +14,37 @@ or normalization. never include card data, OAuth tokens, or provider secrets in 
 
 const vaultRecoveryHelp = "only if restart_verification is advertised in available_operations, invoke it with explicit user approval each time to get a fresh spend_approval link. restart grants no spend consent: the cardholder must verify and explicitly approve spending again on the new link. if the result is unclear, re-get and share the new action if present; invoke once more only if restart_verification is still advertised and the user approves again. otherwise " + kernelSupportGuidance
 
+const shopPayRecoveryHelp = "follow status_reason. Shop Pay issuance recovery may be explicitly abandoned by deleting the card directly after user confirmation, then creating a new purchase for separate approval. recovery while reporting a merchant transaction cannot be deleted; reconcile it with support. deletion or recreation is never proof that no payment occurred"
+
+const shopPayFlowHelp = `Shop Pay checkout (the item's available_operations descriptions are authoritative):
+1. create a Shop Pay wallet with --provider shop_pay and Kernel-managed OAuth authorization,
+   share the returned shop_pay_oauth URL unchanged with the shopper, and wait for connected.
+2. inspect wallets payment-methods. a card spec may select payment_method_id or omit it to
+   use the shopper's preferred card.
+3. create a card with amount, USD currency, merchant details, shopper-facing context, and
+   totals containing exactly one positive total no greater than amount.
+4. after explicit user approval, invoke authorize. at final checkout pass --browser-id and
+   --page-url together so Shop receives that page as the merchant and fill is locked to its
+   origin; omit both to use merchant_url. share any approval URL unchanged and observe the item.
+5. when fill is advertised, fill only the fields requested by the checkout and submit it.
+   ready means a credential was issued, not that the merchant accepted payment.
+6. report the observed merchant outcome once with confirm_transaction. Shop Pay accepts
+   PURCHASE, AUTHORIZATION, or CAPTURE; APPROVED may include order_id/order_url, while other
+   outcomes may include failure_code. reporting consumes the card whatever the outcome.
+never infer success or retry an unknown payment; reconcile the merchant order and original item.`
+
 const vaultWalletSpecHelp = `
-for --provider kernel, use --spec '{}'. share the returned card_enrollment url
-with the cardholder; never enter card details in the cli. use wallets get --wait 60
-to observe connection, then wallets payment-methods to inspect token eligibility.
-a connected wallet may still be ineligible while network token enrollment runs.
+for --provider kernel, use --spec '{}'. if creation returns card_enrollment,
+share it with the cardholder; never enter card details in the cli. where the wallet
+advertises add_payment_method, creation instead returns an empty connected wallet and
+each card is enrolled through that operation. use wallets get --wait 60 to observe
+connection, then wallets payment-methods to inspect card status and token eligibility.
+a connected wallet may have zero cards or cards that are still ineligible while network
+token enrollment runs.
 ` + kernelWalletHelp + `. ` + kernelEligibilityHelp + `.
 kernel wallets accept neither provider configuration flags nor --tokens-file.
+Shop Pay wallets also accept neither: they always use Kernel-managed OAuth. creation returns
+shop_pay_oauth; share its URL unchanged with the shopper and observe with wallets get --wait 60.
 for Link and AgentCard, omit config selection to preserve managed defaults.
 --provider-config-id and --provider-config-name are mutually exclusive.
 for Link with selection flags, use --spec '{}' and --tokens-file <path|->.
@@ -54,15 +78,26 @@ type AgentCardWalletSpec = {
   user_id?: string; // usr_...; enrolled in this organization under the same config
 };
 
-// one card stored with KERNEL-managed credentials. creation returns a card_enrollment
-// action: the cardholder enters the card on a KERNEL-hosted page, and the wallet
-// connects once the card is stored. KERNEL then enrolls it for an agentic network
-// token when the issuer supports it; until then payment-methods reports
-// capabilities.single_use_card.eligible=false and authorize returns 400.
-// the card number never reaches KERNEL or the cli. no provider config or tokens.
+// cards stored with KERNEL-managed credentials. each is a wallet payment method.
+// where add_payment_method is advertised, creation returns an empty connected wallet;
+// invoke add_payment_method once for each card enrollment. otherwise creation returns
+// the default card's card_enrollment action and connects after that card is stored.
+// KERNEL enrolls stored cards for agentic network tokens when supported; until then
+// payment-methods can report capabilities.single_use_card.eligible=false.
+// card numbers never reach KERNEL or the cli. no provider config or tokens.
 type KernelWalletSpec = {
   provider: "kernel";
 };
+
+type ShopPayWalletSpec = {
+  provider: "shop_pay";
+  authorization: {
+    method: "oauth";
+    client: { type: "kernel_managed" };
+  };
+};
+
+` + shopPayFlowHelp + `
 `
 
 const vaultCardSpecHelp = `
@@ -107,6 +142,7 @@ type AgentCardCardSpec = {
 type KernelCardSpec = {
   provider: "kernel";
   wallet: string;             // KERNEL wallet item key
+  payment_method_id?: string; // from wallets payment-methods; omit only for the legacy default card; a wallet with no default card requires it
   amount: number;             // integer minor units; 1..1000000
   currency: string;           // iso 4217 three letters
   merchant_name: string;      // 1..255 characters
@@ -114,6 +150,31 @@ type KernelCardSpec = {
   merchant_country?: string;  // iso 3166-1 alpha-2; required for Visa cards
   merchant_category?: string; // actual category, 1..255 characters; omit rather than invent
   merchant_category_code?: string; // actual four-digit MCC, not 0000; omit rather than invent
+};
+
+type ShopPayCardSpec = {
+  provider: "shop_pay";
+  wallet: string;             // connected Shop Pay wallet item key
+  payment_method_id?: string; // from wallets payment-methods; omit for the shopper's preferred card
+  amount: number;             // approval limit in minor units; 1..1000000
+  currency: string;           // USD only
+  merchant_name: string;      // 1..255 characters
+  merchant_url: string;       // merchant https URL; used when authorize omits checkout context
+  merchant_country?: string;  // iso 3166-1 alpha-2
+  context: string;            // 100..500 characters shown to the shopper
+  line_items?: ShopPayLineItem[];
+  totals: ShopPayTotal[];     // exactly one positive total, no greater than amount
+};
+
+type ShopPayLineItem = {
+  name: string;
+  quantity: number;           // integer >= 1
+  unit_amount: number;        // integer minor units >= 0
+};
+
+type ShopPayTotal = {
+  type: string;               // e.g. subtotal, fulfillment, tax, discount, total
+  amount: number;             // integer minor units; discounts are negative
 };
 
 type LinkLineItem = {
@@ -161,6 +222,71 @@ it retains the current approval flow; even when supplied, autopilot may not appl
 user approval may still be required. this field does not guarantee payment success.
 prepared checkout uses preparation merchant_origin instead.
 
-permitted domains are not configurable in the spec. Link card fill is limited to the origin
-of the checkout the card was authorized at; AgentCard domains are provider-assigned.
+permitted domains are not configurable in the spec. Link and Shop Pay card fill is limited
+to the checkout origin when authorized with browser_id/page_url, or merchant_url's origin
+when authorized without them; AgentCard domains are provider-assigned.
+for KERNEL purchases, ` + kernelFundingStatusHelp + `.
+
+` + shopPayFlowHelp + `
+`
+
+const vaultPaymentRequestSpecHelp = `
+payment_request items are one Link or KERNEL purchase parented by a wallet. they have
+the same authorize, fill, confirmation, recovery, and deletion lifecycle as the
+corresponding card purchase. availability is organization-controlled. AgentCard reusable
+cards remain card items. create and update require type payment_request on the wire; the
+cli supplies it. updates are subject to the same authorization-state restrictions as cards.
+
+type LinkPaymentRequestSpec = {
+  provider: "link";
+  wallet: string;             // connected Link wallet item key
+  payment_method_id: string;  // from wallets payment-methods
+  amount: number;             // integer minor units; 1..50000; with recurring, per-period limit
+  currency: string;           // three letters
+  merchant_name: string;      // 1..255 characters
+  merchant_url: string;       // uri; virtual-card fill is limited to this origin
+  context: string;            // at least 100 characters
+  line_items?: LinkLineItem[];
+  totals?: LinkTotal[];
+  metadata?: Record<string, string>;
+  recurring?: LinkRecurring;
+};
+
+type KernelPaymentRequestSpec = {
+  provider: "kernel";
+  wallet: string;             // KERNEL wallet item key
+  payment_method_id: string;  // required; active eligible method from wallets payment-methods
+  amount: number;             // integer minor units; 1..1000000
+  currency: string;           // iso 4217 three letters
+  merchant_name: string;      // 1..255 characters
+  merchant_url: string;       // https merchant checkout url; fill is locked to its origin
+  merchant_country?: string;  // iso 3166-1 alpha-2; required for Visa cards
+  merchant_category?: string; // actual category; omit rather than invent
+  merchant_category_code?: string; // actual four-digit MCC, not 0000; omit rather than invent
+};
+
+type LinkRecurring = {
+  interval: "day" | "week" | "month" | "year";
+  interval_count?: number;    // integer >= 1
+};
+
+type LinkLineItem = {
+  name: string;
+  quantity?: number;
+  unit_amount?: number;
+  description?: string;
+  sku?: string;
+  url?: string;
+  image_url?: string;
+  product_url?: string;
+  totals?: LinkTotal[];
+};
+
+type LinkTotal = { type: string; display_text: string; amount: number };
+
+KERNEL payment requests must select payment_method_id and remain bound to it. removing
+that method makes the purchase unusable rather than moving it to another card. for KERNEL
+purchases, ` + kernelFundingStatusHelp + `. Link payment requests follow the Link checkout
+flow below. never retry an uncertain payment by creating another payment_request;
+reconcile the original item and merchant outcome.
 `
