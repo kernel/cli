@@ -1,6 +1,6 @@
 module github.com/kernel/cli
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/Masterminds/semver/v3 v3.4.0
