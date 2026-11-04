@@ -49,17 +49,24 @@ for Link and AgentCard, omit config selection to preserve managed defaults.
 --provider-config-id and --provider-config-name are mutually exclusive.
 for Link with selection flags, use --spec '{}' and --tokens-file <path|->.
 alternatively, set the customer_managed client and provider_config in --spec,
-with tokens still supplied only through --tokens-file. its json object must have
-access_token and refresh_token strings from the same currently valid grant.
+with tokens still supplied only through --tokens-file. --token-refresh is fixed at
+wallet creation. kernel (the default) requires access_token and refresh_token from
+the same currently valid grant; after import your backend must stop refreshing it
+because KERNEL owns rotation. customer requires only access_token: your backend keeps
+and rotates the refresh token, while KERNEL never refreshes or revokes the grant.
 config client credentials belong in vault-provider-configs, not in a wallet.
 
-your backend completes OAuth before import and must stop refreshing the grant
-after import: KERNEL owns subsequent rotation. duplicate creation never replaces
-tokens. bindings are immutable; renaming a config preserves the resolved id.
-if an imported wallet becomes degraded, obtain a fresh grant in your backend and
-import it under a new wallet key for new work. this does not rebind existing cards
-or resolve uncertain payments. retain old items for reconciliation; do not repeat
-an uncertain payment through the new wallet. there is no in-place reauthorization.
+with token_refresh=customer, invoke the advertised update_access_token operation through
+items invoke --spec-file before each step that reaches Link, including card creation,
+authorization, and fill. if Link rejects the stored token, the operation returns 409
+without another Link call; update the token, then retry. existing cards and pending
+purchases keep their state.
+with token_refresh=kernel, duplicate creation never replaces tokens. bindings are
+immutable; renaming a config preserves the resolved id. if an imported wallet becomes
+degraded, obtain a fresh grant in your backend and import it under a new wallet key for
+new work. this does not rebind existing cards or resolve uncertain payments. retain old
+items for reconciliation; do not repeat an uncertain payment through the new wallet.
+there is no in-place reauthorization.
 
 type ProviderConfigReference = { id: string } | { name: string };
 
@@ -69,6 +76,7 @@ type LinkWalletSpec = {
     method: "oauth";
     client: { type: "kernel_managed" } |
       { type: "customer_managed"; provider_config: ProviderConfigReference }; // requires --tokens-file
+    token_refresh?: "kernel" | "customer"; // imported grants only; default kernel; or use --token-refresh
   };
 };
 
@@ -132,25 +140,53 @@ type AgentCardCardSpec = {
   checkout_origin?: string;   // top-level checkout origin for autopilot matching; update omission removes it
 };
 
-// one live purchase with a KERNEL-enrolled card. authorize obtains a network token and
-// one-time code for fill on merchant_url's origin until expires_at. Mastercard purchases
-// need no hosted approval. a Visa purchase returns a spend_approval action: the cardholder
-// approves it with a Visa passkey (the link expires after 30 minutes) before the code is
-// issued. when the card network cannot issue an agentic token, spend_approval instead
-// collects a fresh security code; after collection, fill before expires_at, normally within
-// five minutes. an expired purchase requires a new card. updates are not supported.
+// one live KERNEL purchase. with payment_method_id (or the legacy default card),
+// authorize obtains a network token and one-time code for fill on merchant_url's exact
+// origin until expires_at. Mastercard purchases need no hosted approval. a Visa purchase
+// returns spend_approval: the cardholder approves it with a Visa passkey before the code is
+// issued, or supplies a fresh security code when agentic token issuance is unavailable.
+// single_use_card instead stores caller-supplied card details and is ready on creation.
+// it supports only fill, on any https page in merchant_url's registrable domain, and fill
+// does not consume it. updates are not supported in either mode.
 type KernelCardSpec = {
   provider: "kernel";
   wallet: string;             // KERNEL wallet item key
-  payment_method_id?: string; // from wallets payment-methods; omit only for the legacy default card; a wallet with no default card requires it
+  payment_method_id?: string; // wallet payment method; omit only for legacy default card; a wallet with no default card requires it; mutually exclusive with single_use_card
+  single_use_card?: {
+    number: string;           // 12..19 digits and must pass Luhn; --spec-file only
+    cvc: string;              // 3..4 digits; --spec-file only
+    exp_month: string;        // MM; --spec-file only
+    exp_year: string;         // YYYY; --spec-file only
+    name?: string;            // 1..255 characters; filled as billing_name
+    billing_address?: {
+      line1?: string;         // 1..255 characters
+      line2?: string;         // 1..255 characters
+      city?: string;          // 1..255 characters
+      state?: string;         // 1..255 characters
+      postal_code?: string;   // 1..255 characters
+      country?: string;       // uppercase iso 3166-1 alpha-2
+    };
+    reference?: string;       // 1..255 characters; returned unchanged on reads
+  };
+  expires_at?: string;        // single-use only, RFC3339; default 2h, max 24h, capped by expiry month
   amount: number;             // integer minor units; 1..1000000
   currency: string;           // iso 4217 three letters
   merchant_name: string;      // 1..255 characters
-  merchant_url: string;       // https merchant checkout url; fill is locked to its origin
-  merchant_country?: string;  // iso 3166-1 alpha-2; required for Visa cards
+  merchant_url: string;       // https merchant checkout url
+  merchant_country?: string;  // iso 3166-1 alpha-2; required for Visa payment-method cards
   merchant_category?: string; // actual category, 1..255 characters; omit rather than invent
   merchant_category_code?: string; // actual four-digit MCC, not 0000; omit rather than invent
 };
+
+single-use card details are encrypted and never returned; reads expose only reference and
+safe card masks. pass the full Kernel card spec through --spec-file <path|->, never --spec.
+the card is expired from expires_at and KERNEL deletes its details shortly afterward;
+deleting the card, wallet, or vault deletes them immediately. expires_at must be in the
+future, no more than 24 hours after creation, and no later than the card's expiry month.
+a card whose expiry month ended is rejected. amount, currency, and merchant fields are
+recorded but do not restrict browser payment requests. repeating the identical create
+returns the item; another request at the same key conflicts, including after expired card
+details have been deleted.
 
 type ShopPayCardSpec = {
   provider: "shop_pay";
@@ -204,14 +240,19 @@ terms cannot be changed after authorization.
 
 kernel cards cannot be updated. ` + kernelReplacementHelp + `.
 in recovery_required, ` + vaultRecoveryHelp + `
-invoke authorize only when advertised. for Visa, present the returned
-spend_approval url to the cardholder and poll items get --wait 60 until ready.
-Mastercard may become ready without hosted approval. neither ready nor fill
-confirms merchant payment. fill and submit before expires_at; never pass PAN to cli.
-after the user submits checkout, report the observed outcome once with confirm_transaction
-when advertised. ` + kernelTransactionHelp + `. ` + kernelTerminalHelp + `.
-kernel cards have no stored billing fields; billing_* returns field_unavailable before
-any write. enter billing details on the merchant page.
+for a payment-method-funded card, invoke authorize only when advertised. for Visa, present
+spend_approval to the cardholder and poll items get --wait 60 until ready. Mastercard may
+become ready without hosted approval. neither ready nor fill confirms merchant payment.
+fill and submit before expires_at; never put PAN in shell arguments.
+a single-use card is ready on creation, advertises only fill, and remains fillable until
+expires_at without being consumed. repeated fill is safe and never submits checkout; card
+details are delivered for only a few minutes after fill, so submit promptly. its supplied
+name and billing address are available as billing_name and billing_* fill fields; omitted
+fields return field_unavailable.
+after the user submits a payment-method-funded checkout, report the observed outcome once
+with confirm_transaction when advertised. ` + kernelTransactionHelp + `. ` + kernelTerminalHelp + `.
+payment-method-funded kernel cards have no stored billing fields; enter billing details on
+the merchant page.
 
 card updates replace the whole spec, so omitting checkout_origin from an update removes
 its existing value. for non-prepared authorization, checkout_origin is forwarded to
@@ -225,7 +266,8 @@ prepared checkout uses preparation merchant_origin instead.
 permitted domains are not configurable in the spec. Link and Shop Pay card fill is limited
 to the checkout origin when authorized with browser_id/page_url, or merchant_url's origin
 when authorized without them; AgentCard domains are provider-assigned.
-for KERNEL purchases, ` + kernelFundingStatusHelp + `.
+for payment-method-funded KERNEL purchases, ` + kernelFundingStatusHelp + `. single-use
+cards have no payment_method_id or funding_status.
 
 ` + shopPayFlowHelp + `
 `

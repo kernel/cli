@@ -71,7 +71,8 @@ var vaultItemFields = vaultOutputFields{
 		"requests":        onePasswordRequestFields,
 		"fields":          vaultFieldsOf("name label type required sensitive"),
 		"provider_config": vaultFieldsOf("id name"),
-		"authorization":   {"method": nil, "client": {"type": nil, "provider_config": vaultFieldsOf("id name")}},
+		"authorization":   {"method": nil, "token_refresh": nil, "client": {"type": nil, "provider_config": vaultFieldsOf("id name")}},
+		"single_use_card": vaultFieldsOf("reference"),
 		"totals":          vaultTotalFields,
 		"recurring":       vaultFieldsOf("interval interval_count"),
 		"line_items": {
@@ -86,6 +87,7 @@ var vaultItemFields = vaultOutputFields{
 			"request": onePasswordRequestFields, "entries": onePasswordRequestEntryFields,
 			"resolved": vaultFieldsOf("reference entryId"),
 		},
+		"source":            nil,
 		"funding_status":    nil,
 		"payment_method_id": nil,
 		"fields":            {"*": vaultFieldsOf("has_value type")},
@@ -362,7 +364,9 @@ func printVaultOperationHints(item *kernel.VaultItemUnion, vault, key, project s
 	}
 	for _, op := range actions.Operations {
 		command := prefix
-		if vaultOperationTakesParams(op.Type) {
+		if op.Type == "1pw_update_access_token" || op.Type == "update_access_token" {
+			command += " --spec-file '<path|->'"
+		} else if vaultOperationTakesParams(op.Type) {
 			command += " --params '<json>'"
 		}
 		if isPasskeyOperation(op.Type) {
@@ -447,6 +451,9 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 			rows = append(rows, []string{"OAuth client type", client.Type})
 			if item.Spec.Provider == "link" {
 				configID, configName = client.ProviderConfig.ID, client.ProviderConfig.Name
+				if item.Spec.Authorization.JSON.TokenRefresh.Valid() {
+					rows = append(rows, []string{"token refresh owner (immutable)", item.Spec.Authorization.TokenRefresh})
+				}
 			}
 		}
 		if configID != "" {
@@ -464,8 +471,14 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 			merchant = item.Spec.Merchant
 		}
 		rows = append(rows, []string{"wallet key", item.Spec.Wallet}, []string{"merchant", merchant}, []string{"amount (minor units)", fmt.Sprintf("%d %s", item.Spec.Amount, item.Spec.Currency)})
+		if item.State.JSON.Source.Valid() {
+			rows = append(rows, []string{"funding source", string(item.State.Source)})
+		}
 		if item.Spec.PaymentMethodID != "" {
 			rows = append(rows, []string{"payment method id", item.Spec.PaymentMethodID})
+		}
+		if item.Spec.JSON.SingleUseCard.Valid() && item.Spec.SingleUseCard.Reference != "" {
+			rows = append(rows, []string{"single-use card reference", item.Spec.SingleUseCard.Reference})
 		}
 		if item.Spec.Provider == "link" && item.Spec.JSON.Recurring.Valid() {
 			intervalCount := "1 (default)"
@@ -557,8 +570,12 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		}
 		return
 	}
-	if item.Type == "wallet" && item.Spec.Provider == "link" && item.Spec.Authorization.Client.Type == "customer_managed" && item.State.Status == "degraded" {
-		pterm.Warning.Println("imported grant is degraded; there is no in-place reauthorization. import a fresh backend OAuth grant under a new wallet key for new work only. existing cards stay bound to the old wallet; retain them and reconcile uncertain payments before further action.")
+	if item.Type == "wallet" && item.Spec.Provider == "link" && item.Spec.Authorization.Client.Type == "customer_managed" {
+		if item.Spec.Authorization.TokenRefresh == "customer" {
+			pterm.Info.Println("your backend owns refresh-token rotation. before each operation that reaches Link, replace the stored access token with items invoke update_access_token --spec-file. KERNEL never refreshes or revokes this grant.")
+		} else if item.State.Status == "degraded" {
+			pterm.Warning.Println("imported grant is degraded; there is no in-place reauthorization. import a fresh backend OAuth grant under a new wallet key for new work only. existing cards stay bound to the old wallet; retain them and reconcile uncertain payments before further action.")
+		}
 	}
 	if actions.RequiredAction != "" && actions.ActionURL != "" {
 		pterm.Printf("action url:\n%s\n", actions.ActionURL)
@@ -598,13 +615,17 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	}
 	if item.Type == "card" || item.Type == "payment_request" {
 		if item.Spec.Provider == "kernel" {
-			switch item.State.Status {
-			case "requested", "pending_authorization", "ready":
-				pterm.Info.Println("Visa may require passkey approval through spend_approval; an alias-mode card may instead require fresh security-code collection. share the link privately and never open it for the cardholder; an unused link expires after 30 minutes. alias-mode cards normally expire five minutes after collection. ready means card details are available, not that the merchant charged the card; fill and submit before expires_at.")
-			}
-			switch item.State.Status {
-			case "ready", "declined", "expired", "consumed":
-				pterm.Info.Println(kernelTerminalHelp)
+			if item.State.Source == kernel.KernelCardStateSourceSingleUseCard {
+				pterm.Info.Println("this caller-supplied single-use card supports only fill. it fills on any https page in the permitted registrable domain, is not consumed by fill, and expires at expires_at; KERNEL deletes its stored details shortly afterward. card details are delivered for only a few minutes after fill, so submit promptly.")
+			} else {
+				switch item.State.Status {
+				case "requested", "pending_authorization", "ready":
+					pterm.Info.Println("Visa may require passkey approval through spend_approval; an alias-mode card may instead require fresh security-code collection. share the link privately and never open it for the cardholder; an unused link expires after 30 minutes. alias-mode cards normally expire five minutes after collection. ready means card details are available, not that the merchant charged the card; fill and submit before expires_at.")
+				}
+				switch item.State.Status {
+				case "ready", "declined", "expired", "consumed":
+					pterm.Info.Println(kernelTerminalHelp)
+				}
 			}
 		}
 		if item.State.JSON.Preparation.Valid() {
@@ -632,9 +653,13 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		}
 		switch item.Spec.Provider {
 		case "kernel":
-			pterm.Info.Println(kernelTransactionHelp + ". kernel card and payment_request purchases have no stored billing fields; billing_* returns field_unavailable. enter billing details on the merchant page.")
-			if item.State.JSON.FundingStatus.Valid() {
-				pterm.Info.Println(kernelFundingStatusHelp + ".")
+			if item.State.Source == kernel.KernelCardStateSourceSingleUseCard {
+				pterm.Info.Println("fill exposes only the cardholder and billing fields supplied at creation; omitted fields return field_unavailable. ready and fill do not confirm merchant payment.")
+			} else {
+				pterm.Info.Println(kernelTransactionHelp + ". payment-method-funded kernel cards and payment_request purchases have no stored billing fields; billing_* returns field_unavailable. enter billing details on the merchant page.")
+				if item.State.JSON.FundingStatus.Valid() {
+					pterm.Info.Println(kernelFundingStatusHelp + ".")
+				}
 			}
 		case "link":
 			pterm.Info.Println("fill never submits payment; submit the checkout yourself. if the result of submitting payment is unclear, check the merchant's order confirmation or order history before paying again. if authorization is declined or expires, delete this purchase item and create a new one.")
@@ -671,7 +696,7 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		printVaultLinkShippingAddresses(item.Expanded.LinkShippingAddresses)
 	}
 	if actions.RequiredAction != "" {
-		pterm.Info.Println("complete the returned action with the provider; never pass card data or OAuth codes to the cli. observe with items get --wait 60.")
+		pterm.Info.Println("complete the returned action with the provider; never put card data or OAuth codes in shell arguments. observe with items get --wait 60.")
 	}
 }
 

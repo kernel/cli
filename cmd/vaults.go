@@ -255,6 +255,9 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 	}
 	if err != nil {
 		if vaultSpecProvider(spec) == "kernel" {
+			if vaultSpecHasSingleUseCard(spec) {
+				return vaultCredentialError(err)
+			}
 			return kernelVaultRequestError(err, "create")
 		}
 		return util.CleanedUpSdkError{Err: err}
@@ -316,6 +319,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	}
 	if (operation == "add_payment_method" || operation == "remove_payment_method") && (params == nil || params.PaymentMethod == nil) {
 		return fmt.Errorf("%s requires its documented parameters", operation)
+	}
+	if operation == "update_access_token" && (params == nil || params.UpdateAccessToken == nil) {
+		return fmt.Errorf("update_access_token requires --spec-file with access_token")
 	}
 	item, err := c.vaults.Items.Get(ctx, key, kernel.VaultItemGetParams{IDOrName: vault}, option.WithMaxRetries(0))
 	if err != nil {
@@ -399,6 +405,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	} else if params != nil && params.PaymentMethod != nil {
 		request = *params.PaymentMethod
 		request.IDOrName = vault
+	} else if params != nil && params.UpdateAccessToken != nil {
+		request = *params.UpdateAccessToken
+		request.IDOrName = vault
 	} else if operation == "prepare_checkout" {
 		if item.Type != "card" || item.Spec.Provider != "agentcard" {
 			return fmt.Errorf("prepare_checkout requires an AgentCard card")
@@ -416,6 +425,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	if err != nil {
 		if isOnePasswordOperation(operation) {
 			return onePasswordOperationError(err, operation)
+		}
+		if operation == "update_access_token" {
+			return vaultCredentialError(err)
 		}
 		if item.Type == "credential" || item.Type == "credential_account" {
 			return vaultCredentialError(err)

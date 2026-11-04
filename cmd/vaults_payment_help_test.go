@@ -47,7 +47,7 @@ func TestVaultPaymentHelpProviderBoundaries(t *testing.T) {
 				"report one observed merchant outcome",
 				"unknown means no reliable merchant outcome",
 				"restart_verification takes no parameters",
-				"KERNEL cards have no stored billing fields",
+				"payment-method-funded KERNEL cards and KERNEL payment_request items have no stored billing fields",
 				"billing_* returns field_unavailable (400) before any write",
 				"enter billing details on the merchant page",
 			},

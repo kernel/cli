@@ -80,6 +80,11 @@ func TestVaultSpecHelpAndFlags(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, cmd.Flags().Lookup("provider"))
 			require.NotNil(t, cmd.Flags().Lookup("spec"))
+			if path == "cards create" {
+				require.NotNil(t, cmd.Flags().Lookup("spec-file"))
+			} else {
+				assert.Nil(t, cmd.Flags().Lookup("spec-file"))
+			}
 			for _, removed := range []string{"wallet", "amount", "currency", "merchant", "merchant-url", "payment-method-id", "context", "test", "live", "card-id", "user-id"} {
 				assert.Nil(t, cmd.Flags().Lookup(removed), removed)
 			}
@@ -91,12 +96,11 @@ func TestVaultSpecHelpAndFlags(t *testing.T) {
 			assert.Contains(t, cmd.Example, "--spec '")
 			assert.NotContains(t, cmd.Long, "test: boolean")
 			assert.NotContains(t, cmd.Long, "sandbox/live")
-			assert.NotContains(t, cmd.Long, "expires_at?:")
 			if strings.HasPrefix(path, "cards") {
-				for _, field := range []string{"merchant_name:", "merchant:", "line_items?:", "metadata?:", "recurring?:", "type LinkRecurring", `interval: "day" | "week" | "month" | "year"`, "checkout_origin?:", "type LinkLineItem", "type LinkTotal", "type ShopPayCardSpec", "type ShopPayLineItem", "type ShopPayTotal"} {
+				for _, field := range []string{"merchant_name:", "merchant:", "line_items?:", "metadata?:", "recurring?:", "type LinkRecurring", `interval: "day" | "week" | "month" | "year"`, "checkout_origin?:", "type LinkLineItem", "type LinkTotal", "type ShopPayCardSpec", "type ShopPayLineItem", "type ShopPayTotal", "single_use_card?:", "expires_at?:", "billing_address?:", "reference?:"} {
 					assert.Contains(t, cmd.Long, field)
 				}
-				for _, guidance := range []string{"eligible", "autopilot may not apply", "user approval may", "does not guarantee payment success", "KERNEL does not validate this declaration against the page open in the browser.", "preparation merchant_origin instead", "card updates replace the whole spec", "omitting checkout_origin from an update removes", "per-period spending limit", "do not create a new card each period", "does not cancel the merchant subscription", "1..1000000"} {
+				for _, guidance := range []string{"eligible", "autopilot may not apply", "user approval may", "does not guarantee payment success", "KERNEL does not validate this declaration against the page open in the browser.", "preparation merchant_origin instead", "card updates replace the whole spec", "omitting checkout_origin from an update removes", "per-period spending limit", "do not create a new card each period", "does not cancel the merchant subscription", "1..1000000", "--spec-file <path|->", "any https page in merchant_url's registrable domain", "does not consume it", "never returned"} {
 					assert.Contains(t, cmd.Long, guidance)
 				}
 			} else {

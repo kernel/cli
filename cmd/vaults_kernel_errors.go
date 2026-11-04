@@ -74,6 +74,19 @@ func vaultSpecProvider(spec json.Marshaler) string {
 	return value.Provider
 }
 
+func vaultSpecHasSingleUseCard(spec json.Marshaler) bool {
+	raw, err := spec.MarshalJSON()
+	if err != nil {
+		return false
+	}
+	var value map[string]json.RawMessage
+	if json.Unmarshal(raw, &value) != nil {
+		return false
+	}
+	_, present := value["single_use_card"]
+	return present
+}
+
 func kernelVaultRetryGuidance(operation string) string {
 	switch operation {
 	case "create":

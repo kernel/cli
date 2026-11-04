@@ -61,11 +61,12 @@ const vaultOnePasswordCredentialHelp = `1Password flow:
    with a customer-supplied access token, state.access_request.resolved returns the
    non-secret granted references.
 5. create a browser with the vault attached, open the login page, and invoke 1pw_fill
-   with browser_id and the exact page_url. when several open pages have that exact url,
-   pass target_id (for example tab.target_id from playwright.execute). when several
-   approved entries share that page's origin, pass entry_id from the state.access_request
-   entries in items get -o json. fill_submitted means the form
-   was submitted, not that sign-in succeeded.
+   with browser_id and the exact page_url. the 1Password extension decides whether the
+   approved login matches and refuses pages that do not. when several open pages have
+   that exact url, pass target_id (for example tab.target_id from playwright.execute).
+   when several entries are approved and the page origin does not identify exactly one,
+   pass entry_id from state.access_request in items get -o json. fill_submitted means
+   the form was submitted, not that sign-in succeeded.
 invoke only advertised operations. 1pw_fill can submit the form, so never retry
 automatically. check the page first before retrying. never automatically retry an
 access request or recovery.

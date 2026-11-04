@@ -83,6 +83,13 @@ func (b BrowsersCmd) WebMCPInvoke(ctx context.Context, in BrowsersWebMCPInvokeIn
 	for key, value := range fields {
 		input[key] = value
 	}
+	serialized, err := json.Marshal(input)
+	if err != nil {
+		return fmt.Errorf("invalid input: could not serialize JSON object: %w", err)
+	}
+	if len(serialized) > 4<<20 {
+		return fmt.Errorf("invalid input: JSON object exceeds 4 MiB after serialization")
+	}
 	params := kernel.BrowserWebmcpInvokeToolParams{InvokeRequest: kernel.InvokeRequestParam{
 		ToolRef: in.ToolRef, Input: input, TimeoutSec: in.TimeoutSec,
 	}}
@@ -129,14 +136,18 @@ func newBrowsersWebMCPCommand() *cobra.Command {
 			"backed by a declarative form that does not autosubmit instead returns once " +
 			"its fields are populated (awaiting_submission): inspect the form, obtain any required confirmation, " +
 			"then submit it through Playwright or computer interaction without invoking " +
-			"the tool again.",
+			"the tool again. If the tab or frame disappears, or the request times out after invocation starts, " +
+			"the outcome is unknown; a returned status of unknown has the same meaning. An unrelated reload, " +
+			"navigation, or tab crash can instead report tool_page_unloaded. Neither failure is retried " +
+			"because the tool may have had side effects. " +
+			"CDP-backed custom tool output above 240 KiB fails instead of being truncated.",
 		Args: cobra.ExactArgs(1),
 		RunE: runBrowsersWebMCPInvoke,
 	}
 	invoke.Flags().String("tool-ref", "", "Opaque tool reference from webmcp list")
 	_ = invoke.MarkFlagRequired("tool-ref")
-	invoke.Flags().String("input", "", "Tool input as a JSON object")
-	invoke.Flags().String("input-file", "", "Path to a JSON object file (use '-' for stdin)")
+	invoke.Flags().String("input", "", "Tool input as a JSON object (maximum 4 MiB after JSON serialization)")
+	invoke.Flags().String("input-file", "", "Path to a JSON object file (use '-' for stdin; maximum 4 MiB after JSON serialization)")
 	invoke.MarkFlagsOneRequired("input", "input-file")
 	invoke.MarkFlagsMutuallyExclusive("input", "input-file")
 	invoke.Flags().Int64("timeout-sec", 0, "Maximum execution time in seconds, 1-120 (default per server)")

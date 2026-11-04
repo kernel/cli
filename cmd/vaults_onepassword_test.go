@@ -316,6 +316,10 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 	assert.Contains(t, invoke.Example, `"entry_id":"<entry-id>"`)
 	assert.Contains(t, invoke.Example, `"target_id":"<cdp-target-id>"`)
 	assert.Contains(t, invoke.Long, "target_id when several open pages")
+	assert.Contains(t, invoke.Long, "extension decides whether an approved login matches")
+	assert.Contains(t, invoke.Long, "page origin does not identify exactly one")
+	assert.Contains(t, credentials.Long, "extension decides whether the")
+	assert.Contains(t, credentials.Long, "page origin does not identify exactly one")
 	assert.Contains(t, invoke.Long, "optional access_token_expires_at (RFC3339)")
 	assert.Contains(t, invoke.Long, "expiry clears the previously supplied expiry")
 	for _, help := range []string{invoke.Long, invoke.Example, credentials.Long, credentials.Example, connect.Long} {
