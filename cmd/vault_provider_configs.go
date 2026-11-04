@@ -79,7 +79,7 @@ Secrets are accepted only from a file or stdin and are never displayed. Protect 
 				params.OfAgentcard = &kernel.VaultProviderConfigNewParamsBodyAgentcard{Name: name, Credentials: kernel.VaultProviderConfigNewParamsBodyAgentcardCredentials{ClientID: credentials["client_id"], ClientSecret: credentials["client_secret"]}}
 			}
 			c := getVaultProviderConfigsHandler(cmd)
-			config, err := c.configs.New(cmd.Context(), params, option.WithMaxRetries(0))
+			config, err := c.configs.New(cmd.Context(), params, vaultWriteRequestOptions()...)
 			if err != nil {
 				return vaultCredentialError(err)
 			}
@@ -144,7 +144,7 @@ Secrets are accepted only from a file or stdin and are never displayed. Protect 
 				params.Credentials.PublishableKey = kernel.Opt(publishableKey)
 			}
 			c := getVaultProviderConfigsHandler(cmd)
-			config, err := c.configs.Update(cmd.Context(), args[0], params, option.WithMaxRetries(0))
+			config, err := c.configs.Update(cmd.Context(), args[0], params, vaultWriteRequestOptions()...)
 			if err != nil {
 				return vaultCredentialError(err)
 			}
@@ -170,7 +170,7 @@ Secrets are accepted only from a file or stdin and are never displayed. Protect 
 					return nil
 				}
 			}
-			err := c.configs.Delete(cmd.Context(), args[0], option.WithMaxRetries(0))
+			err := c.configs.Delete(cmd.Context(), args[0], vaultWriteRequestOptions()...)
 			if err != nil {
 				return vaultCredentialError(err)
 			}

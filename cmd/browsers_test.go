@@ -67,6 +67,7 @@ type FakeBrowsersService struct {
 	HTTPClientFunc     func(id string, opts ...option.RequestOption) (*http.Client, error)
 	LoadExtensionsFunc func(ctx context.Context, id string, body kernel.BrowserLoadExtensionsParams, opts ...option.RequestOption) error
 	ReplFunc           func(ctx context.Context, id string, body kernel.BrowserReplParams, opts ...option.RequestOption) (*kernel.BrowserReplResult, error)
+	SaveProfileFunc    func(ctx context.Context, id string, body kernel.BrowserSaveProfileParams, opts ...option.RequestOption) (*kernel.Profile, error)
 }
 
 func (f *FakeBrowsersService) Get(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
@@ -123,6 +124,73 @@ func (f *FakeBrowsersService) Repl(ctx context.Context, id string, body kernel.B
 		return f.ReplFunc(ctx, id, body, opts...)
 	}
 	return &kernel.BrowserReplResult{}, nil
+}
+
+func (f *FakeBrowsersService) SaveProfile(ctx context.Context, id string, body kernel.BrowserSaveProfileParams, opts ...option.RequestOption) (*kernel.Profile, error) {
+	if f.SaveProfileFunc != nil {
+		return f.SaveProfileFunc(ctx, id, body, opts...)
+	}
+	return &kernel.Profile{}, nil
+}
+
+func TestBrowsersSaveProfile(t *testing.T) {
+	created := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name     string
+		input    BrowsersSaveProfileInput
+		expected string
+	}{
+		{name: "existing id", input: BrowsersSaveProfileInput{Identifier: "browser-1", ProfileID: "profile-1", Output: "json"}, expected: `{"id":"profile-1"}`},
+		{name: "new name", input: BrowsersSaveProfileInput{Identifier: "browser-1", ProfileName: "checkout", Output: "json"}, expected: `{"name":"checkout"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			fake := &FakeBrowsersService{SaveProfileFunc: func(ctx context.Context, id string, body kernel.BrowserSaveProfileParams, opts ...option.RequestOption) (*kernel.Profile, error) {
+				calls++
+				assert.Equal(t, "browser-1", id)
+				assert.Len(t, opts, 2, "save-profile disables retries and captures the response")
+				raw, err := json.Marshal(body)
+				require.NoError(t, err)
+				assert.JSONEq(t, tc.expected, string(raw))
+				var profile kernel.Profile
+				require.NoError(t, json.Unmarshal([]byte(fmt.Sprintf(`{"id":"profile-1","name":"checkout","created_at":%q,"updated_at":%q,"last_used_at":%q}`, created.Format(time.RFC3339), created.Format(time.RFC3339), created.Format(time.RFC3339))), &profile))
+				return &profile, nil
+			}}
+			out := captureStdout(t, func() {
+				require.NoError(t, (BrowsersCmd{browsers: fake}).SaveProfile(context.Background(), tc.input))
+			})
+			assert.Equal(t, 1, calls)
+			assert.Contains(t, out, `"id": "profile-1"`)
+		})
+	}
+}
+
+func TestBrowsersSaveProfileValidationAndHelp(t *testing.T) {
+	fake := &FakeBrowsersService{SaveProfileFunc: func(ctx context.Context, id string, body kernel.BrowserSaveProfileParams, opts ...option.RequestOption) (*kernel.Profile, error) {
+		t.Fatal("invalid destination reached API")
+		return nil, nil
+	}}
+	b := BrowsersCmd{browsers: fake}
+	for _, input := range []BrowsersSaveProfileInput{
+		{Identifier: "browser-1"},
+		{Identifier: "browser-1", ProfileID: "profile-1", ProfileName: "checkout"},
+	} {
+		require.ErrorContains(t, b.SaveProfile(context.Background(), input), "exactly one")
+	}
+
+	cmd, _, err := rootCmd.Find([]string{"browsers", "save-profile"})
+	require.NoError(t, err)
+	assert.NotNil(t, cmd.Flags().Lookup("profile-id"))
+	assert.NotNil(t, cmd.Flags().Lookup("profile-name"))
+	for _, text := range []string{"Saving restarts the browser", "CDP", "Playwright", "WebDriver", "pages reload", "stable", "profile upload completes", "remain in the running browser", "does not attach", "save_changes", "refresh_on_profile_update", "completion time", "failed save leaves it unchanged", "browser_busy", "browser_lease_changed", "browser_not_active", "doesn't retry"} {
+		assert.Contains(t, cmd.Long, text)
+	}
+}
+
+func TestSaveProfileOutcome(t *testing.T) {
+	assert.Equal(t, "Created profile", saveProfileOutcome(&http.Response{StatusCode: http.StatusCreated}))
+	assert.Equal(t, "Overwrote profile", saveProfileOutcome(&http.Response{StatusCode: http.StatusOK}))
+	assert.Equal(t, "Saved profile", saveProfileOutcome(nil))
 }
 
 func TestBrowsersCurlRawUsesBrowserHTTPClient(t *testing.T) {
@@ -397,12 +465,14 @@ func TestBrowsersList_PrintsTableWithRows(t *testing.T) {
 	setupStdoutCapture(t)
 
 	created := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+	leased := time.Date(2030, 6, 7, 8, 9, 10, 0, time.UTC)
 	rows := []kernel.BrowserListResponse{
 		{
 			SessionID:          "sess-1",
 			CdpWsURL:           "ws://cdp-1",
 			BrowserLiveViewURL: "http://view-1",
 			CreatedAt:          created,
+			LeasedAt:           leased,
 			Region:             kernel.BrowserListResponseRegionEuWest,
 		},
 		{
@@ -427,6 +497,8 @@ func TestBrowsersList_PrintsTableWithRows(t *testing.T) {
 	assert.Contains(t, out, "sess-2")
 	assert.Contains(t, out, "eu-west")
 	assert.Contains(t, out, "us-east")
+	assert.Contains(t, out, "Leased At")
+	assert.Contains(t, out, "2030")
 }
 
 func TestBrowsersList_PrintsErrorOnFailure(t *testing.T) {
@@ -825,7 +897,7 @@ func TestBrowsersGet_ProxyRoutes(t *testing.T) {
 	fake := &FakeBrowsersService{
 		GetFunc: func(_ context.Context, _ string, _ kernel.BrowserGetParams, _ ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
 			var resp kernel.BrowserGetResponse
-			err := json.Unmarshal([]byte(`{"session_id":"sess-routes","network":{"private_hosts":["internal.example"],"proxy_routes":[{"hosts":["api.ipify.org"],"proxy":{"id":"resolved-proxy"}}]}}`), &resp)
+			err := json.Unmarshal([]byte(`{"session_id":"sess-routes","network":{"private_hosts":["internal.example"],"allowlist_state":{"revision":"rev-123","base_revision":"rev-122","mutation_id":"mutation-1"},"proxy_routes":[{"hosts":["api.ipify.org"],"proxy":{"id":"resolved-proxy"}}]}}`), &resp)
 			require.NoError(t, err)
 			return &resp, nil
 		},
@@ -835,6 +907,10 @@ func TestBrowsersGet_ProxyRoutes(t *testing.T) {
 	assert.Contains(t, outBuf.String(), "Private Hosts")
 	assert.Contains(t, outBuf.String(), "Proxy Routes")
 	assert.Contains(t, outBuf.String(), "api.ipify.org = resolved-proxy")
+	assert.Contains(t, outBuf.String(), "Allowlist Revision")
+	assert.Contains(t, outBuf.String(), "rev-123")
+	assert.Contains(t, outBuf.String(), "Allowlist Mutation ID")
+	assert.Contains(t, outBuf.String(), "mutation-1")
 	jsonOutput := captureStdout(t, func() {
 		require.NoError(t, b.Get(context.Background(), BrowsersGetInput{Identifier: "sess-routes", Output: "json"}))
 	})
@@ -987,6 +1063,32 @@ func TestBrowsersCreate_WithVideoMemory(t *testing.T) {
 
 	// An unsupported size is rejected before the request is made.
 	assert.Error(t, b.Create(context.Background(), BrowsersCreateInput{VideoMemory: "8GiB"}))
+}
+
+func TestBrowsersCreate_WithFingerprintOS(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	calls := 0
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			calls++
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-fingerprint"}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{FingerprintOS: "macos"})
+	require.NoError(t, err)
+	assert.Equal(t, kernel.BrowserFingerprintOsMacos, captured.Fingerprint.Os)
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"fingerprint":{"os":"macos"}`)
+
+	err = b.Create(context.Background(), BrowsersCreateInput{FingerprintOS: "windows"})
+	require.ErrorContains(t, err, "--fingerprint-os")
+	assert.Equal(t, 1, calls)
 }
 
 func TestBrowsersCreate_WithChromePolicy(t *testing.T) {
@@ -1462,6 +1564,7 @@ func TestBrowsersGet_PrintsDetails(t *testing.T) {
 	setupStdoutCapture(t)
 
 	created := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+	leased := time.Date(2031, 6, 7, 8, 9, 10, 0, time.UTC)
 	fake := &FakeBrowsersService{
 		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
 			return &kernel.BrowserGetResponse{
@@ -1469,6 +1572,7 @@ func TestBrowsersGet_PrintsDetails(t *testing.T) {
 				CdpWsURL:           "ws://cdp-url",
 				BrowserLiveViewURL: "http://live-view",
 				CreatedAt:          created,
+				LeasedAt:           leased,
 				TimeoutSeconds:     300,
 				Headless:           false,
 				Stealth:            true,
@@ -1494,6 +1598,8 @@ func TestBrowsersGet_PrintsDetails(t *testing.T) {
 	assert.Contains(t, out, "my-profile")
 	assert.Contains(t, out, "my-proxy (proxy-123)")
 	assert.Contains(t, out, "eu-west")
+	assert.Contains(t, out, "Leased At")
+	assert.Contains(t, out, "2031")
 }
 
 func TestBrowsersGet_JSONOutput(t *testing.T) {
@@ -2938,7 +3044,12 @@ func captureUpdateParams(t *testing.T) (*FakeBrowsersService, *kernel.BrowserUpd
 	captured := &kernel.BrowserUpdateParams{}
 	fake := &FakeBrowsersService{UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserUpdateParams, opts ...option.RequestOption) (*kernel.BrowserUpdateResponse, error) {
 		*captured = body
-		return &kernel.BrowserUpdateResponse{SessionID: "session123", Name: body.Name.Value, Tags: body.Tags}, nil
+		return &kernel.BrowserUpdateResponse{
+			SessionID: "session123",
+			Name:      body.Name.Value,
+			Tags:      body.Tags,
+			LeasedAt:  time.Date(2033, 6, 7, 8, 9, 10, 0, time.UTC),
+		}, nil
 	}}
 	return fake, captured
 }
@@ -2957,6 +3068,8 @@ func TestBrowsersUpdate_WithName_ForwardsParam(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, captured.Name.Valid())
 	assert.Equal(t, "new-name", captured.Name.Value)
+	assert.Contains(t, outBuf.String(), "Leased At")
+	assert.Contains(t, outBuf.String(), "2033")
 }
 
 func TestBrowsersUpdate_ClearName_SendsEmptyName(t *testing.T) {
@@ -3414,6 +3527,28 @@ func TestBrowsersUpdate_WithAllowedHosts_ForwardsParam(t *testing.T) {
 	assert.Contains(t, string(raw), `"network":{"allowed_hosts":["example.com","*.example.com"]}`)
 }
 
+func TestBrowsersUpdate_ConditionalAllowedHosts_ForwardsPrecondition(t *testing.T) {
+	setupStdoutCapture(t)
+	fake, captured := captureUpdateParams(t)
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Update(context.Background(), BrowsersUpdateInput{
+		Identifier:                "session123",
+		AllowedHosts:              []string{"example.com"},
+		AllowedHostsProvided:      true,
+		ExpectedAllowlistRevision: "rev-123",
+		MutationID:                "mutation-123",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "rev-123", captured.Network.ExpectedAllowlistRevision.Value)
+	assert.Equal(t, "mutation-123", captured.Network.MutationID.Value)
+	raw, marshalErr := json.Marshal(*captured)
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(raw), `"expected_allowlist_revision":"rev-123"`)
+	assert.Contains(t, string(raw), `"mutation_id":"mutation-123"`)
+}
+
 func TestBrowsersUpdate_ClearAllowedHosts_SendsNull(t *testing.T) {
 	setupStdoutCapture(t)
 	fake, captured := captureUpdateParams(t)
@@ -3477,6 +3612,16 @@ func TestBrowsersUpdate_AllowedHostsValidation(t *testing.T) {
 			name:    "too many entries",
 			in:      BrowsersUpdateInput{Identifier: "s", AllowedHosts: tooMany, AllowedHostsProvided: true},
 			wantErr: "too many --allowed-host entries",
+		},
+		{
+			name:    "revision without mutation id",
+			in:      BrowsersUpdateInput{Identifier: "s", AllowedHosts: []string{"example.com"}, ExpectedAllowlistRevision: "rev-1"},
+			wantErr: "--expected-allowlist-revision and --mutation-id must be passed together",
+		},
+		{
+			name:    "conditional fields without allowlist change",
+			in:      BrowsersUpdateInput{Identifier: "s", Name: "new-name", SetName: true, ExpectedAllowlistRevision: "rev-1", MutationID: "mutation-1"},
+			wantErr: "require --allowed-host or --clear-allowed-hosts",
 		},
 	}
 	for _, tt := range tests {

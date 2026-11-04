@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	kernel "github.com/kernel/kernel-go-sdk"
-	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -220,7 +219,7 @@ func vaultWebMCPNullSlot(input any, path string) bool {
 }
 
 func (c VaultsCmd) webMCPInvoke(ctx context.Context, vault, key string, request *kernel.WebmcpInvokeVaultItemOperationRequestParam, output string) error {
-	response, err := c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, OfWebmcpInvoke: request}, option.WithMaxRetries(0))
+	response, err := c.vaults.Items.PerformOperation(ctx, key, kernel.VaultItemPerformOperationParams{IDOrName: vault, OfWebmcpInvoke: request}, vaultWriteRequestOptions()...)
 	if err != nil {
 		return vaultOperationRequestError(err, "webmcp_invoke", vaultWebMCPErrorMessages, vaultWebMCPRejected, vaultWebMCPUncertain)
 	}
@@ -281,7 +280,7 @@ func newVaultWebMCPCommand() *cobra.Command {
 		Use:   "invoke <vault> <key>",
 		Short: "Invoke a live WebMCP tool with vault fields substituted into null input slots",
 		Args:  cobra.ExactArgs(2),
-		Long: `Invoke a live WebMCP tool with values from a credential item or ready Link card.
+		Long: `Invoke a live WebMCP tool with values from a credential item or ready Link card/payment_request item.
 This sends the advertised webmcp_invoke operation; it is equivalent to
 items invoke <vault> <key> webmcp_invoke --spec-file with the same parameters.
 

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -198,7 +199,9 @@ func TestVaultInvokeConfirmTransactionSendsObservedOutcome(t *testing.T) {
 			raw := fmt.Sprintf(`{"status":"APPROVED","transaction_type":"PURCHASE","amount":1234,"currency":"USD","occurred_at":%q}`, occurredAt)
 			params, err := parseVaultOperationParams("confirm_transaction", raw, true, false)
 			require.NoError(t, err)
-			assert.Equal(t, occurredAt, params.ConfirmTransaction.OccurredAt)
+			expectedTime, err := time.Parse(time.RFC3339, occurredAt)
+			require.NoError(t, err)
+			assert.Equal(t, expectedTime, params.ConfirmTransaction.OccurredAt)
 
 			calls := 0
 			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {

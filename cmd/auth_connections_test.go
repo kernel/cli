@@ -106,6 +106,7 @@ func TestAuthConnectionsGet_PrintsSubmissionHints(t *testing.T) {
 			return &kernel.ManagedAuth{
 				ID:          id,
 				Domain:      "auth.leaseweb.com",
+				Hitl:        true,
 				ProfileName: "raf-leaseweb",
 				Status:      kernel.ManagedAuthStatusNeedsAuth,
 				FlowStatus:  kernel.ManagedAuthFlowStatusInProgress,
@@ -136,6 +137,7 @@ func TestAuthConnectionsGet_PrintsSubmissionHints(t *testing.T) {
 	assert.Contains(t, out, "Text message")
 	assert.Contains(t, out, "Pending SSO Buttons")
 	assert.Contains(t, out, "Continue with Google")
+	assert.Contains(t, out, "Human Intervention")
 }
 
 func TestAuthConnectionsGet_PrintsHealthCheckUnavailableReason(t *testing.T) {
@@ -209,6 +211,11 @@ func TestAuthConnectionsGet_PrintsCanonicalInputMetadata(t *testing.T) {
 						Type:        "mfa_method",
 						MfaType:     "totp",
 					},
+					{
+						ID:    "captcha_complete",
+						Label: "I completed the challenge",
+						Type:  "human_intervention",
+					},
 				},
 			}, nil
 		},
@@ -228,6 +235,35 @@ func TestAuthConnectionsGet_PrintsCanonicalInputMetadata(t *testing.T) {
 	assert.Contains(t, out, `mfa_method, sms, to=+1 ••• ••• 1234`)
 	assert.Contains(t, out, `mfa_app (Use your authenticator app)`)
 	assert.Contains(t, out, `mfa_method, totp`)
+	assert.Contains(t, out, `captcha_complete (I completed the challenge)`)
+	assert.Contains(t, out, `human_intervention`)
+}
+
+func TestAuthConnectionsFollow_PrintsHumanInterventionLiveView(t *testing.T) {
+	outBuf := capturePtermOutput(t)
+	var event kernel.AuthConnectionFollowResponseUnion
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"event":"managed_auth_state",
+		"flow_status":"IN_PROGRESS",
+		"flow_step":"AWAITING_HUMAN_INTERVENTION",
+		"timestamp":"2030-01-01T00:00:00Z",
+		"interaction_id":"mai_hitl",
+		"live_view_url":"https://live.example/session",
+		"choices":[{"id":"captcha_complete","label":"I completed the challenge","type":"human_intervention"}]
+	}`), &event))
+	fake := &FakeAuthConnectionService{
+		FollowStreamingFunc: func(ctx context.Context, id string, opts ...option.RequestOption) *ssestream.Stream[kernel.AuthConnectionFollowResponseUnion] {
+			assert.Equal(t, "conn-1", id)
+			return makeStream([]kernel.AuthConnectionFollowResponseUnion{event})
+		},
+	}
+
+	require.NoError(t, (AuthConnectionCmd{svc: fake}).Follow(context.Background(), AuthConnectionFollowInput{ID: "conn-1"}))
+	out := outBuf.String()
+	assert.Contains(t, out, "AWAITING_HUMAN_INTERVENTION")
+	assert.Contains(t, out, "Live View URL: https://live.example/session")
+	assert.Contains(t, out, "captcha_complete (I completed the challenge)")
+	assert.Contains(t, out, "human_intervention")
 }
 
 func TestAuthConnectionsGet_JSONOutputIncludesDiscoveredFields(t *testing.T) {
@@ -513,6 +549,78 @@ func TestAuthConnectionsRegion_CommandFlags(t *testing.T) {
 			assert.Equal(t, tt.wantRegion, browser["region"])
 		})
 	}
+}
+
+func TestAuthConnectionsHitl_CommandFlags(t *testing.T) {
+	wantTrue := true
+	wantFalse := false
+	tests := []struct {
+		name    string
+		command *cobra.Command
+		method  string
+		path    string
+		args    []string
+		want    *bool
+	}{
+		{
+			name:    "create enables human intervention",
+			command: authConnectionsCreateCmd,
+			method:  http.MethodPost,
+			path:    "/auth/connections",
+			args:    []string{"--domain", "example.com", "--profile-name", "work", "--hitl", "--output", "json"},
+			want:    &wantTrue,
+		},
+		{
+			name:    "create omits human intervention",
+			command: authConnectionsCreateCmd,
+			method:  http.MethodPost,
+			path:    "/auth/connections",
+			args:    []string{"--domain", "example.com", "--profile-name", "work", "--output", "json"},
+		},
+		{
+			name:    "update enables human intervention",
+			command: authConnectionsUpdateCmd,
+			method:  http.MethodPatch,
+			path:    "/auth/connections/conn-1",
+			args:    []string{"conn-1", "--hitl", "--output", "json"},
+			want:    &wantTrue,
+		},
+		{
+			name:    "update disables human intervention",
+			command: authConnectionsUpdateCmd,
+			method:  http.MethodPatch,
+			path:    "/auth/connections/conn-1",
+			args:    []string{"conn-1", "--hitl=false", "--output", "json"},
+			want:    &wantFalse,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := runAuthConnectionCommand(t, tt.command, tt.method, tt.path, tt.args...)
+			got, present := body["hitl"]
+			if tt.want == nil {
+				assert.False(t, present)
+				return
+			}
+			require.True(t, present)
+			assert.Equal(t, *tt.want, got)
+		})
+	}
+
+	createHelp := authConnectionsCreateCmd.Flags().Lookup("hitl").Usage
+	updateHelp := authConnectionsUpdateCmd.Flags().Lookup("hitl").Usage
+	for _, help := range []string{createHelp, updateHelp} {
+		assert.Contains(t, help, "CAPTCHA")
+		assert.Contains(t, help, "live view")
+		assert.Contains(t, help, "submit <id> --choice-id <choice-id>")
+		assert.Contains(t, help, "reauthentication never pauses")
+	}
+	assert.Contains(t, createHelp, "disabled by default")
+	assert.Contains(t, updateHelp, "--hitl=false")
+	assert.Contains(t, authConnectionsSubmitCmd.Long, "AWAITING_HUMAN_INTERVENTION")
+	assert.Contains(t, authConnectionsSubmitCmd.Long, "human_intervention")
+	assert.Contains(t, authConnectionsSubmitCmd.Long, "Live View")
 }
 
 func TestAuthConnectionsRegion_RejectsUnknownValue(t *testing.T) {

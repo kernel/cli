@@ -120,10 +120,73 @@ func TestVaultConfirmTransactionValidValues(t *testing.T) {
 	}
 }
 
+func TestVaultConfirmTransactionShopPayOutcomeDetails(t *testing.T) {
+	approved := `{"status":"APPROVED","transaction_type":"PURCHASE","amount":1234,"currency":"USD","occurred_at":"2026-09-01T12:00:00.123Z","order_id":"order-123","order_url":"https://shop.example/orders/123"}`
+	params, err := parseVaultOperationParams("confirm_transaction", approved, true, false)
+	require.NoError(t, err)
+	assert.Equal(t, "order-123", params.ConfirmTransaction.OrderID.Value)
+	assert.Equal(t, "https://shop.example/orders/123", params.ConfirmTransaction.OrderURL.Value)
+	assert.False(t, params.ConfirmTransaction.FailureCode.Valid())
+
+	failed := `{"status":"ERROR","transaction_type":"CAPTURE","amount":1234,"currency":"USD","occurred_at":"2026-09-01T12:00:00Z","failure_code":"site_error"}`
+	params, err = parseVaultOperationParams("confirm_transaction", failed, true, false)
+	require.NoError(t, err)
+	assert.Equal(t, "site_error", params.ConfirmTransaction.FailureCode.Value)
+
+	for raw, message := range map[string]string{
+		`{"status":"APPROVED","transaction_type":"PURCHASE","amount":1,"currency":"USD","occurred_at":"2026-09-01T12:00:00Z","failure_code":"site_error"}`:                "only for outcomes other than APPROVED",
+		`{"status":"ERROR","transaction_type":"PURCHASE","amount":1,"currency":"USD","occurred_at":"2026-09-01T12:00:00Z","order_id":"order-1"}`:                          "only for an APPROVED outcome",
+		`{"status":"ERROR","transaction_type":"PURCHASE","amount":1,"currency":"USD","occurred_at":"2026-09-01T12:00:00Z","failure_code":"UPPERCASE"}`:                    "lowercase letters",
+		`{"status":"DECLINED","transaction_type":"PURCHASE","amount":1,"currency":"USD","occurred_at":"2026-09-01T12:00:00Z","failure_code":"site_error"}`:                "accepts only failure_code payment_declined",
+		`{"status":"ERROR","transaction_type":"PURCHASE","amount":1,"currency":"USD","occurred_at":"2026-09-01T12:00:00Z","failure_code":"payment_declined"}`:             "requires status DECLINED",
+		`{"status":"APPROVED","transaction_type":"PURCHASE","amount":1,"currency":"USD","occurred_at":"2026-09-01T12:00:00Z","order_url":"http://shop.example/orders/1"}`: "https URL",
+		`{"status":"APPROVED","transaction_type":"PURCHASE","amount":1,"currency":"USD","occurred_at":"2026-09-01T12:00:00Z","order_id":""}`:                              "non-empty string",
+	} {
+		_, err := parseVaultOperationParams("confirm_transaction", raw, true, false)
+		require.ErrorContains(t, err, message)
+	}
+}
+
+func TestVaultShopPayConfirmTransactionUsesTypedFields(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	fixture := strings.Replace(shopPayCardFixture, `{"type":"authorize","description":"Authorize this Shop Pay purchase."}`, `{"type":"confirm_transaction","description":"Report the Shop Pay merchant outcome."}`, 1)
+	calls, posts := 0, 0
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			posts++
+			body, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"type":"confirm_transaction","status":"APPROVED","transaction_type":"PURCHASE","amount":1234,"currency":"USD","occurred_at":"2026-09-01T12:00:00.123Z","order_id":"order-123","order_url":"https://shop.example/orders/123"}`, string(body))
+			_, _ = io.WriteString(w, strings.Replace(strings.Replace(fixture, `"status":"requested"`, `"status":"consumed"`, 1), `[{"type":"confirm_transaction","description":"Report the Shop Pay merchant outcome."}]`, `[]`, 1))
+			return
+		}
+		_, _ = io.WriteString(w, fixture)
+	})
+
+	raw := `{"status":"APPROVED","transaction_type":"PURCHASE","amount":1234,"currency":"USD","occurred_at":"2026-09-01T12:00:00.123Z","order_id":"order-123","order_url":"https://shop.example/orders/123"}`
+	_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "confirm_transaction", "--params", raw, "-o", "json")
+	require.NoError(t, err)
+	assert.Equal(t, 2, calls)
+	assert.Equal(t, 1, posts)
+
+	calls, posts = 0, 0
+	_, _, err = executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "confirm_transaction", "--params", `{"status":"APPROVED","transaction_type":"REFUND","amount":1234,"currency":"USD","occurred_at":"2026-09-01T12:00:00Z"}`)
+	require.ErrorContains(t, err, "Shop Pay confirm_transaction transaction_type")
+	assert.Equal(t, 1, calls)
+	assert.Equal(t, 0, posts)
+}
+
 func TestVaultConfirmTransactionHelpUsesCurrentAmountMaximum(t *testing.T) {
 	cmd, _, err := newVaultsCommand().Find([]string{"items", "invoke"})
 	require.NoError(t, err)
 	assert.Contains(t, cmd.Long, "0..1000000")
+	assert.Contains(t, cmd.Long, "order_id")
+	assert.Contains(t, cmd.Long, "order_url")
+	assert.Contains(t, cmd.Long, "failure_code")
+	assert.Contains(t, cmd.Long, "Shop Pay accepts only PURCHASE, AUTHORIZATION,")
+	assert.Contains(t, cmd.Long, "or CAPTURE")
 	assert.NotContains(t, cmd.Long, "0..50000")
 }
 

@@ -46,6 +46,11 @@ func vaultWalletSpecFromFlags(cmd *cobra.Command) (kernel.VaultItemUpsertParamsB
 		if reference != nil || cmd.Flags().Changed("tokens-file") {
 			return kernel.VaultItemUpsertParamsBodyWalletSpecUnion{}, fmt.Errorf("kernel wallets do not use provider configurations or tokens")
 		}
+	case "shop_pay":
+		if reference != nil || cmd.Flags().Changed("tokens-file") {
+			return kernel.VaultItemUpsertParamsBodyWalletSpecUnion{}, fmt.Errorf("Shop Pay wallets use Kernel-managed OAuth and do not accept provider configurations or tokens")
+		}
+		err = configureShopPayWallet(spec)
 	case "agentcard":
 		if cmd.Flags().Changed("tokens-file") {
 			return kernel.VaultItemUpsertParamsBodyWalletSpecUnion{}, fmt.Errorf("--tokens-file is only for imported Link wallet grants")
@@ -77,6 +82,23 @@ func vaultProviderConfigFromFlags(cmd *cobra.Command) (json.RawMessage, error) {
 		return nil, err
 	}
 	return json.Marshal(reference)
+}
+
+func configureShopPayWallet(spec map[string]json.RawMessage) error {
+	raw, ok := spec["authorization"]
+	if !ok {
+		return fmt.Errorf("Shop Pay spec.authorization is required with method oauth and client.type kernel_managed")
+	}
+	var authorization struct {
+		Method string `json:"method"`
+		Client struct {
+			Type string `json:"type"`
+		} `json:"client"`
+	}
+	if json.Unmarshal(raw, &authorization) != nil || authorization.Method != "oauth" || authorization.Client.Type != "kernel_managed" {
+		return fmt.Errorf("Shop Pay spec.authorization must use method oauth and client.type kernel_managed")
+	}
+	return nil
 }
 
 func configureAgentCardWallet(spec map[string]json.RawMessage, reference json.RawMessage) error {

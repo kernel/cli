@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	kernel "github.com/kernel/kernel-go-sdk"
-	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/spf13/cobra"
 )
 
@@ -58,11 +57,14 @@ const vaultOnePasswordCredentialHelp = `1Password flow:
 3. invoke 1pw_create_access_request once; it needs no browser. present the returned
    onepassword:// approval link and instructions to the account owner unchanged.
 4. invoke 1pw_access_request_status (timeout_seconds 0-120) until the credential is
-   ready, declined, or failed. ready means approved, not signed in.
+   ready, declined, or failed. ready means approved, not signed in. for credentials made
+   with a customer-supplied access token, state.access_request.resolved returns the
+   non-secret granted references.
 5. create a browser with the vault attached, open the login page, and invoke 1pw_fill
-   with browser_id and the exact page_url. when
-   several approved entries share that page's origin, pass entry_id from the
-   state.access_request entries in items get -o json. fill_submitted means the form
+   with browser_id and the exact page_url. when several open pages have that exact url,
+   pass target_id (for example tab.target_id from playwright.execute). when several
+   approved entries share that page's origin, pass entry_id from the state.access_request
+   entries in items get -o json. fill_submitted means the form
    was submitted, not that sign-in succeeded.
 invoke only advertised operations. 1pw_fill can submit the form, so never retry
 automatically. check the page first before retrying. never automatically retry an
@@ -80,8 +82,18 @@ credentials connect again with the same key for a new link.`
 const vaultOnePasswordStoredTokenHelp = `stored-token 1Password credentials (developer integrations only, separate from the
 flow above): a developer who already holds a 1Password broker access token and its
 matching integration key may create the credential with access_token, integration_key,
-and requests instead of account. supply either account or both secrets, never both. put them only in a protected --spec-file
-or stdin; they are write-only and never displayed. never ask an end user for them.
+and requests instead of account. supply either account or both secrets, never both. put
+them only in a protected --spec-file or stdin; they are write-only and never displayed.
+never ask an end user for them.
+for a new approval, omit access_request_id, resolved, and request entry ids, then use
+the access-request operations above. if the developer already created an access request
+with the same token and integration key and the user approved it, supply access_request_id, 1-5 resolved
+entries from the 1Password SDK or extension, and an id on every requests entry.
+access_request_id and every entry id must be non-empty and at most 128 characters.
+copy each resolved reference unchanged and include its entryId to identify the request
+entry it satisfies. entryId may be omitted only when requests has one entry.
+the item starts ready and KERNEL does not create another access request.
+KERNEL does not verify these references; 1Password checks them during 1pw_fill.
 replace the token with items invoke 1pw_update_access_token --spec-file.`
 
 const vaultManagedAuthCredentialHelp = `managed auth credentials (spec provider "managed_auth"): reference a managed auth
@@ -99,7 +111,8 @@ const vaultCredentialHelp = `create credentials for a website.
 KERNEL-hosted flow:
 do not use credential items to store, collect, or fill credit card data, including
 card numbers (pans), security codes (cvv/cvc), or expiration dates. use wallet and
-card item types for credit cards and payment checkout instead.
+card item types for credit cards and payment checkout instead; where enabled, use a
+payment_request item for one Link or KERNEL purchase.
 
 first create a vault for the end user and attach it with browsers create --vault.
 use a protected json file or stdin, never secret values in shell arguments.
@@ -191,7 +204,11 @@ JSON
 {"provider":"managed_auth","connection_id":"ma_abc123xyz","description":"Amazon"}
 JSON`
 		}
-		cmd.Flags().String("spec-file", "", "credential spec json file (use '-' for stdin; maximum 128 KiB)")
+		specFileUsage := "credential spec json file (use '-' for stdin; maximum 128 KiB)"
+		if !update {
+			specFileUsage = "credential spec json file (supports pre-approved 1Password access_request_id/resolved; use '-' for stdin; maximum 128 KiB)"
+		}
+		cmd.Flags().String("spec-file", "", specFileUsage)
 		_ = cmd.MarkFlagRequired("spec-file")
 		cmd.Flags().Bool("open", false, "open the returned https collection url")
 		addVaultJSONOutputFlag(cmd)
@@ -267,13 +284,13 @@ func (c VaultsCmd) saveCredential(ctx context.Context, vault, key string, data [
 		if expectedID != "" {
 			request.ExpectedItemID = kernel.String(expectedID)
 		}
-		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCredentialVaultItemUpdateRequest: &request}, option.WithMaxRetries(0))
+		item, err = c.vaults.Items.Update(ctx, key, kernel.VaultItemUpdateParams{IDOrName: vault, OfCredentialVaultItemUpdateRequest: &request}, vaultWriteRequestOptions()...)
 	} else {
 		spec, specErr := credentialSpecInput(data)
 		if specErr != nil {
 			return specErr
 		}
-		item, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCredential: &kernel.CredentialVaultItemRequestParam{Type: "credential", Spec: spec}}, option.WithMaxRetries(0))
+		item, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCredential: &kernel.CredentialVaultItemRequestParam{Type: "credential", Spec: spec}}, vaultWriteRequestOptions()...)
 	}
 	if err != nil {
 		return vaultCredentialError(err)
@@ -347,7 +364,7 @@ func (c VaultsCmd) connectCredentialAccount(ctx context.Context, vault, key, out
 			},
 		},
 	}
-	item, err := c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCredentialAccount: &request}, option.WithMaxRetries(0))
+	item, err := c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCredentialAccount: &request}, vaultWriteRequestOptions()...)
 	if err != nil {
 		return onePasswordConnectError(err)
 	}
