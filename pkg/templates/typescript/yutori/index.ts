@@ -1,6 +1,6 @@
 import { Kernel, type KernelContext } from '@onkernel/sdk';
 import type OpenAI from 'openai';
-import { samplingLoop } from './loop';
+import { samplingLoop, type ReasoningEffort } from './loop';
 import { KernelBrowserSession } from './session';
 
 const kernel = new Kernel();
@@ -10,7 +10,7 @@ const app = kernel.app('ts-yutori-cua');
 interface QueryInput {
   query: string;
   record_replay?: boolean;
-  kiosk?: boolean;
+  reasoning_effort?: ReasoningEffort;
   user_timezone?: string;
   user_location?: string;
 }
@@ -35,13 +35,11 @@ app.action<QueryInput, QueryOutput>(
       throw new Error('Query is required');
     }
 
-    // Create browser session with optional replay recording and kiosk mode
-    const kioskMode = payload.kiosk ?? false;
+    // Create browser session with optional replay recording
     const session = new KernelBrowserSession(kernel, {
       invocationId: ctx.invocation_id,
       stealth: true,
       recordReplay: payload.record_replay ?? false,
-      kioskMode,
     });
 
     await session.start();
@@ -50,14 +48,16 @@ app.action<QueryInput, QueryOutput>(
     try {
       // Run the sampling loop
       const { finalAnswer, messages } = await samplingLoop({
-        model: 'n1.5-latest',
+        model: 'n2',
         task: payload.query,
         apiKey: YUTORI_API_KEY,
         kernel,
         sessionId: session.sessionId,
-        viewportWidth: session.viewportWidth,
-        viewportHeight: session.viewportHeight,
-        kioskMode,
+        // n2 sees the whole screen, browser chrome included — the Kernel
+        // viewport is the window size, so it is the screen size here.
+        screenWidth: session.viewportWidth,
+        screenHeight: session.viewportHeight,
+        reasoningEffort: payload.reasoning_effort,
         userTimezone: payload.user_timezone,
         userLocation: payload.user_location,
       });

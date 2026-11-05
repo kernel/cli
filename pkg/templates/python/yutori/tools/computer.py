@@ -1,80 +1,96 @@
 """
-Yutori n1.5 Computer Tool
+Yutori n2 Computer Tool
 
-Maps n1.5-latest action format to Kernel's Computer Controls API.
-Screenshots are converted to WebP for better compression across multi-step trajectories.
+Maps n2's `computer_batch` action list onto Kernel's Computer Controls API.
+n2 plans every action in a batch against the screenshot taken *before* the batch
+ran, so the batch executes sequentially, stops at the first error, and answers
+with a single screenshot taken after the last action that ran.
 
-@see https://docs.yutori.com/reference/n1-5
+@see https://docs.yutori.com/reference/n2
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
-import json
+from dataclasses import dataclass
 from io import BytesIO
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, Optional, TypedDict
 
 from kernel import Kernel
 from PIL import Image
 
-from .base import ToolError, ToolResult
+from .base import ToolError
 
 TYPING_DELAY_MS = 12
-SCREENSHOT_DELAY_S = 0.15
-ACTION_DELAY_S = 0.3
+# Let the UI settle between actions in a batch, and again before the screenshot
+# that the model will plan its next batch against.
+INTER_ACTION_DELAY_S = 0.08
+SETTLE_DELAY_S = 0.4
 
-# n1.5 scroll `amount` is in "wheel units" where 1 unit ≈ 10% of the viewport
-# height (~80px at 800px tall). Kernel's delta_y is a wheel-event repeat count
-# where each tick is much smaller in practice, so we multiply.
-SCROLL_NOTCHES_PER_AMOUNT = 4
+NAVIGATOR_COORDINATE_SCALE = 1000
+
+# n2's scroll `amount` is a wheel notch count (1-50), which is exactly what
+# Kernel's delta_x/delta_y take ("xdotool wheel units"), so it passes through.
+DEFAULT_SCROLL_AMOUNT = 3
 
 # WebP quality for screenshots. Kernel returns PNGs, which are crisp and
 # tolerate aggressive WebP compression with no visible degradation — matches
 # Yutori SDK's DEFAULT_WEBP_QUALITY_FOR_PNG=30 (yutori-sdk-python/yutori/
-# navigator/images.py). Lower values cut payload size substantially on long
-# multi-step trajectories.
+# navigator/images.py). Requests are capped at 10 MB and a trajectory carries
+# several full-screen captures, so the compression matters.
 WEBP_QUALITY = 30
 
-N15ActionType = Literal[
+N2ActionName = Literal[
     "left_click",
     "double_click",
     "triple_click",
     "middle_click",
     "right_click",
-    "mouse_move",
-    "mouse_down",
-    "mouse_up",
     "scroll",
     "type",
     "key_press",
-    "hold_key",
     "drag",
+    "mouse_move",
+    "mouse_down",
+    "mouse_up",
+    "hold_key",
     "wait",
-    "refresh",
-    "go_back",
-    "go_forward",
-    "goto_url",
+    "screenshot",
 ]
 
 
-class N15Action(TypedDict, total=False):
-    action_type: N15ActionType
-    coordinates: tuple[int, int] | list[int]
-    start_coordinates: tuple[int, int] | list[int]
-    direction: Literal["up", "down", "left", "right"]
-    amount: int
-    text: str
-    key: str
-    modifier: str
-    duration: int
-    url: str
+class N2Action(TypedDict, total=False):
+    """One `{name, arguments}` member of a `computer_batch` call."""
+
+    name: N2ActionName
+    arguments: dict[str, Any]
 
 
-# n1.5 emits lowercase key names (e.g. `enter`, `ctrl+c`, `down down down enter`).
+@dataclass
+class BatchOutcome:
+    executed: int
+    total: int
+    # Set when an action raised; the remaining actions were skipped.
+    failed_index: Optional[int] = None
+    failed_name: Optional[str] = None
+    failed_message: Optional[str] = None
+
+    def describe(self) -> str:
+        if self.failed_index is None:
+            return f"Executed {self.executed} of {self.total} actions."
+        return (
+            f"Executed {self.executed} of {self.total} actions. "
+            f"Action {self.failed_index + 1} ({self.failed_name}) failed: {self.failed_message}. "
+            f"The remaining actions were skipped."
+        )
+
+
+# n2 emits lowercase key names (e.g. `enter`, `ctrl+c`, `down down down enter`).
 # Kernel's press_key expects XKeysym names (e.g. `Return`, `Ctrl`, `Page_Up`).
-# Keys not in the map pass through unchanged (printable characters like `a`,
-# `1`, `,` are already XKeysym).
+# This map covers every key Yutori documents at
+# https://docs.yutori.com/reference/n2#key-space — keys not in the map pass
+# through unchanged (printable characters like `a` and `1` are already XKeysym).
 #
 # Sister implementation (Playwright target instead of XKeysym):
 # https://github.com/yutori-ai/yutori-sdk-python/blob/main/yutori/navigator/keys.py
@@ -115,6 +131,19 @@ KEY_MAP: dict[str, str] = {
     "pagedown": "Page_Down",
     # Function keys
     **{f"f{i}": f"F{i}" for i in range(1, 13)},
+    # Punctuation — n2 sends word forms, most of which are already XKeysym names
+    "minus": "minus",
+    "plus": "plus",
+    "equal": "equal",
+    "comma": "comma",
+    "period": "period",
+    "slash": "slash",
+    "backslash": "backslash",
+    "semicolon": "semicolon",
+    "quote": "apostrophe",
+    "backquote": "grave",
+    "bracketleft": "bracketleft",
+    "bracketright": "bracketright",
     # Locks / special
     "capslock": "Caps_Lock",
     "numlock": "Num_Lock",
@@ -126,19 +155,11 @@ KEY_MAP: dict[str, str] = {
 
 
 def _map_token(token: str) -> str:
-    lower = token.strip().lower()
-    return KEY_MAP.get(lower, token.strip())
-
-
-def _normalize_url(url: str) -> str:
-    trimmed = url.strip()
-    if "://" in trimmed:
-        return trimmed
-    return f"https://{trimmed}"
+    return KEY_MAP.get(token.strip().lower(), token.strip())
 
 
 def _parse_key_expression(expr: str) -> list[str]:
-    """Parse an n1.5 key expression into one Kernel combo per sequential press.
+    """Parse an n2 key expression into one Kernel combo per sequential press.
 
     Spaces separate sequential presses; '+' separates simultaneous tokens
     within a press. Examples:
@@ -154,285 +175,198 @@ def _parse_key_expression(expr: str) -> list[str]:
     ]
 
 
+def _duration_ms(duration: Any, fallback_ms: int) -> int:
+    """n2 emits `duration` in seconds; Kernel takes milliseconds."""
+    if isinstance(duration, (int, float)) and duration > 0:
+        return int(duration * 1000)
+    return fallback_ms
+
+
 class ComputerTool:
-    def __init__(self, kernel: Kernel, session_id: str, width: int = 1280, height: int = 800, kiosk_mode: bool = False):
+    def __init__(self, kernel: Kernel, session_id: str, screen_width: int = 1280, screen_height: int = 800):
         self.kernel = kernel
         self.session_id = session_id
-        self.width = width
-        self.height = height
-        self.kiosk_mode = kiosk_mode
+        self.screen_width = screen_width
+        self.screen_height = screen_height
 
-    async def execute(self, action: N15Action) -> ToolResult:
-        action_type = action.get("action_type")
+    async def run_batch(self, actions: list[N2Action]) -> BatchOutcome:
+        """Run a `computer_batch` action list in order, stopping at the first failure.
 
-        handlers = {
-            "left_click": lambda a: self._handle_click(a, "left", 1),
-            "double_click": lambda a: self._handle_click(a, "left", 2),
-            "triple_click": lambda a: self._handle_click(a, "left", 3),
-            "middle_click": lambda a: self._handle_click(a, "middle", 1),
-            "right_click": lambda a: self._handle_click(a, "right", 1),
-            "mouse_move": self._handle_mouse_move,
-            "mouse_down": lambda a: self._handle_mouse_button(a, "down"),
-            "mouse_up": lambda a: self._handle_mouse_button(a, "up"),
-            "scroll": self._handle_scroll,
-            "type": self._handle_type,
-            "key_press": self._handle_key_press,
-            "hold_key": self._handle_hold_key,
-            "drag": self._handle_drag,
-            "wait": self._handle_wait,
-            "refresh": self._handle_refresh,
-            "go_back": self._handle_go_back,
-            "go_forward": self._handle_go_forward,
-            "goto_url": self._handle_goto_url,
-        }
+        The caller reports the outcome and a single post-batch screenshot back to n2.
+        """
+        for index, action in enumerate(actions):
+            try:
+                await self._run_action(action)
+            except Exception as error:
+                return BatchOutcome(
+                    executed=index,
+                    total=len(actions),
+                    failed_index=index,
+                    failed_name=str(action.get("name")),
+                    failed_message=str(error),
+                )
+            if index < len(actions) - 1:
+                await asyncio.sleep(INTER_ACTION_DELAY_S)
 
-        handler = handlers.get(action_type)
-        if not handler:
-            raise ToolError(f"Unknown action type: {action_type}")
+        return BatchOutcome(executed=len(actions), total=len(actions))
 
-        return await handler(action)
+    async def _run_action(self, action: N2Action) -> None:
+        name = action.get("name")
+        args = action.get("arguments") or {}
 
-    async def _handle_click(self, action: N15Action, button: str, num_clicks: int) -> ToolResult:
-        coords = self._get_coordinates(action.get("coordinates"))
-        modifier = action.get("modifier")
+        if name in ("left_click", "double_click", "triple_click"):
+            num_clicks = {"left_click": 1, "double_click": 2, "triple_click": 3}[name]
+            return self._click(args, "left", num_clicks)
+        if name == "middle_click":
+            return self._click(args, "middle", 1)
+        if name == "right_click":
+            return self._click(args, "right", 1)
+        if name == "scroll":
+            return self._scroll(args)
+        if name == "type":
+            return self._type(args)
+        if name == "key_press":
+            return self._key_press(args)
+        if name == "drag":
+            return self._drag(args)
+        if name == "mouse_move":
+            return self._mouse_move(args)
+        if name in ("mouse_down", "mouse_up"):
+            return self._mouse_button(args, name.split("_")[1])
+        if name == "hold_key":
+            return self._hold_key(args)
+        if name == "wait":
+            return await asyncio.sleep(_duration_ms(args.get("duration"), 2000) / 1000)
+        if name == "screenshot":
+            # A batch already answers with a screenshot taken after its last
+            # action, so an explicit `screenshot` member has nothing to do.
+            return None
+
+        raise ToolError(f"Unknown action: {name}")
+
+    def _click(self, args: dict[str, Any], button: str, num_clicks: int) -> None:
+        x, y = self._require_coordinates(args.get("coordinates"))
         kwargs: dict[str, Any] = {
-            "x": coords["x"],
-            "y": coords["y"],
+            "x": x,
+            "y": y,
             "button": button,
             "click_type": "click",
             "num_clicks": num_clicks,
         }
-        if modifier:
-            kwargs["hold_keys"] = [_map_token(modifier)]
+        if args.get("modifier"):
+            kwargs["hold_keys"] = [_map_token(args["modifier"])]
 
         self.kernel.browsers.computer.click_mouse(self.session_id, **kwargs)
 
-        await asyncio.sleep(SCREENSHOT_DELAY_S)
-        return await self.screenshot()
+    def _mouse_move(self, args: dict[str, Any]) -> None:
+        x, y = self._require_coordinates(args.get("coordinates"))
+        self.kernel.browsers.computer.move_mouse(self.session_id, x=x, y=y)
 
-    async def _handle_mouse_move(self, action: N15Action) -> ToolResult:
-        coords = self._get_coordinates(action.get("coordinates"))
-
-        self.kernel.browsers.computer.move_mouse(
-            self.session_id,
-            x=coords["x"],
-            y=coords["y"],
-        )
-
-        await asyncio.sleep(SCREENSHOT_DELAY_S)
-        return await self.screenshot()
-
-    async def _handle_mouse_button(self, action: N15Action, click_type: str) -> ToolResult:
-        coords = self._get_coordinates(action.get("coordinates"))
+    def _mouse_button(self, args: dict[str, Any], click_type: str) -> None:
+        # Coordinates are optional here — without them the button is pressed or
+        # released wherever the cursor already is, which is what a manual
+        # mouse_move -> mouse_down -> mouse_move -> mouse_up drag relies on.
+        if args.get("coordinates"):
+            x, y = self._require_coordinates(args["coordinates"])
+        else:
+            position = self.kernel.browsers.computer.get_mouse_position(self.session_id)
+            x, y = position.x, position.y
 
         self.kernel.browsers.computer.click_mouse(
             self.session_id,
-            x=coords["x"],
-            y=coords["y"],
+            x=x,
+            y=y,
             button="left",
             click_type=click_type,
         )
 
-        await asyncio.sleep(SCREENSHOT_DELAY_S)
-        return await self.screenshot()
+    def _scroll(self, args: dict[str, Any]) -> None:
+        x, y = self._require_coordinates(args.get("coordinates"))
+        direction = args.get("direction")
 
-    async def _handle_scroll(self, action: N15Action) -> ToolResult:
-        coords = self._get_coordinates(action.get("coordinates"))
-        direction = action.get("direction")
-        amount = max(action.get("amount", 3), 1)
-
-        if direction not in ("up", "down", "left", "right"):
+        # n2 only scrolls vertically.
+        if direction not in ("up", "down"):
             raise ToolError(f"Invalid scroll direction: {direction}")
 
-        # Yutori 1 unit ≈ 10% of viewport height; scale into Kernel wheel-event ticks.
-        ticks = amount * SCROLL_NOTCHES_PER_AMOUNT
-
-        delta_x = 0
-        delta_y = 0
-
-        if direction == "up":
-            delta_y = -ticks
-        elif direction == "down":
-            delta_y = ticks
-        elif direction == "left":
-            delta_x = -ticks
-        elif direction == "right":
-            delta_x = ticks
-
-        modifier = action.get("modifier")
-        scroll_kwargs: dict[str, Any] = {
-            "x": coords["x"],
-            "y": coords["y"],
-            "delta_x": delta_x,
-            "delta_y": delta_y,
+        notches = max(1, round(args.get("amount") or DEFAULT_SCROLL_AMOUNT))
+        kwargs: dict[str, Any] = {
+            "x": x,
+            "y": y,
+            "delta_x": 0,
+            "delta_y": -notches if direction == "up" else notches,
         }
-        if modifier:
-            scroll_kwargs["hold_keys"] = [_map_token(modifier)]
+        if args.get("modifier"):
+            kwargs["hold_keys"] = [_map_token(args["modifier"])]
 
-        self.kernel.browsers.computer.scroll(self.session_id, **scroll_kwargs)
+        self.kernel.browsers.computer.scroll(self.session_id, **kwargs)
 
-        await asyncio.sleep(SCREENSHOT_DELAY_S)
-        screenshot_result = await self.screenshot()
-        screenshot_result["output"] = f"Scrolled {amount} unit(s) {direction}."
-        return screenshot_result
-
-    async def _handle_type(self, action: N15Action) -> ToolResult:
-        text = action.get("text")
+    def _type(self, args: dict[str, Any]) -> None:
+        text = args.get("text")
         if not text:
-            raise ToolError("text is required for type action")
+            raise ToolError("text is required for type")
 
-        self.kernel.browsers.computer.type_text(
-            self.session_id,
-            text=text,
-            delay=TYPING_DELAY_MS,
-        )
+        self.kernel.browsers.computer.type_text(self.session_id, text=text, delay=TYPING_DELAY_MS)
 
-        await asyncio.sleep(SCREENSHOT_DELAY_S)
-        return await self.screenshot()
-
-    async def _handle_key_press(self, action: N15Action) -> ToolResult:
-        key = action.get("key")
+    def _key_press(self, args: dict[str, Any]) -> None:
+        key = args.get("key")
         if not key:
-            raise ToolError("key is required for key_press action")
+            raise ToolError("key is required for key_press")
 
-        # n1.5 supports sequential presses ("down down down enter") — issue each
+        # n2 supports sequential presses ("down down down enter") — issue each
         # combo as its own press_key so they're seen as separate keystrokes.
-        combos = _parse_key_expression(key)
-        for combo in combos:
+        for combo in _parse_key_expression(key):
             self.kernel.browsers.computer.press_key(self.session_id, keys=[combo])
 
-        await asyncio.sleep(SCREENSHOT_DELAY_S)
-        return await self.screenshot()
-
-    async def _handle_hold_key(self, action: N15Action) -> ToolResult:
-        key = action.get("key")
+    def _hold_key(self, args: dict[str, Any]) -> None:
+        key = args.get("key")
         if not key:
-            raise ToolError("key is required for hold_key action")
+            raise ToolError("key is required for hold_key")
 
-        # Yutori emits `duration` in seconds; Kernel SDK's press_key takes ms.
-        duration_s = action.get("duration")
-        duration_ms = int(duration_s * 1000) if duration_s and duration_s > 0 else 1000
-
-        combos = _parse_key_expression(key)
-        for combo in combos:
+        for combo in _parse_key_expression(key):
             self.kernel.browsers.computer.press_key(
                 self.session_id,
                 keys=[combo],
-                duration=duration_ms,
+                duration=_duration_ms(args.get("duration"), 1000),
             )
 
-        await asyncio.sleep(SCREENSHOT_DELAY_S)
-        return await self.screenshot()
-
-    async def _handle_drag(self, action: N15Action) -> ToolResult:
-        start_coords = self._get_coordinates(action.get("start_coordinates"))
-        end_coords = self._get_coordinates(action.get("coordinates"))
+    def _drag(self, args: dict[str, Any]) -> None:
+        start_x, start_y = self._require_coordinates(args.get("start_coordinates"))
+        end_x, end_y = self._require_coordinates(args.get("coordinates"))
 
         self.kernel.browsers.computer.drag_mouse(
             self.session_id,
-            path=[[start_coords["x"], start_coords["y"]], [end_coords["x"], end_coords["y"]]],
+            path=[[start_x, start_y], [end_x, end_y]],
             button="left",
         )
 
-        await asyncio.sleep(SCREENSHOT_DELAY_S)
-        return await self.screenshot()
+    async def screenshot(self) -> str:
+        """Capture the whole screen — browser chrome included — as base64 WebP."""
+        await asyncio.sleep(SETTLE_DELAY_S)
 
-    async def _handle_wait(self, action: N15Action) -> ToolResult:
-        # Yutori emits `duration` in seconds (matches reference impl).
-        duration = action.get("duration")
-        seconds = duration if duration and duration > 0 else 2
-        await asyncio.sleep(seconds)
-        return await self.screenshot()
+        response = self.kernel.browsers.computer.capture_screenshot(self.session_id)
+        image = Image.open(BytesIO(response.read()))
+        webp_buffer = BytesIO()
+        image.save(webp_buffer, "WEBP", quality=WEBP_QUALITY)
 
-    async def _handle_refresh(self, action: N15Action) -> ToolResult:
-        self.kernel.browsers.computer.press_key(
-            self.session_id,
-            keys=["F5"],
+        return base64.b64encode(webp_buffer.getvalue()).decode("utf-8")
+
+    def _require_coordinates(self, coords: Any) -> tuple[int, int]:
+        """Map [0, 1000] coordinates to screen pixels, clamped to [0, dim-1].
+
+        Clamping prevents a boundary value like 1000 from landing one pixel
+        outside the screen on a 1280x800 display.
+        """
+        if not isinstance(coords, (list, tuple)) or len(coords) != 2:
+            raise ToolError(f"coordinates are required, got {coords!r}")
+
+        nx, ny = coords
+        if not isinstance(nx, (int, float)) or not isinstance(ny, (int, float)):
+            raise ToolError(f"Invalid coordinates: {coords!r}")
+
+        x = round(nx / NAVIGATOR_COORDINATE_SCALE * self.screen_width)
+        y = round(ny / NAVIGATOR_COORDINATE_SCALE * self.screen_height)
+
+        return (
+            max(0, min(self.screen_width - 1, x)),
+            max(0, min(self.screen_height - 1, y)),
         )
-        await asyncio.sleep(2)
-        return await self.screenshot()
-
-    async def _handle_go_back(self, action: N15Action) -> ToolResult:
-        self.kernel.browsers.computer.press_key(
-            self.session_id,
-            keys=["Alt+Left"],
-        )
-        await asyncio.sleep(1.5)
-        return await self.screenshot()
-
-    async def _handle_go_forward(self, action: N15Action) -> ToolResult:
-        self.kernel.browsers.computer.press_key(
-            self.session_id,
-            keys=["Alt+Right"],
-        )
-        await asyncio.sleep(1.5)
-        return await self.screenshot()
-
-    async def _handle_goto_url(self, action: N15Action) -> ToolResult:
-        url = action.get("url")
-        if not url:
-            raise ToolError("url is required for goto_url action")
-        target_url = _normalize_url(url)
-
-        if self.kiosk_mode:
-            response = self.kernel.browsers.playwright.execute(
-                self.session_id,
-                code=f"await page.goto({json.dumps(target_url)});",
-                timeout_sec=60,
-            )
-            if not response.success:
-                raise ToolError(response.error or "Playwright goto failed")
-            await asyncio.sleep(ACTION_DELAY_S)
-            return await self.screenshot()
-
-        self.kernel.browsers.computer.press_key(
-            self.session_id,
-            keys=["Ctrl+l"],
-        )
-        await asyncio.sleep(ACTION_DELAY_S)
-
-        self.kernel.browsers.computer.press_key(
-            self.session_id,
-            keys=["Ctrl+a"],
-        )
-        await asyncio.sleep(0.1)
-
-        self.kernel.browsers.computer.type_text(
-            self.session_id,
-            text=target_url,
-            delay=TYPING_DELAY_MS,
-        )
-        await asyncio.sleep(ACTION_DELAY_S)
-
-        self.kernel.browsers.computer.press_key(
-            self.session_id,
-            keys=["Return"],
-        )
-        await asyncio.sleep(2)
-        return await self.screenshot()
-
-    async def screenshot(self) -> ToolResult:
-        try:
-            response = self.kernel.browsers.computer.capture_screenshot(
-                self.session_id
-            )
-            png_bytes = response.read()
-            img = Image.open(BytesIO(png_bytes))
-            webp_buf = BytesIO()
-            img.save(webp_buf, "WEBP", quality=WEBP_QUALITY)
-            base64_image = base64.b64encode(webp_buf.getvalue()).decode("utf-8")
-            return {"base64_image": base64_image}
-        except Exception as e:
-            raise ToolError(f"Failed to take screenshot: {e}")
-
-    def _get_coordinates(
-        self, coords: tuple[int, int] | list[int] | None
-    ) -> dict[str, int]:
-        if coords is None or len(coords) != 2:
-            return {"x": self.width // 2, "y": self.height // 2}
-
-        x, y = coords
-        if not isinstance(x, (int, float)) or not isinstance(y, (int, float)) or x < 0 or y < 0:
-            raise ToolError(f"Invalid coordinates: {coords}")
-
-        return {"x": int(x), "y": int(y)}
