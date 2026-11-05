@@ -6,107 +6,258 @@ on:
     types: [completed]
 
 permissions:
-  contents: write
-  pull-requests: write
-  actions: read
+  contents: read
 
 jobs:
-  attempt-fix:
+  generate:
     if: >-
-      ${{ github.event.workflow_run.conclusion == 'failure' &&
+      ${{ github.repository == 'kernel/cli' &&
+          github.event.workflow_run.conclusion == 'failure' &&
           github.event.workflow_run.event == 'pull_request' &&
+          github.event.workflow_run.head_repository.full_name == github.repository &&
           github.event.workflow_run.name != 'Fix CI Failures' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      changed: ${{ steps.snapshot.outputs.changed }}
+      pr_number: ${{ steps.pr.outputs.number }}
+      fix_sha: ${{ steps.fix-branch.outputs.sha }}
+    env:
+      HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      FIX_BRANCH: ci-fix/${{ github.event.workflow_run.head_branch }}
     steps:
-      - name: Generate app token
-        id: app-token
-        uses: actions/create-github-app-token@v3
+      - name: Check out workflow files
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          app-id: ${{ secrets.ADMIN_APP_ID }}
-          private-key: ${{ secrets.ADMIN_APP_PRIVATE_KEY }}
+          path: trusted
+          sparse-checkout: |
+            .github/prompts
+            .github/scripts
+          persist-credentials: false
 
-      - name: Checkout repository
-        uses: actions/checkout@v6
+      - name: Find pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          git check-ref-format --branch "$FIX_BRANCH" >/dev/null
+          pr=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" --jq '[.[]
+            | select(.state == "open" and .head.repo.full_name == env.REPO
+              and .head.ref == env.HEAD_BRANCH and .head.sha == env.HEAD_SHA)][0].number // empty')
+          if [[ -z "$pr" ]]; then
+            echo "No open same-repository PR has $HEAD_BRANCH at $HEAD_SHA; skipping."
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/ci-fix"
+          gh run view "$RUN_ID" --repo "$REPO" --log-failed > "$RUNNER_TEMP/ci-fix/failed.log"
+          echo "number=$pr" >> "$GITHUB_OUTPUT"
+
+      - name: Check out pull request
+        if: steps.pr.outputs.number != ''
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          token: ${{ steps.app-token.outputs.token }}
+          ref: ${{ env.HEAD_SHA }}
+          path: pr
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Install Cursor CLI
+      - name: Record fix branch
+        id: fix-branch
+        if: steps.pr.outputs.number != ''
+        working-directory: pr
         run: |
-          curl https://cursor.com/install -fsS | bash
-          echo "$HOME/.cursor/bin" >> $GITHUB_PATH
+          # The fix branch is regenerated from the PR head; the lease only stops
+          # this run from overwriting an update made while it was running.
+          echo "sha=$(git rev-parse --verify --quiet "refs/remotes/origin/$FIX_BRANCH" || true)" >> "$GITHUB_OUTPUT"
 
-      - name: Enable Cursor Max Mode
+      - name: Setup Go
+        if: steps.pr.outputs.number != ''
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: pr/go.mod
+          # PR and agent code runs in this job, so it must not save caches that
+          # other workflows restore.
+          cache: false
+
+      - name: Setup Node
+        if: steps.pr.outputs.number != ''
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+
+      - name: Install Pi
+        if: steps.pr.outputs.number != ''
+        env:
+          PI_TELEMETRY: '0'
         run: |
-          CFG_DIR="$HOME/.cursor"
-          mkdir -p "$CFG_DIR"
-          echo '{"maxMode": true}' > "$CFG_DIR/cli-config.json"
-          echo "CURSOR_CONFIG_DIR=$CFG_DIR" >> "$GITHUB_ENV"
+          npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+          pi --version
 
-      - name: Configure git identity
+      - name: Fix CI failure
+        if: steps.pr.outputs.number != ''
+        working-directory: pr
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PI_PREFERRED_MODEL: ${{ vars.PI_PREFERRED_MODEL }}
+          PI_SKIP_VERSION_CHECK: '1'
+          PI_TELEMETRY: '0'
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          : "${PI_PREFERRED_MODEL:?Set the PI_PREFERRED_MODEL organization variable}"
+          export CONTEXT_DIR="$RUNNER_TEMP/ci-fix" SUMMARY_FILE="$RUNNER_TEMP/fix-ci-summary.md"
+          # shellcheck disable=SC2016
+          envsubst '${REPO} ${PR_NUMBER} ${HEAD_BRANCH} ${HEAD_SHA} ${RUN_URL} ${CONTEXT_DIR} ${SUMMARY_FILE}' \
+            < ../trusted/.github/prompts/fix-ci.md > "$RUNNER_TEMP/fix-ci-prompt.md"
+          # The checkout is PR content, so project-local Pi resources are not loaded.
+          pi --print --no-session --no-approve \
+            --model "$PI_PREFERRED_MODEL" --thinking max \
+            @"$RUNNER_TEMP/fix-ci-prompt.md"
+
+      - name: Snapshot publishable changes
+        id: snapshot
+        if: steps.pr.outputs.number != ''
+        working-directory: pr
+        run: |
+          if [[ -s "$RUNNER_TEMP/fix-ci-summary.md" ]]; then
+            cat "$RUNNER_TEMP/fix-ci-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          git reset -q --soft "$HEAD_SHA"
+          git add -A
+          git diff --cached --name-only --no-renames -z \
+            | bash ../trusted/.github/scripts/fix-ci-disallowed-paths.sh > "$RUNNER_TEMP/excluded-paths"
+          if [[ -s "$RUNNER_TEMP/excluded-paths" ]]; then
+            echo "::warning::Discarding changes outside the CI fix allowlist:"
+            tr '\0' '\n' < "$RUNNER_TEMP/excluded-paths"
+            GIT_LITERAL_PATHSPECS=1 git reset -q --pathspec-from-file="$RUNNER_TEMP/excluded-paths" --pathspec-file-nul
+          fi
+          git diff --cached --binary --no-renames --no-ext-diff --no-textconv > "$RUNNER_TEMP/fix-ci.patch"
+          git reset -q --hard
+          git clean -fdxq
+          if [[ -s "$RUNNER_TEMP/fix-ci.patch" ]]; then
+            git apply --index "$RUNNER_TEMP/fix-ci.patch"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify fix
+        if: steps.snapshot.outputs.changed == 'true'
+        working-directory: pr
+        run: |
+          test -s "$RUNNER_TEMP/fix-ci-summary.md"
+          if git diff --cached --raw --no-renames | awk '$2 !~ /^(100644|100755|000000)$/ { found = 1 } END { exit !found }'; then
+            echo "::error::The fix may only contain regular files."
+            exit 1
+          fi
+          # Validation must build against published modules, not local replacements.
+          go mod edit -json | jq -e '[.Replace[]? | select(.New.Version == null)] | length == 0'
+          make test
+          git diff --cached --check
+
+      - name: Upload validated fix
+        if: steps.snapshot.outputs.changed == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fix-ci
+          path: |
+            ${{ runner.temp }}/fix-ci.patch
+            ${{ runner.temp }}/fix-ci-summary.md
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: generate
+    if: needs.generate.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ needs.generate.outputs.pr_number }}
+      HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      FIX_BRANCH: ci-fix/${{ github.event.workflow_run.head_branch }}
+      FIX_SHA: ${{ needs.generate.outputs.fix_sha }}
+    steps:
+      - name: Check out workflow files
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          path: trusted
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Download validated fix
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: fix-ci
+          path: ${{ runner.temp }}/fix-ci
+
+      - name: Check out pull request
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          path: pr
+          persist-credentials: false
+
+      - name: Apply validated fix
+        working-directory: pr
         run: |
           git config user.name "kernel-internal[bot]"
           git config user.email "260533166+kernel-internal[bot]@users.noreply.github.com"
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          git apply --index "$RUNNER_TEMP/fix-ci/fix-ci.patch"
+          git diff --cached --name-only --no-renames -z \
+            | bash ../trusted/.github/scripts/fix-ci-disallowed-paths.sh > "$RUNNER_TEMP/disallowed-paths"
+          if [[ -s "$RUNNER_TEMP/disallowed-paths" ]]; then
+            echo "::error::Validated changes include paths outside the CI fix allowlist:"
+            tr '\0' '\n' < "$RUNNER_TEMP/disallowed-paths"
+            exit 1
+          fi
+          if git diff --cached --raw --no-renames | awk '$2 !~ /^(100644|100755|000000)$/ { found = 1 } END { exit !found }'; then
+            echo "::error::Validated changes may only contain regular files."
+            exit 1
+          fi
+          git commit -q -m "Fix CI failure in #$PR_NUMBER"
 
-      - name: Setup Go
-        uses: actions/setup-go@v6
+      - name: Generate publishing token
+        id: publish-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          go-version-file: 'go.mod'
+          app-id: ${{ secrets.ADMIN_APP_ID }}
+          private-key: ${{ secrets.ADMIN_APP_PRIVATE_KEY }}
+          owner: kernel
+          repositories: cli
+          permission-contents: write
+          permission-pull-requests: write
 
-      - name: Fix CI failure
+      - name: Push fix and comment on PR
+        working-directory: pr
         env:
-          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          BRANCH_PREFIX: ci-fix
+          GH_TOKEN: ${{ steps.publish-token.outputs.token }}
         run: |
-          cursor-agent -p "You are operating in a GitHub Actions runner for the Kernel CLI repository.
+          gh auth setup-git
+          git push --force-with-lease="refs/heads/$FIX_BRANCH:$FIX_SHA" origin "HEAD:refs/heads/$FIX_BRANCH"
 
-          The GitHub CLI is available as \`gh\` and authenticated via GH_TOKEN. Git is available. You have write access to repository contents and can comment on pull requests, but you must not create or edit PRs directly.
-
-          # Context
-          - Repo: ${{ github.repository }}
-          - Workflow Run ID: ${{ github.event.workflow_run.id }}
-          - Workflow Run URL: ${{ github.event.workflow_run.html_url }}
-          - Fix Branch Prefix: ci-fix
-
-          # Codebase Structure
-          - cmd/ - CLI commands (main command implementations)
-          - cmd/proxies/ - Proxy-related commands
-          - cmd/mcp/ - MCP server commands
-          - pkg/ - Supporting packages and templates
-          - Makefile - Build and test targets (\`make test\` runs \`go vet\` and \`go test\`)
-
-          # Goal
-          Implement an end-to-end CI fix flow: identify the failing PR, analyze the failure, make minimal targeted fixes, and propose changes back.
-
-          # Requirements
-          1. Use \`gh run view ${{ github.event.workflow_run.id }} --log-failed\` to get failure logs
-          2. Identify the PR associated with the failed workflow run
-          3. Analyze the failure - common issues include:
-             - Go compilation errors
-             - Test failures (missing interface methods, type mismatches)
-             - Mock/fake implementations missing new interface methods
-             - Linting issues from \`go vet\`
-          4. Make minimal, targeted edits consistent with the repo style
-          5. Create/update a fix branch: ci-fix/<pr-head-branch>
-          6. Push changes and post a PR comment with ONLY a compare link for quick PR creation
-             - Format: Describe the fix, then provide ONLY a single PR creation link
-             - Example format:
-               \"🔧 CI Fix Available
-               I've pushed a fix for the CI failure.
-
-               👉 Click here to create a PR with the fix\"
-             - Do NOT include any git merge instructions or manual merge commands
-             - Only include the compare link (e.g., https://github.com/.../compare/...)
-
-          # Style Guidelines
-          - Go: Follow existing patterns, use testify for tests
-          - Comments: Keep simple, no extra formatting
-          - Interfaces: When adding methods to interfaces, update all implementations including test fakes
-
-          # Constraints
-          - Do NOT create PRs directly - only post comments with compare links
-          - Avoid duplicate comments - update existing bot comments
-          - If no actionable fix is possible, make no changes and post no comment
-          - PR comments must ONLY include the PR creation link, no manual merge instructions
-          " --model ${{ vars.CURSOR_PREFERRED_MODEL }} --force --output-format=text
+          body="$RUNNER_TEMP/fix-ci-comment.md"
+          {
+            printf '🔧 CI Fix Available\n%s\n\n' "$(head -c 4000 "$RUNNER_TEMP/fix-ci/fix-ci-summary.md")"
+            printf '👉 [Click here to create a PR with the fix](https://github.com/%s/compare/%s...%s)\n' \
+              "$REPO" "$HEAD_BRANCH" "$FIX_BRANCH"
+          } > "$body"
+          comment=$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments" \
+            --jq '.[] | select(.user.login == "kernel-internal[bot]" and (.body | startswith("🔧 CI Fix Available"))) | .id' \
+            | tail -1)
+          if [[ -n "$comment" ]]; then
+            gh api --method PATCH "repos/$REPO/issues/comments/$comment" -F "body=@$body" > /dev/null
+          else
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$body"
+          fi
