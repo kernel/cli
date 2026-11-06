@@ -652,7 +652,18 @@ func vaultSpecFromFlags(cmd *cobra.Command) (map[string]json.RawMessage, error) 
 	if vaultSpecHasSecrets(json.RawMessage(raw)) {
 		return nil, fmt.Errorf("--spec must not contain credentials or tokens; use the dedicated file/stdin inputs")
 	}
-	if vaultSpecHasCardData(json.RawMessage(raw)) {
+	scanned := json.RawMessage(raw)
+	if provider == "link" || provider == "agentcard" {
+		// Link and AgentCard metadata is caller-defined and forwarded as is, so its keys are not card fields.
+		withoutMetadata := make(map[string]json.RawMessage, len(spec))
+		for key, value := range spec {
+			if key != "metadata" {
+				withoutMetadata[key] = value
+			}
+		}
+		scanned, _ = json.Marshal(withoutMetadata)
+	}
+	if vaultSpecHasCardData(scanned) {
 		protectedField := ""
 		switch provider {
 		case "kernel":

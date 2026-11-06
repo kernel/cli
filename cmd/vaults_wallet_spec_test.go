@@ -13,10 +13,18 @@ import (
 )
 
 func TestVaultSpecsPreserveOpaqueMetadata(t *testing.T) {
-	metadata := `{"tokens":"loyalty-points","credentials":{"label":"member"},"client_secret":"field-description","entries":[{"access_token":"column-name"}]}`
+	metadata := `{"tokens":"loyalty-points","credentials":{"label":"member"},"client_secret":"field-description","entries":[{"access_token":"column-name"}],"number":"42","cvc":"order-code","expiry":"2026-12"}`
 	for _, provider := range []string{"link", "agentcard"} {
-		for _, command := range []string{"wallets create", "cards create", "cards update"} {
+		commands := []string{"wallets create", "cards create", "cards update"}
+		if provider == "link" {
+			commands = append(commands, "payment-requests create", "payment-requests update")
+		}
+		for _, command := range commands {
 			t.Run(provider+"/"+command, func(t *testing.T) {
+				fixture := requestedCardFixture
+				if strings.HasPrefix(command, "payment-requests") {
+					fixture = linkPaymentRequestFixture
+				}
 				client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 					var body struct {
 						Spec map[string]json.RawMessage `json:"spec"`
@@ -24,7 +32,7 @@ func TestVaultSpecsPreserveOpaqueMetadata(t *testing.T) {
 					require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 					assert.JSONEq(t, metadata, string(body.Spec["metadata"]))
 					w.Header().Set("Content-Type", "application/json")
-					_, _ = io.WriteString(w, requestedCardFixture)
+					_, _ = io.WriteString(w, fixture)
 				})
 				args := append([]string{"vaults"}, strings.Fields(command)...)
 				args = append(args, "checkout", "item-1", "--provider", provider, "--spec", `{"metadata":`+metadata+`}`, "-o", "json")
@@ -32,6 +40,18 @@ func TestVaultSpecsPreserveOpaqueMetadata(t *testing.T) {
 				require.NoError(t, err)
 			})
 		}
+	}
+}
+
+func TestVaultLinkSpecRejectsCardDetailsOutsideMetadata(t *testing.T) {
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Fatal("card details reached API") })
+	for _, spec := range []string{
+		`{"number":"4111111111111111"}`,
+		`{"line_items":[{"cvc":"123"}],"metadata":{"order":"42"}}`,
+	} {
+		_, _, err := executeVaultCommand(t, client, "vaults", "cards", "create", "checkout", "item-1", "--provider", "link", "--spec", spec)
+		require.ErrorContains(t, err, "card details")
+		assert.NotContains(t, err.Error(), "4111111111111111")
 	}
 }
 
