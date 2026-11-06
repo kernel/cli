@@ -205,16 +205,22 @@ func parseMemoryFlag(memory string) (kernel.BrowserMemoryRequest, error) {
 // availableVideoMemorySizes returns the video memory (VRAM) sizes the API
 // accepts for a GPU browser session.
 func availableVideoMemorySizes() []string {
+	return []string{"3GiB", "6GiB"}
+}
+
+// deprecatedVideoMemorySizes are aliases the API still accepts for 3GiB and
+// 6GiB. They are sent unchanged so the API can track remaining usage.
+func deprecatedVideoMemorySizes() []string {
 	return []string{"2GiB", "4GiB"}
 }
 
 // parseVideoMemoryFlag validates a --video-memory value. An empty value means the
-// flag was not set, which lets the API apply its default (2GiB).
+// flag was not set, which lets the API apply its default (3GiB).
 func parseVideoMemoryFlag(videoMemory string) (kernel.BrowserVideoMemory, error) {
 	if videoMemory == "" {
 		return "", nil
 	}
-	for _, m := range availableVideoMemorySizes() {
+	for _, m := range append(availableVideoMemorySizes(), deprecatedVideoMemorySizes()...) {
 		if strings.EqualFold(videoMemory, m) {
 			return kernel.BrowserVideoMemory(m), nil
 		}
@@ -3560,7 +3566,7 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().BoolP("headless", "H", false, "Launch browser without GUI access")
 	browsersCreateCmd.Flags().Bool("gpu", false, "Launch browser with hardware-accelerated GPU rendering")
 	browsersCreateCmd.Flags().String("memory", "", "Memory for a non-GPU browser session. Headless: '1GiB' (default), '2GiB' or '4GiB'. Headful: '8GiB' (default) or '16GiB'")
-	browsersCreateCmd.Flags().String("video-memory", "", "Video memory (VRAM) for a GPU browser session (requires --gpu): '2GiB' (default, 4 vCPU/6GiB memory) or '4GiB' (8 vCPU/12GiB memory)")
+	browsersCreateCmd.Flags().String("video-memory", "", "Video memory (VRAM) for a GPU browser session (requires --gpu): '3GiB' (default, 4 vCPU/6GiB memory) or '6GiB' (8 vCPU/12GiB memory)")
 	browsersCreateCmd.Flags().String("fingerprint-os", "", "Closed beta browser fingerprint OS override: macos. Contact Kernel to enable; requires --stealth=true, --headless=false, --gpu=false, and default memory")
 	browsersCreateCmd.Flags().String("invocation-id", "", "Associate the browser session with an invocation")
 	browsersCreateCmd.Flags().Bool("kiosk", false, "Launch browser in kiosk mode")

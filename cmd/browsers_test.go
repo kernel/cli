@@ -1048,15 +1048,20 @@ func TestBrowsersCreate_WithVideoMemory(t *testing.T) {
 	}
 	b := BrowsersCmd{browsers: fake}
 
-	err := b.Create(context.Background(), BrowsersCreateInput{GPU: BoolFlag{Set: true, Value: true}, VideoMemory: "4gib"})
+	err := b.Create(context.Background(), BrowsersCreateInput{GPU: BoolFlag{Set: true, Value: true}, VideoMemory: "6gib"})
 	require.NoError(t, err)
-	assert.Equal(t, kernel.BrowserVideoMemory4GiB, captured.VideoMemory)
+	assert.Equal(t, kernel.BrowserVideoMemory6GiB, captured.VideoMemory)
 
 	raw, err := captured.MarshalJSON()
 	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"video_memory":"4GiB"`)
+	assert.Contains(t, string(raw), `"video_memory":"6GiB"`)
 
-	// Omitting the flag sends nothing; the server defaults to 2GiB.
+	// Deprecated aliases are sent as given; the API maps them to 3GiB and 6GiB.
+	err = b.Create(context.Background(), BrowsersCreateInput{GPU: BoolFlag{Set: true, Value: true}, VideoMemory: "4GiB"})
+	require.NoError(t, err)
+	assert.Equal(t, kernel.BrowserVideoMemory4GiB, captured.VideoMemory)
+
+	// Omitting the flag sends nothing; the server defaults to 3GiB.
 	err = b.Create(context.Background(), BrowsersCreateInput{GPU: BoolFlag{Set: true, Value: true}})
 	require.NoError(t, err)
 	assert.Empty(t, captured.VideoMemory)
