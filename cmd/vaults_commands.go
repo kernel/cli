@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 
 	"github.com/kernel/cli/pkg/interactive"
 	kernel "github.com/kernel/kernel-go-sdk"
@@ -652,7 +653,14 @@ func vaultSpecFromFlags(cmd *cobra.Command) (map[string]json.RawMessage, error) 
 	if vaultSpecHasSecrets(json.RawMessage(raw)) {
 		return nil, fmt.Errorf("--spec must not contain credentials or tokens; use the dedicated file/stdin inputs")
 	}
-	if vaultSpecHasCardData(json.RawMessage(raw)) {
+	scanned := json.RawMessage(raw)
+	if provider == "link" {
+		// Link card and payment request metadata is caller-defined and forwarded to Link as is, so its keys are not card fields.
+		withoutMetadata := maps.Clone(spec)
+		delete(withoutMetadata, "metadata")
+		scanned, _ = json.Marshal(withoutMetadata)
+	}
+	if vaultSpecHasCardData(scanned) {
 		protectedField := ""
 		switch provider {
 		case "kernel":
