@@ -13,18 +13,10 @@ import (
 )
 
 func TestVaultSpecsPreserveOpaqueMetadata(t *testing.T) {
-	metadata := `{"tokens":"loyalty-points","credentials":{"label":"member"},"client_secret":"field-description","entries":[{"access_token":"column-name"}],"number":"42","cvc":"order-code","expiry":"2026-12"}`
+	metadata := `{"tokens":"loyalty-points","credentials":{"label":"member"},"client_secret":"field-description","entries":[{"access_token":"column-name"}]}`
 	for _, provider := range []string{"link", "agentcard"} {
-		commands := []string{"wallets create", "cards create", "cards update"}
-		if provider == "link" {
-			commands = append(commands, "payment-requests create", "payment-requests update")
-		}
-		for _, command := range commands {
+		for _, command := range []string{"wallets create", "cards create", "cards update"} {
 			t.Run(provider+"/"+command, func(t *testing.T) {
-				fixture := requestedCardFixture
-				if strings.HasPrefix(command, "payment-requests") {
-					fixture = linkPaymentRequestFixture
-				}
 				client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 					var body struct {
 						Spec map[string]json.RawMessage `json:"spec"`
@@ -32,7 +24,7 @@ func TestVaultSpecsPreserveOpaqueMetadata(t *testing.T) {
 					require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 					assert.JSONEq(t, metadata, string(body.Spec["metadata"]))
 					w.Header().Set("Content-Type", "application/json")
-					_, _ = io.WriteString(w, fixture)
+					_, _ = io.WriteString(w, requestedCardFixture)
 				})
 				args := append([]string{"vaults"}, strings.Fields(command)...)
 				args = append(args, "checkout", "item-1", "--provider", provider, "--spec", `{"metadata":`+metadata+`}`, "-o", "json")
@@ -40,6 +32,31 @@ func TestVaultSpecsPreserveOpaqueMetadata(t *testing.T) {
 				require.NoError(t, err)
 			})
 		}
+	}
+}
+
+func TestVaultLinkSpecsPreserveMetadataCardKeys(t *testing.T) {
+	metadata := `{"number":"42","cvc":"order-code","expiry":"2026-12"}`
+	for _, command := range []string{"cards create", "cards update", "payment-requests create", "payment-requests update"} {
+		t.Run(command, func(t *testing.T) {
+			fixture := requestedCardFixture
+			if strings.HasPrefix(command, "payment-requests") {
+				fixture = linkPaymentRequestFixture
+			}
+			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				var body struct {
+					Spec map[string]json.RawMessage `json:"spec"`
+				}
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				assert.JSONEq(t, metadata, string(body.Spec["metadata"]))
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, fixture)
+			})
+			args := append([]string{"vaults"}, strings.Fields(command)...)
+			args = append(args, "checkout", "item-1", "--provider", "link", "--spec", `{"metadata":`+metadata+`}`, "-o", "json")
+			_, _, err := executeVaultCommand(t, client, args...)
+			require.NoError(t, err)
+		})
 	}
 }
 
