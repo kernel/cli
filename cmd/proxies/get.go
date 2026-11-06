@@ -36,6 +36,7 @@ func (p ProxyCmd) Get(ctx context.Context, in ProxyGetInput) error {
 	}
 	rows = append(rows, []string{"Name", name})
 	rows = append(rows, []string{"Type", string(item.Type)})
+	rows = append(rows, []string{"IP Address", util.OrDash(item.IPAddress)})
 	rows = append(rows, []string{"Bypass Hosts", formatBypassHosts(item.BypassHosts)})
 
 	// Display protocol (default to https if not set)
@@ -75,6 +76,9 @@ func getProxyConfigRows(proxy *kernel.ProxyGetResponse) [][]string {
 	case kernel.ProxyGetResponseTypeIsp:
 		if config.Country != "" {
 			rows = append(rows, []string{"Country", config.Country})
+		}
+		if config.IPAddress != "" {
+			rows = append(rows, []string{"Reserved IP", config.IPAddress})
 		}
 	case kernel.ProxyGetResponseTypeResidential:
 		if config.Country != "" {

@@ -21,14 +21,15 @@ type vaultLinkClient struct {
 
 type vaultLinkTokens struct {
 	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
+	RefreshToken string `json:"refresh_token,omitempty"`
 }
 
 type vaultLinkAuthorization struct {
-	Method string           `json:"method"`
-	Client vaultLinkClient  `json:"client"`
-	Tokens *vaultLinkTokens `json:"tokens,omitempty"`
-	fields map[string]json.RawMessage
+	Method       string           `json:"method"`
+	Client       vaultLinkClient  `json:"client"`
+	Tokens       *vaultLinkTokens `json:"tokens,omitempty"`
+	TokenRefresh string           `json:"token_refresh,omitempty"`
+	fields       map[string]json.RawMessage
 }
 
 func vaultWalletSpecFromFlags(cmd *cobra.Command) (kernel.VaultItemUpsertParamsBodyWalletSpecUnion, error) {
@@ -41,6 +42,9 @@ func vaultWalletSpecFromFlags(cmd *cobra.Command) (kernel.VaultItemUpsertParamsB
 		return kernel.VaultItemUpsertParamsBodyWalletSpecUnion{}, err
 	}
 	provider, _ := cmd.Flags().GetString("provider")
+	if provider != "link" && cmd.Flags().Changed("token-refresh") {
+		return kernel.VaultItemUpsertParamsBodyWalletSpecUnion{}, fmt.Errorf("--token-refresh is only for imported Link wallet grants")
+	}
 	switch provider {
 	case "kernel":
 		if reference != nil || cmd.Flags().Changed("tokens-file") {
@@ -56,6 +60,11 @@ func vaultWalletSpecFromFlags(cmd *cobra.Command) (kernel.VaultItemUpsertParamsB
 			return kernel.VaultItemUpsertParamsBodyWalletSpecUnion{}, fmt.Errorf("--tokens-file is only for imported Link wallet grants")
 		}
 		err = configureAgentCardWallet(spec, reference)
+	case "vgs":
+		if cmd.Flags().Changed("tokens-file") {
+			return kernel.VaultItemUpsertParamsBodyWalletSpecUnion{}, fmt.Errorf("VGS wallets use a vault provider configuration and do not accept tokens")
+		}
+		err = configureVgsWallet(spec, reference)
 	case "link":
 		err = configureLinkWallet(cmd, spec, reference)
 	}
@@ -114,14 +123,43 @@ func configureAgentCardWallet(spec map[string]json.RawMessage, reference json.Ra
 	return nil
 }
 
+func configureVgsWallet(spec map[string]json.RawMessage, reference json.RawMessage) error {
+	if reference != nil {
+		if _, exists := spec["provider_config"]; exists {
+			return fmt.Errorf("select a provider config through flags or spec, not both")
+		}
+		spec["provider_config"] = reference
+	}
+	ref, exists := spec["provider_config"]
+	if !exists {
+		return fmt.Errorf("VGS wallets require --provider-config-id, --provider-config-name, or spec.provider_config")
+	}
+	return validateVaultConfigReference(ref)
+}
+
 func configureLinkWallet(cmd *cobra.Command, spec map[string]json.RawMessage, reference json.RawMessage) error {
 	auth, err := vaultLinkAuthorizationFromSpec(spec["authorization"], reference)
 	if err != nil {
 		return err
 	}
+	tokenRefreshFlag, tokenRefreshSet := "", cmd.Flags().Changed("token-refresh")
+	_, tokenRefreshInSpec := auth.fields["token_refresh"]
+	if tokenRefreshSet {
+		tokenRefreshFlag, _ = cmd.Flags().GetString("token-refresh")
+		if tokenRefreshInSpec && auth.TokenRefresh != tokenRefreshFlag {
+			return fmt.Errorf("spec.authorization.token_refresh must match --token-refresh")
+		}
+		auth.TokenRefresh = tokenRefreshFlag
+	}
+	if (tokenRefreshSet || tokenRefreshInSpec) && auth.TokenRefresh != "kernel" && auth.TokenRefresh != "customer" {
+		return fmt.Errorf("Link authorization.token_refresh must be kernel or customer")
+	}
 	if auth.Client.Type != "customer_managed" {
 		if cmd.Flags().Changed("tokens-file") {
 			return fmt.Errorf("--tokens-file requires a customer-managed Link provider configuration")
+		}
+		if tokenRefreshSet || tokenRefreshInSpec {
+			return fmt.Errorf("token_refresh applies only to imported Link grants with a customer-managed provider configuration")
 		}
 		return nil
 	}
@@ -131,7 +169,16 @@ func configureLinkWallet(cmd *cobra.Command, spec map[string]json.RawMessage, re
 	if err := validateVaultConfigReference(auth.Client.ProviderConfig); err != nil {
 		return err
 	}
-	tokens, err := readVaultSecrets(cmd, "tokens-file", "access_token", "refresh_token")
+	effectiveTokenRefresh := auth.TokenRefresh
+	if effectiveTokenRefresh == "" {
+		effectiveTokenRefresh = "kernel"
+	}
+	var tokens map[string]string
+	if effectiveTokenRefresh == "customer" {
+		tokens, err = readVaultSecrets(cmd, "tokens-file", "access_token")
+	} else {
+		tokens, err = readVaultSecrets(cmd, "tokens-file", "access_token", "refresh_token")
+	}
 	if err != nil {
 		return err
 	}
@@ -159,6 +206,9 @@ func vaultLinkAuthorizationFromSpec(raw, reference json.RawMessage) (vaultLinkAu
 	if client, exists := auth.fields["client"]; exists && json.Unmarshal(client, &auth.Client) != nil {
 		return auth, fmt.Errorf("spec.authorization.client must be an OAuth client object")
 	}
+	if tokenRefresh, exists := auth.fields["token_refresh"]; exists && json.Unmarshal(tokenRefresh, &auth.TokenRefresh) != nil {
+		return auth, fmt.Errorf("spec.authorization.token_refresh must be a string")
+	}
 	return auth, nil
 }
 
@@ -167,12 +217,19 @@ func (auth vaultLinkAuthorization) withTokens(tokens vaultLinkTokens) (json.RawM
 	if auth.fields == nil {
 		return json.Marshal(auth)
 	}
-	// Only the file-supplied tokens change; preserve opaque fields and omissions.
+	// Only file- and flag-supplied fields change; preserve opaque fields and omissions.
 	raw, err := json.Marshal(tokens)
 	if err != nil {
 		return nil, err
 	}
 	auth.fields["tokens"] = raw
+	if auth.TokenRefresh != "" {
+		raw, err = json.Marshal(auth.TokenRefresh)
+		if err != nil {
+			return nil, err
+		}
+		auth.fields["token_refresh"] = raw
+	}
 	return json.Marshal(auth.fields)
 }
 

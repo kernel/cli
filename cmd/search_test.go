@@ -40,7 +40,7 @@ func TestSearchCreate(t *testing.T) {
 		stdin, want string
 	}{
 		{"auto", []string{"test"}, "", `{"query":"test"}`},
-		{"pinned", []string{"test", "--provider", "exa", "--max-results", "5"}, "", `{"query":"test","max_results":5,"strategy":{"type":"pinned","provider":{"provider":"exa"}}}`},
+		{"pinned", []string{"test", "--provider", "EXA", "--max-results", "5"}, "", `{"query":"test","max_results":5,"strategy":{"type":"pinned","provider":{"provider":"exa"}}}`},
 		{"advanced request", []string{"--request", advanced}, "", advanced},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -132,6 +132,7 @@ func TestSearchContents(t *testing.T) {
 func TestSearchInvalidInput(t *testing.T) {
 	for _, args := range [][]string{
 		{}, {" "}, {strings.Repeat("x", 2049)}, {"a", "b"}, {"test", "--provider", ""},
+		{"test", "--provider", "valyu"}, {"test", "--provider", "serpapi"}, {"test", "--provider", "unknown"},
 		{"test", "--max-results", "0"}, {"test", "--max-results", "101"},
 		{"test", "-o", "yaml"}, {"get", "srch_test", "-o", "yaml"}, {"contents", "srch_test", "--limit", "1", "-o", "yaml"},
 		{"--request", "null"}, {"--request", "[]"}, {"--request", "{"}, {"--request", `{}`}, {"--request", `{"query":1}`},
@@ -174,6 +175,16 @@ func TestSearchErrorsDoNotRetryCreate(t *testing.T) {
 			assert.Equal(t, 1, calls)
 		})
 	}
+}
+
+func TestSearchProviderHelpMatchesCurrentSpec(t *testing.T) {
+	cmd := newSearchCommand()
+	usage := cmd.Flags().Lookup("provider").Usage
+	for _, provider := range searchProviderSlugs {
+		assert.Contains(t, usage, provider)
+	}
+	assert.NotContains(t, usage, "valyu")
+	assert.NotContains(t, usage, "serpapi")
 }
 
 func TestSearchWiring(t *testing.T) {

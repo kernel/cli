@@ -41,8 +41,11 @@ Proxy types (from best to worst for bot detection):
 - custom: Your own proxy server
 
 Country targeting:
-- isp defaults to US when --country is omitted
+- isp defaults to US when --country and --ip-address are omitted
+- an ISP --ip-address uses that reserved IP's country unless --country is also set
 - residential and mobile use the global pool without country targeting when --country is omitted
+
+Use kernel proxy-ips list to find active reserved IPs. Omit --ip-address to let Kernel choose an ISP exit IP.
 
 Examples:
   # Create a custom proxy
@@ -54,6 +57,9 @@ Examples:
   # Create an ISP proxy in Germany
   kernel proxies create --type isp --country DE --name "DE ISP"
 
+  # Pin an ISP proxy to an active reserved IP
+  kernel proxies create --type isp --ip-address 203.0.113.10 --name "Pinned ISP"
+
   # Create a residential proxy with location
   kernel proxies create --type residential --country US --city sanfrancisco --state CA --name "SF Residential"
 
@@ -63,11 +69,15 @@ Examples:
 }
 
 var proxiesUpdateCmd = &cobra.Command{
-	Use:   "update <id>",
-	Short: "Rename a proxy configuration",
-	Long:  "Rename a proxy configuration. Only the name can be changed; recreate the proxy to change its type or config.",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runProxiesUpdate,
+	Use:   "update <id-or-name>",
+	Short: "Update a proxy configuration",
+	Long: `Update a proxy's name, move an ISP proxy to another reserved exit IP, or do both.
+
+Proxy names do not need to be unique. Moving with --ip-address is available only for ISP proxies in organizations with a reserved ISP allocation. The IP must be active and in the proxy's country. Kernel probes the new endpoint before changing the proxy, so a failed probe leaves it unchanged. Live browsers use the new IP for new connections within a few seconds while established connections drain on the old IP.
+
+If the IP is outside the organization's allocation, the update is rejected. If the IP cannot currently be assigned or the proxy changed concurrently, inspect it with kernel proxies get and retry.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runProxiesUpdate,
 }
 
 var proxiesDeleteCmd = &cobra.Command{
@@ -98,6 +108,7 @@ func init() {
 	addJSONOutputFlag(proxiesListCmd)
 	proxiesListCmd.Flags().String("name", "", "Filter by exact proxy name")
 	proxiesListCmd.Flags().String("query", "", "Search proxies by name, host, or IP address (IDs match by exact value)")
+	proxiesListCmd.Flags().String("ip-address", "", "Filter ISP proxies by an exact primary exit IPv4 address")
 	proxiesListCmd.Flags().Int("limit", 0, "Maximum number of proxies to return")
 	proxiesListCmd.Flags().Int("offset", 0, "Number of proxies to skip (for pagination)")
 	addJSONOutputFlag(proxiesGetCmd)
@@ -109,9 +120,10 @@ func init() {
 	proxiesCreateCmd.Flags().String("type", "", "Proxy type (isp|residential|mobile|custom)")
 	_ = proxiesCreateCmd.MarkFlagRequired("type")
 	proxiesCreateCmd.Flags().String("protocol", "https", "Protocol to use for the proxy connection (http|https)")
+	proxiesCreateCmd.Flags().String("ip-address", "", "Active reserved exit IP to pin an ISP proxy to; must match --country when both are set")
 
 	// Location flags (isp, residential, mobile)
-	proxiesCreateCmd.Flags().String("country", "", "ISO 3166 country code or EU (isp proxies support US, GB, FR, DE, SG, KR; isp defaults to US, residential and mobile use the global pool without country targeting)")
+	proxiesCreateCmd.Flags().String("country", "", "ISO 3166 country code or EU (ISP supports US, GB, FR, DE, SG, KR and defaults to US, or to --ip-address's country when set; residential and mobile use the global pool when omitted)")
 	proxiesCreateCmd.Flags().String("city", "", "City name (no spaces, e.g. sanfrancisco)")
 	proxiesCreateCmd.Flags().String("state", "", "Two-letter state code")
 	proxiesCreateCmd.Flags().String("zip", "", "US ZIP code")
@@ -130,8 +142,9 @@ func init() {
 
 	// Update flags
 	addJSONOutputFlag(proxiesUpdateCmd)
-	proxiesUpdateCmd.Flags().String("name", "", "New proxy name (required)")
-	_ = proxiesUpdateCmd.MarkFlagRequired("name")
+	proxiesUpdateCmd.Flags().String("name", "", "New proxy name; duplicate names are allowed")
+	proxiesUpdateCmd.Flags().String("ip-address", "", "Active reserved exit IP to move an ISP proxy to")
+	proxiesUpdateCmd.MarkFlagsOneRequired("name", "ip-address")
 
 	// Delete flags
 	proxiesDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")

@@ -45,16 +45,37 @@ func executeVaultInputCommand(t *testing.T, client kernel.Client, stdin string, 
 	return stdout, buf.String(), err
 }
 
+func TestVaultProviderConfigHelpIncludesVgs(t *testing.T) {
+	root := newVaultProviderConfigsCommand()
+	create, _, err := root.Find([]string{"create"})
+	require.NoError(t, err)
+	assert.Contains(t, create.Use, "vgs")
+	assert.Contains(t, create.Long, "vault_id and environment")
+	assert.Contains(t, create.Long, "aliases:read")
+	assert.Contains(t, create.Flags().Lookup("provider").Usage, "vgs")
+	assert.Contains(t, create.Flags().Lookup("credentials-file").Usage, "vault_id")
+	update, _, err := root.Find([]string{"update"})
+	require.NoError(t, err)
+	assert.Contains(t, update.Long, "VGS vault_id and environment are immutable")
+}
+
 func TestVaultProviderConfigCreate(t *testing.T) {
-	for _, provider := range []string{"link", "agentcard"} {
+	for _, provider := range []string{"link", "agentcard", "vgs"} {
 		for _, source := range []string{"file", "stdin"} {
 			t.Run(provider+"/"+source, func(t *testing.T) {
 				secret := vaultTestSecret(t)
-				input := fmt.Sprintf(`{"client_id":"client-1","client_secret":%q}`, secret)
+				credentials := map[string]string{"client_id": "client-1", "client_secret": secret}
+				if provider == "vgs" {
+					credentials["vault_id"] = "tntabc12"
+					credentials["environment"] = "sandbox"
+				}
+				inputBytes, err := json.Marshal(credentials)
+				require.NoError(t, err)
+				input := string(inputBytes)
 				path, stdin := "-", input
 				if source == "file" {
 					path, stdin = filepath.Join(t.TempDir(), "credentials.json"), ""
-					require.NoError(t, os.WriteFile(path, []byte(input), 0600))
+					require.NoError(t, os.WriteFile(path, inputBytes, 0600))
 				}
 				calls := 0
 				client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -69,15 +90,18 @@ func TestVaultProviderConfigCreate(t *testing.T) {
 					require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 					assert.Equal(t, "checkout-client", body.Name)
 					assert.Equal(t, provider, body.Provider)
-					assert.Equal(t, 2, len(body.Credentials))
+					assert.Equal(t, credentials, body.Credentials)
 					assert.True(t, body.Credentials["client_secret"] == secret, "secret must be sent unchanged")
-					assert.Equal(t, "client-1", body.Credentials["client_id"])
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusCreated)
 					response := providerConfigFixture
-					if provider == "link" {
+					switch provider {
+					case "link":
 						response = strings.ReplaceAll(response, "agentcard", "link")
 						response = strings.ReplaceAll(response, `,"test_mode":false`, "")
+					case "vgs":
+						response = strings.ReplaceAll(response, "agentcard", "vgs")
+						response = strings.ReplaceAll(response, `,"test_mode":false`, `,"vault_id":"tntabc12","environment":"sandbox"`)
 					}
 					_, _ = io.WriteString(w, response)
 				})
@@ -89,6 +113,10 @@ func TestVaultProviderConfigCreate(t *testing.T) {
 				assert.Contains(t, out, `"id": "config-1"`)
 				if provider == "link" {
 					assert.NotContains(t, out, "test_mode")
+				}
+				if provider == "vgs" {
+					assert.Contains(t, out, `"vault_id": "tntabc12"`)
+					assert.Contains(t, out, `"environment": "sandbox"`)
 				}
 			})
 		}
@@ -187,6 +215,25 @@ func TestVaultProviderConfigSafeOutput(t *testing.T) {
 	}
 }
 
+func TestVaultProviderConfigVgsSafeHumanOutput(t *testing.T) {
+	secret := vaultTestSecret(t)
+	body := strings.ReplaceAll(providerConfigFixture, `"provider":"agentcard"`, `"provider":"vgs"`)
+	body = strings.ReplaceAll(body, `,"test_mode":false`, `,"vault_id":"tntabc12","environment":"live"`)
+	body = strings.TrimSuffix(body, "}") + fmt.Sprintf(`,"credentials":{"client_secret":%q}}`, secret)
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, body)
+	})
+	_, human, err := executeVaultInputCommand(t, client, "", "vault-provider-configs", "get", "config-1")
+	require.NoError(t, err)
+	assert.Contains(t, human, "VGS vault ID (immutable)")
+	assert.Contains(t, human, "tntabc12")
+	assert.Contains(t, human, "VGS environment (immutable)")
+	assert.Contains(t, human, "live")
+	assert.NotContains(t, human, secret)
+	assert.NotContains(t, human, "client_secret")
+}
+
 func TestVaultProviderConfigInvalidInput(t *testing.T) {
 	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Error("invalid input reached API") })
 	for _, args := range []string{
@@ -202,6 +249,15 @@ func TestVaultProviderConfigInvalidInput(t *testing.T) {
 	}
 	for _, raw := range []string{"", "null", "[]", "{}", "{} {}", `{"client_id":"client-1"}`, `{"client_id":false,"client_secret":null}`} {
 		_, _, err := executeVaultInputCommand(t, client, raw, "vault-provider-configs", "create", "--name", "good", "--provider", "link", "--credentials-file", "-")
+		require.Error(t, err)
+	}
+	for _, raw := range []string{
+		`{"client_id":"client-1","client_secret":"secret","vault_id":"tntabc12"}`,
+		`{"client_id":"client-1","client_secret":"secret","environment":"sandbox"}`,
+		`{"client_id":"client-1","client_secret":"secret","vault_id":"tntabc12","environment":false}`,
+		`{"client_id":"client-1","client_secret":"secret","vault_id":"tntabc12","environment":"sandbox","extra":"value"}`,
+	} {
+		_, _, err := executeVaultInputCommand(t, client, raw, "vault-provider-configs", "create", "--name", "good", "--provider", "vgs", "--credentials-file", "-")
 		require.Error(t, err)
 	}
 	secret := vaultTestSecret(t)

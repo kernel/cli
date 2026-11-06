@@ -71,7 +71,7 @@ func (f *FakeProxyService) Update(ctx context.Context, id string, body kernel.Pr
 	if f.UpdateFunc != nil {
 		return f.UpdateFunc(ctx, id, body, opts...)
 	}
-	return &kernel.ProxyUpdateResponse{ID: id, Name: body.Name, Type: kernel.ProxyUpdateResponseTypeIsp}, nil
+	return &kernel.ProxyUpdateResponse{ID: id, Name: body.Name.Value, Type: kernel.ProxyUpdateResponseTypeIsp}, nil
 }
 
 func (f *FakeProxyService) Delete(ctx context.Context, id string, opts ...option.RequestOption) error {

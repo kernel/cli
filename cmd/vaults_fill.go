@@ -121,7 +121,7 @@ func (c VaultsCmd) fill(ctx context.Context, vault, key string, params *vaultFil
 			for code, message := range vaultFillErrorMessages {
 				messages[code] = message
 			}
-			messages["field_unavailable"] = "kernel cards have no stored billing fields; remove unsupported bindings and enter billing details on the merchant page"
+			messages["field_unavailable"] = "this KERNEL item does not store the requested field; payment-method-funded cards and payment requests have no billing fields, so enter billing details on the merchant page; single-use cards expose only cardholder and billing fields supplied at creation"
 		}
 		return vaultOperationRequestError(err, "fill", messages, vaultFillRejected, vaultFillUncertain)
 	}
@@ -223,7 +223,7 @@ const onePasswordFillNotSubmitted = "nothing was submitted by this request; insp
 // Only these statuses are returned before the extension is invoked.
 var onePasswordFillRejected = map[int]string{
 	400: onePasswordFillNotSubmitted, 403: onePasswordFillNotSubmitted, 404: onePasswordFillNotSubmitted,
-	409: "nothing was submitted by this request; if several open pages have page_url, pass target_id, and if several approved entries match its origin, pass entry_id from items get -o json. 1pw_fill can submit the form, so never retry automatically. check the page first before retrying.",
+	409: "nothing was submitted by this request; if several open pages have page_url, pass target_id. if several entries are approved and the page origin does not identify exactly one, pass entry_id from items get -o json. the 1Password extension decides whether the login matches and refuses pages that do not. 1pw_fill can submit the form, so never retry automatically. check the page first before retrying.",
 }
 
 var onePasswordFillResultFields = vaultFieldsOf("type status error_code")

@@ -102,7 +102,7 @@ func TestVaultRequiredAndInvalidFlags(t *testing.T) {
 		{"vaults wallets create checkout wallet-1", "required flag"},
 		{"vaults wallets create checkout wallet-1 --provider unknown --spec {}", "--provider"},
 		{"vaults wallets create checkout wallet-1 --provider link", "required flag"},
-		{"vaults cards create checkout order-1 --provider link", "required flag"},
+		{"vaults cards create checkout order-1 --provider link", "at least one of the flags"},
 		{"vaults cards update checkout order-1 --spec {}", "required flag"},
 		{"vaults wallets create checkout wallet-1 --provider link --user-id usr_123", "--user-id"},
 		{"vaults wallets create checkout wallet-1 --provider agentcard --user-id wrong", "--user-id"},

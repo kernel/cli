@@ -23,6 +23,13 @@ type ProxyService interface {
 	Check(ctx context.Context, id string, body kernel.ProxyCheckParams, opts ...option.RequestOption) (res *kernel.ProxyCheckResponse, err error)
 }
 
+// ProxyIPService defines the subset of the Kernel SDK reserved proxy IP client
+// used by the CLI.
+type ProxyIPService interface {
+	List(ctx context.Context, query kernel.ProxyIPListParams, opts ...option.RequestOption) (res *pagination.OffsetPagination[kernel.ProxyIP], err error)
+	Get(ctx context.Context, ipAddress string, opts ...option.RequestOption) (res *kernel.ProxyIPDetail, err error)
+}
+
 // ProxyCmd handles proxy operations independent of cobra.
 type ProxyCmd struct {
 	proxies  ProxyService
@@ -31,11 +38,12 @@ type ProxyCmd struct {
 
 // Input types for proxy operations
 type ProxyListInput struct {
-	Name   string
-	Query  string
-	Limit  int
-	Offset int
-	Output string
+	Name      string
+	Query     string
+	IPAddress string
+	Limit     int
+	Offset    int
+	Output    string
 }
 
 type ProxyGetInput struct {
@@ -44,9 +52,10 @@ type ProxyGetInput struct {
 }
 
 type ProxyCreateInput struct {
-	Name     string
-	Type     string
-	Protocol string
+	Name      string
+	Type      string
+	Protocol  string
+	IPAddress string
 	// Hostnames that should bypass the parent proxy and connect directly.
 	BypassHosts []string
 	// ISP config
@@ -67,9 +76,10 @@ type ProxyCreateInput struct {
 }
 
 type ProxyUpdateInput struct {
-	ID     string
-	Name   string
-	Output string
+	ID        string
+	Name      string
+	IPAddress string
+	Output    string
 }
 
 type ProxyDeleteInput struct {
@@ -81,4 +91,17 @@ type ProxyCheckInput struct {
 	ID     string
 	URL    string
 	Output string
+}
+
+type ProxyIPListInput struct {
+	Country string
+	Status  string
+	Page    int
+	PerPage int
+	Output  string
+}
+
+type ProxyIPGetInput struct {
+	IPAddress string
+	Output    string
 }

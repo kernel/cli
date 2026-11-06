@@ -232,6 +232,36 @@ func TestWebMCPInvokeNeverRetries(t *testing.T) {
 	}
 }
 
+func TestWebMCPInvokeToolPageUnloadedNeverRetries(t *testing.T) {
+	calls := 0
+	stdout, _, err := executeWebMCPCommand(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Should-Retry", "false")
+		w.WriteHeader(http.StatusGone)
+		fmt.Fprint(w, `{"code":"tool_page_unloaded","invocation_id":"inv-unloaded","message":"Tool page was replaced"}`)
+	}, "", "invoke", "browser", "--tool-ref", "ref", "--input", "{}")
+	require.Error(t, err)
+	assert.Equal(t, 1, calls)
+	assert.Empty(t, stdout)
+	assert.EqualError(t, util.CleanedUpSdkError{Err: err}, "tool_page_unloaded: Tool page was replaced")
+}
+
+func TestWebMCPInvokeInputLimitAndHelp(t *testing.T) {
+	cmd, _, err := newBrowsersWebMCPCommand().Find([]string{"invoke"})
+	require.NoError(t, err)
+	assert.Contains(t, cmd.Long, "tool_page_unloaded")
+	assert.Contains(t, cmd.Long, "may have had side effects")
+	assert.Contains(t, cmd.Flags().Lookup("input").Usage, "4 MiB")
+	assert.Contains(t, cmd.Flags().Lookup("input-file").Usage, "4 MiB")
+
+	oversized := `{"value":"` + strings.Repeat("x", 4<<20) + `"}`
+	_, _, err = executeWebMCPCommand(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("oversized input reached API")
+	}, "", "invoke", "browser", "--tool-ref", "ref", "--input", oversized)
+	require.ErrorContains(t, err, "exceeds 4 MiB")
+}
+
 func TestWebMCPInvokeFailedStatus(t *testing.T) {
 	for _, status := range []string{"error", "canceled"} {
 		t.Run(status, func(t *testing.T) {
