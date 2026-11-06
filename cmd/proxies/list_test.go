@@ -121,9 +121,10 @@ func TestProxyList_ForwardsLimitOffset(t *testing.T) {
 	}
 
 	p := ProxyCmd{proxies: fake}
-	err := p.List(context.Background(), ProxyListInput{Limit: 5, Offset: 10})
+	err := p.List(context.Background(), ProxyListInput{IPAddress: "203.0.113.10", Limit: 5, Offset: 10})
 
 	assert.NoError(t, err)
+	assert.Equal(t, "203.0.113.10", captured.IPAddress.Value)
 	assert.Equal(t, int64(5), captured.Limit.Value)
 	assert.Equal(t, int64(10), captured.Offset.Value)
 }

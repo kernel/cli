@@ -43,6 +43,9 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 	if len(in.BypassHosts) > 0 {
 		params.BypassHosts = normalizeBypassHosts(in.BypassHosts)
 	}
+	if in.IPAddress != "" && proxyType != kernel.ProxyNewParamsTypeIsp {
+		return fmt.Errorf("--ip-address is only supported for ISP proxies")
+	}
 
 	// Build config based on type
 	switch proxyType {
@@ -50,6 +53,9 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 		config := kernel.ProxyNewParamsConfigIsp{}
 		if in.Country != "" {
 			config.Country = kernel.Opt(in.Country)
+		}
+		if in.IPAddress != "" {
+			config.IPAddress = kernel.Opt(in.IPAddress)
 		}
 		params.Config = kernel.ProxyNewParamsConfigUnion{
 			OfIsp: &config,
@@ -190,6 +196,7 @@ func (p ProxyCmd) Create(ctx context.Context, in ProxyCreateInput) error {
 	}
 	rows = append(rows, []string{"Name", name})
 	rows = append(rows, []string{"Type", string(proxy.Type)})
+	rows = append(rows, []string{"IP Address", util.OrDash(proxy.IPAddress)})
 	rows = append(rows, []string{"Bypass Hosts", formatBypassHosts(proxy.BypassHosts)})
 
 	// Display protocol (default to https if not set)
@@ -215,6 +222,7 @@ func runProxiesCreate(cmd *cobra.Command, args []string) error {
 	proxyType, _ := cmd.Flags().GetString("type")
 	name, _ := cmd.Flags().GetString("name")
 	protocol, _ := cmd.Flags().GetString("protocol")
+	ipAddress, _ := cmd.Flags().GetString("ip-address")
 	country, _ := cmd.Flags().GetString("country")
 	city, _ := cmd.Flags().GetString("city")
 	state, _ := cmd.Flags().GetString("state")
@@ -236,6 +244,7 @@ func runProxiesCreate(cmd *cobra.Command, args []string) error {
 		Name:         name,
 		Type:         proxyType,
 		Protocol:     protocol,
+		IPAddress:    ipAddress,
 		BypassHosts:  bypassHosts,
 		Country:      country,
 		City:         city,

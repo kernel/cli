@@ -456,3 +456,37 @@ func TestProxyCreate_ISP_WithoutCountry(t *testing.T) {
 	assert.Contains(t, output, "Creating isp proxy")
 	assert.Contains(t, output, "Successfully created proxy")
 }
+
+func TestProxyCreate_ISP_WithReservedIPAddress(t *testing.T) {
+	fake := &FakeProxyService{
+		NewFunc: func(ctx context.Context, body kernel.ProxyNewParams, opts ...option.RequestOption) (*kernel.ProxyNewResponse, error) {
+			require.NotNil(t, body.Config.OfIsp)
+			assert.True(t, body.Config.OfIsp.IPAddress.Valid())
+			assert.Equal(t, "203.0.113.10", body.Config.OfIsp.IPAddress.Value)
+			assert.False(t, body.Config.OfIsp.Country.Valid())
+			return &kernel.ProxyNewResponse{
+				ID:        "isp-reserved",
+				Type:      kernel.ProxyNewResponseTypeIsp,
+				IPAddress: "203.0.113.10",
+			}, nil
+		},
+	}
+
+	err := ProxyCmd{proxies: fake}.Create(context.Background(), ProxyCreateInput{
+		Name:      "Pinned ISP",
+		Type:      "isp",
+		IPAddress: "203.0.113.10",
+	})
+
+	assert.NoError(t, err)
+}
+
+func TestProxyCreate_RejectsIPAddressForNonISP(t *testing.T) {
+	err := ProxyCmd{proxies: &FakeProxyService{}}.Create(context.Background(), ProxyCreateInput{
+		Name:      "Residential",
+		Type:      "residential",
+		IPAddress: "203.0.113.10",
+	})
+
+	assert.EqualError(t, err, "--ip-address is only supported for ISP proxies")
+}

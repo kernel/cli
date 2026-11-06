@@ -28,6 +28,9 @@ func (p ProxyCmd) List(ctx context.Context, in ProxyListInput) error {
 	if in.Query != "" {
 		params.Query = kernel.String(in.Query)
 	}
+	if in.IPAddress != "" {
+		params.IPAddress = kernel.String(in.IPAddress)
+	}
 	if in.Limit > 0 {
 		params.Limit = kernel.Int(int64(in.Limit))
 	}
@@ -59,7 +62,7 @@ func (p ProxyCmd) List(ctx context.Context, in ProxyListInput) error {
 
 	// Prepare table data
 	tableData := pterm.TableData{
-		{"ID", "Name", "Type", "Protocol", "Bypass Hosts", "Config", "Status", "Last Checked"},
+		{"ID", "Name", "Type", "IP Address", "Protocol", "Bypass Hosts", "Config", "Status", "Last Checked"},
 	}
 
 	for _, proxy := range items {
@@ -94,6 +97,7 @@ func (p ProxyCmd) List(ctx context.Context, in ProxyListInput) error {
 			proxy.ID,
 			name,
 			string(proxy.Type),
+			util.OrDash(proxy.IPAddress),
 			protocol,
 			formatBypassHosts(proxy.BypassHosts),
 			configStr,
@@ -110,8 +114,15 @@ func formatProxyConfig(proxy *kernel.ProxyListResponse) string {
 	config := &proxy.Config
 	switch proxy.Type {
 	case kernel.ProxyListResponseTypeIsp:
+		parts := []string{}
 		if config.Country != "" {
-			return fmt.Sprintf("Country: %s", config.Country)
+			parts = append(parts, fmt.Sprintf("Country: %s", config.Country))
+		}
+		if config.IPAddress != "" {
+			parts = append(parts, fmt.Sprintf("Reserved IP: %s", config.IPAddress))
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, ", ")
 		}
 	case kernel.ProxyListResponseTypeResidential:
 		parts := []string{}
@@ -162,9 +173,10 @@ func runProxiesList(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 	name, _ := cmd.Flags().GetString("name")
 	query, _ := cmd.Flags().GetString("query")
+	ipAddress, _ := cmd.Flags().GetString("ip-address")
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
 	svc := client.Proxies
 	p := ProxyCmd{proxies: &svc}
-	return p.List(cmd.Context(), ProxyListInput{Name: name, Query: query, Limit: limit, Offset: offset, Output: output})
+	return p.List(cmd.Context(), ProxyListInput{Name: name, Query: query, IPAddress: ipAddress, Limit: limit, Offset: offset, Output: output})
 }
