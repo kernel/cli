@@ -5,7 +5,7 @@ const vaultSpecHelp = `
 --spec takes the specification object, not the {type, spec} request envelope.
 --provider supplies spec.provider; omit it from json or supply the same value.
 the api validates provider-specific fields. values are forwarded without defaults
-or normalization. never include card data, OAuth tokens, or provider secrets in --spec.
+or normalization. never include card data, VGS aliases, OAuth tokens, or provider secrets in --spec.
 
 // keep these types in sync with https://api.onkernel.com/spec.yaml.
 // TypeScript notation: ? means optional. other fields are required.
@@ -33,6 +33,26 @@ const shopPayFlowHelp = `Shop Pay checkout (the item's available_operations desc
    outcomes may include failure_code. reporting consumes the card whatever the outcome.
 never infer success or retry an unknown payment; reconcile the merchant order and original item.`
 
+const vgsCardFlowHelp = `VGS card checkout (the item's available_operations descriptions are authoritative):
+1. register a VGS service account with vault-provider-configs create. it needs aliases:read
+   access to the selected customer vault and is fixed to its vault_id and environment.
+2. create a VGS wallet bound to that configuration. it connects on creation, stores no cards,
+   and has no payment_methods expansion; every purchase carries its own aliases.
+3. collect a persistent PAN alias and a fresh, still-live CVC alias in the customer's VGS vault.
+4. create one card through cards create --provider vgs --spec-file. aliases are write-only,
+   encrypted, never returned in the item, events, or logs, and must match on an identical retry.
+5. invoke authorize only when advertised. Kernel sends both aliases through its VGS outbound
+   proxy; the proxy resolves them and replaces the revealed PAN and CVC with Kernel-vault aliases
+   before the response reaches Kernel, so Kernel never receives the card number or security code.
+   no hosted approval follows a successful reveal.
+6. when ready, fill the checkout on merchant_url's exact origin and submit before expires_at,
+   normally five minutes after authorize. fill writes Kernel aliases; the VGS proxy replaces
+   them with card details when the browser submits checkout. ready and fill do not prove payment.
+if an alias is missing or invalid, the card is declined and cannot be edited; collect a fresh CVC
+alias when needed, delete the failed or expired card, and create a new item. a provider credential
+failure requires rotating the VGS configuration secret before creating a new card. amount and
+merchant fields are recorded but do not constrain what the browser submits.`
+
 const vaultWalletSpecHelp = `
 for --provider kernel, use --spec '{}'. if creation returns card_enrollment,
 share it with the cardholder; never enter card details in the cli. where the wallet
@@ -46,6 +66,8 @@ kernel wallets accept neither provider configuration flags nor --tokens-file.
 Shop Pay wallets also accept neither: they always use Kernel-managed OAuth. creation returns
 shop_pay_oauth; share its URL unchanged with the shopper and observe with wallets get --wait 60.
 for Link and AgentCard, omit config selection to preserve managed defaults.
+VGS has no managed default: select exactly one VGS configuration through
+--provider-config-id, --provider-config-name, or spec.provider_config. the binding is immutable.
 --provider-config-id and --provider-config-name are mutually exclusive.
 for Link with selection flags, use --spec '{}' and --tokens-file <path|->.
 alternatively, set the customer_managed client and provider_config in --spec,
@@ -54,7 +76,8 @@ wallet creation. kernel (the default) requires access_token and refresh_token fr
 the same currently valid grant; after import your backend must stop refreshing it
 because KERNEL owns rotation. customer requires only access_token: your backend keeps
 and rotates the refresh token, while KERNEL never refreshes or revokes the grant.
-config client credentials belong in vault-provider-configs, not in a wallet.
+config client credentials belong in vault-provider-configs, not in a wallet. VGS wallets
+accept no tokens and hold no cards or payment methods; each VGS card carries its own aliases.
 
 with token_refresh=customer, invoke the advertised update_access_token operation through
 items invoke --spec-file before each step that reaches Link, including card creation,
@@ -105,7 +128,14 @@ type ShopPayWalletSpec = {
   };
 };
 
+type VgsWalletSpec = {
+  provider: "vgs";
+  provider_config: ProviderConfigReference; // required; no KERNEL-managed VGS credentials
+};
+
 ` + shopPayFlowHelp + `
+
+` + vgsCardFlowHelp + `
 `
 
 const vaultCardSpecHelp = `
@@ -188,6 +218,32 @@ recorded but do not restrict browser payment requests. repeating the identical c
 returns the item; another request at the same key conflicts, including after expired card
 details have been deleted.
 
+type VgsCardSpec = {
+  provider: "vgs";
+  wallet: string;             // VGS wallet item key
+  amount: number;             // integer minor units; 1..1000000
+  currency: string;           // aud, brl, cad, chf, czk, dkk, eur, gbp, hkd, inr, jpy, krw, mxn, nok, nzd, pln, sek, sgd, usd, or zar
+  merchant_name: string;
+  merchant_url: string;       // https checkout URL; fill is restricted to this exact origin
+  card: {                     // required on create; --spec-file only; never returned
+    pan_alias: string;        // persistent PAN alias in the customer's VGS vault
+    cvc_alias: string;        // fresh volatile CVC alias; must exist when authorize runs
+    exp_month: number;        // integer 1..12
+    exp_year: number;         // integer 2000..9999
+    last4: string;            // exactly four digits, checked against the revealed PAN
+  };
+};
+
+VGS card aliases are stored encrypted and never returned in the item, events, or logs.
+pass the full VGS card spec through --spec-file <path|->, never --spec. authorize sends the
+aliases through Kernel's VGS outbound proxy, which resolves them and replaces the revealed PAN
+and CVC with Kernel-vault aliases before the response reaches Kernel. ready lasts until
+expires_at, normally five minutes after authorize. fill is locked
+to merchant_url's exact origin and writes Kernel aliases that the VGS proxy substitutes when
+the browser submits checkout. updates are not supported; an expired card or stale CVC alias
+requires a new card item with a freshly collected alias. repeating an identical create must
+send the same card aliases.
+
 type ShopPayCardSpec = {
   provider: "shop_pay";
   wallet: string;             // connected Shop Pay wallet item key
@@ -239,6 +295,7 @@ provider_revocation_pending, retry deletion. deletion does not cancel the mercha
 terms cannot be changed after authorization.
 
 kernel cards cannot be updated. ` + kernelReplacementHelp + `.
+VGS cards cannot be updated either; delete the card and create a new item with fresh aliases.
 in recovery_required, ` + vaultRecoveryHelp + `
 for a payment-method-funded card, invoke authorize only when advertised. for Visa, present
 spend_approval to the cardholder and poll items get --wait 60 until ready. Mastercard may
@@ -265,11 +322,14 @@ prepared checkout uses preparation merchant_origin instead.
 
 permitted domains are not configurable in the spec. Link and Shop Pay card fill is limited
 to the checkout origin when authorized with browser_id/page_url, or merchant_url's origin
-when authorized without them; AgentCard domains are provider-assigned.
+when authorized without them; VGS fill is limited to merchant_url's exact origin. AgentCard
+domains are provider-assigned.
 for payment-method-funded KERNEL purchases, ` + kernelFundingStatusHelp + `. single-use
 cards have no payment_method_id or funding_status.
 
 ` + shopPayFlowHelp + `
+
+` + vgsCardFlowHelp + `
 `
 
 const vaultPaymentRequestSpecHelp = `

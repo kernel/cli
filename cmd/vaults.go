@@ -254,11 +254,15 @@ func (c VaultsCmd) SaveCard(ctx context.Context, vault, key string, spec kernel.
 		item, err = c.vaults.Items.Upsert(ctx, key, kernel.VaultItemUpsertParams{IDOrName: vault, OfCard: &kernel.VaultItemUpsertParamsBodyCard{Spec: spec}}, vaultWriteRequestOptions()...)
 	}
 	if err != nil {
-		if vaultSpecProvider(spec) == "kernel" {
+		provider := vaultSpecProvider(spec)
+		if provider == "kernel" {
 			if vaultSpecHasSingleUseCard(spec) {
 				return vaultCredentialError(err)
 			}
 			return kernelVaultRequestError(err, "create")
+		}
+		if provider == "vgs" {
+			return vaultCredentialError(err)
 		}
 		return util.CleanedUpSdkError{Err: err}
 	}

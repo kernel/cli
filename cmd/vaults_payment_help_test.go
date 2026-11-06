@@ -17,9 +17,10 @@ func TestVaultPaymentHelpProviderBoundaries(t *testing.T) {
 		{
 			name: "vaults",
 			want: []string{
-				"attachment is required for authorizing a Link or Shop Pay card at a checkout and for fill",
-				"ready Link, KERNEL, and Shop Pay cards use only advertised fill",
-				"none exposes aliases or supports egress substitution",
+				"attachment is required for authorizing a Link or Shop Pay card at a checkout and for every fill, including VGS",
+				"ready Link, KERNEL, Shop Pay, and VGS cards use only advertised fill",
+				"VGS outbound proxy replaces",
+				"the CLI never receives the card",
 				"AgentCard-only checkout aliases support egress substitution with checkout hold, approval, and replay",
 				"not a fallback after fill",
 			},
@@ -34,9 +35,10 @@ func TestVaultPaymentHelpProviderBoundaries(t *testing.T) {
 			path: []string{"items", "invoke"},
 			want: []string{
 				"the vault must already be attached to the browser",
-				"fill is available for credential items and ready Link, KERNEL, or Shop Pay cards when advertised, not AgentCard",
+				"fill is available for credential items and ready Link, KERNEL, Shop Pay, or VGS cards when advertised, not AgentCard",
 				"Link, KERNEL, and Shop Pay cards do not expose aliases or support egress substitution",
-				"fill writes real values into the browser; unrestricted browser/cdp access can read them",
+				"VGS cards also expose no aliases to the CLI",
+				"fill writes real credential or card values into the browser except for VGS",
 				"fill never explicitly submits forms or clicks buttons",
 				"input/change events may trigger site behavior",
 				"not website acceptance, login, or payment success",

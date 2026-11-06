@@ -493,7 +493,7 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		if item.Spec.Provider == "agentcard" && item.Spec.CheckoutOrigin != "" {
 			rows = append(rows, []string{"checkout origin", item.Spec.CheckoutOrigin})
 		}
-		if (item.Spec.Provider == "kernel" || item.Spec.Provider == "shop_pay") && item.Spec.MerchantURL != "" {
+		if (item.Spec.Provider == "kernel" || item.Spec.Provider == "shop_pay" || item.Spec.Provider == "vgs") && item.Spec.MerchantURL != "" {
 			rows = append(rows, []string{"merchant url", item.Spec.MerchantURL})
 		}
 		if (item.Spec.Provider == "kernel" || item.Spec.Provider == "shop_pay") && item.Spec.MerchantCountry != "" {
@@ -668,6 +668,26 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 			}
 		case "shop_pay":
 			pterm.Info.Println("Shop Pay fill never submits payment. submit checkout yourself, then report the observed merchant outcome once with confirm_transaction when advertised; reporting consumes the card whatever the outcome. never infer success or repeat an unknown checkout. " + shopPayRecoveryHelp + ".")
+		case "vgs":
+			switch item.State.Status {
+			case "requested":
+				pterm.Info.Println("authorize only when advertised. it sends the PAN and CVC aliases through Kernel's VGS outbound proxy; the proxy resolves them and replaces the revealed card details with Kernel-vault aliases before the response reaches Kernel, so the CLI never receives the card. provider_unavailable leaves the item requested; re-get it and invoke authorize again only if freshly advertised, never automatically. a missing or stale CVC alias declines the item and requires a new card with a fresh alias.")
+			case "ready":
+				pterm.Info.Println("fill on merchant_url's exact origin and submit checkout before expires_at, normally five minutes after authorize. fill writes protected Kernel aliases; the VGS proxy replaces them with card details only when the browser submits checkout. ready and fill do not prove merchant payment.")
+			case "declined":
+				switch item.State.StatusReason {
+				case "invalid_card":
+					pterm.Info.Println("VGS rejected aliases that do not match the card or an expired card. VGS cards cannot be updated; fix the input, delete this item, and create a new card.")
+				case "alias_not_found":
+					pterm.Info.Println("the customer's VGS vault no longer has one of the aliases, usually an expired CVC alias. collect the CVC again, delete this item, and create a new card with the fresh alias.")
+				case "provider_credentials_rejected":
+					pterm.Info.Println("VGS rejected the provider configuration's service account. rotate its client secret, then delete this item and create a new card; this card cannot be updated.")
+				default:
+					pterm.Info.Println("VGS cards cannot be updated. follow status_reason, collect a fresh CVC alias when needed, then delete this item and create a new card. never infer that an unknown merchant payment failed.")
+				}
+			case "expired":
+				pterm.Info.Println("the VGS card's live window or CVC alias expired. collect a fresh CVC alias, delete this item, and create a new card; VGS cards cannot be updated.")
+			}
 		default:
 			pterm.Info.Println("inspect items events for payment outcomes. never retry automatically; if recovery permits abandonment, delete the purchase item only after explicit user confirmation before creating a replacement.")
 		}
@@ -681,6 +701,9 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		}
 		if item.Spec.Provider == "shop_pay" {
 			pterm.Info.Println("the connected wallet's payment_methods expansion lists the shopper's saved Shop Pay cards. create a separate card item for each purchase and follow its advertised authorize, fill, and confirm_transaction operations.")
+		}
+		if item.Spec.Provider == "vgs" {
+			pterm.Info.Println("this VGS wallet binds one provider configuration but stores no cards or payment methods. each purchase is a separate VGS card whose aliases are supplied through cards create --spec-file. pending_authorization or degraded means creation did not finish; reading retries it, and a wallet that stays degraded can be deleted and created again. provider credentials are checked when a card is authorized.")
 		}
 		for _, expansion := range wallet.AvailableExpansions {
 			pterm.Printf("available expansion: %s — %s\n", expansion.Type, expansion.Description)
@@ -696,7 +719,7 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		printVaultLinkShippingAddresses(item.Expanded.LinkShippingAddresses)
 	}
 	if actions.RequiredAction != "" {
-		pterm.Info.Println("complete the returned action with the provider; never put card data or OAuth codes in shell arguments. observe with items get --wait 60.")
+		pterm.Info.Println("complete the returned action with the provider; never put card data, VGS aliases, or OAuth codes in shell arguments. observe with items get --wait 60.")
 	}
 }
 

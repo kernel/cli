@@ -60,6 +60,11 @@ func vaultWalletSpecFromFlags(cmd *cobra.Command) (kernel.VaultItemUpsertParamsB
 			return kernel.VaultItemUpsertParamsBodyWalletSpecUnion{}, fmt.Errorf("--tokens-file is only for imported Link wallet grants")
 		}
 		err = configureAgentCardWallet(spec, reference)
+	case "vgs":
+		if cmd.Flags().Changed("tokens-file") {
+			return kernel.VaultItemUpsertParamsBodyWalletSpecUnion{}, fmt.Errorf("VGS wallets use a vault provider configuration and do not accept tokens")
+		}
+		err = configureVgsWallet(spec, reference)
 	case "link":
 		err = configureLinkWallet(cmd, spec, reference)
 	}
@@ -116,6 +121,20 @@ func configureAgentCardWallet(spec map[string]json.RawMessage, reference json.Ra
 		return validateVaultConfigReference(ref)
 	}
 	return nil
+}
+
+func configureVgsWallet(spec map[string]json.RawMessage, reference json.RawMessage) error {
+	if reference != nil {
+		if _, exists := spec["provider_config"]; exists {
+			return fmt.Errorf("select a provider config through flags or spec, not both")
+		}
+		spec["provider_config"] = reference
+	}
+	ref, exists := spec["provider_config"]
+	if !exists {
+		return fmt.Errorf("VGS wallets require --provider-config-id, --provider-config-name, or spec.provider_config")
+	}
+	return validateVaultConfigReference(ref)
 }
 
 func configureLinkWallet(cmd *cobra.Command, spec map[string]json.RawMessage, reference json.RawMessage) error {

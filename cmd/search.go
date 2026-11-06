@@ -17,6 +17,8 @@ import (
 	"github.com/spf13/pflag"
 )
 
+var searchProviderSlugs = []string{"brave", "exa", "perplexity", "context", "parallel", "octen", "you", "tavily"}
+
 func newSearchCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search [query]",
@@ -29,7 +31,7 @@ func newSearchCommand() *cobra.Command {
 		RunE:    runSearch,
 	}
 	cmd.PersistentFlags().StringP("output", "o", "", util.JSONOutputFlagDescription)
-	cmd.Flags().String("provider", "", "Pin a provider slug (default: automatic routing)")
+	cmd.Flags().String("provider", "", "Pin a provider slug: brave, exa, perplexity, context, parallel, octen, you, or tavily (default: automatic routing)")
 	cmd.Flags().Int("max-results", 10, "Requested result count (1–100; subject to provider cap)")
 	cmd.Flags().String("request", "", "Complete Search API request as a JSON object; cannot be combined with query flags")
 	cmd.MarkFlagsMutuallyExclusive("request", "provider")
@@ -48,7 +50,7 @@ func newSearchCommand() *cobra.Command {
 		}
 		return executeSearchRequest(cmd, http.MethodGet, path, nil)
 	}}
-	providers.Flags().String("slug", "", "Filter by provider slug")
+	providers.Flags().String("slug", "", "Filter by provider slug: brave, exa, perplexity, context, parallel, octen, you, or tavily")
 	contents := &cobra.Command{
 		Use:   "contents <id>",
 		Short: "Fetch content for selected results of a retained search as JSON",
@@ -213,8 +215,9 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		}
 		if cmd.Flags().Changed("provider") {
 			provider, _ := cmd.Flags().GetString("provider")
-			if strings.TrimSpace(provider) == "" {
-				return fmt.Errorf("--provider must not be empty")
+			provider = strings.ToLower(strings.TrimSpace(provider))
+			if !slices.Contains(searchProviderSlugs, provider) {
+				return fmt.Errorf("--provider must be one of: %s", strings.Join(searchProviderSlugs, ", "))
 			}
 			request["strategy"] = map[string]any{"type": "pinned", "provider": map[string]string{"provider": provider}}
 		}

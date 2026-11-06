@@ -86,23 +86,27 @@ optionally select a project with --project <id-or-name> or KERNEL_PROJECT.
 otherwise, the api resolves the project from your credentials and its defaults.
 vault names, item keys, and project ownership are immutable.
 
-1. create/select a vault, then create a provider wallet and follow its returned action.
+1. create/select a vault, then create a provider wallet and follow any returned action.
    for kernel, share the hosted card_enrollment url; for Shop Pay, share shop_pay_oauth.
-   card details and OAuth approval stay on those provider pages.
-2. inspect wallets payment-methods for eligibility and reasons before creating a purchase.
-   for Link, select a payment method id explicitly.
+   a VGS wallet instead binds a required VGS provider configuration and connects without
+   storing cards or payment methods. card details and OAuth approval stay with their provider.
+2. inspect wallets payment-methods for providers that advertise it before creating a purchase.
+   for Link, select a payment method id explicitly. VGS wallets have no payment methods.
 3. attach the vault with browsers create --vault <id-or-name>; attachment is required for
-   authorizing a Link or Shop Pay card at a checkout and for fill; the same applies to a
-   Link payment_request. reach the final checkout page before checkout-bound authorization.
-4. create a purchase with cards create (Link, AgentCard, KERNEL, or Shop Pay), or where
+   authorizing a Link or Shop Pay card at a checkout and for every fill, including VGS.
+   the same applies to a Link payment_request. reach the final checkout page before
+   checkout-bound Link or Shop Pay authorization.
+4. create a purchase with cards create (Link, AgentCard, KERNEL, Shop Pay, or VGS), or where
    enabled use payment-requests create for a Link or KERNEL purchase. pass --provider and --spec json.
-   a caller-supplied KERNEL single-use card is the exception: pass the full spec through
-   cards create --spec-file <path|-> so card details never appear in shell arguments.
+   caller-supplied KERNEL card details and VGS card aliases are exceptions: pass the full
+   spec through cards create --spec-file <path|-> so protected values never appear in shell arguments.
 5. inspect items get, then use items invoke <vault> <key> <operation> only when advertised.
    follow the operation description and any returned provider action.
-6. ready Link, KERNEL, and Shop Pay cards use only advertised fill with --params for browser checkout;
-   equivalent Link and KERNEL payment_request items do too. none exposes aliases or supports egress
-   substitution. payment-method-funded KERNEL fill is locked to merchant_url's exact origin;
+6. ready Link, KERNEL, Shop Pay, and VGS cards use only advertised fill with --params for browser checkout;
+   equivalent Link and KERNEL payment_request items do too. Link, KERNEL, and Shop Pay fill real
+   card values and do not use egress substitution. VGS fill writes Kernel aliases that the VGS
+   outbound proxy replaces only when the browser submits checkout; the CLI never receives the card.
+   payment-method-funded KERNEL fill and VGS fill are locked to merchant_url's exact origin;
    a KERNEL single-use card fills on any https page in merchant_url's registrable domain.
    submit the merchant checkout before the purchase expires.
    payment-method-funded KERNEL cards and KERNEL payment requests have no stored billing fields;
@@ -117,13 +121,16 @@ vault names, item keys, and project ownership are immutable.
 
 ` + shopPayFlowHelp + `
 
+` + vgsCardFlowHelp + `
+
 permitted checkout domains are displayed when returned. Link card/payment_request and Shop Pay
 card fill is limited to the origin where the purchase was authorized (or merchant_url's origin
-when authorized without a checkout); payment-method-funded KERNEL card and payment_request fill
-uses merchant_url's exact origin, while a KERNEL single-use card uses its registrable domain.
-AgentCard domains are provider-assigned. there is no domain-setting api.
-never supply card data, OAuth codes, ciphertext, or secrets in shell arguments. use protected
-file or stdin inputs where documented, including cards create --spec-file for a single-use card.
+when authorized without a checkout); payment-method-funded KERNEL card, KERNEL payment_request,
+and VGS card fill use merchant_url's exact origin, while a KERNEL single-use card uses its
+registrable domain. AgentCard domains are provider-assigned. there is no domain-setting api.
+never supply card data, VGS aliases, OAuth codes, ciphertext, or secrets in shell arguments. use
+protected file or stdin inputs where documented, including cards create --spec-file for a
+single-use KERNEL card or VGS card.
 use vault-provider-configs for client credentials and wallets create --tokens-file
 for imported Link grants; both accept protected files or stdin.
 do not automatically repeat failed, timed-out, rejected, or indeterminate payments: inspect
@@ -231,13 +238,16 @@ Shop Pay cards support card fields plus available billing fields; billing_first_
 payment-method-funded KERNEL cards and KERNEL payment_request items have no stored billing fields: billing_* returns field_unavailable (400) before
 any write. enter billing details on the merchant page.
 the api searches the page and descendant frames, including payment iframes.
-fill is available for credential items and ready Link, KERNEL, or Shop Pay cards when advertised, not AgentCard.
+fill is available for credential items and ready Link, KERNEL, Shop Pay, or VGS cards when advertised, not AgentCard.
 equivalent Link and KERNEL payment_request items also use fill when advertised.
 Link, KERNEL, and Shop Pay cards do not expose aliases or support egress substitution; payment_request
-items have the same boundary. kernel fill
-is locked to merchant_url's exact origin for payment-method-funded cards and payment requests;
-a KERNEL single-use card instead fills on any https page in that registrable domain. submit checkout before expiry.
-fill writes real values into the browser; unrestricted browser/cdp access can read them.
+items have the same boundary. VGS cards also expose no aliases to the CLI, but fill writes Kernel
+aliases that the VGS outbound proxy replaces with card details when checkout is submitted.
+KERNEL fill is locked to merchant_url's exact origin for payment-method-funded cards and payment requests;
+VGS fill is also locked to merchant_url's exact origin. a KERNEL single-use card instead fills on
+any https page in that registrable domain. submit checkout before expiry.
+fill writes real credential or card values into the browser except for VGS, where it writes protected
+Kernel aliases; unrestricted browser/CDP access can read whatever was filled.
 fill never explicitly submits forms or clicks buttons, but input/change events may trigger site behavior.
 completed means fields were filled, not website acceptance, login, or payment success.
 failed may leave partial writes; unknown quarantines the browser. fill never submits,
@@ -302,6 +312,8 @@ and never retry automatically. 400/403/404/409 rejections mean the tool was not 
 ` + linkCardFlowHelp + `
 
 ` + shopPayFlowHelp + `
+
+` + vgsCardFlowHelp + `
 
 1Password credentials (see credentials --help) use --params or --spec-file without type:
 1pw_create_access_request: no browser needed; optional goal (<=140), reason (<=100),
@@ -401,8 +413,8 @@ JSON
 	items.AddCommand(itemList, itemGet, itemEvents, invoke, newVaultWebMCPCommand(), newVaultDeleteCommand(true))
 
 	wallets := &cobra.Command{Use: "wallets", Short: "connect provider wallets and inspect funding methods"}
-	walletCreate := &cobra.Command{Use: "create <vault> <key> --provider <link|agentcard|kernel|shop_pay> --spec '<json>'", Short: "create a wallet and display its connection or enrollment action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: "create a wallet at an immutable key and follow the returned provider action.\na connected Link wallet pays through card or payment_request items; a connected Shop Pay wallet pays through card items. returned descriptions and the flows below are authoritative.\n" + vaultSpecHelp + vaultWalletSpecHelp + "\n" + linkCardFlowHelp,
+	walletCreate := &cobra.Command{Use: "create <vault> <key> --provider <link|agentcard|kernel|shop_pay|vgs> --spec '<json>'", Short: "create a wallet and display its connection or enrollment action", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+		Long: "create a wallet at an immutable key and follow any returned provider action.\na connected Link wallet pays through card or payment_request items; connected Shop Pay and VGS wallets pay through card items. VGS wallets hold no cards or payment methods themselves. returned descriptions and the flows below are authoritative.\n" + vaultSpecHelp + vaultWalletSpecHelp + "\n" + linkCardFlowHelp + "\n" + vgsCardFlowHelp,
 		Example: `  kernel vaults wallets create checkout wallet-1 \
     --provider link --spec '{
       "authorization": {
@@ -422,7 +434,10 @@ JSON
 
   kernel vaults wallets create checkout shopper --provider shop_pay --spec '{
     "authorization":{"method":"oauth","client":{"type":"kernel_managed"}}
-  }' --open`,
+  }' --open
+
+  kernel vaults wallets create checkout vgs-wallet --provider vgs --spec '{}' \
+    --provider-config-name my-vgs-vault`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			spec, err := vaultWalletSpecFromFlags(cmd)
 			if err != nil {
@@ -480,7 +495,7 @@ func newVaultDeleteCommand(item bool) *cobra.Command {
 			yes, _ := cmd.Flags().GetBool("yes")
 			return getVaultsHandler(cmd).Delete(cmd.Context(), args[0], key, yes)
 		}}
-	cmd.Flags().BoolP("yes", "y", false, "skip confirmation prompt; Link, KERNEL, or Shop Pay issuance recovery may be abandoned only by deleting the card directly after explicit user confirmation")
+	cmd.Flags().BoolP("yes", "y", false, "skip confirmation prompt; Link, KERNEL, Shop Pay, or VGS recovery may be abandoned only by deleting the card directly after explicit user confirmation")
 	return cmd
 }
 
@@ -489,7 +504,7 @@ func newVaultCardCommand(update bool) *cobra.Command {
 	if update {
 		use, short = "update", "update a card spec before it is authorized at a checkout"
 	}
-	providers := "link|agentcard|kernel|shop_pay"
+	providers := "link|agentcard|kernel|shop_pay|vgs"
 	if update {
 		providers = "link|agentcard|shop_pay"
 	}
@@ -509,11 +524,15 @@ func newVaultCardCommand(update bool) *cobra.Command {
 
   kernel vaults cards create checkout single-use-order --provider kernel --spec-file - <<'JSON'
 {"wallet":"wallet-1","amount":4999,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://www.example.com/checkout","single_use_card":{"number":"<card-number>","cvc":"<cvc>","exp_month":"11","exp_year":"2030","name":"Jane Doe","billing_address":{"line1":"1 Main St","city":"Springfield","state":"IL","postal_code":"62701","country":"US"},"reference":"issuer-card-id"}}
+JSON
+
+  kernel vaults cards create checkout vgs-order --provider vgs --spec-file - <<'JSON'
+{"wallet":"vgs-wallet","amount":4999,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://www.example.com/checkout","card":{"pan_alias":"<persistent-pan-alias>","cvc_alias":"<fresh-cvc-alias>","exp_month":11,"exp_year":2030,"last4":"4242"}}
 JSON`
 	}
 	cmd := &cobra.Command{Use: use + " <vault> <key> --provider <" + providers + "> " + specInput, Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
 		Long: short + `. neither create nor update authorizes a card.
-kernel cards cannot be updated. other requested cards accept a replacement spec.
+kernel and VGS cards cannot be updated. other requested cards accept a replacement spec.
 pending issuance updates preserve omitted optional fields; explicit empty lists clear them. the api restricts fields after
 authorization starts; wallet/provider bindings cannot change. an uncertain update
 enters recovery_required and must not be retried. checkout cards can be edited
@@ -529,8 +548,15 @@ an AgentCard recovery item that permits abandonment must be deleted after explic
 			if err != nil {
 				return err
 			}
-			if update && string(spec["provider"]) == `"kernel"` {
+			provider := string(spec["provider"])
+			if !update && provider == `"vgs"` && !cmd.Flags().Changed("spec-file") {
+				return fmt.Errorf("VGS card aliases are accepted only through --spec-file <path|->, never --spec")
+			}
+			if update && provider == `"kernel"` {
 				return fmt.Errorf("kernel card updates are not supported; " + kernelReplacementHelp)
+			}
+			if update && provider == `"vgs"` {
+				return fmt.Errorf("VGS card updates are not supported; delete the card and create a new item with fresh aliases")
 			}
 			return getVaultsHandler(cmd).SaveCard(cmd.Context(), args[0], args[1], param.Override[kernel.CardVaultItemSpecUnionParam](spec), update, vaultOutput(cmd))
 		}}
@@ -572,7 +598,7 @@ never create another request to retry an uncertain payment.
 				return err
 			}
 			if string(spec["provider"]) != `"link"` && string(spec["provider"]) != `"kernel"` {
-				return fmt.Errorf("payment_request items support only link or kernel; AgentCard and Shop Pay purchases use vaults cards")
+				return fmt.Errorf("payment_request items support only link or kernel; AgentCard, Shop Pay, and VGS purchases use vaults cards")
 			}
 			return getVaultsHandler(cmd).SavePaymentRequest(cmd.Context(), args[0], args[1], param.Override[kernel.PaymentRequestVaultItemSpecUnionParam](spec), update, vaultOutput(cmd))
 		},
@@ -584,11 +610,11 @@ never create another request to retry an uncertain payment.
 }
 
 func addVaultSpecFlags(cmd *cobra.Command, allowFile bool) {
-	cmd.Flags().String("provider", "", "provider: link, agentcard, kernel, or shop_pay (required)")
+	cmd.Flags().String("provider", "", "provider: link, agentcard, kernel, shop_pay, or vgs (required)")
 	cmd.Flags().String("spec", "", "raw json specification object; see types and examples above")
 	_ = cmd.MarkFlagRequired("provider")
 	if allowFile {
-		cmd.Flags().String("spec-file", "", "protected json specification file (use '-' for stdin; required for caller-supplied single-use card details)")
+		cmd.Flags().String("spec-file", "", "protected json specification file (use '-' for stdin; required for caller-supplied KERNEL card details or VGS card aliases)")
 		cmd.MarkFlagsOneRequired("spec", "spec-file")
 		cmd.MarkFlagsMutuallyExclusive("spec", "spec-file")
 	} else {
@@ -598,8 +624,8 @@ func addVaultSpecFlags(cmd *cobra.Command, allowFile bool) {
 
 func vaultSpecFromFlags(cmd *cobra.Command) (map[string]json.RawMessage, error) {
 	provider, _ := cmd.Flags().GetString("provider")
-	if provider != "link" && provider != "agentcard" && provider != "kernel" && provider != "shop_pay" {
-		return nil, fmt.Errorf("--provider must be link, agentcard, kernel, or shop_pay")
+	if provider != "link" && provider != "agentcard" && provider != "kernel" && provider != "shop_pay" && provider != "vgs" {
+		return nil, fmt.Errorf("--provider must be link, agentcard, kernel, shop_pay, or vgs")
 	}
 	raw, _ := cmd.Flags().GetString("spec")
 	fromFile := cmd.Flags().Lookup("spec-file") != nil && cmd.Flags().Changed("spec-file")
@@ -627,16 +653,23 @@ func vaultSpecFromFlags(cmd *cobra.Command) (map[string]json.RawMessage, error) 
 		return nil, fmt.Errorf("--spec must not contain credentials or tokens; use the dedicated file/stdin inputs")
 	}
 	if vaultSpecHasCardData(json.RawMessage(raw)) {
-		singleUseCard, hasSingleUseCard := spec["single_use_card"]
-		withoutSingleUseCard := make(map[string]json.RawMessage, len(spec))
+		protectedField := ""
+		switch provider {
+		case "kernel":
+			protectedField = "single_use_card"
+		case "vgs":
+			protectedField = "card"
+		}
+		protected, hasProtected := spec[protectedField]
+		remainderFields := make(map[string]json.RawMessage, len(spec))
 		for key, value := range spec {
-			if key != "single_use_card" {
-				withoutSingleUseCard[key] = value
+			if key != protectedField {
+				remainderFields[key] = value
 			}
 		}
-		remainder, _ := json.Marshal(withoutSingleUseCard)
-		if provider != "kernel" || !fromFile || !hasSingleUseCard || !vaultSpecHasCardData(singleUseCard) || vaultSpecHasCardData(remainder) {
-			return nil, fmt.Errorf("card details are accepted only in a KERNEL card create --spec-file single_use_card object; otherwise use hosted enrollment")
+		remainder, _ := json.Marshal(remainderFields)
+		if protectedField == "" || !fromFile || !hasProtected || !vaultSpecHasCardData(protected) || vaultSpecHasCardData(remainder) {
+			return nil, fmt.Errorf("card details are accepted only in a KERNEL cards create --spec-file single_use_card object or a VGS cards create --spec-file card alias object; otherwise use hosted enrollment")
 		}
 	}
 	spec["provider"], _ = json.Marshal(provider)
