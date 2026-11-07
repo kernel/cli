@@ -529,6 +529,11 @@ JSON
 
   kernel vaults cards create checkout vgs-order --provider vgs --spec-file - <<'JSON'
 {"wallet":"vgs-wallet","amount":4999,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://www.example.com/checkout","card":{"pan_alias":"<persistent-pan-alias>","cvc_alias":"<fresh-cvc-alias>","exp_month":11,"exp_year":2030,"last4":"4242"}}
+JSON
+
+  # a card the merchant already holds on file; its checkout asks only for the security code
+  kernel vaults cards create checkout vgs-saved-card --provider vgs --spec-file - <<'JSON'
+{"wallet":"vgs-wallet","amount":4999,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://www.example.com/checkout","card_mode":"cvc_only","card":{"cvc_alias":"<fresh-cvc-alias>"}}
 JSON`
 	}
 	cmd := &cobra.Command{Use: use + " <vault> <key> --provider <" + providers + "> " + specInput, Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,

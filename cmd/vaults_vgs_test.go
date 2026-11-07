@@ -125,6 +125,34 @@ func TestVaultVgsCardCreateUsesProtectedAliases(t *testing.T) {
 	assert.NotContains(t, out, cvcAlias)
 }
 
+// A card the merchant holds on file sends card_mode and the CVC alias alone.
+// The CLI forwards the spec as written, so it must not add the number fields
+// the API rejects on a cvc_only card, even as empty values.
+func TestVaultVgsCVCOnlyCardSendsOnlyTheCVCAlias(t *testing.T) {
+	cvcAlias := vaultTestSecret(t)
+	input := fmt.Sprintf(`{"wallet":"vgs-wallet","amount":4999,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://www.example.com/checkout","card_mode":"cvc_only","card":{"cvc_alias":%q}}`, cvcAlias)
+	calls := 0
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var body struct {
+			Spec struct {
+				CardMode string                     `json:"card_mode"`
+				Card     map[string]json.RawMessage `json:"card"`
+			} `json:"spec"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.Equal(t, "cvc_only", body.Spec.CardMode)
+		assert.Equal(t, map[string]json.RawMessage{"cvc_alias": json.RawMessage(fmt.Sprintf("%q", cvcAlias))}, body.Spec.Card)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, strings.Replace(vgsRequestedCardFixture, `"merchant_url":"https://www.example.com/checkout"`, `"merchant_url":"https://www.example.com/checkout","card_mode":"cvc_only"`, 1))
+	})
+
+	out, _, err := executeVaultInputCommand(t, client, input, "vaults", "cards", "create", "checkout", "vgs-order", "--provider", "vgs", "--spec-file", "-", "-o", "json")
+	require.NoError(t, err)
+	assert.Equal(t, 1, calls)
+	assert.NotContains(t, out, cvcAlias)
+}
+
 func TestVaultVgsCardRejectsInlineAliasesAndUpdates(t *testing.T) {
 	input := `{"wallet":"vgs-wallet","amount":4999,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://www.example.com/checkout","card":{"pan_alias":"tok_pan","cvc_alias":"tok_cvc","exp_month":11,"exp_year":2030,"last4":"4242"}}`
 	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unsafe VGS card request reached API") })
