@@ -65,7 +65,7 @@ var vaultItemFields = vaultOutputFields{
 		"link_shipping_addresses": vaultLinkShippingAddressFields,
 	},
 	"spec": {
-		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil, "checkout_origin": nil,
+		"provider": nil, "wallet": nil, "card_mode": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil, "checkout_origin": nil,
 		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil, "merchant_country": nil, "merchant_category": nil, "merchant_category_code": nil,
 		"context": nil, "expires_at": nil, "description": nil, "account": nil, "connection_id": nil,
 		"requests":        onePasswordRequestFields,
@@ -671,7 +671,7 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		case "vgs":
 			switch item.State.Status {
 			case "requested":
-				pterm.Info.Println("authorize only when advertised. it sends the PAN and CVC aliases through Kernel's VGS outbound proxy; the proxy resolves them and replaces the revealed card details with Kernel-vault aliases before the response reaches Kernel, so the CLI never receives the card. provider_unavailable leaves the item requested; re-get it and invoke authorize again only if freshly advertised, never automatically. a missing or stale CVC alias declines the item and requires a new card with a fresh alias.")
+				pterm.Info.Println("authorize only when advertised. it sends the card's aliases (only the CVC alias for a cvc_only card) through Kernel's VGS outbound proxy; the proxy resolves them and replaces the revealed card details with Kernel-vault aliases before the response reaches Kernel, so the CLI never receives the card. provider_unavailable leaves the item requested; re-get it and invoke authorize again only if freshly advertised, never automatically. a missing or stale CVC alias declines the item and requires a new card with a fresh alias.")
 			case "ready":
 				pterm.Info.Println("fill on merchant_url's exact origin and submit checkout before expires_at, normally five minutes after authorize. fill writes protected Kernel aliases; the VGS proxy replaces them with card details only when the browser submits checkout. ready and fill do not prove merchant payment.")
 			case "declined":
