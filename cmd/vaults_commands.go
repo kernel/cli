@@ -105,10 +105,12 @@ vault names, item keys, and project ownership are immutable.
    follow the operation description and any returned provider action.
 6. ready Link, KERNEL, Shop Pay, and VGS cards use only advertised fill with --params for browser checkout;
    equivalent Link and KERNEL payment_request items do too. Link, KERNEL, and Shop Pay fill real
-   card values and do not use egress substitution. VGS fill writes Kernel aliases that the VGS
-   outbound proxy replaces only when the browser submits checkout; the CLI never receives the card.
-   payment-method-funded KERNEL fill and VGS fill are locked to merchant_url's exact origin;
-   a KERNEL single-use card fills on any https page in merchant_url's registrable domain.
+   card values and do not use egress substitution. VGS fill writes Kernel aliases; cvc_only fills
+   only cvc and reports no card masks. while a VGS payment window is open, all browser egress uses
+   the VGS outbound proxy, which resolves a supplied alias at any destination the browser sends it to.
+   the CLI never receives the card. payment-method-funded KERNEL fill and VGS fill are locked to
+   merchant_url's exact origin; a KERNEL single-use card fills on any https page in merchant_url's
+   registrable domain.
    submit the merchant checkout before the purchase expires.
    payment-method-funded KERNEL cards and KERNEL payment requests have no stored billing fields;
    a single-use card fills only the cardholder and billing fields supplied at creation.
@@ -242,8 +244,10 @@ the api searches the page and descendant frames, including payment iframes.
 fill is available for credential items and ready Link, KERNEL, Shop Pay, or VGS cards when advertised, not AgentCard.
 equivalent Link and KERNEL payment_request items also use fill when advertised.
 Link, KERNEL, and Shop Pay cards do not expose aliases or support egress substitution; payment_request
-items have the same boundary. VGS cards also expose no aliases to the CLI, but fill writes Kernel
-aliases that the VGS outbound proxy replaces with card details when checkout is submitted.
+items have the same boundary. VGS cards also expose no aliases to the CLI, but fill writes protected
+Kernel aliases. a cvc_only VGS card fills only cvc and reports no card masks. while either VGS card
+mode's payment window is open, all browser egress uses the VGS outbound proxy, which resolves a
+supplied alias at any destination the browser sends it to, not only the intended checkout field.
 KERNEL fill is locked to merchant_url's exact origin for payment-method-funded cards and payment requests;
 VGS fill is also locked to merchant_url's exact origin. a KERNEL single-use card instead fills on
 any https page in that registrable domain. submit checkout before expiry.
@@ -529,6 +533,10 @@ JSON
 
   kernel vaults cards create checkout vgs-order --provider vgs --spec-file - <<'JSON'
 {"wallet":"vgs-wallet","amount":4999,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://www.example.com/checkout","card":{"pan_alias":"<persistent-pan-alias>","cvc_alias":"<fresh-cvc-alias>","exp_month":11,"exp_year":2030,"last4":"4242"}}
+JSON
+
+  kernel vaults cards create checkout vgs-cvc-order --provider vgs --spec-file - <<'JSON'
+{"wallet":"vgs-wallet","amount":4999,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://www.example.com/checkout","card_mode":"cvc_only","card":{"cvc_alias":"<fresh-cvc-alias>"}}
 JSON`
 	}
 	cmd := &cobra.Command{Use: use + " <vault> <key> --provider <" + providers + "> " + specInput, Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
@@ -615,7 +623,7 @@ func addVaultSpecFlags(cmd *cobra.Command, allowFile bool) {
 	cmd.Flags().String("spec", "", "raw json specification object; see types and examples above")
 	_ = cmd.MarkFlagRequired("provider")
 	if allowFile {
-		cmd.Flags().String("spec-file", "", "protected json specification file (use '-' for stdin; required for caller-supplied KERNEL card details or VGS card aliases)")
+		cmd.Flags().String("spec-file", "", "protected json specification file (use '-' for stdin; required for caller-supplied KERNEL card details or VGS aliases; set card_mode in the JSON for cvc_only)")
 		cmd.MarkFlagsOneRequired("spec", "spec-file")
 		cmd.MarkFlagsMutuallyExclusive("spec", "spec-file")
 	} else {

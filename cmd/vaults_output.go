@@ -65,7 +65,7 @@ var vaultItemFields = vaultOutputFields{
 		"link_shipping_addresses": vaultLinkShippingAddressFields,
 	},
 	"spec": {
-		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil, "checkout_origin": nil,
+		"provider": nil, "wallet": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil, "checkout_origin": nil, "card_mode": nil,
 		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil, "merchant_country": nil, "merchant_category": nil, "merchant_category_code": nil,
 		"context": nil, "expires_at": nil, "description": nil, "account": nil, "connection_id": nil,
 		"requests":        onePasswordRequestFields,
@@ -471,6 +471,13 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 			merchant = item.Spec.Merchant
 		}
 		rows = append(rows, []string{"wallet key", item.Spec.Wallet}, []string{"merchant", merchant}, []string{"amount (minor units)", fmt.Sprintf("%d %s", item.Spec.Amount, item.Spec.Currency)})
+		if item.Spec.Provider == "vgs" {
+			cardMode := string(item.Spec.CardMode)
+			if cardMode == "" {
+				cardMode = "full (default)"
+			}
+			rows = append(rows, []string{"card mode", cardMode})
+		}
 		if item.State.JSON.Source.Valid() {
 			rows = append(rows, []string{"funding source", string(item.State.Source)})
 		}
@@ -669,11 +676,24 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		case "shop_pay":
 			pterm.Info.Println("Shop Pay fill never submits payment. submit checkout yourself, then report the observed merchant outcome once with confirm_transaction when advertised; reporting consumes the card whatever the outcome. never infer success or repeat an unknown checkout. " + shopPayRecoveryHelp + ".")
 		case "vgs":
+			cardMode := item.Spec.CardMode
+			if cardMode == "" {
+				cardMode = kernel.VgsCardVaultItemSpecCardModeFull
+			}
 			switch item.State.Status {
 			case "requested":
-				pterm.Info.Println("authorize only when advertised. it sends the PAN and CVC aliases through Kernel's VGS outbound proxy; the proxy resolves them and replaces the revealed card details with Kernel-vault aliases before the response reaches Kernel, so the CLI never receives the card. provider_unavailable leaves the item requested; re-get it and invoke authorize again only if freshly advertised, never automatically. a missing or stale CVC alias declines the item and requires a new card with a fresh alias.")
+				if cardMode == kernel.VgsCardVaultItemSpecCardModeCvcOnly {
+					pterm.Info.Println("authorize only when advertised. this cvc_only card sends only its CVC alias through Kernel's VGS outbound proxy; the proxy replaces the revealed security code with a Kernel-vault alias before the response reaches Kernel, so the CLI never receives it. provider_unavailable leaves the item requested; re-get it and invoke authorize again only if freshly advertised, never automatically. a missing or stale CVC alias declines the item and requires a new card with a fresh alias.")
+				} else {
+					pterm.Info.Println("authorize only when advertised. this full card sends its PAN and CVC aliases through Kernel's VGS outbound proxy; the proxy replaces the revealed card details with Kernel-vault aliases before the response reaches Kernel, so the CLI never receives the card. provider_unavailable leaves the item requested; re-get it and invoke authorize again only if freshly advertised, never automatically. a missing or stale CVC alias declines the item and requires a new card with a fresh alias.")
+				}
 			case "ready":
-				pterm.Info.Println("fill on merchant_url's exact origin and submit checkout before expires_at, normally five minutes after authorize. fill writes protected Kernel aliases; the VGS proxy replaces them with card details only when the browser submits checkout. ready and fill do not prove merchant payment.")
+				if cardMode == kernel.VgsCardVaultItemSpecCardModeCvcOnly {
+					pterm.Info.Println("fill only the cvc field on merchant_url's exact origin and submit checkout before expires_at, normally five minutes after authorize. this cvc_only card reports no card masks because it has no last4 to verify.")
+				} else {
+					pterm.Info.Println("fill on merchant_url's exact origin and submit checkout before expires_at, normally five minutes after authorize. fill writes protected Kernel aliases for the full card.")
+				}
+				pterm.Info.Println("while the VGS payment window is open, all browser egress uses Kernel's VGS outbound proxy; it resolves a supplied alias at any destination the browser sends it to, not only the intended checkout field. ready and fill do not prove merchant payment.")
 			case "declined":
 				switch item.State.StatusReason {
 				case "invalid_card":
