@@ -85,7 +85,7 @@ func TestVaultSpecHelpAndFlags(t *testing.T) {
 			} else {
 				assert.Nil(t, cmd.Flags().Lookup("spec-file"))
 			}
-			for _, removed := range []string{"wallet", "amount", "currency", "merchant", "merchant-url", "payment-method-id", "context", "test", "live", "card-id", "user-id"} {
+			for _, removed := range []string{"wallet", "amount", "currency", "merchant", "merchant-url", "payment-method-id", "context", "test", "live", "card-id", "user-id", "card-mode"} {
 				assert.Nil(t, cmd.Flags().Lookup(removed), removed)
 			}
 			assert.Contains(t, cmd.Long, "keep these types in sync with https://api.onkernel.com/spec.yaml")
@@ -99,13 +99,13 @@ func TestVaultSpecHelpAndFlags(t *testing.T) {
 			assert.NotContains(t, cmd.Long, "test: boolean")
 			assert.NotContains(t, cmd.Long, "sandbox/live")
 			if strings.HasPrefix(path, "cards") {
-				for _, field := range []string{"merchant_name:", "merchant:", "line_items?:", "metadata?:", "recurring?:", "type LinkRecurring", `interval: "day" | "week" | "month" | "year"`, "checkout_origin?:", "type LinkLineItem", "type LinkTotal", "type ShopPayCardSpec", "type ShopPayLineItem", "type ShopPayTotal", "type VgsCardSpec", "pan_alias:", "cvc_alias:", "last4:", "single_use_card?:", "expires_at?:", "billing_address?:", "reference?:"} {
+				for _, field := range []string{"merchant_name:", "merchant:", "line_items?:", "metadata?:", "recurring?:", "type LinkRecurring", `interval: "day" | "week" | "month" | "year"`, "checkout_origin?:", "type LinkLineItem", "type LinkTotal", "type ShopPayCardSpec", "type ShopPayLineItem", "type ShopPayTotal", "type VgsCardSpec", `card_mode?: "full" | "cvc_only"`, "pan_alias?:", "cvc_alias:", "exp_month?:", "exp_year?:", "last4?:", "single_use_card?:", "expires_at?:", "billing_address?:", "reference?:"} {
 					assert.Contains(t, cmd.Long, field)
 				}
 				for _, guidance := range []string{"eligible", "autopilot may not apply", "user approval may", "does not guarantee payment success", "KERNEL does not validate this declaration against the page open in the browser.", "preparation merchant_origin instead", "card updates replace the whole spec", "omitting checkout_origin from an update removes", "per-period spending limit", "do not create a new card each period", "does not cancel the merchant subscription", "1..1000000", "--spec-file <path|->", "any https page in merchant_url's registrable domain", "does not consume it", "never returned"} {
 					assert.Contains(t, cmd.Long, guidance)
 				}
-				for _, guidance := range []string{"VGS card aliases are stored encrypted", "normally five minutes after authorize", "VGS proxy substitutes", "VGS cards cannot be updated"} {
+				for _, guidance := range []string{"VGS card aliases are stored encrypted", "normally five minutes after authorize", "required for full", "rejected for cvc_only", "fills only cvc", "reports no masks", "all browser egress uses the VGS", "any destination the browser sends it to", "VGS cards cannot be updated"} {
 					assert.Contains(t, cmd.Long, guidance)
 				}
 			} else {

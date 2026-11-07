@@ -19,6 +19,8 @@ const vgsRequestedCardFixture = `{"id":"card-vgs-id","key":"vgs-order","type":"c
 
 const vgsReadyCardFixture = `{"id":"card-vgs-id","key":"vgs-order","type":"card","spec":{"provider":"vgs","wallet":"vgs-wallet","amount":4999,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://www.example.com/checkout"},"state":{"provider":"vgs","status":"ready","masks":{"last4":"4242","brand":"visa"}},"expires_at":"2026-09-01T00:05:00Z","permitted_domains":["https://www.example.com"],"available_operations":[{"type":"fill","description":"Fill this VGS card before it expires."}],"available_expansions":[]}`
 
+const vgsCvcOnlyReadyCardFixture = `{"id":"card-vgs-cvc-id","key":"vgs-cvc-order","type":"card","spec":{"provider":"vgs","wallet":"vgs-wallet","amount":4999,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://www.example.com/checkout","card_mode":"cvc_only"},"state":{"provider":"vgs","status":"ready"},"expires_at":"2026-09-01T00:05:00Z","permitted_domains":["https://www.example.com"],"available_operations":[{"type":"fill","description":"Fill this VGS card's security code before it expires."}],"available_expansions":[]}`
+
 func TestVaultVgsWalletConfigSelection(t *testing.T) {
 	for _, selection := range []string{"id", "name", "spec"} {
 		t.Run(selection, func(t *testing.T) {
@@ -125,6 +127,63 @@ func TestVaultVgsCardCreateUsesProtectedAliases(t *testing.T) {
 	assert.NotContains(t, out, cvcAlias)
 }
 
+func TestVaultVgsCvcOnlyCardCreateUsesOnlyProtectedCvcAlias(t *testing.T) {
+	cvcAlias := vaultTestSecret(t)
+	input := fmt.Sprintf(`{"wallet":"vgs-wallet","amount":4999,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://www.example.com/checkout","card_mode":"cvc_only","card":{"cvc_alias":%q}}`, cvcAlias)
+	calls := 0
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		assert.Equal(t, http.MethodPut, r.Method)
+		assert.Equal(t, "/vaults/checkout/items/vgs-cvc-order", r.URL.Path)
+		var body struct {
+			Type string `json:"type"`
+			Spec struct {
+				Provider string                     `json:"provider"`
+				CardMode string                     `json:"card_mode"`
+				Card     map[string]json.RawMessage `json:"card"`
+			} `json:"spec"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.Equal(t, "card", body.Type)
+		assert.Equal(t, "vgs", body.Spec.Provider)
+		assert.Equal(t, "cvc_only", body.Spec.CardMode)
+		require.Len(t, body.Spec.Card, 1)
+		assert.JSONEq(t, fmt.Sprintf(`%q`, cvcAlias), string(body.Spec.Card["cvc_alias"]))
+		for _, rejected := range []string{"pan_alias", "exp_month", "exp_year", "last4"} {
+			assert.NotContains(t, body.Spec.Card, rejected)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		response := strings.Replace(vgsCvcOnlyReadyCardFixture, `"card_mode":"cvc_only"`, fmt.Sprintf(`"card_mode":"cvc_only","card":{"cvc_alias":%q}`, cvcAlias), 1)
+		_, _ = io.WriteString(w, response)
+	})
+
+	out, human, err := executeVaultInputCommand(t, client, input, "vaults", "cards", "create", "checkout", "vgs-cvc-order", "--provider", "vgs", "--spec-file", "-", "-o", "json")
+	require.NoError(t, err)
+	assert.Equal(t, 1, calls)
+	assert.Empty(t, human)
+	assert.Contains(t, out, `"card_mode": "cvc_only"`)
+	assert.NotContains(t, out, "cvc_alias")
+	assert.NotContains(t, out, cvcAlias)
+}
+
+func TestVaultVgsCvcOnlyGuidanceExplainsFillAndProxyScope(t *testing.T) {
+	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, vgsCvcOnlyReadyCardFixture)
+	})
+
+	out, human, err := executeVaultInputCommand(t, client, "", "vaults", "items", "get", "checkout", "vgs-cvc-order")
+	require.NoError(t, err)
+	assert.Empty(t, out)
+	assert.Contains(t, human, "card mode")
+	assert.Contains(t, human, "cvc_only")
+	assert.Contains(t, human, "fill only the cvc field")
+	assert.Contains(t, human, "reports no card masks")
+	assert.Contains(t, human, "all browser egress")
+	assert.Contains(t, human, "any destination")
+	assert.NotContains(t, human, "card last4")
+}
+
 func TestVaultVgsCardRejectsInlineAliasesAndUpdates(t *testing.T) {
 	input := `{"wallet":"vgs-wallet","amount":4999,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://www.example.com/checkout","card":{"pan_alias":"tok_pan","cvc_alias":"tok_cvc","exp_month":11,"exp_year":2030,"last4":"4242"}}`
 	client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unsafe VGS card request reached API") })
@@ -193,7 +252,8 @@ func TestVaultVgsAuthorizeAndReadyGuidance(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, out)
 	assert.Equal(t, 2, calls)
-	assert.Contains(t, human, "VGS proxy replaces them with card details")
+	assert.Contains(t, human, "protected Kernel aliases for the full card")
+	assert.Contains(t, human, "all browser egress")
 	assert.Contains(t, human, "five minutes after authorize")
 	assert.Contains(t, human, "merchant url")
 	assert.Contains(t, human, "https://www.example.com/checkout")
