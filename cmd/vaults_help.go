@@ -41,7 +41,7 @@ const vgsCardFlowHelp = `VGS card checkout (the item's available_operations desc
 3. collect a fresh, still-live CVC alias in the customer's VGS vault, plus a persistent PAN
    alias, expiry and last4 for a full card. when the merchant already holds the card on file and
    its checkout asks only for the security code, set card_mode "cvc_only" and send the CVC alias
-   alone; pan_alias, exp_month, exp_year and last4 are then rejected, even empty.
+   alone; pan_alias, exp_month, exp_year and last4 are then rejected, even empty or zero.
 4. create one card through cards create --provider vgs --spec-file. aliases are write-only,
    encrypted, never returned in the item, events, or logs, and must match on an identical retry.
 5. invoke authorize only when advertised. Kernel sends the card's aliases through its VGS
@@ -51,7 +51,7 @@ const vgsCardFlowHelp = `VGS card checkout (the item's available_operations desc
 6. when ready, fill the checkout on merchant_url's exact origin and submit before expires_at,
    normally five minutes after authorize. fill writes Kernel aliases; the VGS proxy replaces
    them with card details when the browser submits checkout. a cvc_only card fills only the cvc
-   field and reports no last4. ready and fill do not prove payment.
+   field and reports no masks. ready and fill do not prove payment.
 if an alias is missing or invalid, the card is declined and cannot be edited; collect a fresh CVC
 alias when needed, delete the failed or expired card, and create a new item. a provider credential
 failure requires rotating the VGS configuration secret before creating a new card. amount and
@@ -229,20 +229,22 @@ type VgsCardSpec = {
   currency: string;           // aud, brl, cad, chf, czk, dkk, eur, gbp, hkd, inr, jpy, krw, mxn, nok, nzd, pln, sek, sgd, usd, or zar
   merchant_name: string;
   merchant_url: string;       // https checkout URL; fill is restricted to this exact origin
-  card_mode?: "full" | "cvc_only"; // default "full"; the only card field a read returns
+  card_mode?: "full" | "cvc_only"; // default "full"; reads return it only for cvc_only, so absent means full
   card: {                     // required on create; --spec-file only; never returned
     pan_alias?: string;       // persistent PAN alias; required with full, rejected with cvc_only
     cvc_alias: string;        // fresh volatile CVC alias; must exist when authorize runs
     exp_month?: number;       // integer 1..12; required with full, rejected with cvc_only
     exp_year?: number;        // integer 2000..9999; required with full, rejected with cvc_only
-    last4?: string;           // four digits checked against the revealed PAN; full only
+    last4?: string;           // four digits; required with full, rejected with cvc_only
   };
 };
 
 VGS card aliases are stored encrypted and never returned in the item, events, or logs.
 card_mode "cvc_only" is for a card the merchant already holds on file whose checkout asks only
 for the security code: send cvc_alias alone. card_mode must match the card, so a full card
-missing pan_alias is rejected rather than treated as cvc_only.
+missing pan_alias is rejected rather than treated as cvc_only. a mismatch, or any of pan_alias,
+exp_month, exp_year or last4 on a cvc_only card, returns http 400. Kernel cannot verify which card
+the merchant holds, and the payment window routes browser egress exactly as widely as a full card's.
 pass the full VGS card spec through --spec-file <path|->, never --spec. authorize sends the
 aliases through Kernel's VGS outbound proxy, which resolves them and replaces the revealed
 values with Kernel-vault aliases before the response reaches Kernel. ready lasts until

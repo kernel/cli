@@ -150,6 +150,7 @@ func TestVaultVgsCVCOnlyCardSendsOnlyTheCVCAlias(t *testing.T) {
 	out, _, err := executeVaultInputCommand(t, client, input, "vaults", "cards", "create", "checkout", "vgs-order", "--provider", "vgs", "--spec-file", "-", "-o", "json")
 	require.NoError(t, err)
 	assert.Equal(t, 1, calls)
+	assert.Contains(t, out, `"card_mode": "cvc_only"`)
 	assert.NotContains(t, out, cvcAlias)
 }
 

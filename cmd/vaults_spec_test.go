@@ -105,7 +105,7 @@ func TestVaultSpecHelpAndFlags(t *testing.T) {
 				for _, guidance := range []string{"eligible", "autopilot may not apply", "user approval may", "does not guarantee payment success", "KERNEL does not validate this declaration against the page open in the browser.", "preparation merchant_origin instead", "card updates replace the whole spec", "omitting checkout_origin from an update removes", "per-period spending limit", "do not create a new card each period", "does not cancel the merchant subscription", "1..1000000", "--spec-file <path|->", "any https page in merchant_url's registrable domain", "does not consume it", "never returned"} {
 					assert.Contains(t, cmd.Long, guidance)
 				}
-				for _, guidance := range []string{"VGS card aliases are stored encrypted", "normally five minutes after authorize", "VGS proxy substitutes", "VGS cards cannot be updated", `card_mode?: "full" | "cvc_only"`, "the merchant already holds on file", "rejected rather than treated as cvc_only"} {
+				for _, guidance := range []string{"VGS card aliases are stored encrypted", "normally five minutes after authorize", "VGS proxy substitutes", "VGS cards cannot be updated", `card_mode?: "full" | "cvc_only"`, "the merchant already holds on file", "rejected rather than treated as cvc_only", "absent means full", "returns http 400"} {
 					assert.Contains(t, cmd.Long, guidance)
 				}
 			} else {
