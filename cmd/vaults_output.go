@@ -746,9 +746,9 @@ func printVaultPaymentMethodOperationResult(response *kernel.VaultItemOperationR
 		pterm.Success.Println("Started payment method enrollment")
 		printVaultPaymentMethods("kernel", []kernel.VaultPaymentMethod{result.PaymentMethod})
 		if result.PaymentMethod.Action.Name == "card_ingest" {
-			pterm.Info.Println("have the card's issuer post the card to the single-use card_ingest URL from its backend; never open it in a browser or share it with the cardholder. it expires after 5 minutes. every call creates a separate URL, so never retry automatically. observe completion with wallets payment-methods; an expired or failed enrollment does not affect other methods.")
+			pterm.Info.Println("have the card's issuer post the card to the single-use card_ingest url from its backend; never open it in a browser or share it with the cardholder. it expires after 5 minutes. every call creates a separate url, so never retry automatically. observe completion with wallets payment-methods; an expired or failed enrollment does not affect other methods.")
 		} else {
-			pterm.Info.Println("share the single-use card_enrollment URL only with the intended cardholder; it expires after 30 minutes. every call creates a separate link, so never retry automatically. observe completion with wallets payment-methods; an expired or failed enrollment does not affect other methods.")
+			pterm.Info.Println("share the single-use card_enrollment url only with the intended cardholder; it expires after 30 minutes. every call creates a separate link, so never retry automatically. observe completion with wallets payment-methods; an expired or failed enrollment does not affect other methods.")
 		}
 		return nil
 	}

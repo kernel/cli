@@ -421,7 +421,7 @@ JSON
 	invoke.Flags().String("browser-id", "", "browser session id, not a reusable name; used by Link or Shop Pay authorize (with --page-url) and passkey operations")
 	invoke.Flags().String("page-url", "", "Link or Shop Pay authorize only: exact current top-level checkout url open in --browser-id")
 	invoke.Flags().String("field", "", "passkey field to arm, receive a registration, or disarm; arm/register require it when ambiguous, while disarm omits it to affect every field")
-	invoke.Flags().String("enrollment", "", "add_payment_method enrollment flow: hosted (default, cardholder link) or server (issuer backend ingest URL)")
+	invoke.Flags().String("enrollment", "", "add_payment_method enrollment flow: hosted (default, cardholder link) or server (issuer backend ingest url)")
 	addVaultJSONOutputFlag(invoke)
 	items.AddCommand(itemList, itemGet, itemEvents, invoke, newVaultWebMCPCommand(), newVaultDeleteCommand(true))
 

@@ -62,7 +62,7 @@ for --provider kernel, use --spec '{}'. if creation returns card_enrollment,
 share it with the cardholder; never enter card details in the cli. where the wallet
 advertises add_payment_method, creation instead returns an empty connected wallet and
 each card is enrolled through that operation. its default hosted flow returns a
-card_enrollment link for the cardholder; --enrollment server returns a card_ingest URL
+card_enrollment link for the cardholder; --enrollment server returns a card_ingest url
 for the card's issuer backend and is available only when the organization's card backend
 is configured. use wallets get --wait 60 to observe
 connection, then wallets payment-methods to inspect card status and token eligibility.
