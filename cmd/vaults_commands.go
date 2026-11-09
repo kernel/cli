@@ -235,6 +235,7 @@ billing_state, billing_postal_code, billing_country. expiration requires format 
 or MM/YYYY. deprecated timeout_ms is accepted for compatibility but ignored; fill sets no operation deadline and adapts typing pace to value length.
 KERNEL card and payment_request items support number, expiration (format MM/YY or MM/YYYY), cvc, exp_month, and exp_year.
 a KERNEL single-use card also supports billing_name and the billing_* fields supplied at creation; omitted fields return field_unavailable.
+VGS cards support number, cvc, exp_month, exp_year, and expiration; a cvc_only VGS card supports only cvc, and any other field returns field_unavailable.
 Shop Pay cards support card fields plus available billing fields; billing_first_name and billing_last_name are available only when Shop returned them.
 payment-method-funded KERNEL cards and KERNEL payment_request items have no stored billing fields: billing_* returns field_unavailable (400) before
 any write. enter billing details on the merchant page.
@@ -529,6 +530,11 @@ JSON
 
   kernel vaults cards create checkout vgs-order --provider vgs --spec-file - <<'JSON'
 {"wallet":"vgs-wallet","amount":4999,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://www.example.com/checkout","card":{"pan_alias":"<persistent-pan-alias>","cvc_alias":"<fresh-cvc-alias>","exp_month":11,"exp_year":2030,"last4":"4242"}}
+JSON
+
+  # a card the merchant already holds on file; its checkout asks only for the security code
+  kernel vaults cards create checkout vgs-saved-card --provider vgs --spec-file - <<'JSON'
+{"wallet":"vgs-wallet","amount":4999,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://www.example.com/checkout","card_mode":"cvc_only","card":{"cvc_alias":"<fresh-cvc-alias>"}}
 JSON`
 	}
 	cmd := &cobra.Command{Use: use + " <vault> <key> --provider <" + providers + "> " + specInput, Short: short, Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
