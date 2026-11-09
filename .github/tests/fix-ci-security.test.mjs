@@ -43,7 +43,7 @@ test('only failed runs of same-repository PRs are handled', () => {
 
 test('actions are pinned and checkouts do not persist credentials', () => {
   for (const entry of Object.keys(jobs).flatMap(steps).filter((entry) => entry.includes('uses: '))) {
-    assert.match(entry, /uses: [\w/-]+@[a-f0-9]{40}(?:\s|$)/);
+    assert.match(entry, /uses: [\w./-]+@[a-f0-9]{40}(?:\s|$)/);
     if (entry.includes('uses: actions/checkout@')) {
       assert.match(entry, /persist-credentials: false/);
       assert.doesNotMatch(entry, /token:/);
@@ -60,7 +60,9 @@ test('expressions are not interpolated into shell scripts', () => {
 test('the generate job has no write credentials', () => {
   assert.match(workflow, /^permissions:\n  contents: read\n\n/m);
   const generate = jobs.generate.join('');
-  assert.doesNotMatch(generate, /: write\b/);
+  // id-token: write only lets the job mint an OIDC token for short-lived model credentials.
+  assert.equal(generate.match(/: write\b/g).length, 1);
+  assert.match(header('generate'), /^    permissions:\n(?:      [\w-]+: \w+\n)*      id-token: write\n/m);
   assert.doesNotMatch(generate, /create-github-app-token|ADMIN_APP/);
   assert.doesNotMatch(step('generate', 'Fix CI failure'), /GH_TOKEN:|GITHUB_TOKEN:|github\.token|outputs\.token/);
   // Agent and PR code run in this job, so caches it saves could reach other workflows.
