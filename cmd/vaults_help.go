@@ -61,7 +61,10 @@ const vaultWalletSpecHelp = `
 for --provider kernel, use --spec '{}'. if creation returns card_enrollment,
 share it with the cardholder; never enter card details in the cli. where the wallet
 advertises add_payment_method, creation instead returns an empty connected wallet and
-each card is enrolled through that operation. use wallets get --wait 60 to observe
+each card is enrolled through that operation. its default hosted flow returns a
+card_enrollment link for the cardholder; --enrollment server returns a card_ingest URL
+for the card's issuer backend and is available only when the organization's card backend
+is configured. use wallets get --wait 60 to observe
 connection, then wallets payment-methods to inspect card status and token eligibility.
 a connected wallet may have zero cards or cards that are still ineligible while network
 token enrollment runs.
@@ -115,8 +118,10 @@ type AgentCardWalletSpec = {
 
 // cards stored with KERNEL-managed credentials. each is a wallet payment method.
 // where add_payment_method is advertised, creation returns an empty connected wallet;
-// invoke add_payment_method once for each card enrollment. otherwise creation returns
-// the default card's card_enrollment action and connects after that card is stored.
+// invoke add_payment_method once for each card enrollment. hosted (the default) returns
+// a card_enrollment action for the cardholder; server returns a card_ingest action for
+// the card's issuer backend. otherwise creation returns the default card's
+// card_enrollment action and connects after that card is stored.
 // KERNEL enrolls stored cards for agentic network tokens when supported; until then
 // payment-methods can report capabilities.single_use_card.eligible=false.
 // card numbers never reach KERNEL or the cli. no provider config or tokens.

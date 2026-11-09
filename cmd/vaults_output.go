@@ -33,7 +33,7 @@ var onePasswordRequestEntryFields = vaultOutputFields{
 var onePasswordRequestFields = vaultOutputFields{"version": nil, "goal": nil, "entries": onePasswordRequestEntryFields}
 var vaultMethodFields = vaultOutputFields{
 	"id": nil, "provider": nil, "type": nil, "is_default": nil,
-	"status": nil, "status_reason": nil, "expires_at": nil,
+	"status": nil, "status_reason": nil, "expires_at": nil, "issuer_reference": nil, "valid_until": nil,
 	"action":       vaultFieldsOf("name url"),
 	"display":      vaultFieldsOf("label brand last4"),
 	"capabilities": {"single_use_card": vaultFieldsOf("eligible reasons")},
@@ -745,7 +745,11 @@ func printVaultPaymentMethodOperationResult(response *kernel.VaultItemOperationR
 		result := response.AsAddPaymentMethodVaultItemOperationResult()
 		pterm.Success.Println("Started payment method enrollment")
 		printVaultPaymentMethods("kernel", []kernel.VaultPaymentMethod{result.PaymentMethod})
-		pterm.Info.Println("share the single-use card_enrollment url only with the intended cardholder; it expires after 30 minutes. every call creates a separate link, so never retry automatically. observe completion with wallets payment-methods; an expired or failed enrollment does not affect other methods.")
+		if result.PaymentMethod.Action.Name == "card_ingest" {
+			pterm.Info.Println("have the card's issuer post the card to the single-use card_ingest URL from its backend; never open it in a browser or share it with the cardholder. it expires after 5 minutes. every call creates a separate URL, so never retry automatically. observe completion with wallets payment-methods; an expired or failed enrollment does not affect other methods.")
+		} else {
+			pterm.Info.Println("share the single-use card_enrollment URL only with the intended cardholder; it expires after 30 minutes. every call creates a separate link, so never retry automatically. observe completion with wallets payment-methods; an expired or failed enrollment does not affect other methods.")
+		}
 		return nil
 	}
 	result := response.AsRemovePaymentMethodVaultItemOperationResult()
@@ -759,7 +763,19 @@ func printVaultPaymentMethods(provider string, methods []kernel.VaultPaymentMeth
 		pterm.Info.Println("no payment methods returned")
 		return
 	}
-	rows := pterm.TableData{{"payment method id", "provider", "type", "label", "brand", "last4", "default", "status", "single-use eligible", "reasons", "status reason", "expires at"}}
+	showIssuerReference, showValidUntil := false, false
+	for _, method := range methods {
+		showIssuerReference = showIssuerReference || method.JSON.IssuerReference.Valid()
+		showValidUntil = showValidUntil || method.JSON.ValidUntil.Valid()
+	}
+	headers := []string{"payment method id", "provider", "type", "label", "brand", "last4", "default", "status", "single-use eligible", "reasons", "status reason", "expires at"}
+	if showIssuerReference {
+		headers = append(headers, "issuer reference")
+	}
+	if showValidUntil {
+		headers = append(headers, "valid until")
+	}
+	rows := pterm.TableData{headers}
 	for _, m := range methods {
 		capability := m.Capabilities.SingleUseCard
 		eligible := "unknown"
@@ -770,7 +786,18 @@ func printVaultPaymentMethods(provider string, methods []kernel.VaultPaymentMeth
 		if m.JSON.ExpiresAt.Valid() && !m.ExpiresAt.IsZero() {
 			expiresAt = util.FormatLocal(m.ExpiresAt)
 		}
-		rows = append(rows, []string{m.ID, m.Provider, m.Type, m.Display.Label, m.Display.Brand, m.Display.Last4, fmt.Sprint(m.IsDefault), string(m.Status), eligible, strings.Join(capability.Reasons, ", "), m.StatusReason, expiresAt})
+		row := []string{m.ID, m.Provider, m.Type, m.Display.Label, m.Display.Brand, m.Display.Last4, fmt.Sprint(m.IsDefault), string(m.Status), eligible, strings.Join(capability.Reasons, ", "), m.StatusReason, expiresAt}
+		if showIssuerReference {
+			row = append(row, m.IssuerReference)
+		}
+		if showValidUntil {
+			validUntil := ""
+			if m.JSON.ValidUntil.Valid() && !m.ValidUntil.IsZero() {
+				validUntil = util.FormatLocal(m.ValidUntil)
+			}
+			row = append(row, validUntil)
+		}
+		rows = append(rows, row)
 	}
 	PrintTableNoPad(rows, true)
 	for _, method := range methods {
@@ -780,7 +807,7 @@ func printVaultPaymentMethods(provider string, methods []kernel.VaultPaymentMeth
 	}
 	if provider == "kernel" {
 		pterm.Info.Println("select payment_method_id explicitly for payment_request items and for card items when the wallet has no default card. a legacy default card may be selected by omitting it only from a card spec. " + kernelEligibilityHelp)
-		pterm.Info.Println("pending_enrollment needs the returned cardholder action. removal_pending means retry remove_payment_method later; recovery_required handling depends on status_reason.")
+		pterm.Info.Println("pending_enrollment needs the returned action: card_enrollment is a hosted link for the cardholder, while card_ingest is for the card's issuer backend. removal_pending means retry remove_payment_method later; recovery_required handling depends on status_reason.")
 	} else {
 		pterm.Info.Println("select an id explicitly in the purchase --spec json: Link uses payment_method_id; AgentCard cards use card_id (or omit it for cardholder selection). capabilities are advisory; missing means unknown, not ineligible.")
 	}
