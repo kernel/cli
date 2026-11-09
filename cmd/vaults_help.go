@@ -18,14 +18,14 @@ const shopPayRecoveryHelp = "follow status_reason. Shop Pay issuance recovery ma
 
 const shopPayFlowHelp = `Shop Pay checkout (the item's available_operations descriptions are authoritative):
 1. create a Shop Pay wallet with --provider shop_pay and Kernel-managed OAuth authorization,
-   share the returned shop_pay_oauth URL unchanged with the shopper, and wait for connected.
+   share the returned shop_pay_oauth url unchanged with the shopper, and wait for connected.
 2. inspect wallets payment-methods. a card spec may select payment_method_id or omit it to
    use the shopper's preferred card.
 3. create a card with amount, USD currency, merchant details, shopper-facing context, and
    totals containing exactly one positive total no greater than amount.
 4. after explicit user approval, invoke authorize. at final checkout pass --browser-id and
    --page-url together so Shop receives that page as the merchant and fill is locked to its
-   origin; omit both to use merchant_url. share any approval URL unchanged and observe the item.
+   origin; omit both to use merchant_url. share any approval url unchanged and observe the item.
 5. when fill is advertised, fill only the fields requested by the checkout and submit it.
    ready means a credential was issued, not that the merchant accepted payment.
 6. report the observed merchant outcome once with confirm_transaction. Shop Pay accepts
@@ -71,7 +71,7 @@ token enrollment runs.
 ` + kernelWalletHelp + `. ` + kernelEligibilityHelp + `.
 kernel wallets accept neither provider configuration flags nor --tokens-file.
 Shop Pay wallets also accept neither: they always use Kernel-managed OAuth. creation returns
-shop_pay_oauth; share its URL unchanged with the shopper and observe with wallets get --wait 60.
+shop_pay_oauth; share its url unchanged with the shopper and observe with wallets get --wait 60.
 for Link and AgentCard, omit config selection to preserve managed defaults.
 VGS has no managed default: select exactly one VGS configuration through
 --provider-config-id, --provider-config-name, or spec.provider_config. the binding is immutable.
@@ -233,7 +233,7 @@ type VgsCardSpec = {
   amount: number;             // integer minor units; 1..1000000
   currency: string;           // aud, brl, cad, chf, czk, dkk, eur, gbp, hkd, inr, jpy, krw, mxn, nok, nzd, pln, sek, sgd, usd, or zar
   merchant_name: string;
-  merchant_url: string;       // https checkout URL; fill is restricted to this exact origin
+  merchant_url: string;       // https checkout url; fill is restricted to this exact origin
   card_mode?: "full" | "cvc_only"; // default "full"; reads return it only for cvc_only, so absent means full
   card: {                     // required on create; --spec-file only; never returned
     pan_alias?: string;       // persistent PAN alias; required with full, rejected with cvc_only
@@ -266,7 +266,7 @@ type ShopPayCardSpec = {
   amount: number;             // approval limit in minor units; 1..1000000
   currency: string;           // USD only
   merchant_name: string;      // 1..255 characters
-  merchant_url: string;       // merchant https URL; used when authorize omits checkout context
+  merchant_url: string;       // merchant https url; used when authorize omits checkout context
   merchant_country?: string;  // iso 3166-1 alpha-2
   context: string;            // 100..500 characters shown to the shopper
   line_items?: ShopPayLineItem[];

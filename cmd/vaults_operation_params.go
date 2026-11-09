@@ -71,7 +71,7 @@ type vaultFillField struct {
 
 // Reject duplicate and unknown keys without including payloads in diagnostics.
 func vaultParamsObject(raw, allowed string) (map[string]json.RawMessage, error) {
-	invalid := fmt.Errorf("operation parameters must contain JSON objects with only supported, non-duplicate properties")
+	invalid := fmt.Errorf("operation parameters must contain json objects with only supported, non-duplicate properties")
 	dec := json.NewDecoder(strings.NewReader(raw))
 	token, err := dec.Token()
 	if err != nil || token != json.Delim('{') {
@@ -245,11 +245,11 @@ func parseVaultFillParams(raw string) (*vaultFillParams, error) {
 	}
 	if rawURL, present := object["page_url"]; present {
 		if json.Unmarshal(rawURL, &params.PageURL) != nil {
-			return nil, fmt.Errorf("page_url must be an absolute URL")
+			return nil, fmt.Errorf("page_url must be an absolute url")
 		}
 		u, err := url.ParseRequestURI(params.PageURL)
 		if err != nil || u.Scheme == "" {
-			return nil, fmt.Errorf("page_url must be an absolute URL")
+			return nil, fmt.Errorf("page_url must be an absolute url")
 		}
 	}
 	if timeout, ok := object["timeout_ms"]; ok {
@@ -358,10 +358,10 @@ func parseOnePasswordOperationParams(operation, raw string) (*kernel.VaultItemPe
 		}
 		request := kernel.OnePasswordFillVaultItemOperationRequestParam{BrowserID: browserID, Type: kernel.OnePasswordFillVaultItemOperationRequestType1pwFill}
 		if json.Unmarshal(object["page_url"], &request.PageURL) != nil {
-			return nil, fmt.Errorf("page_url must be the exact absolute URL of the open login page")
+			return nil, fmt.Errorf("page_url must be the exact absolute url of the open login page")
 		}
 		if u, err := url.ParseRequestURI(request.PageURL); err != nil || u.Scheme == "" {
-			return nil, fmt.Errorf("page_url must be the exact absolute URL of the open login page")
+			return nil, fmt.Errorf("page_url must be the exact absolute url of the open login page")
 		}
 		if value, ok := object["timeout_ms"]; ok {
 			var timeout *int64

@@ -139,7 +139,7 @@ func TestVaultConfirmTransactionShopPayOutcomeDetails(t *testing.T) {
 		`{"status":"ERROR","transaction_type":"PURCHASE","amount":1,"currency":"USD","occurred_at":"2026-09-01T12:00:00Z","failure_code":"UPPERCASE"}`:                    "lowercase letters",
 		`{"status":"DECLINED","transaction_type":"PURCHASE","amount":1,"currency":"USD","occurred_at":"2026-09-01T12:00:00Z","failure_code":"site_error"}`:                "accepts only failure_code payment_declined",
 		`{"status":"ERROR","transaction_type":"PURCHASE","amount":1,"currency":"USD","occurred_at":"2026-09-01T12:00:00Z","failure_code":"payment_declined"}`:             "requires status DECLINED",
-		`{"status":"APPROVED","transaction_type":"PURCHASE","amount":1,"currency":"USD","occurred_at":"2026-09-01T12:00:00Z","order_url":"http://shop.example/orders/1"}`: "https URL",
+		`{"status":"APPROVED","transaction_type":"PURCHASE","amount":1,"currency":"USD","occurred_at":"2026-09-01T12:00:00Z","order_url":"http://shop.example/orders/1"}`: "https url",
 		`{"status":"APPROVED","transaction_type":"PURCHASE","amount":1,"currency":"USD","occurred_at":"2026-09-01T12:00:00Z","order_id":""}`:                              "non-empty string",
 	} {
 		_, err := parseVaultOperationParams("confirm_transaction", raw, true, false)
