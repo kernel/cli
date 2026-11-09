@@ -22,6 +22,7 @@ jobs:
       contents: read
       actions: read
       pull-requests: read
+      id-token: write
     outputs:
       changed: ${{ steps.snapshot.outputs.changed }}
       pr_number: ${{ steps.pr.outputs.number }}
@@ -100,12 +101,22 @@ jobs:
           npm install -g --ignore-scripts @earendil-works/pi-coding-agent
           pi --version
 
+      - name: Model credentials
+        if: steps.pr.outputs.number != ''
+        uses: kernel/security-workflows/.github/actions/llm-credentials@main
+        with:
+          model: ${{ vars.PI_PREFERRED_MODEL }}
+          anthropic-federation-rule-id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          anthropic-organization-id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          anthropic-service-account-id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          openai-identity-provider-id: ${{ vars.OPENAI_IDENTITY_PROVIDER_ID }}
+          openai-service-account-id: ${{ vars.OPENAI_SERVICE_ACCOUNT_ID }}
+          openai-audience: ${{ vars.OPENAI_WIF_AUDIENCE }}
+
       - name: Fix CI failure
         if: steps.pr.outputs.number != ''
         working-directory: pr
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           PI_PREFERRED_MODEL: ${{ vars.PI_PREFERRED_MODEL }}
           PI_SKIP_VERSION_CHECK: '1'
           PI_TELEMETRY: '0'
@@ -122,6 +133,12 @@ jobs:
           pi --print --no-session --no-approve \
             --model "$PI_PREFERRED_MODEL" --thinking max \
             @"$RUNNER_TEMP/fix-ci-prompt.md"
+
+      - name: Stop model credentials
+        if: always()
+        uses: kernel/security-workflows/.github/actions/llm-credentials@main
+        with:
+          stop: true
 
       - name: Snapshot publishable changes
         id: snapshot
