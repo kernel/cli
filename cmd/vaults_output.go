@@ -81,7 +81,7 @@ var vaultItemFields = vaultOutputFields{
 		},
 	},
 	"state": {
-		"provider": nil, "status": nil, "status_reason": nil, "user_id": nil, "domains": nil, "access_request_id": nil,
+		"provider": nil, "status": nil, "status_reason": nil, "credential_type": nil, "user_id": nil, "domains": nil, "access_request_id": nil,
 		"access_request": {
 			"id": nil, "state": nil, "goal": nil, "createdAt": nil, "has_autofill_token": nil, "granted_count": nil,
 			"request": onePasswordRequestFields, "entries": onePasswordRequestEntryFields,
@@ -465,6 +465,9 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 	if item.State.StatusReason != "" {
 		rows = append(rows, []string{"status reason", item.State.StatusReason})
 	}
+	if item.State.JSON.CredentialType.Valid() && item.State.CredentialType != "" {
+		rows = append(rows, []string{"credential type", item.State.CredentialType})
+	}
 	if item.Type == "card" || item.Type == "payment_request" {
 		merchant := item.Spec.MerchantName
 		if item.Spec.Provider == "agentcard" {
@@ -662,6 +665,14 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 				}
 			}
 		case "link":
+			switch {
+			case item.State.JSON.CredentialType.Valid() && item.State.CredentialType == "link_pay_token":
+				pterm.Info.Println("credential type link_pay_token: invoke fill without field bindings; KERNEL supplies the Link Pay Token through the checkout's Link WebMCP tool.")
+			case item.State.JSON.CredentialType.Valid() && item.State.CredentialType == "card":
+				pterm.Info.Println("credential type card: invoke fill with the field bindings advertised by the item.")
+			case item.State.Status == "ready":
+				pterm.Info.Println("no credential type was returned; a ready Link item without state.credential_type fills like card, so use the advertised card field bindings.")
+			}
 			pterm.Info.Println("fill never submits payment; submit the checkout yourself. if the result of submitting payment is unclear, check the merchant's order confirmation or order history before paying again. if authorization is declined or expires, delete this purchase item and create a new one.")
 			if item.Spec.JSON.Recurring.Valid() {
 				pterm.Info.Println("this recurring Link purchase remains ready for merchant-scheduled charges until it expires or is deleted; do not create a new card each period, or a new payment_request for the same recurring purchase. deleting the item, wallet, or vault revokes the Link credential but does not cancel the merchant subscription. if deletion returns 409 provider_revocation_pending, retry deletion.")

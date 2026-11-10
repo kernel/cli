@@ -308,9 +308,9 @@ func (c APIKeysCmd) Update(ctx context.Context, in APIKeysUpdateInput) error {
 	return nil
 }
 
-// Rotate issues a replacement API key. The rotated key keeps working until its
-// grace period elapses, so this is disruptive but not immediately breaking --
-// it still prompts, since the old key does eventually stop working.
+// Rotate issues a replacement API key. Grace-period and natural expiry do not
+// end browser sessions. An immediate rotation does, so all rotations prompt
+// because the old key stops working and the immediate form is also disruptive.
 func (c APIKeysCmd) Rotate(ctx context.Context, in APIKeysRotateInput) error {
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
@@ -331,9 +331,13 @@ func (c APIKeysCmd) Rotate(ctx context.Context, in APIKeysRotateInput) error {
 	}
 
 	if !in.SkipConfirm {
+		warning := fmt.Sprintf("Are you sure you want to rotate API key '%s'? The current key stops working after its grace period.", in.ID)
+		if in.ExpireInDays.Set && in.ExpireInDays.Value == 0 {
+			warning = fmt.Sprintf("Are you sure you want to rotate API key '%s' immediately? Browser sessions attributed to the current key will end asynchronously and unsaved profile changes will be discarded.", in.ID)
+		}
 		ok, err := c.prompter.Confirm(
 			fmt.Sprintf("rotate API key '%s'", in.ID),
-			fmt.Sprintf("Are you sure you want to rotate API key '%s'? The current key stops working after its grace period.", in.ID),
+			warning,
 		)
 		if err != nil {
 			return err
@@ -362,7 +366,7 @@ func (c APIKeysCmd) Delete(ctx context.Context, in APIKeysDeleteInput) error {
 	if !in.SkipConfirm {
 		ok, err := c.prompter.Confirm(
 			fmt.Sprintf("delete API key '%s'", in.ID),
-			fmt.Sprintf("Are you sure you want to delete API key '%s'?", in.ID),
+			fmt.Sprintf("Are you sure you want to delete API key '%s'? Browser sessions attributed to it will end asynchronously and unsaved profile changes will be discarded.", in.ID),
 		)
 		if err != nil {
 			return err
@@ -584,7 +588,7 @@ var apiKeysUpdateCmd = &cobra.Command{
 var apiKeysRotateCmd = &cobra.Command{
 	Use:   "rotate <id>",
 	Short: "Rotate an API key",
-	Long:  "Issue a replacement API key. The rotated key keeps working for a grace period (7 days by default) so callers can migrate; use --expire-in-days 0 to revoke it immediately.",
+	Long:  "Issue a replacement API key. The rotated key keeps working for a grace period (7 days by default) so callers can migrate. Use --expire-in-days 0 to expire it immediately; browser sessions attributed to the old key then end asynchronously and unsaved profile changes are discarded. Grace-period and natural expiry do not end existing browser sessions. If immediate cleanup cannot be scheduled, the rotation is not completed.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runAPIKeysRotate,
 }
@@ -592,6 +596,7 @@ var apiKeysRotateCmd = &cobra.Command{
 var apiKeysDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete an API key",
+	Long:  "Delete an API key and asynchronously end browser sessions attributed to it, discarding unsaved profile changes. A key cannot delete itself; use a different key. If browser cleanup cannot be scheduled, the key is not deleted.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runAPIKeysDelete,
 }
@@ -625,7 +630,7 @@ func init() {
 
 	addJSONOutputFlag(apiKeysRotateCmd)
 	apiKeysRotateCmd.Flags().Int64("days-to-expire", 0, "Lifetime in days for the new key (1-3650); omit to reuse the rotated key's lifetime")
-	apiKeysRotateCmd.Flags().Int64("expire-in-days", 0, "Grace period in days before the rotated key expires; 0 expires it immediately, omit for the default 7 days")
+	apiKeysRotateCmd.Flags().Int64("expire-in-days", 0, "Grace period in days before the rotated key expires; 0 expires it immediately and asynchronously ends its browser sessions, omit for the default 7 days")
 	apiKeysRotateCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 
 	apiKeysDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")

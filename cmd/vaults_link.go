@@ -24,14 +24,16 @@ const linkCardFlowHelp = `Link card checkout and payment_request checkout (each 
 3. once the user has approved this purchase, authorize with items invoke <vault> <key>
    authorize --browser-id <browser-session-id> --page-url <exact current top-level checkout
    url>. KERNEL inspects the checkout, chooses how the credential is delivered (a Link Pay
-   Token or a virtual card), limits fill to that checkout's origin, and sends the user an
-   approval request. do not inspect or invoke WebMCP yourself.
+   Token or a virtual card), records card or link_pay_token in state.credential_type after
+   authorize, limits fill to that checkout's origin, and sends the user an approval request.
+   callers do not choose the delivery type; do not inspect or invoke WebMCP yourself.
 4. share the approval url from the item's action with the user, then use items get --wait 60
    until fill is advertised. to re-check sooner, invoke authorize again; checkout context is
    not needed, and re-checking never creates another payment request.
-5. fill as the item's fill description says, in any browser with this vault attached: a Link
-   Pay Token takes browser_id and page_url and omits fields; a virtual card also takes
-   field/selector bindings.
+5. fill as the item's fill description says, in any browser with this vault attached:
+   link_pay_token takes browser_id and page_url and omits fields; card also takes
+   field/selector bindings. state.credential_type is absent before authorize and after Link
+   rejects the request; a ready item without it fills like card.
 6. submit the checkout yourself; fill never submits payment. failed or unknown fills are safe
    to retry, but only after checking the page and not in an automatic loop.
 if authorize returns page_not_found, ambiguous_page, browser_not_found, browser_unavailable,
