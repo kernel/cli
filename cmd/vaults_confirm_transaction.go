@@ -69,11 +69,11 @@ func parseVaultConfirmTransactionParams(raw string) (*kernel.ConfirmTransactionV
 	if rawOrderURL, ok := object["order_url"]; ok {
 		var orderURL string
 		if json.Unmarshal(rawOrderURL, &orderURL) != nil || len(orderURL) > 2048 {
-			return nil, fmt.Errorf("order_url must be an https URL of at most 2048 characters")
+			return nil, fmt.Errorf("order_url must be an https url of at most 2048 characters")
 		}
 		u, err := url.ParseRequestURI(orderURL)
 		if err != nil || u.Scheme != "https" || u.Host == "" {
-			return nil, fmt.Errorf("order_url must be an https URL of at most 2048 characters")
+			return nil, fmt.Errorf("order_url must be an https url of at most 2048 characters")
 		}
 		params.OrderURL = kernel.Opt(orderURL)
 	}

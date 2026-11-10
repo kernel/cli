@@ -88,9 +88,11 @@ otherwise, the api resolves the project from your credentials and its defaults.
 vault names, item keys, and project ownership are immutable.
 
 1. create/select a vault, then create a provider wallet and follow any returned action.
-   for kernel, share the hosted card_enrollment url; for Shop Pay, share shop_pay_oauth.
-   a VGS wallet instead binds a required VGS provider configuration and connects without
-   storing cards or payment methods. card details and OAuth approval stay with their provider.
+   for kernel, share a hosted card_enrollment url with the cardholder, or use
+   add_payment_method --enrollment server when the card's issuer will post to card_ingest.
+   for Shop Pay, share shop_pay_oauth. a VGS wallet instead binds a required VGS provider
+   configuration and connects without storing cards or payment methods. card details and
+   OAuth approval stay with their provider.
 2. inspect wallets payment-methods for providers that advertise it before creating a purchase.
    for Link, select a payment method id explicitly. VGS wallets have no payment methods.
 3. attach the vault with browsers create --vault <id-or-name>; attachment is required for
@@ -280,11 +282,14 @@ or CAPTURE. an APPROVED outcome may add order_id (1..255 characters) and order_u
 max 2048 characters); other outcomes may add failure_code (1..64 lowercase letters, digits,
 or underscores). payment_declined is only for DECLINED, which accepts no other failure code.
 unknown fields are rejected. never infer success; each purchase accepts one report. ` + kernelTransactionHelp + `.
-add_payment_method takes no parameters and is valid only when advertised by a connected
-KERNEL wallet. each call creates a separate pending enrollment with a single-use url that
-expires after 30 minutes; share it only with the cardholder and never retry automatically.
-a failed or expired enrollment does not affect other methods. remove_payment_method
-requires {"payment_method_id":"<id>"}. it blocks new purchases, fills, and confirmations
+add_payment_method is valid only when advertised by a connected KERNEL wallet.
+--enrollment hosted is the default and returns a single-use card_enrollment url for the
+cardholder that expires after 30 minutes. --enrollment server returns a single-use
+card_ingest url for the card's issuer to post the card to from its backend; it expires after
+5 minutes and returns 409 when server enrollment is not configured for the organization's
+card backend. each call creates a separate pending enrollment. never log an action url or
+retry automatically; a failed or expired enrollment does not affect other methods.
+remove_payment_method requires {"payment_method_id":"<id>"}. it blocks new purchases, fills, and confirmations
 funded by that method without disconnecting the wallet or changing other methods. an
 unresolved purchase can block removal; an uncertain provider outcome leaves removal_pending
 and must be re-checked before an explicit retry. removal is not proof that a payment did
@@ -360,6 +365,7 @@ JSON
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login"}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login","entry_id":"<entry-id>","target_id":"<cdp-target-id>"}'
   kernel vaults items invoke checkout cardholder add_payment_method
+  kernel vaults items invoke checkout cardholder add_payment_method --enrollment server
   kernel vaults items invoke checkout cardholder remove_payment_method --params '{"payment_method_id":"<payment-method-id>"}'
   kernel vaults items invoke checkout wallet-1 update_access_token --spec-file ./link-access-token.json
   kernel vaults items invoke user-vault login register_passkey --browser-id <browser-session-id> --field passkey
@@ -389,6 +395,10 @@ JSON
 			if err != nil {
 				return err
 			}
+			enrollment, _ := cmd.Flags().GetString("enrollment")
+			if err := applyVaultAddPaymentMethodEnrollment(args[2], params, enrollment, cmd.Flags().Changed("enrollment")); err != nil {
+				return err
+			}
 			passkey, err := parseVaultPasskeyOperationFlags(cmd, args[2])
 			if err != nil {
 				return err
@@ -411,6 +421,7 @@ JSON
 	invoke.Flags().String("browser-id", "", "browser session id, not a reusable name; used by Link or Shop Pay authorize (with --page-url) and passkey operations")
 	invoke.Flags().String("page-url", "", "Link or Shop Pay authorize only: exact current top-level checkout url open in --browser-id")
 	invoke.Flags().String("field", "", "passkey field to arm, receive a registration, or disarm; arm/register require it when ambiguous, while disarm omits it to affect every field")
+	invoke.Flags().String("enrollment", "", "add_payment_method enrollment flow: hosted (default, cardholder link) or server (issuer backend ingest url)")
 	addVaultJSONOutputFlag(invoke)
 	items.AddCommand(itemList, itemGet, itemEvents, invoke, newVaultWebMCPCommand(), newVaultDeleteCommand(true))
 
