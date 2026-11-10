@@ -25,7 +25,7 @@ const readyAgentCardFixture = `{
 const readyLinkCardFixture = `{
   "id":"card-id","key":"order-1","type":"card",
   "spec":{"provider":"link","wallet":"wallet-1","payment_method_id":"pm-1","amount":1234,"currency":"usd","merchant_name":"Example Shop","merchant_url":"https://shop.example","provider_secret":"SECRET_SPEC"},
-  "state":{"provider":"link","status":"ready","domains":["shop.example"],"masks":{"brand":"visa","last4":"1234"},"card_number":"SECRET_CARD","secret_enc":"SECRET_CIPHERTEXT"},
+  "state":{"provider":"link","status":"ready","credential_type":"card","domains":["shop.example"],"masks":{"brand":"visa","last4":"1234"},"card_number":"SECRET_CARD","secret_enc":"SECRET_CIPHERTEXT"},
   "available_operations":[{"type":"fill","description":"Fill checkout fields."}],"available_expansions":[],"oauth_tokens":"SECRET_OAUTH"
 }`
 
@@ -84,6 +84,8 @@ func TestVaultOutputLinkHasNoAliases(t *testing.T) {
 			operation := "authorize"
 			if item.State.Status == "ready" {
 				operation = "fill"
+				assert.Contains(t, buf.String(), "credential type")
+				assert.Contains(t, buf.String(), "credential type card")
 				assert.Contains(t, buf.String(), "permitted domains (provider-assigned)")
 				assert.Contains(t, buf.String(), "shop.example")
 			}
@@ -97,8 +99,46 @@ func TestVaultOutputLinkHasNoAliases(t *testing.T) {
 			require.NoError(t, json.Unmarshal([]byte(out), &decoded))
 			assert.JSONEq(t, fmt.Sprintf("%q", item.State.Status), string(decoded.State["status"]))
 			if item.State.Status == "ready" {
+				assert.JSONEq(t, `"card"`, string(decoded.State["credential_type"]))
 				assert.JSONEq(t, `["shop.example"]`, string(decoded.State["domains"]))
 				assert.JSONEq(t, `{"brand":"visa","last4":"1234"}`, string(decoded.State["masks"]))
+			}
+		})
+	}
+}
+
+func TestVaultOutputLinkCredentialTypeVariants(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		fixture string
+		want    []string
+		absent  bool
+	}{
+		{
+			name:    "link pay token",
+			fixture: strings.Replace(readyLinkCardFixture, `"credential_type":"card"`, `"credential_type":"link_pay_token"`, 1),
+			want:    []string{"credential type", "link_pay_token", "without field bindings", "Link WebMCP tool"},
+		},
+		{
+			name:    "ready legacy response",
+			fixture: strings.Replace(readyLinkCardFixture, `,"credential_type":"card"`, "", 1),
+			want:    []string{"no credential type was returned", "fills like card", "card field bindings"},
+			absent:  true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var item kernel.VaultItemUnion
+			require.NoError(t, json.Unmarshal([]byte(tc.fixture), &item))
+			buf := capturePtermOutput(t)
+			require.NoError(t, printVaultItem(&item, ""))
+			for _, want := range tc.want {
+				assert.Contains(t, buf.String(), want)
+			}
+			out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
+			if tc.absent {
+				assert.NotContains(t, out, `"credential_type"`)
+			} else {
+				assert.Contains(t, out, `"credential_type": "link_pay_token"`)
 			}
 		})
 	}

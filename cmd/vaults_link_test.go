@@ -42,7 +42,11 @@ func TestLinkCardFlowHelpOrder(t *testing.T) {
 	}
 	for _, want := range []string{
 		"a Link Pay Token or a virtual card",
-		"a Link Pay Token takes browser_id and page_url and omits fields",
+		"records card or link_pay_token in state.credential_type after authorize",
+		"callers do not choose the delivery type",
+		"link_pay_token takes browser_id and page_url and omits fields",
+		"state.credential_type is absent before authorize and after Link rejects the request",
+		"a ready item without it fills like card",
 		"page_not_found, ambiguous_page, browser_not_found, browser_unavailable, destination_denied, timeout, or browser_error",
 		"make sure the checkout is open in exactly one tab at page_url, then authorize again",
 		"authorize without --browser-id and --page-url to issue a virtual card",

@@ -67,6 +67,37 @@ func TestProxyIPListUsesPagePaginationAndPreservesFilters(t *testing.T) {
 	assert.Contains(t, out, `Next: kernel proxy-ips list --page 3 --per-page 2 --country "US" --status "active"`)
 }
 
+func TestProxyIPListUsesMaximumPageSizeWithLookahead(t *testing.T) {
+	var captured kernel.ProxyIPListParams
+	fake := &fakeProxyIPService{
+		listFunc: func(_ context.Context, params kernel.ProxyIPListParams, _ ...option.RequestOption) (*pagination.OffsetPagination[kernel.ProxyIP], error) {
+			captured = params
+			return &pagination.OffsetPagination[kernel.ProxyIP]{}, nil
+		},
+	}
+
+	err := ProxyIPCmd{proxyIPs: fake}.List(context.Background(), ProxyIPListInput{Page: 2, PerPage: 999, Output: "json"})
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(1000), captured.Limit.Value)
+	assert.Equal(t, int64(999), captured.Offset.Value)
+}
+
+func TestProxyIPListRejectsPageSizeAboveLookaheadLimit(t *testing.T) {
+	called := false
+	fake := &fakeProxyIPService{
+		listFunc: func(_ context.Context, _ kernel.ProxyIPListParams, _ ...option.RequestOption) (*pagination.OffsetPagination[kernel.ProxyIP], error) {
+			called = true
+			return nil, nil
+		},
+	}
+
+	err := ProxyIPCmd{proxyIPs: fake}.List(context.Background(), ProxyIPListInput{PerPage: 1000})
+
+	assert.EqualError(t, err, "--per-page must be between 1 and 999")
+	assert.False(t, called)
+}
+
 func TestProxyIPListPrintsFooterWhenEmpty(t *testing.T) {
 	buf := captureOutput(t)
 
@@ -126,6 +157,7 @@ func TestProxyIPCommandsExposePageBasedFlags(t *testing.T) {
 	assert.NotNil(t, ProxyIPsCmd.Commands())
 	assert.NotNil(t, proxyIPsListCmd.Flags().Lookup("page"))
 	assert.NotNil(t, proxyIPsListCmd.Flags().Lookup("per-page"))
+	assert.Contains(t, proxyIPsListCmd.Flags().Lookup("per-page").Usage, "1-999")
 	assert.Nil(t, proxyIPsListCmd.Flags().Lookup("limit"))
 	assert.Nil(t, proxyIPsListCmd.Flags().Lookup("offset"))
 	assert.NotNil(t, proxyIPsListCmd.Flags().Lookup("country"))
