@@ -16,6 +16,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestAPIKeyCleanupHelpMatchesSessionBehavior(t *testing.T) {
+	for _, text := range []string{
+		apiKeysDeleteCmd.Long,
+		apiKeysRotateCmd.Long,
+		apiKeysRotateCmd.Flags().Lookup("expire-in-days").Usage,
+	} {
+		assert.Contains(t, text, "browser sessions")
+	}
+	assert.Contains(t, apiKeysDeleteCmd.Long, "unsaved profile changes")
+	assert.Contains(t, apiKeysDeleteCmd.Long, "key is not deleted")
+	assert.Contains(t, apiKeysRotateCmd.Long, "Grace-period and natural expiry do not end")
+	assert.Contains(t, apiKeysRotateCmd.Long, "rotation is not completed")
+}
+
 type FakeAPIKeysService struct {
 	NewFunc    func(ctx context.Context, body kernel.APIKeyNewParams, opts ...option.RequestOption) (*kernel.CreatedAPIKey, error)
 	GetFunc    func(ctx context.Context, id string, query kernel.APIKeyGetParams, opts ...option.RequestOption) (*kernel.APIKey, error)
@@ -379,8 +393,9 @@ func TestAPIKeysRotateBuildsParamsAndPrintsNewKey(t *testing.T) {
 	assert.Equal(t, "key_123", capturedID)
 	assert.True(t, captured.DaysToExpire.Valid())
 	assert.Equal(t, int64(30), captured.DaysToExpire.Value)
-	// 0 must reach the API as an explicit value, not be dropped: it means
-	// "revoke the rotated key now" rather than "use the default grace period".
+	// 0 must reach the API as an explicit value, not be dropped: it expires
+	// the rotated key and asynchronously ends its browser sessions rather than
+	// using the default grace period.
 	assert.True(t, captured.ExpireInDays.Valid())
 	assert.Equal(t, int64(0), captured.ExpireInDays.Value)
 

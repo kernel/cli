@@ -48,7 +48,7 @@ func init() {
 	ProxyIPsCmd.AddCommand(proxyIPsListCmd, proxyIPsGetCmd)
 
 	proxyIPsListCmd.Flags().Int("page", 1, "Page number (1-based)")
-	proxyIPsListCmd.Flags().Int("per-page", 20, "Items per page")
+	proxyIPsListCmd.Flags().Int("per-page", 20, "Items per page (1-999)")
 	proxyIPsListCmd.Flags().String("country", "", "Filter by an ISP-supported ISO 3166 country code")
 	proxyIPsListCmd.Flags().String("status", "", "Filter by assignability (active|excluded)")
 	addJSONOutputFlag(proxyIPsListCmd)
@@ -72,6 +72,11 @@ func (p ProxyIPCmd) List(ctx context.Context, in ProxyIPListInput) error {
 	}
 	if perPage <= 0 {
 		perPage = 20
+	}
+	// The API accepts at most 1000 items. Reserve one item for the pagination
+	// lookahead used to determine whether another page exists.
+	if perPage > 999 {
+		return fmt.Errorf("--per-page must be between 1 and 999")
 	}
 
 	params := kernel.ProxyIPListParams{
