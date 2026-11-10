@@ -35,6 +35,27 @@ func vaultOperationTakesParams(operation string) bool {
 	return operation == "fill" || operation == "webmcp_invoke" || operation == "prepare_checkout" || operation == "confirm_transaction" || operation == "remove_payment_method" || operation == "update_access_token" || (isOnePasswordOperation(operation) && operation != "1pw_recover")
 }
 
+func applyVaultAddPaymentMethodEnrollment(operation string, params *vaultOperationParams, enrollment string, set bool) error {
+	if !set {
+		return nil
+	}
+	if operation != "add_payment_method" {
+		return fmt.Errorf("--enrollment is only supported for add_payment_method")
+	}
+	if params == nil || params.PaymentMethod == nil || params.PaymentMethod.OfAddPaymentMethod == nil {
+		return fmt.Errorf("add_payment_method parameters were not initialized")
+	}
+	switch enrollment {
+	case "hosted":
+		params.PaymentMethod.OfAddPaymentMethod.Enrollment = kernel.AddPaymentMethodVaultItemOperationRequestEnrollmentHosted
+	case "server":
+		params.PaymentMethod.OfAddPaymentMethod.Enrollment = kernel.AddPaymentMethodVaultItemOperationRequestEnrollmentServer
+	default:
+		return fmt.Errorf("--enrollment must be hosted or server")
+	}
+	return nil
+}
+
 type vaultFillParams struct {
 	BrowserID string           `json:"browser_id"`
 	PageURL   string           `json:"page_url,omitempty"`
@@ -50,7 +71,7 @@ type vaultFillField struct {
 
 // Reject duplicate and unknown keys without including payloads in diagnostics.
 func vaultParamsObject(raw, allowed string) (map[string]json.RawMessage, error) {
-	invalid := fmt.Errorf("operation parameters must contain JSON objects with only supported, non-duplicate properties")
+	invalid := fmt.Errorf("operation parameters must contain json objects with only supported, non-duplicate properties")
 	dec := json.NewDecoder(strings.NewReader(raw))
 	token, err := dec.Token()
 	if err != nil || token != json.Delim('{') {
@@ -142,7 +163,7 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 	}
 	if operation == "add_payment_method" {
 		if paramsSet {
-			return nil, fmt.Errorf("add_payment_method takes no parameters")
+			return nil, fmt.Errorf("add_payment_method uses --enrollment hosted|server and does not accept --params or --spec-file")
 		}
 		return &vaultOperationParams{PaymentMethod: &kernel.VaultItemPerformOperationParams{
 			OfAddPaymentMethod: &kernel.AddPaymentMethodVaultItemOperationRequestParam{Type: kernel.AddPaymentMethodVaultItemOperationRequestTypeAddPaymentMethod},
@@ -199,7 +220,7 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 	}
 	if operation != "fill" {
 		if paramsSet {
-			return nil, fmt.Errorf("--params is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, remove_payment_method, update_access_token, and 1Password operations; authorize takes --browser-id and --page-url, passkey operations take --browser-id and optional --field, and add_payment_method and restart_verification take no parameters")
+			return nil, fmt.Errorf("--params is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, remove_payment_method, update_access_token, and 1Password operations; authorize takes --browser-id and --page-url, passkey operations take --browser-id and optional --field, add_payment_method takes --enrollment, and restart_verification takes no parameters")
 		}
 		return nil, nil
 	}
@@ -224,11 +245,11 @@ func parseVaultFillParams(raw string) (*vaultFillParams, error) {
 	}
 	if rawURL, present := object["page_url"]; present {
 		if json.Unmarshal(rawURL, &params.PageURL) != nil {
-			return nil, fmt.Errorf("page_url must be an absolute URL")
+			return nil, fmt.Errorf("page_url must be an absolute url")
 		}
 		u, err := url.ParseRequestURI(params.PageURL)
 		if err != nil || u.Scheme == "" {
-			return nil, fmt.Errorf("page_url must be an absolute URL")
+			return nil, fmt.Errorf("page_url must be an absolute url")
 		}
 	}
 	if timeout, ok := object["timeout_ms"]; ok {
@@ -337,10 +358,10 @@ func parseOnePasswordOperationParams(operation, raw string) (*kernel.VaultItemPe
 		}
 		request := kernel.OnePasswordFillVaultItemOperationRequestParam{BrowserID: browserID, Type: kernel.OnePasswordFillVaultItemOperationRequestType1pwFill}
 		if json.Unmarshal(object["page_url"], &request.PageURL) != nil {
-			return nil, fmt.Errorf("page_url must be the exact absolute URL of the open login page")
+			return nil, fmt.Errorf("page_url must be the exact absolute url of the open login page")
 		}
 		if u, err := url.ParseRequestURI(request.PageURL); err != nil || u.Scheme == "" {
-			return nil, fmt.Errorf("page_url must be the exact absolute URL of the open login page")
+			return nil, fmt.Errorf("page_url must be the exact absolute url of the open login page")
 		}
 		if value, ok := object["timeout_ms"]; ok {
 			var timeout *int64

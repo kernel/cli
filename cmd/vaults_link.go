@@ -88,7 +88,7 @@ func parseVaultAuthorizeCheckout(cmd *cobra.Command, operation string) (*kernel.
 		return nil, fmt.Errorf("--browser-id must be a non-empty browser session ID, not a name")
 	}
 	if _, err := url.Parse(pageURL); err != nil || !linkCheckoutPageURL.MatchString(pageURL) {
-		return nil, fmt.Errorf("--page-url must be the exact current top-level https checkout URL")
+		return nil, fmt.Errorf("--page-url must be the exact current top-level https checkout url")
 	}
 	return &kernel.AuthorizeVaultItemOperationRequestParam{
 		Type:      kernel.AuthorizeVaultItemOperationRequestTypeAuthorize,

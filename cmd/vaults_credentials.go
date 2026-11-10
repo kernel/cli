@@ -128,7 +128,7 @@ sensitive, and value. text, email, and password have form inputs. totp and passk
 not, so both KERNEL-hosted and customer-hosted collection forms omit them.
 custom collection web apps that encrypt in the browser may send encrypted_value (a
 compact jwe to the key from vaults get-encryption-key) instead of value; never both.
-a passkey value is a JSON-encoded FIDO Credential Exchange Format object with unpadded
+a passkey value is a json-encoded FIDO Credential Exchange Format object with unpadded
 base64url credentialId, a userHandle of at most 64 bytes, a PKCS#8 ECDSA P-256 private
 key, a lowercase rpId domain, and optional username and userDisplayName. other CXF
 members are ignored. alternatively, declare an optional empty passkey field and use

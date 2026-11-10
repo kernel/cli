@@ -110,7 +110,7 @@ func parseVaultWebMCPParams(raw string) (*kernel.WebmcpInvokeVaultItemOperationR
 // Members stay json.RawMessage: the SDK encodes json.Number as a string, which would change
 // numeric arguments.
 func decodeVaultWebMCPInput(raw []byte) (map[string]any, error) {
-	invalid := fmt.Errorf("input must be a JSON object of public tool arguments (maximum 64 KiB)")
+	invalid := fmt.Errorf("input must be a json object of public tool arguments (maximum 64 KiB)")
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	var members map[string]json.RawMessage
 	if dec.Decode(&members) != nil || members == nil {
@@ -142,7 +142,7 @@ func validateVaultWebMCPParams(params *kernel.WebmcpInvokeVaultItemOperationRequ
 	if params.TimeoutSec.Valid() && (params.TimeoutSec.Value < 1 || params.TimeoutSec.Value > 120) {
 		return fmt.Errorf("timeout_sec must be an integer between 1 and 120")
 	}
-	invalidInput := fmt.Errorf("input must be a JSON object of public tool arguments (maximum 64 KiB)")
+	invalidInput := fmt.Errorf("input must be a json object of public tool arguments (maximum 64 KiB)")
 	if params.Input == nil {
 		return invalidInput
 	}
@@ -175,7 +175,7 @@ func validateVaultWebMCPParams(params *kernel.WebmcpInvokeVaultItemOperationRequ
 			return fmt.Errorf("%s format must be MM/YY or MM/YYYY", binding(i))
 		}
 		if !vaultWebMCPNullSlot(input, b.InputPath) {
-			return fmt.Errorf("%s input_path must be an RFC 6901 JSON Pointer to an existing null value in input", binding(i))
+			return fmt.Errorf("%s input_path must be an RFC 6901 json pointer to an existing null value in input", binding(i))
 		}
 	}
 	return nil
@@ -288,7 +288,7 @@ Discover the tool first with kernel browsers webmcp list <session-id> -o json an
 tool_ref and exact source.page_url (fragment omitted). The vault must already be attached
 to the browser. --input holds only public tool arguments; put null at each slot a vault
 field fills, and never include vault values. Each --bind maps one vault field to an
-RFC 6901 JSON Pointer to an existing null value in input (no root or append paths).
+RFC 6901 json pointer to an existing null value in input (no root or append paths).
 Each field and path may be bound once. Use <field>:<format>=<pointer> for card
 expiration (MM/YY or MM/YYYY); credential fields take no format. TOTP fields supply a
 fresh code, never the seed. --timeout-sec is 1-120 (API default 15).
@@ -314,8 +314,8 @@ did. API rejections (400/403/404/409) mean the tool was not invoked by that requ
 	invoke.Flags().String("browser-id", "", "Browser session ID the vault is attached to, not a name (required)")
 	invoke.Flags().String("tool-ref", "", "Opaque tool_ref from browsers webmcp list (required)")
 	invoke.Flags().String("page-url", "", "Exact source.page_url from browsers webmcp list, without fragment (required)")
-	invoke.Flags().String("input", "", "Public tool input JSON object with null slots for vault fields")
-	invoke.Flags().String("input-file", "", "Path to the input JSON object (use '-' for stdin)")
+	invoke.Flags().String("input", "", "Public tool input json object with null slots for vault fields")
+	invoke.Flags().String("input-file", "", "Path to the input json object (use '-' for stdin)")
 	invoke.Flags().StringArray("bind", nil, "Vault field binding <field>=<json-pointer> or <field>:<format>=<json-pointer>; repeatable (required)")
 	invoke.Flags().Int64("timeout-sec", 0, "Tool invocation timeout in seconds, 1-120 (API default 15)")
 	for _, name := range []string{"browser-id", "tool-ref", "page-url", "bind"} {
