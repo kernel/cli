@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -3704,6 +3705,21 @@ func TestBrowsersLiveViewCreate_JSONOutput(t *testing.T) {
 		require.NoError(t, b.LiveViewCreate(context.Background(), BrowsersLiveViewCreateInput{Identifier: "id", Output: "json"}))
 	})
 	assert.JSONEq(t, `{"url":"https://live/view","scope":"read"}`, out)
+}
+
+func TestBrowsersLiveViewCreate_DoesNotRetry(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := kernel.NewClient(option.WithBaseURL(srv.URL), option.WithAPIKey("test"))
+	b := BrowsersCmd{liveView: &client.Browsers.LiveView}
+	err := b.LiveViewCreate(context.Background(), BrowsersLiveViewCreateInput{Identifier: "id"})
+	assert.Error(t, err)
+	assert.Equal(t, int32(1), requests.Load())
 }
 
 func TestBrowsersLiveViewCreate_RejectsInvalidFlags(t *testing.T) {
