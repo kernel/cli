@@ -292,6 +292,10 @@ kernel search contents srch_01jsearchresult --limit 3 --content-source browser
 - `kernel browsers delete <id-or-name>` - Delete a browser by ID or name
 - `kernel browsers view <id-or-name>` - Get live view URL for a browser by ID or name
   - `--output json`, `-o json` - Output JSON with liveViewUrl
+- `kernel browsers live-view create <id-or-name>` - Create a live view URL scoped to read-only or control access. The URL works only for the live view, not CDP or other browser endpoints.
+  - `--scope <read|control>` - Access scope (default: read)
+  - `--ttl <seconds>` - Seconds until the URL expires (default: valid until the browser is deleted)
+  - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers get <id-or-name>` - Get detailed browser session info by ID or name
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers update <id-or-name>` - Update a running browser session by ID or name
@@ -1656,6 +1660,9 @@ kernel browsers delete browser123
 
 # Get live view URL
 kernel browsers view browser123
+
+# Share a read-only live view URL that expires in an hour
+kernel browsers live-view create browser123 --scope read --ttl 3600
 
 # Make an HTTP request through the browser session
 kernel browsers curl browser123 https://example.com

@@ -53,6 +53,11 @@ type BrowserReplaysService interface {
 	Stop(ctx context.Context, replayID string, body kernel.BrowserReplayStopParams, opts ...option.RequestOption) (err error)
 }
 
+// BrowserLiveViewService defines the subset we use for scoped live view URLs.
+type BrowserLiveViewService interface {
+	New(ctx context.Context, idOrName string, body kernel.BrowserLiveViewNewParams, opts ...option.RequestOption) (res *kernel.BrowserLiveView, err error)
+}
+
 // BrowserFSService defines the subset we use for browser filesystem APIs.
 type BrowserFSService interface {
 	NewDirectory(ctx context.Context, idOrName string, body kernel.BrowserFNewDirectoryParams, opts ...option.RequestOption) (err error)
@@ -575,6 +580,13 @@ type BrowsersViewInput struct {
 	Output     string
 }
 
+type BrowsersLiveViewCreateInput struct {
+	Identifier string
+	Scope      string
+	TTLSeconds int64
+	Output     string
+}
+
 type BrowsersGetInput struct {
 	Identifier     string
 	IncludeDeleted bool
@@ -631,6 +643,7 @@ type BrowsersUpdateInput struct {
 type BrowsersCmd struct {
 	browsers            BrowsersService
 	replays             BrowserReplaysService
+	liveView            BrowserLiveViewService
 	fs                  BrowserFSService
 	fsWatch             BrowserFWatchService
 	process             BrowserProcessService
@@ -1075,6 +1088,49 @@ func (b BrowsersCmd) View(ctx context.Context, in BrowsersViewInput) error {
 	}
 
 	fmt.Println(browser.BrowserLiveViewURL)
+	return nil
+}
+
+func (b BrowsersCmd) LiveViewCreate(ctx context.Context, in BrowsersLiveViewCreateInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+
+	req := kernel.BrowserLiveViewRequestParam{}
+	switch in.Scope {
+	case "":
+	case string(kernel.BrowserLiveViewScopeRead), string(kernel.BrowserLiveViewScopeControl):
+		req.Scope = kernel.BrowserLiveViewScope(in.Scope)
+	default:
+		return fmt.Errorf("invalid --scope value: %s (must be one of read, control)", in.Scope)
+	}
+	if in.TTLSeconds < 0 {
+		return fmt.Errorf("invalid --ttl value: %d (must be a positive number of seconds)", in.TTLSeconds)
+	}
+	if in.TTLSeconds > 0 {
+		req.TtlSeconds = kernel.Opt(in.TTLSeconds)
+	}
+
+	res, err := b.liveView.New(ctx, in.Identifier, kernel.BrowserLiveViewNewParams{BrowserLiveViewRequest: req})
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(res)
+	}
+
+	expires := "When the browser is deleted"
+	if !res.ExpiresAt.IsZero() {
+		expires = util.FormatLocal(res.ExpiresAt)
+	}
+	rows := pterm.TableData{
+		{"Property", "Value"},
+		{"URL", res.URL},
+		{"Scope", string(res.Scope)},
+		{"Expires", expires},
+	}
+	PrintTableNoPad(rows, true)
 	return nil
 }
 
@@ -3308,6 +3364,25 @@ func init() {
 	logsRoot.AddCommand(logsStream)
 	browsersCmd.AddCommand(logsRoot)
 
+	// live view
+	liveViewRoot := &cobra.Command{Use: "live-view", Short: "Create scoped live view URLs"}
+	liveViewCreate := &cobra.Command{
+		Use:   "create <id-or-name>",
+		Short: "Create a read-only or control live view URL for a browser",
+		Long: `Create a live view URL that grants either read-only or control access to a headful browser.
+
+The URL authorizes the live view only: it cannot connect to CDP, WebDriver, or any other
+browser endpoint. It stays valid until the browser is deleted, or until --ttl seconds
+elapse when set. It cannot be revoked before then, so treat it as a credential.`,
+		Args: cobra.ExactArgs(1),
+		RunE: runBrowsersLiveViewCreate,
+	}
+	liveViewCreate.Flags().String("scope", "", "Access scope: read (view only) or control (default: read)")
+	liveViewCreate.Flags().Int64("ttl", 0, "Seconds until the URL expires (default: valid until the browser is deleted)")
+	addJSONOutputFlag(liveViewCreate)
+	liveViewRoot.AddCommand(liveViewCreate)
+	browsersCmd.AddCommand(liveViewRoot)
+
 	// replays
 	replaysRoot := &cobra.Command{Use: "replays", Short: "Manage browser replays"}
 	replaysList := &cobra.Command{Use: "list <id>", Short: "List replays for a browser", Args: cobra.ExactArgs(1), RunE: runBrowsersReplaysList}
@@ -4064,6 +4139,15 @@ func runBrowsersReplaysStart(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 	b := BrowsersCmd{browsers: &svc, replays: &svc.Replays}
 	return b.ReplaysStart(cmd.Context(), BrowsersReplaysStartInput{Identifier: args[0], Framerate: fr, MaxDurationSeconds: md, RecordAudio: recordAudio, Output: output})
+}
+
+func runBrowsersLiveViewCreate(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	scope, _ := cmd.Flags().GetString("scope")
+	ttl, _ := cmd.Flags().GetInt64("ttl")
+	output, _ := cmd.Flags().GetString("output")
+	b := BrowsersCmd{liveView: &client.Browsers.LiveView}
+	return b.LiveViewCreate(cmd.Context(), BrowsersLiveViewCreateInput{Identifier: args[0], Scope: scope, TTLSeconds: ttl, Output: output})
 }
 
 func runBrowsersReplaysStop(cmd *cobra.Command, args []string) error {

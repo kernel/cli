@@ -3647,3 +3647,81 @@ func TestBrowsersUpdate_AllowedHostsValidation(t *testing.T) {
 		})
 	}
 }
+
+// --- Tests for Live View ---
+
+type FakeLiveViewService struct {
+	NewFunc func(ctx context.Context, idOrName string, body kernel.BrowserLiveViewNewParams, opts ...option.RequestOption) (*kernel.BrowserLiveView, error)
+}
+
+func (f *FakeLiveViewService) New(ctx context.Context, idOrName string, body kernel.BrowserLiveViewNewParams, opts ...option.RequestOption) (*kernel.BrowserLiveView, error) {
+	return f.NewFunc(ctx, idOrName, body, opts...)
+}
+
+func TestBrowsersLiveViewCreate_SendsScopeAndTTL(t *testing.T) {
+	setupStdoutCapture(t)
+	var gotID string
+	var gotBody []byte
+	fake := &FakeLiveViewService{NewFunc: func(ctx context.Context, idOrName string, body kernel.BrowserLiveViewNewParams, opts ...option.RequestOption) (*kernel.BrowserLiveView, error) {
+		gotID = idOrName
+		gotBody, _ = body.MarshalJSON()
+		return &kernel.BrowserLiveView{URL: "https://live/view", Scope: kernel.BrowserLiveViewScopeControl, ExpiresAt: time.Unix(3600, 0)}, nil
+	}}
+	b := BrowsersCmd{liveView: fake}
+	err := b.LiveViewCreate(context.Background(), BrowsersLiveViewCreateInput{Identifier: "my-browser", Scope: "control", TTLSeconds: 600})
+	require.NoError(t, err)
+	assert.Equal(t, "my-browser", gotID)
+	assert.JSONEq(t, `{"scope":"control","ttl_seconds":600}`, string(gotBody))
+	out := outBuf.String()
+	assert.Contains(t, out, "https://live/view")
+	assert.Contains(t, out, "control")
+	assert.Contains(t, out, util.FormatLocal(time.Unix(3600, 0)))
+}
+
+func TestBrowsersLiveViewCreate_OmitsUnsetFields(t *testing.T) {
+	setupStdoutCapture(t)
+	var gotBody []byte
+	fake := &FakeLiveViewService{NewFunc: func(ctx context.Context, idOrName string, body kernel.BrowserLiveViewNewParams, opts ...option.RequestOption) (*kernel.BrowserLiveView, error) {
+		gotBody, _ = body.MarshalJSON()
+		return &kernel.BrowserLiveView{URL: "https://live/view", Scope: kernel.BrowserLiveViewScopeRead}, nil
+	}}
+	b := BrowsersCmd{liveView: fake}
+	err := b.LiveViewCreate(context.Background(), BrowsersLiveViewCreateInput{Identifier: "id"})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{}`, string(gotBody))
+	assert.Contains(t, outBuf.String(), "When the browser is deleted")
+}
+
+func TestBrowsersLiveViewCreate_JSONOutput(t *testing.T) {
+	setupStdoutCapture(t)
+	var res kernel.BrowserLiveView
+	require.NoError(t, json.Unmarshal([]byte(`{"url":"https://live/view","scope":"read"}`), &res))
+	fake := &FakeLiveViewService{NewFunc: func(ctx context.Context, idOrName string, body kernel.BrowserLiveViewNewParams, opts ...option.RequestOption) (*kernel.BrowserLiveView, error) {
+		return &res, nil
+	}}
+	b := BrowsersCmd{liveView: fake}
+	out := captureStdout(t, func() {
+		require.NoError(t, b.LiveViewCreate(context.Background(), BrowsersLiveViewCreateInput{Identifier: "id", Output: "json"}))
+	})
+	assert.JSONEq(t, `{"url":"https://live/view","scope":"read"}`, out)
+}
+
+func TestBrowsersLiveViewCreate_RejectsInvalidFlags(t *testing.T) {
+	called := false
+	fake := &FakeLiveViewService{NewFunc: func(ctx context.Context, idOrName string, body kernel.BrowserLiveViewNewParams, opts ...option.RequestOption) (*kernel.BrowserLiveView, error) {
+		called = true
+		return &kernel.BrowserLiveView{}, nil
+	}}
+	b := BrowsersCmd{liveView: fake}
+
+	err := b.LiveViewCreate(context.Background(), BrowsersLiveViewCreateInput{Identifier: "id", Scope: "write"})
+	assert.ErrorContains(t, err, "invalid --scope value: write")
+
+	err = b.LiveViewCreate(context.Background(), BrowsersLiveViewCreateInput{Identifier: "id", TTLSeconds: -1})
+	assert.ErrorContains(t, err, "invalid --ttl value: -1")
+
+	err = b.LiveViewCreate(context.Background(), BrowsersLiveViewCreateInput{Identifier: "id", Output: "yaml"})
+	assert.Error(t, err)
+
+	assert.False(t, called)
+}
