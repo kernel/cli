@@ -326,9 +326,17 @@ and never retry automatically. 400/403/404/409 rejections mean the tool was not 
 1pw_create_access_request: no browser needed; optional goal (<=140), reason (<=100),
   keywords (1-5 strings); reason and keywords only for single-entry credentials.
   present the returned onepassword:// approval link and instructions to the account
-  owner unchanged; invoke it once per credential.
-1pw_access_request_status: no browser needed; optional timeout_seconds 0-120 (default 10).
-  check status after the account owner has the approval link.
+  owner unchanged. native iOS, Android, and desktop apps running 1Password 8.12.46
+  or later may append &return_url=<URL-encoded URL>. invoke it once per advertised
+  request and never request another link automatically.
+1pw_access_request_status: no browser needed; optional timeout_seconds 0-120 (default 10)
+  controls how long to keep checking. Kernel checks immediately, then every 2 seconds,
+  slowing to 10- and 20-second intervals. each call reads fresh status and may wait up
+  to 20 seconds for its first scheduled check even when timeout_seconds is shorter.
+  honor a 429 Retry-After. after 3 minutes the approval prompt closes: ask whether the
+  owner approved and check once more, or invoke a newly advertised
+  1pw_create_access_request for another link. expired returns the item to
+  pending_authorization; unknown is treated as failed.
 1pw_fill: browser_id and the exact page_url of an open login page; the 1Password
   extension decides whether an approved login matches and refuses pages that do not.
   use target_id when several open pages have that exact url, and entry_id when several
