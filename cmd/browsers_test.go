@@ -603,6 +603,39 @@ func TestBrowsersCreate_WithNameAndTags(t *testing.T) {
 	assert.Contains(t, out, "env=staging, team=backend")
 }
 
+func TestBrowsersCreate_WithStartReplay(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	startedAt := time.Date(2032, 6, 7, 8, 9, 10, 0, time.UTC)
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{
+				SessionID: "sess-replay",
+				Replay: kernel.BrowserNewResponseReplay{
+					ReplayID:      "replay-1",
+					ReplayViewURL: "https://replays.example/replay-1",
+					StartedAt:     startedAt,
+				},
+			}, nil
+		},
+	}
+
+	err := (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
+		StartReplay: BoolFlag{Set: true, Value: true},
+	})
+	require.NoError(t, err)
+	require.True(t, captured.StartReplay.Valid())
+	assert.True(t, captured.StartReplay.Value)
+	assert.Contains(t, outBuf.String(), "replay-1")
+	assert.Contains(t, outBuf.String(), "https://replays.example/replay-1")
+
+	flag := browsersCreateCmd.Flags().Lookup("start-replay")
+	require.NotNil(t, flag)
+	assert.Contains(t, flag.Usage, "pool")
+}
+
 func TestBrowsersCreate_WithVaults(t *testing.T) {
 	setupStdoutCapture(t)
 
@@ -1246,6 +1279,7 @@ func TestPoolLeaseAllowedFlags_ExcludesChromePolicy(t *testing.T) {
 	// The flags that genuinely apply per-lease stay allowed.
 	assert.True(t, allowed["pool-id"])
 	assert.True(t, allowed["name"])
+	assert.True(t, allowed["start-replay"])
 	assert.True(t, allowed["tag"])
 }
 

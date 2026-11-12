@@ -551,6 +551,76 @@ func TestAuthConnectionsRegion_CommandFlags(t *testing.T) {
 	}
 }
 
+func TestAuthConnectionsLocale_CommandFlags(t *testing.T) {
+	tests := []struct {
+		name       string
+		command    *cobra.Command
+		method     string
+		path       string
+		args       []string
+		wantLocale any
+		wantSet    bool
+	}{
+		{
+			name:       "create sets locale",
+			command:    authConnectionsCreateCmd,
+			method:     http.MethodPost,
+			path:       "/auth/connections",
+			args:       []string{"--domain", "example.com", "--profile-name", "work", "--locale", "sv-SE", "--output", "json"},
+			wantLocale: "sv-SE",
+			wantSet:    true,
+		},
+		{
+			name:    "create omits locale",
+			command: authConnectionsCreateCmd,
+			method:  http.MethodPost,
+			path:    "/auth/connections",
+			args:    []string{"--domain", "example.com", "--profile-name", "work", "--output", "json"},
+		},
+		{
+			name:       "update sets locale",
+			command:    authConnectionsUpdateCmd,
+			method:     http.MethodPatch,
+			path:       "/auth/connections/conn-1",
+			args:       []string{"conn-1", "--locale", "fr-FR", "--output", "json"},
+			wantLocale: "fr-FR",
+			wantSet:    true,
+		},
+		{
+			name:       "update clears locale",
+			command:    authConnectionsUpdateCmd,
+			method:     http.MethodPatch,
+			path:       "/auth/connections/conn-1",
+			args:       []string{"conn-1", "--clear-locale", "--output", "json"},
+			wantLocale: nil,
+			wantSet:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := runAuthConnectionCommand(t, tt.command, tt.method, tt.path, tt.args...)
+			browser, _ := body["browser"].(map[string]any)
+			location, _ := browser["location"].(map[string]any)
+			got, present := location["locale"]
+			assert.Equal(t, tt.wantSet, present)
+			if tt.wantSet {
+				assert.Equal(t, tt.wantLocale, got)
+			}
+		})
+	}
+
+	assert.Nil(t, authConnectionsLoginCmd.Flags().Lookup("locale"), "the API does not support a per-login locale override")
+	assert.Contains(t, authConnectionsCreateCmd.Flags().Lookup("locale").Usage, "BCP 47")
+	assert.Contains(t, authConnectionsUpdateCmd.Flags().Lookup("clear-locale").Usage, "region's default")
+
+	err := (AuthConnectionCmd{svc: &FakeAuthConnectionService{}}).Update(context.Background(), AuthConnectionUpdateInput{
+		ID:        "conn-1",
+		LocaleSet: true,
+	})
+	assert.ErrorContains(t, err, "--locale requires a non-empty value")
+}
+
 func TestAuthConnectionsHitl_CommandFlags(t *testing.T) {
 	wantTrue := true
 	wantFalse := false
@@ -631,11 +701,15 @@ func TestAuthConnectionsRegion_RejectsUnknownValue(t *testing.T) {
 	assert.ErrorContains(t, err, "invalid --region value")
 }
 
-func TestManagedAuthBrowserRows_IncludesRegion(t *testing.T) {
+func TestManagedAuthBrowserRows_IncludesRegionAndLocale(t *testing.T) {
 	rows := managedAuthBrowserRows(kernel.ManagedAuthBrowserConfig{
 		Region: kernel.ManagedAuthBrowserConfigRegionEuWest,
+		Location: kernel.ManagedAuthBrowserLocation{
+			Locale: "sv-SE",
+		},
 	})
 	assert.Contains(t, rows, []string{"Browser Region", "eu-west"})
+	assert.Contains(t, rows, []string{"Browser Locale", "sv-SE"})
 }
 
 // --credential-auto should still be honored (it was a no-op redundant flag

@@ -12,6 +12,7 @@ import (
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
+	"github.com/kernel/kernel-go-sdk/packages/param"
 	"github.com/kernel/kernel-go-sdk/packages/ssestream"
 	"github.com/pterm/pterm"
 	"github.com/samber/lo"
@@ -50,6 +51,7 @@ type AuthConnectionCreateInput struct {
 	ProxyName           string
 	ProxyMode           string
 	Region              string
+	Locale              string
 	Stealth             BoolFlag
 	SaveCredentials     bool
 	NoSaveCredentials   bool
@@ -89,6 +91,9 @@ type AuthConnectionUpdateInput struct {
 	ProxyNameSet           bool
 	ProxyMode              string
 	Region                 string
+	Locale                 string
+	LocaleSet              bool
+	ClearLocale            bool
 	Stealth                BoolFlag
 	SaveCredentials        BoolFlag
 	HealthCheckInterval    int
@@ -240,6 +245,9 @@ func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateIn
 	if in.Stealth.Set {
 		params.ManagedAuthCreateRequest.Browser.Stealth = kernel.Opt(in.Stealth.Value)
 	}
+	if in.Locale != "" {
+		params.ManagedAuthCreateRequest.Browser.Location.Locale = kernel.Opt(in.Locale)
+	}
 
 	if in.NoSaveCredentials {
 		params.ManagedAuthCreateRequest.SaveCredentials = kernel.Opt(false)
@@ -325,8 +333,8 @@ func managedAuthBrowserRows(cfg kernel.ManagedAuthBrowserConfig) pterm.TableData
 	if proxy := formatBrowserProxyConfig(cfg.Proxy); proxy != "" {
 		rows = append(rows, []string{"Browser Proxy", proxy})
 	}
-	if cfg.Region != "" {
-		rows = append(rows, []string{"Browser Region", string(cfg.Region)})
+	if cfg.Location.Locale != "" {
+		rows = append(rows, []string{"Browser Locale", cfg.Location.Locale})
 	}
 	// Stealth defaults to true when omitted, so only report what the API sent.
 	if cfg.JSON.Stealth.Valid() {
@@ -429,6 +437,19 @@ func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateIn
 
 	if in.Stealth.Set {
 		params.ManagedAuthUpdateRequest.Browser.Stealth = kernel.Opt(in.Stealth.Value)
+		hasChanges = true
+	}
+	if in.LocaleSet && in.ClearLocale {
+		return fmt.Errorf("cannot specify both --locale and --clear-locale")
+	}
+	if in.LocaleSet && strings.TrimSpace(in.Locale) == "" {
+		return fmt.Errorf("--locale requires a non-empty value; use --clear-locale to use the browser region's default")
+	}
+	if in.ClearLocale {
+		params.ManagedAuthUpdateRequest.Browser.Location.Locale = param.Null[string]()
+		hasChanges = true
+	} else if in.LocaleSet {
+		params.ManagedAuthUpdateRequest.Browser.Location.Locale = kernel.Opt(in.Locale)
 		hasChanges = true
 	}
 
@@ -1387,6 +1408,7 @@ func init() {
 	authConnectionsCreateCmd.Flags().String("proxy-name", "", "Proxy name to use for this connection's browser sessions (mutually exclusive with --proxy-id and --proxy-mode)")
 	authConnectionsCreateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' for the stealth-derived default")
 	authConnectionsCreateCmd.Flags().String("region", "", "Geographic region for browser sessions: 'us-east', 'us-west', 'eu-west', or 'ap-southeast'. Defaults to us-east")
+	authConnectionsCreateCmd.Flags().String("locale", "", "Browser locale for login, reauthentication, and health-check sessions (canonical BCP 47, e.g. sv-SE); omit to use the browser region's default")
 	authConnectionsCreateCmd.Flags().Bool("stealth", true, "Run this connection's browser sessions in stealth mode; use --stealth=false to disable")
 	authConnectionsCreateCmd.Flags().Bool("no-save-credentials", false, "Disable saving credentials after successful login")
 	authConnectionsCreateCmd.Flags().Int("health-check-interval", 0, "Interval in seconds between health checks. Defaults to 3600 or your plan minimum, whichever is larger. The maximum is 86400; the minimum depends on your plan (Enterprise 300, Startup 1200, Hobbyist 3600, Free 21600)")
@@ -1417,6 +1439,8 @@ func init() {
 	authConnectionsUpdateCmd.Flags().String("proxy-name", "", "Proxy name to use for future browser sessions (mutually exclusive with --proxy-id and --proxy-mode)")
 	authConnectionsUpdateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' to drop a selected proxy and use the stealth-derived default")
 	authConnectionsUpdateCmd.Flags().String("region", "", "Geographic region for future browser sessions: 'us-east', 'us-west', 'eu-west', or 'ap-southeast'")
+	authConnectionsUpdateCmd.Flags().String("locale", "", "Set the browser locale for future login, reauthentication, and health-check sessions (canonical BCP 47, e.g. sv-SE); omit to leave it unchanged (mutually exclusive with --clear-locale)")
+	authConnectionsUpdateCmd.Flags().Bool("clear-locale", false, "Clear the browser locale override so future sessions use the browser region's default")
 	authConnectionsUpdateCmd.Flags().Bool("stealth", true, "Set whether future browser sessions run in stealth mode; use --stealth=false to disable")
 	authConnectionsUpdateCmd.Flags().Bool("save-credentials", false, "Enable saving credentials after successful login")
 	authConnectionsUpdateCmd.Flags().Bool("no-save-credentials", false, "Disable saving credentials after successful login")
@@ -1435,6 +1459,7 @@ func init() {
 	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("save-credentials", "no-save-credentials")
 	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("health-checks", "no-health-checks")
 	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("auto-reauth", "no-auto-reauth")
+	authConnectionsUpdateCmd.MarkFlagsMutuallyExclusive("locale", "clear-locale")
 
 	// List flags
 	addJSONOutputFlag(authConnectionsListCmd)
@@ -1510,6 +1535,7 @@ func runAuthConnectionsCreate(cmd *cobra.Command, args []string) error {
 	proxyName, _ := cmd.Flags().GetString("proxy-name")
 	proxyMode, _ := cmd.Flags().GetString("proxy-mode")
 	region, _ := cmd.Flags().GetString("region")
+	locale, _ := cmd.Flags().GetString("locale")
 	noSaveCredentials, _ := cmd.Flags().GetBool("no-save-credentials")
 	healthCheckInterval, _ := cmd.Flags().GetInt("health-check-interval")
 	noHealthChecks, _ := cmd.Flags().GetBool("no-health-checks")
@@ -1534,6 +1560,7 @@ func runAuthConnectionsCreate(cmd *cobra.Command, args []string) error {
 		ProxyName:           proxyName,
 		ProxyMode:           proxyMode,
 		Region:              region,
+		Locale:              locale,
 		Stealth:             readBoolFlag(cmd.Flags(), "stealth"),
 		NoSaveCredentials:   noSaveCredentials,
 		HealthCheckInterval: healthCheckInterval,
@@ -1574,6 +1601,8 @@ func runAuthConnectionsUpdate(cmd *cobra.Command, args []string) error {
 	proxyName, _ := cmd.Flags().GetString("proxy-name")
 	proxyMode, _ := cmd.Flags().GetString("proxy-mode")
 	region, _ := cmd.Flags().GetString("region")
+	locale, _ := cmd.Flags().GetString("locale")
+	clearLocale, _ := cmd.Flags().GetBool("clear-locale")
 	saveCredentials, _ := cmd.Flags().GetBool("save-credentials")
 	noSaveCredentials, _ := cmd.Flags().GetBool("no-save-credentials")
 	healthCheckInterval, _ := cmd.Flags().GetInt("health-check-interval")
@@ -1626,6 +1655,9 @@ func runAuthConnectionsUpdate(cmd *cobra.Command, args []string) error {
 		ProxyNameSet:           cmd.Flags().Changed("proxy-name"),
 		ProxyMode:              proxyMode,
 		Region:                 region,
+		Locale:                 locale,
+		LocaleSet:              cmd.Flags().Changed("locale"),
+		ClearLocale:            clearLocale,
 		Stealth:                readBoolFlag(cmd.Flags(), "stealth"),
 		SaveCredentials:        saveCredentialsFlag,
 		HealthCheckInterval:    healthCheckInterval,
