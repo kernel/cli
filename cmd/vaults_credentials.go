@@ -58,7 +58,7 @@ const vaultOnePasswordCredentialHelp = `1Password flow:
    present the returned onepassword:// approval link and instructions to the account
    owner unchanged. native iOS, Android, and desktop apps running 1Password 8.12.46
    or later may append &return_url=<URL-encoded URL>.
-4. invoke 1pw_access_request_status with timeout_seconds 0-120 (default 10). Kernel
+4. invoke 1pw_access_request_status with timeout_seconds 0-120 (default 10). KERNEL
    checks immediately, then every 2 seconds, slowing to 10- and 20-second intervals.
    each call reads fresh status and may wait up to 20 seconds for its first scheduled
    check even when timeout_seconds is shorter; honor a 429 Retry-After. after 3 minutes

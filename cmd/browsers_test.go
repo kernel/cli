@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -224,6 +225,20 @@ func TestBrowsersLiveViewCreateCommand(t *testing.T) {
 	assert.Contains(t, outBuf.String(), "https://live.example/view")
 	assert.Contains(t, outBuf.String(), "control")
 	assert.Contains(t, outBuf.String(), util.FormatLocal(expiresAt))
+}
+
+func TestBrowsersLiveViewCreateDoesNotRetry(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	client := kernel.NewClient(option.WithBaseURL(server.URL), option.WithAPIKey("test"))
+	b := BrowsersCmd{liveView: &client.Browsers.LiveView}
+	require.Error(t, b.LiveViewCreate(context.Background(), BrowsersLiveViewCreateInput{Identifier: "browser-one"}))
+	assert.Equal(t, int32(1), requests.Load())
 }
 
 func TestBrowsersLiveViewCreateDefaultsAndValidation(t *testing.T) {
