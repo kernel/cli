@@ -330,7 +330,7 @@ and never retry automatically. 400/403/404/409 rejections mean the tool was not 
   or later may append &return_url=<URL-encoded URL>. invoke it once per advertised
   request and never request another link automatically.
 1pw_access_request_status: no browser needed; optional timeout_seconds 0-120 (default 10)
-  controls how long to keep checking. Kernel checks immediately, then every 2 seconds,
+  controls how long to keep checking. KERNEL checks immediately, then every 2 seconds,
   slowing to 10- and 20-second intervals. each call reads fresh status and may wait up
   to 20 seconds for its first scheduled check even when timeout_seconds is shorter.
   honor a 429 Retry-After. after 3 minutes the approval prompt closes: ask whether the

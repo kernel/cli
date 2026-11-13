@@ -52,6 +52,7 @@ type AuthConnectionCreateInput struct {
 	ProxyMode           string
 	Region              string
 	Locale              string
+	LocaleSet           bool
 	Stealth             BoolFlag
 	SaveCredentials     bool
 	NoSaveCredentials   bool
@@ -244,6 +245,9 @@ func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateIn
 
 	if in.Stealth.Set {
 		params.ManagedAuthCreateRequest.Browser.Stealth = kernel.Opt(in.Stealth.Value)
+	}
+	if in.LocaleSet && strings.TrimSpace(in.Locale) == "" {
+		return fmt.Errorf("--locale requires a non-empty value; omit it to use the browser region's default")
 	}
 	if in.Locale != "" {
 		params.ManagedAuthCreateRequest.Browser.Location.Locale = kernel.Opt(in.Locale)
@@ -1561,6 +1565,7 @@ func runAuthConnectionsCreate(cmd *cobra.Command, args []string) error {
 		ProxyMode:           proxyMode,
 		Region:              region,
 		Locale:              locale,
+		LocaleSet:           cmd.Flags().Changed("locale"),
 		Stealth:             readBoolFlag(cmd.Flags(), "stealth"),
 		NoSaveCredentials:   noSaveCredentials,
 		HealthCheckInterval: healthCheckInterval,
