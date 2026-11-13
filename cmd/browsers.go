@@ -45,6 +45,11 @@ type BrowsersService interface {
 	SaveProfile(ctx context.Context, idOrName string, body kernel.BrowserSaveProfileParams, opts ...option.RequestOption) (res *kernel.Profile, err error)
 }
 
+// BrowserLiveViewService defines the subset we use for scoped browser live views.
+type BrowserLiveViewService interface {
+	New(ctx context.Context, idOrName string, body kernel.BrowserLiveViewNewParams, opts ...option.RequestOption) (res *kernel.BrowserLiveView, err error)
+}
+
 // BrowserReplaysService defines the subset we use for browser replays.
 type BrowserReplaysService interface {
 	List(ctx context.Context, idOrName string, opts ...option.RequestOption) (res *[]kernel.BrowserReplayListResponse, err error)
@@ -550,6 +555,7 @@ type BrowsersCreateInput struct {
 	AllowedHostsProvided bool
 	ProxyRoutes          []string
 	StartURL             string
+	StartReplay          BoolFlag
 	Timezone             string
 	Locale               string
 	Extensions           []string
@@ -573,6 +579,14 @@ type BrowsersDeleteInput struct {
 type BrowsersViewInput struct {
 	Identifier string
 	Output     string
+}
+
+type BrowsersLiveViewCreateInput struct {
+	Identifier    string
+	Scope         string
+	TtlSeconds    int64
+	TtlSecondsSet bool
+	Output        string
 }
 
 type BrowsersGetInput struct {
@@ -630,6 +644,7 @@ type BrowsersUpdateInput struct {
 // BrowsersCmd is a cobra-independent command handler for browsers operations.
 type BrowsersCmd struct {
 	browsers            BrowsersService
+	liveView            BrowserLiveViewService
 	replays             BrowserReplaysService
 	fs                  BrowserFSService
 	fsWatch             BrowserFWatchService
@@ -716,17 +731,20 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	// Prepare table data. leased_at is only present for leased pooled sessions,
 	// so keep the column out of the table when no returned browser has a lease.
 	showLeasedAt := false
+	showReplay := false
 	for _, browser := range browsers {
-		if !browser.LeasedAt.IsZero() {
-			showLeasedAt = true
-			break
-		}
+		showLeasedAt = showLeasedAt || !browser.LeasedAt.IsZero()
+		showReplay = showReplay || browser.Replay.ReplayID != ""
 	}
 	headers := []string{"Browser ID", "Name", "Created At"}
 	if showLeasedAt {
 		headers = append(headers, "Leased At")
 	}
-	headers = append(headers, "Region", "Profile", "Pool", "CDP WS URL", "Live View URL")
+	headers = append(headers, "Region", "Profile", "Pool")
+	if showReplay {
+		headers = append(headers, "Replay ID")
+	}
+	headers = append(headers, "CDP WS URL", "Live View URL")
 	showDeletedAt := in.IncludeDeleted || in.Status == "deleted" || in.Status == "all"
 	if showDeletedAt {
 		headers = append(headers, "Deleted At")
@@ -764,6 +782,11 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 			util.OrDash(string(browser.Region)),
 			profile,
 			pool,
+		)
+		if showReplay {
+			row = append(row, util.OrDash(browser.Replay.ReplayID))
+		}
+		row = append(row,
 			truncateURL(browser.CdpWsURL, 50),
 			truncateURL(browser.BrowserLiveViewURL, 50),
 		)
@@ -862,6 +885,9 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 	if in.StartURL != "" {
 		params.StartURL = kernel.Opt(in.StartURL)
+	}
+	if in.StartReplay.Set {
+		params.StartReplay = kernel.Opt(in.StartReplay.Value)
 	}
 	if in.Timezone != "" {
 		params.Location.Timezone = kernel.Opt(in.Timezone)
@@ -976,6 +1002,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 
 	tableData := buildBrowserTableData(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.ProfileSaveChanges, browser.StartURL, browser.Name, browser.Tags)
 	tableData = appendBrowserLeasedAtRow(tableData, browser.LeasedAt)
+	tableData = appendReplayRows(tableData, browser.Replay.ReplayID, browser.Replay.ReplayViewURL, browser.Replay.StartedAt, browser.Replay.FinishedAt)
 	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)}, []string{"Allowed Hosts", formatAllowedHosts(browser.Network)}, []string{"Proxy Routes", formatProxyRoutes(browser.Network)})
 	tableData = append(tableData, browserLocationRows(browser.Location)...)
 	PrintTableNoPad(tableData, true)
@@ -992,9 +1019,10 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	return nil
 }
 
-func printBrowserSessionResult(sessionID, cdpURL, liveViewURL string, profile kernel.Profile, profileSaveChanges bool, startURL, name string, tags kernel.Tags, leasedAt time.Time) {
-	tableData := buildBrowserTableData(sessionID, cdpURL, liveViewURL, profile, profileSaveChanges, startURL, name, tags)
-	tableData = appendBrowserLeasedAtRow(tableData, leasedAt)
+func printBrowserPoolAcquireResult(resp *kernel.BrowserPoolAcquireResponse) {
+	tableData := buildBrowserTableData(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.ProfileSaveChanges, resp.StartURL, resp.Name, resp.Tags)
+	tableData = appendBrowserLeasedAtRow(tableData, resp.LeasedAt)
+	tableData = appendReplayRows(tableData, resp.Replay.ReplayID, resp.Replay.ReplayViewURL, resp.Replay.StartedAt, resp.Replay.FinishedAt)
 	PrintTableNoPad(tableData, true)
 }
 
@@ -1003,6 +1031,23 @@ func appendBrowserLeasedAtRow(tableData pterm.TableData, leasedAt time.Time) pte
 		return tableData
 	}
 	return append(tableData, []string{"Leased At", util.FormatLocal(leasedAt)})
+}
+
+func appendReplayRows(tableData pterm.TableData, replayID, replayViewURL string, startedAt, finishedAt time.Time) pterm.TableData {
+	if replayID == "" {
+		return tableData
+	}
+	tableData = append(tableData, []string{"Replay ID", replayID})
+	if replayViewURL != "" {
+		tableData = append(tableData, []string{"Replay View URL", replayViewURL})
+	}
+	if !startedAt.IsZero() {
+		tableData = append(tableData, []string{"Replay Started At", util.FormatLocal(startedAt)})
+	}
+	if !finishedAt.IsZero() {
+		tableData = append(tableData, []string{"Replay Finished At", util.FormatLocal(finishedAt)})
+	}
+	return tableData
 }
 
 // buildBrowserTableData creates a base table with common browser session fields.
@@ -1078,6 +1123,51 @@ func (b BrowsersCmd) View(ctx context.Context, in BrowsersViewInput) error {
 	return nil
 }
 
+func (b BrowsersCmd) LiveViewCreate(ctx context.Context, in BrowsersLiveViewCreateInput) error {
+	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+
+	scope := in.Scope
+	if scope == "" {
+		scope = string(kernel.BrowserLiveViewScopeRead)
+	}
+	if scope != string(kernel.BrowserLiveViewScopeRead) && scope != string(kernel.BrowserLiveViewScopeControl) {
+		return fmt.Errorf("invalid --scope value: %s (must be 'read' or 'control')", scope)
+	}
+	if in.TtlSeconds < 0 || in.TtlSeconds > 31536000 || (in.TtlSecondsSet && in.TtlSeconds == 0) {
+		return fmt.Errorf("--ttl-seconds must be between 1 and 31536000 when set")
+	}
+
+	params := kernel.BrowserLiveViewNewParams{
+		BrowserLiveViewRequest: kernel.BrowserLiveViewRequestParam{
+			Scope: kernel.BrowserLiveViewScope(scope),
+		},
+	}
+	if in.TtlSeconds > 0 {
+		params.BrowserLiveViewRequest.TtlSeconds = kernel.Opt(in.TtlSeconds)
+	}
+
+	liveView, err := b.liveView.New(ctx, in.Identifier, params)
+	if err != nil {
+		return util.CleanedUpSdkError{Err: err}
+	}
+	if in.Output == "json" {
+		return util.PrintPrettyJSON(liveView)
+	}
+
+	rows := pterm.TableData{
+		{"Property", "Value"},
+		{"URL", liveView.URL},
+		{"Scope", string(liveView.Scope)},
+	}
+	if !liveView.ExpiresAt.IsZero() {
+		rows = append(rows, []string{"Expires At", util.FormatLocal(liveView.ExpiresAt)})
+	}
+	PrintTableNoPad(rows, true)
+	return nil
+}
+
 func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
@@ -1111,6 +1201,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	// Append additional detailed fields
 	tableData = append(tableData, []string{"Created At", util.FormatLocal(browser.CreatedAt)})
 	tableData = appendBrowserLeasedAtRow(tableData, browser.LeasedAt)
+	tableData = appendReplayRows(tableData, browser.Replay.ReplayID, browser.Replay.ReplayViewURL, browser.Replay.StartedAt, browser.Replay.FinishedAt)
 	tableData = append(tableData, []string{"Region", util.OrDash(string(browser.Region))})
 	tableData = append(tableData, browserLocationRows(browser.Location)...)
 	tableData = append(tableData, []string{"Timeout (seconds)", fmt.Sprintf("%d", browser.TimeoutSeconds)})
@@ -1460,6 +1551,12 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	pterm.Success.Printf("Updated browser %s\n", browser.SessionID)
 	if !browser.LeasedAt.IsZero() {
 		pterm.Info.Printf("Leased At: %s\n", util.FormatLocal(browser.LeasedAt))
+	}
+	if browser.Replay.ReplayID != "" {
+		pterm.Info.Printf("Replay ID: %s\n", browser.Replay.ReplayID)
+		if browser.Replay.ReplayViewURL != "" {
+			pterm.Info.Printf("Replay View URL: %s\n", browser.Replay.ReplayViewURL)
+		}
 	}
 	if hasNameChange {
 		pterm.Info.Printf("Name: %s\n", util.OrDash(browser.Name))
@@ -3135,6 +3232,25 @@ var browsersViewCmd = &cobra.Command{
 	RunE:  runBrowsersView,
 }
 
+var browsersLiveViewCmd = &cobra.Command{
+	Use:   "live-view",
+	Short: "Create scoped live view URLs",
+}
+
+var browsersLiveViewCreateCmd = &cobra.Command{
+	Use:   "create <id-or-name>",
+	Short: "Create a live view URL",
+	Long: `Create a live view URL for a headful browser with read-only or control access.
+
+The URL works only in the live viewer; it cannot connect to CDP, WebDriver, or
+other browser endpoints. A read-only URL cannot send input. Without
+--ttl-seconds, the URL remains valid until the browser is deleted. For a browser
+acquired from a pool, it also stops working when the browser is released. The
+URL is not stored and cannot be revoked early, so treat it as a credential.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runBrowsersLiveViewCreate,
+}
+
 var browsersGetCmd = &cobra.Command{
 	Use:   "get <id-or-name>",
 	Short: "Get detailed information about a browser session by ID or name",
@@ -3251,6 +3367,12 @@ func init() {
 	// view flags
 	addJSONOutputFlag(browsersViewCmd)
 
+	// live-view flags
+	browsersLiveViewCreateCmd.Flags().String("scope", "read", "Access level: 'read' shows the browser without accepting input; 'control' also lets the viewer drive it")
+	browsersLiveViewCreateCmd.Flags().Int64("ttl-seconds", 0, "Seconds until the URL expires (1-31536000); omit to keep it valid until the browser is deleted or a pooled browser is released")
+	addJSONOutputFlag(browsersLiveViewCreateCmd)
+	browsersLiveViewCmd.AddCommand(browsersLiveViewCreateCmd)
+
 	// save-profile flags
 	addJSONOutputFlag(browsersSaveProfileCmd)
 	browsersSaveProfileCmd.Flags().String("profile-id", "", "Existing profile ID to overwrite (mutually exclusive with --profile-name)")
@@ -3290,6 +3412,7 @@ func init() {
 	browsersCmd.AddCommand(browsersCreateCmd)
 	browsersCmd.AddCommand(browsersDeleteCmd)
 	browsersCmd.AddCommand(browsersViewCmd)
+	browsersCmd.AddCommand(browsersLiveViewCmd)
 	browsersCmd.AddCommand(browsersGetCmd)
 	browsersCmd.AddCommand(browsersSaveProfileCmd)
 	browsersCmd.AddCommand(browsersUpdateCmd)
@@ -3582,6 +3705,7 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().StringSlice("allowed-host", nil, "Set an egress allowlist at creation: the only destinations the browser may reach through Kernel-managed egress (repeat or comma-separated, max 100); anything else is refused with a 403 (network_policy_denied). Filters Kernel-managed egress only, not all browser VM traffic. Accepts exact hostnames ('example.com'), a leading wildcard matching subdomains only ('*.example.com'), public IPs ('8.8.8.8', '[2001:4860:4860::8888]'), and public CIDRs ('8.8.4.0/24'). No ports, paths, or schemes. --start-url must be allowed. Omit for unfiltered egress; an empty list is invalid. Requires proxy v3; cannot be combined with --pool-id or --pool-name, even with --yes. An existing list can be replaced or removed with 'browsers update'; it cannot be added later if omitted at creation or removed")
 	browsersCreateCmd.Flags().StringArray("proxy-route", nil, "Route HOST[,HOST...]=PROXY through a proxy (repeatable, max 10 routes and 50 hosts per route). PROXY is an ID by default; use id:ID or name:NAME explicitly. Exact hosts beat wildcards (longer suffixes win); *.example.com excludes example.com. Unmatched hosts use --proxy-* or default egress. Routes also apply to start_url and other setup traffic. Create-only")
 	browsersCreateCmd.Flags().String("start-url", "", "Initial page to open on launch")
+	browsersCreateCmd.Flags().Bool("start-replay", false, "Start replay recording when the browser is created or acquired; with --pool-id or --pool-name, overrides the pool's configured default")
 	browsersCreateCmd.Flags().String("timezone", "", "Session timezone (IANA, e.g. Europe/Berlin); defaults to the browser region's timezone")
 	browsersCreateCmd.Flags().String("locale", "", "Session locale used for languages and date and number formatting (BCP 47, e.g. de-DE); defaults to the browser region's locale")
 	browsersCreateCmd.Flags().StringSlice("extension", []string{}, "Extension IDs or names to load (repeatable; may be passed multiple times or comma-separated)")
@@ -3688,6 +3812,7 @@ func poolLeaseAllowedFlags() map[string]bool {
 		"timeout":               true,
 		"name":                  true,
 		"start-url":             true,
+		"start-replay":          true,
 		"tag":                   true,
 		"telemetry":             true,
 		"telemetry-cdp-exclude": true,
@@ -3726,6 +3851,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	allowedHosts, _ := cmd.Flags().GetStringSlice("allowed-host")
 	proxyRoutes, _ := cmd.Flags().GetStringArray("proxy-route")
 	startURL, _ := cmd.Flags().GetString("start-url")
+	startReplay, _ := cmd.Flags().GetBool("start-replay")
 	timezone, _ := cmd.Flags().GetString("timezone")
 	locale, _ := cmd.Flags().GetString("locale")
 	extensions, _ := cmd.Flags().GetStringSlice("extension")
@@ -3824,7 +3950,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry, telemetryCdpExclude, startURL, acquireProfile)
+		acquireParams, err := buildAcquireParams(name, tags, acquireTimeout, telemetry, telemetryCdpExclude, startURL, BoolFlag{Set: cmd.Flags().Changed("start-replay"), Value: startReplay}, acquireProfile)
 		if err != nil {
 			return err
 		}
@@ -3844,7 +3970,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		if output == "json" {
 			return util.PrintPrettyJSON(resp)
 		}
-		printBrowserSessionResult(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.ProfileSaveChanges, resp.StartURL, resp.Name, resp.Tags, resp.LeasedAt)
+		printBrowserPoolAcquireResult(resp)
 		return nil
 	}
 
@@ -3887,6 +4013,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		AllowedHostsProvided: cmd.Flags().Changed("allowed-host"),
 		ProxyRoutes:          proxyRoutes,
 		StartURL:             startURL,
+		StartReplay:          BoolFlag{Set: cmd.Flags().Changed("start-replay"), Value: startReplay},
 		Timezone:             timezone,
 		Locale:               locale,
 		Extensions:           extensions,
@@ -3932,6 +4059,23 @@ func runBrowsersView(cmd *cobra.Command, args []string) error {
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
 	return b.View(cmd.Context(), in)
+}
+
+func runBrowsersLiveViewCreate(cmd *cobra.Command, args []string) error {
+	client := getKernelClient(cmd)
+	output, _ := cmd.Flags().GetString("output")
+	scope, _ := cmd.Flags().GetString("scope")
+	ttlSeconds, _ := cmd.Flags().GetInt64("ttl-seconds")
+
+	svc := client.Browsers.LiveView
+	b := BrowsersCmd{liveView: &svc}
+	return b.LiveViewCreate(cmd.Context(), BrowsersLiveViewCreateInput{
+		Identifier:    args[0],
+		Scope:         scope,
+		TtlSeconds:    ttlSeconds,
+		TtlSecondsSet: cmd.Flags().Changed("ttl-seconds"),
+		Output:        output,
+	})
 }
 
 func runBrowsersGet(cmd *cobra.Command, args []string) error {

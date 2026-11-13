@@ -12,6 +12,7 @@ import (
 	"github.com/kernel/kernel-go-sdk"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/kernel/kernel-go-sdk/packages/pagination"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -250,7 +251,7 @@ func TestBrowserPoolsCreate_PrivateHostNormalization(t *testing.T) {
 // forwarding used by both `browser-pools acquire` and the `browsers create
 // --pool-id` lease path.
 func TestBuildAcquireParams(t *testing.T) {
-	p, err := buildAcquireParams("lease", map[string]string{"env": "prod"}, 30, "console,network", "", "https://example.com", kernel.BrowserProfileParam{Name: kernel.Opt("my-profile")})
+	p, err := buildAcquireParams("lease", map[string]string{"env": "prod"}, 30, "console,network", "", "https://example.com", BoolFlag{Set: true, Value: true}, kernel.BrowserProfileParam{Name: kernel.Opt("my-profile")})
 	assert.NoError(t, err)
 	assert.True(t, p.Name.Valid())
 	assert.Equal(t, "lease", p.Name.Value)
@@ -259,22 +260,25 @@ func TestBuildAcquireParams(t *testing.T) {
 	assert.Equal(t, int64(30), p.AcquireTimeoutSeconds.Value)
 	assert.True(t, p.StartURL.Valid())
 	assert.Equal(t, "https://example.com", p.StartURL.Value)
+	assert.True(t, p.StartReplay.Valid())
+	assert.True(t, p.StartReplay.Value)
 	assert.True(t, p.Telemetry.Browser.Console.Enabled.Value)
 	assert.True(t, p.Telemetry.Browser.Network.Enabled.Value)
 	assert.Equal(t, "my-profile", p.Profile.Name.Value)
 
 	// Unset inputs produce an empty params struct (nothing forwarded).
-	empty, err := buildAcquireParams("", nil, 0, "", "", "", kernel.BrowserProfileParam{})
+	empty, err := buildAcquireParams("", nil, 0, "", "", "", BoolFlag{}, kernel.BrowserProfileParam{})
 	assert.NoError(t, err)
 	assert.False(t, empty.Name.Valid())
 	assert.Len(t, empty.Tags, 0)
 	assert.False(t, empty.AcquireTimeoutSeconds.Valid())
 	assert.False(t, empty.StartURL.Valid())
+	assert.False(t, empty.StartReplay.Valid())
 	assert.False(t, empty.Profile.ID.Valid())
 	assert.False(t, empty.Profile.Name.Valid())
 
 	// An invalid category surfaces an error rather than a partial param.
-	_, err = buildAcquireParams("", nil, 0, "bogus", "", "", kernel.BrowserProfileParam{})
+	_, err = buildAcquireParams("", nil, 0, "bogus", "", "", BoolFlag{}, kernel.BrowserProfileParam{})
 	assert.Error(t, err)
 }
 
@@ -373,6 +377,64 @@ func TestBrowserPoolsUpdate_WithRefreshOnProfileUpdate(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, captured.RefreshOnProfileUpdate.Valid())
 	assert.False(t, captured.RefreshOnProfileUpdate.Value)
+}
+
+func TestBrowserPoolsStartReplayParams(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var created kernel.BrowserPoolNewParams
+	var updated kernel.BrowserPoolUpdateParams
+	var acquired kernel.BrowserPoolAcquireParams
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			created = body
+			return &kernel.BrowserPool{ID: "pool-1"}, nil
+		},
+		UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			updated = body
+			return &kernel.BrowserPool{ID: id}, nil
+		},
+		AcquireFunc: func(ctx context.Context, id string, body kernel.BrowserPoolAcquireParams, opts ...option.RequestOption) (*kernel.BrowserPoolAcquireResponse, error) {
+			acquired = body
+			return &kernel.BrowserPoolAcquireResponse{
+				SessionID: "sess-1",
+				Replay: kernel.BrowserPoolAcquireResponseReplay{
+					ReplayID:      "replay-1",
+					ReplayViewURL: "https://replays.example/replay-1",
+				},
+			}, nil
+		},
+	}
+	c := BrowserPoolsCmd{client: fake}
+
+	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{
+		Size:        1,
+		StartReplay: BoolFlag{Set: true, Value: true},
+	}))
+	require.True(t, created.StartReplay.Valid())
+	assert.True(t, created.StartReplay.Value)
+
+	require.NoError(t, c.Update(context.Background(), BrowserPoolsUpdateInput{
+		IDOrName:    "pool-1",
+		StartReplay: BoolFlag{Set: true, Value: false},
+	}))
+	require.True(t, updated.StartReplay.Valid())
+	assert.False(t, updated.StartReplay.Value)
+
+	require.NoError(t, c.Acquire(context.Background(), BrowserPoolsAcquireInput{
+		IDOrName:    "pool-1",
+		StartReplay: BoolFlag{Set: true, Value: true},
+	}))
+	require.True(t, acquired.StartReplay.Valid())
+	assert.True(t, acquired.StartReplay.Value)
+	assert.Contains(t, outBuf.String(), "replay-1")
+	assert.Contains(t, outBuf.String(), "https://replays.example/replay-1")
+
+	for _, command := range []*cobra.Command{browserPoolsCreateCmd, browserPoolsUpdateCmd, browserPoolsAcquireCmd} {
+		flag := command.Flags().Lookup("start-replay")
+		require.NotNil(t, flag)
+		assert.Contains(t, flag.Usage, "replay")
+	}
 }
 
 func TestBrowserPoolsUpdate_WithExpectedNetwork(t *testing.T) {

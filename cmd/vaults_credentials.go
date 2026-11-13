@@ -54,12 +54,19 @@ const vaultOnePasswordCredentialHelp = `1Password flow:
    with the https website of a login page. use one entry unless the user needs several
    logins, such as separate accounts or sign-in origins; per-entry reason and
    keywords go in the spec. no field definitions, selectors, or values are accepted.
-3. invoke 1pw_create_access_request once; it needs no browser. present the returned
-   onepassword:// approval link and instructions to the account owner unchanged.
-4. invoke 1pw_access_request_status (timeout_seconds 0-120) until the credential is
-   ready, declined, or failed. ready means approved, not signed in. for credentials made
-   with a customer-supplied access token, state.access_request.resolved returns the
-   non-secret granted references.
+3. invoke 1pw_create_access_request once per advertised request; it needs no browser.
+   present the returned onepassword:// approval link and instructions to the account
+   owner unchanged. native iOS, Android, and desktop apps running 1Password 8.12.46
+   or later may append &return_url=<URL-encoded URL>.
+4. invoke 1pw_access_request_status with timeout_seconds 0-120 (default 10). Kernel
+   checks immediately, then every 2 seconds, slowing to 10- and 20-second intervals.
+   each call reads fresh status and may wait up to 20 seconds for its first scheduled
+   check even when timeout_seconds is shorter; honor a 429 Retry-After. after 3 minutes
+   the approval prompt closes: ask whether the owner approved and check once more, or
+   invoke a newly advertised 1pw_create_access_request for another link. expired returns
+   the item to pending_authorization; unknown is treated as failed. ready means approved,
+   not signed in. for credentials made with a customer-supplied access token,
+   state.access_request.resolved returns the non-secret granted references.
 5. create a browser with the vault attached, open the login page, and invoke 1pw_fill
    with browser_id and the exact page_url. the 1Password extension decides whether the
    approved login matches and refuses pages that do not. when several open pages have

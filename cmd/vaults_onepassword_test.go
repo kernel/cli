@@ -13,7 +13,7 @@ import (
 
 const onePasswordAccountFixture = `{"id":"account-1","key":"onepassword","type":"credential_account","spec":{"provider":"1password","authorization":{"method":"oauth","client":{"type":"kernel_managed"}}},"state":{"provider":"1password","status":"pending_authorization"},"action":{"name":"1password_oauth","url":"https://my.1password.example/oauth/authorize?client_id=kernel&state=opaque"},"available_operations":[],"available_expansions":[],"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}`
 
-const onePasswordCredentialFixture = `{"id":"credential-2","key":"github","type":"credential","version":1,"spec":{"provider":"1password","account":"onepassword","requests":{"version":2,"entries":[{"type":"login","parameters":{"website":"https://github.com"}}]}},"state":{"provider":"1password","status":"pending_authorization","access_request_id":"req-1","access_request":{"id":"req-1","state":"pending","identity":"never-print-identity","path":"never-print-path","has_autofill_token":false,"granted_count":0,"entries":[{"id":"entry-1","type":"login","parameters":{"website":"https://github.com"}}]}},"action":{"name":"1password_access_approval","url":"onepassword://grant-brokered-access?access_request_reference=ref-1","instructions":"Present this link to the account owner."},"available_operations":[{"type":"1pw_access_request_status","description":"Check the request."}],"available_expansions":[],"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}`
+const onePasswordCredentialFixture = `{"id":"credential-2","key":"github","type":"credential","version":1,"spec":{"provider":"1password","account":"onepassword","requests":{"version":2,"entries":[{"type":"login","parameters":{"website":"https://github.com"}}]}},"state":{"provider":"1password","status":"pending_authorization","access_request_id":"req-1","access_request":{"id":"req-1","state":"pending","identity":"never-print-identity","path":"never-print-path","has_autofill_token":false,"granted_count":0,"entries":[{"id":"entry-1","type":"login","parameters":{"website":"https://github.com"}}]}},"action":{"name":"1password_access_approval","url":"onepassword://grant-brokered-access?access_request_reference=ref-1","access_request_reference":"ref-1","instructions":"Present this link to the account owner."},"available_operations":[{"type":"1pw_access_request_status","description":"Check the request."}],"available_expansions":[],"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}`
 
 func onePasswordCredentialWithOperation(operation string) string {
 	return strings.Replace(onePasswordCredentialFixture, `"1pw_access_request_status"`, `"`+operation+`"`, 1)
@@ -103,6 +103,7 @@ func TestOnePasswordCredentialOutput(t *testing.T) {
 		assert.Contains(t, out, want)
 	}
 	assert.NotContains(t, out, "never-print")
+	assert.NotContains(t, out, `"access_request_reference":`)
 
 	out, text, err := executeVaultCommand(t, client, "vaults", "items", "get", "user", "github")
 	require.NoError(t, err)
@@ -115,6 +116,7 @@ func TestOnePasswordCredentialOutput(t *testing.T) {
 	assert.Contains(t, output, "invoke: kernel vaults items invoke --params '<json>' -- user github 1pw_access_request_status")
 	assert.NotContains(t, output, "field definitions")
 	assert.NotContains(t, output, "never-print")
+	assert.NotContains(t, output, `"access_request_reference":`)
 
 	for _, forged := range []string{
 		"onepassword://grant-brokered-access?access_request_reference=ref-1&code=secret",
@@ -286,6 +288,13 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 		"ask whose 1Password account holds the login and confirm it is in a non-shared vault",
 		"1-5 login entries",
 		"invoke 1pw_create_access_request once",
+		"append &return_url=<URL-encoded URL>",
+		"every 2 seconds",
+		"20 seconds for its first scheduled",
+		"429 Retry-After",
+		"after 3 minutes",
+		"expired returns",
+		"unknown is treated as failed",
 		"pass entry_id",
 		"not that sign-in succeeded",
 		"do not\ndelete and recreate the item to reset it",
@@ -320,6 +329,9 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 	assert.Contains(t, invoke.Long, "page origin does not identify exactly one")
 	assert.Contains(t, credentials.Long, "extension decides whether the")
 	assert.Contains(t, credentials.Long, "page origin does not identify exactly one")
+	for _, want := range []string{"append &return_url=<URL-encoded URL>", "every 2 seconds", "20 seconds for its first scheduled", "429 Retry-After", "after 3 minutes", "expired returns", "unknown is treated as failed"} {
+		assert.Contains(t, invoke.Long, want)
+	}
 	assert.Contains(t, invoke.Long, "optional access_token_expires_at (RFC3339)")
 	assert.Contains(t, invoke.Long, "expiry clears the previously supplied expiry")
 	for _, help := range []string{invoke.Long, invoke.Example, credentials.Long, credentials.Example, connect.Long} {

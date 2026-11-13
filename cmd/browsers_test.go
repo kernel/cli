@@ -133,6 +133,17 @@ func (f *FakeBrowsersService) SaveProfile(ctx context.Context, id string, body k
 	return &kernel.Profile{}, nil
 }
 
+type FakeBrowserLiveViewService struct {
+	NewFunc func(ctx context.Context, id string, body kernel.BrowserLiveViewNewParams, opts ...option.RequestOption) (*kernel.BrowserLiveView, error)
+}
+
+func (f *FakeBrowserLiveViewService) New(ctx context.Context, id string, body kernel.BrowserLiveViewNewParams, opts ...option.RequestOption) (*kernel.BrowserLiveView, error) {
+	if f.NewFunc != nil {
+		return f.NewFunc(ctx, id, body, opts...)
+	}
+	return &kernel.BrowserLiveView{}, nil
+}
+
 func TestBrowsersSaveProfile(t *testing.T) {
 	created := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
@@ -184,6 +195,62 @@ func TestBrowsersSaveProfileValidationAndHelp(t *testing.T) {
 	assert.NotNil(t, cmd.Flags().Lookup("profile-name"))
 	for _, text := range []string{"Saving restarts the browser", "CDP", "Playwright", "WebDriver", "pages reload", "stable", "profile upload completes", "remain in the running browser", "does not attach", "save_changes", "refresh_on_profile_update", "completion time", "failed save leaves it unchanged", "browser_busy", "browser_lease_changed", "browser_not_active", "doesn't retry"} {
 		assert.Contains(t, cmd.Long, text)
+	}
+}
+
+func TestBrowsersLiveViewCreateCommand(t *testing.T) {
+	setupStdoutCapture(t)
+	expiresAt := time.Date(2026, 9, 1, 13, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/browsers/browser-one/live_view", r.URL.Path)
+		payload, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"scope":"control","ttl_seconds":3600}`, string(payload))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"url":"https://live.example/view","scope":"control","expires_at":%q}`, expiresAt.Format(time.RFC3339))
+	}))
+	t.Cleanup(server.Close)
+
+	client := kernel.NewClient(option.WithBaseURL(server.URL), option.WithAPIKey("test"))
+	cmd := &cobra.Command{Use: "create"}
+	cmd.SetContext(context.WithValue(context.Background(), util.KernelClientKey, client))
+	cmd.Flags().String("scope", "read", "")
+	cmd.Flags().Int64("ttl-seconds", 0, "")
+	addJSONOutputFlag(cmd)
+	require.NoError(t, cmd.ParseFlags([]string{"--scope", "control", "--ttl-seconds", "3600"}))
+
+	require.NoError(t, runBrowsersLiveViewCreate(cmd, []string{"browser-one"}))
+	assert.Contains(t, outBuf.String(), "https://live.example/view")
+	assert.Contains(t, outBuf.String(), "control")
+	assert.Contains(t, outBuf.String(), util.FormatLocal(expiresAt))
+}
+
+func TestBrowsersLiveViewCreateDefaultsAndValidation(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserLiveViewNewParams
+	fake := &FakeBrowserLiveViewService{NewFunc: func(ctx context.Context, id string, body kernel.BrowserLiveViewNewParams, opts ...option.RequestOption) (*kernel.BrowserLiveView, error) {
+		assert.Equal(t, "browser-one", id)
+		captured = body
+		return &kernel.BrowserLiveView{URL: "https://live.example/read", Scope: kernel.BrowserLiveViewScopeRead}, nil
+	}}
+	b := BrowsersCmd{liveView: fake}
+	require.NoError(t, b.LiveViewCreate(context.Background(), BrowsersLiveViewCreateInput{Identifier: "browser-one"}))
+	raw, err := json.Marshal(captured)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"scope":"read"}`, string(raw))
+
+	assert.ErrorContains(t, b.LiveViewCreate(context.Background(), BrowsersLiveViewCreateInput{Identifier: "browser-one", Scope: "write"}), "must be 'read' or 'control'")
+	assert.ErrorContains(t, b.LiveViewCreate(context.Background(), BrowsersLiveViewCreateInput{Identifier: "browser-one", TtlSeconds: -1}), "--ttl-seconds")
+	assert.ErrorContains(t, b.LiveViewCreate(context.Background(), BrowsersLiveViewCreateInput{Identifier: "browser-one", TtlSecondsSet: true}), "--ttl-seconds")
+	assert.ErrorContains(t, b.LiveViewCreate(context.Background(), BrowsersLiveViewCreateInput{Identifier: "browser-one", TtlSeconds: 31536001}), "--ttl-seconds")
+
+	command, _, err := rootCmd.Find([]string{"browsers", "live-view", "create"})
+	require.NoError(t, err)
+	assert.NotNil(t, command.Flags().Lookup("scope"))
+	assert.NotNil(t, command.Flags().Lookup("ttl-seconds"))
+	for _, text := range []string{"headful browser", "read-only or control", "cannot connect to CDP", "cannot be revoked early", "treat it as a credential"} {
+		assert.Contains(t, command.Long, text)
 	}
 }
 
@@ -601,6 +668,39 @@ func TestBrowsersCreate_WithNameAndTags(t *testing.T) {
 	assert.Contains(t, out, "my-session")
 	assert.Contains(t, out, "Tags")
 	assert.Contains(t, out, "env=staging, team=backend")
+}
+
+func TestBrowsersCreate_WithStartReplay(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	startedAt := time.Date(2032, 6, 7, 8, 9, 10, 0, time.UTC)
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{
+				SessionID: "sess-replay",
+				Replay: kernel.BrowserNewResponseReplay{
+					ReplayID:      "replay-1",
+					ReplayViewURL: "https://replays.example/replay-1",
+					StartedAt:     startedAt,
+				},
+			}, nil
+		},
+	}
+
+	err := (BrowsersCmd{browsers: fake}).Create(context.Background(), BrowsersCreateInput{
+		StartReplay: BoolFlag{Set: true, Value: true},
+	})
+	require.NoError(t, err)
+	require.True(t, captured.StartReplay.Valid())
+	assert.True(t, captured.StartReplay.Value)
+	assert.Contains(t, outBuf.String(), "replay-1")
+	assert.Contains(t, outBuf.String(), "https://replays.example/replay-1")
+
+	flag := browsersCreateCmd.Flags().Lookup("start-replay")
+	require.NotNil(t, flag)
+	assert.Contains(t, flag.Usage, "pool")
 }
 
 func TestBrowsersCreate_WithVaults(t *testing.T) {
@@ -1246,6 +1346,7 @@ func TestPoolLeaseAllowedFlags_ExcludesChromePolicy(t *testing.T) {
 	// The flags that genuinely apply per-lease stay allowed.
 	assert.True(t, allowed["pool-id"])
 	assert.True(t, allowed["name"])
+	assert.True(t, allowed["start-replay"])
 	assert.True(t, allowed["tag"])
 }
 

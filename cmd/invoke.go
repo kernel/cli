@@ -591,17 +591,20 @@ func runInvocationBrowsers(cmd *cobra.Command, args []string) error {
 	}
 
 	showLeasedAt := false
+	showReplay := false
 	for _, browser := range resp.Browsers {
-		if !browser.LeasedAt.IsZero() {
-			showLeasedAt = true
-			break
-		}
+		showLeasedAt = showLeasedAt || !browser.LeasedAt.IsZero()
+		showReplay = showReplay || browser.Replay.ReplayID != ""
 	}
 	headers := []string{"Session ID", "Created At"}
 	if showLeasedAt {
 		headers = append(headers, "Leased At")
 	}
-	headers = append(headers, "Region", "Headless", "Stealth", "Timeout", "CDP WS URL", "Live View URL")
+	headers = append(headers, "Region", "Headless", "Stealth", "Timeout")
+	if showReplay {
+		headers = append(headers, "Replay ID")
+	}
+	headers = append(headers, "CDP WS URL", "Live View URL")
 	table := pterm.TableData{headers}
 
 	for _, browser := range resp.Browsers {
@@ -624,6 +627,11 @@ func runInvocationBrowsers(cmd *cobra.Command, args []string) error {
 			fmt.Sprintf("%v", browser.Headless),
 			fmt.Sprintf("%v", browser.Stealth),
 			fmt.Sprintf("%d", browser.TimeoutSeconds),
+		)
+		if showReplay {
+			row = append(row, util.OrDash(browser.Replay.ReplayID))
+		}
+		row = append(row,
 			truncateURL(browser.CdpWsURL, 40),
 			truncateURL(liveView, 40),
 		)

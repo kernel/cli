@@ -153,6 +153,7 @@ type BrowserPoolsCreateInput struct {
 	Kiosk                  BoolFlag
 	Memory                 string
 	RefreshOnProfileUpdate BoolFlag
+	StartReplay            BoolFlag
 	ProfileID              string
 	ProfileName            string
 	ProxyID                string
@@ -210,6 +211,9 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 	}
 	if in.RefreshOnProfileUpdate.Set {
 		params.RefreshOnProfileUpdate = kernel.Bool(in.RefreshOnProfileUpdate.Value)
+	}
+	if in.StartReplay.Set {
+		params.StartReplay = kernel.Bool(in.StartReplay.Value)
 	}
 
 	profileID, profileName, profileSet, err := resolvePoolProfile(in.ProfileID, in.ProfileName)
@@ -346,6 +350,7 @@ func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error
 		{"Kiosk Mode", fmt.Sprintf("%t", cfg.KioskMode)},
 		{"Memory", util.OrDash(string(cfg.Memory))},
 		{"Refresh On Profile Update", fmt.Sprintf("%t", cfg.RefreshOnProfileUpdate)},
+		{"Start Replay", fmt.Sprintf("%t", cfg.StartReplay)},
 		{"Profile", formatProfile(cfg.Profile)},
 		{"Proxy ID", util.OrDash(cfg.ProxyID)},
 		{"Start URL", util.OrDash(cfg.StartURL)},
@@ -372,6 +377,7 @@ type BrowserPoolsUpdateInput struct {
 	Kiosk                  BoolFlag
 	Memory                 string
 	RefreshOnProfileUpdate BoolFlag
+	StartReplay            BoolFlag
 	ProfileID              string
 	ProfileName            string
 	ClearProfile           bool
@@ -506,6 +512,9 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 	}
 	if in.RefreshOnProfileUpdate.Set {
 		params.RefreshOnProfileUpdate = kernel.Bool(in.RefreshOnProfileUpdate.Value)
+	}
+	if in.StartReplay.Set {
+		params.StartReplay = kernel.Bool(in.StartReplay.Value)
 	}
 
 	profileID, profileName, profileSet, err := resolvePoolProfile(in.ProfileID, in.ProfileName)
@@ -657,6 +666,7 @@ type BrowserPoolsAcquireInput struct {
 	Tags                map[string]string
 	Telemetry           string
 	TelemetryCdpExclude string
+	StartReplay         BoolFlag
 	ProfileID           string
 	ProfileName         string
 	ProfileSaveChanges  bool
@@ -691,7 +701,7 @@ func buildAcquireProfileParam(profileID, profileName string, saveChanges bool) (
 // path so the per-lease name/tags/start-url/telemetry/profile forwarding cannot silently
 // diverge between them. The telemetry override merges onto the pool's config for
 // this lease.
-func buildAcquireParams(name string, tags map[string]string, timeoutSeconds int64, telemetry, telemetryCdpExclude, startURL string, profile kernel.BrowserProfileParam) (kernel.BrowserPoolAcquireParams, error) {
+func buildAcquireParams(name string, tags map[string]string, timeoutSeconds int64, telemetry, telemetryCdpExclude, startURL string, startReplay BoolFlag, profile kernel.BrowserProfileParam) (kernel.BrowserPoolAcquireParams, error) {
 	params := kernel.BrowserPoolAcquireParams{Profile: profile}
 	if timeoutSeconds > 0 {
 		params.AcquireTimeoutSeconds = kernel.Int(timeoutSeconds)
@@ -701,6 +711,9 @@ func buildAcquireParams(name string, tags map[string]string, timeoutSeconds int6
 	}
 	if startURL != "" {
 		params.StartURL = kernel.Opt(startURL)
+	}
+	if startReplay.Set {
+		params.StartReplay = kernel.Opt(startReplay.Value)
 	}
 	if len(tags) > 0 {
 		params.Tags = kernel.Tags(tags)
@@ -724,7 +737,7 @@ func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInpu
 	if err != nil {
 		return err
 	}
-	params, err := buildAcquireParams(in.Name, in.Tags, in.TimeoutSeconds, in.Telemetry, in.TelemetryCdpExclude, in.StartURL, profile)
+	params, err := buildAcquireParams(in.Name, in.Tags, in.TimeoutSeconds, in.Telemetry, in.TelemetryCdpExclude, in.StartURL, in.StartReplay, profile)
 	if err != nil {
 		return err
 	}
@@ -750,6 +763,7 @@ func (c BrowserPoolsCmd) Acquire(ctx context.Context, in BrowserPoolsAcquireInpu
 		{"Session ID", resp.SessionID},
 	}
 	tableData = appendBrowserLeasedAtRow(tableData, resp.LeasedAt)
+	tableData = appendReplayRows(tableData, resp.Replay.ReplayID, resp.Replay.ReplayViewURL, resp.Replay.StartedAt, resp.Replay.FinishedAt)
 	if resp.Name != "" {
 		tableData = append(tableData, []string{"Name", resp.Name})
 	}
@@ -903,6 +917,7 @@ func init() {
 	browserPoolsCreateCmd.Flags().Bool("kiosk", false, "Enable kiosk mode")
 	browserPoolsCreateCmd.Flags().String("memory", "", "Memory for browsers in the pool. Headless: '1GiB' (default), '2GiB' or '4GiB'. Headful: '8GiB' (default) or '16GiB'")
 	browserPoolsCreateCmd.Flags().Bool("refresh-on-profile-update", false, "Flush idle browsers when the pool's profile is updated")
+	browserPoolsCreateCmd.Flags().Bool("start-replay", false, "Start replay recording automatically whenever a browser is acquired from this pool")
 	browserPoolsCreateCmd.Flags().String("profile-id", "", "Profile ID")
 	browserPoolsCreateCmd.Flags().String("profile-name", "", "Profile name")
 	browserPoolsCreateCmd.Flags().String("proxy-id", "", "Proxy ID")
@@ -930,6 +945,7 @@ func init() {
 	browserPoolsUpdateCmd.Flags().Bool("kiosk", false, "Enable kiosk mode")
 	browserPoolsUpdateCmd.Flags().String("memory", "", "Memory for newly-warmed browsers in the pool. Headless: '1GiB', '2GiB' or '4GiB'. Headful: '8GiB' or '16GiB'. Existing browsers keep their allocation; use --discard-all-idle to replace idle browsers")
 	browserPoolsUpdateCmd.Flags().Bool("refresh-on-profile-update", false, "Flush idle browsers when the pool's profile is updated")
+	browserPoolsUpdateCmd.Flags().Bool("start-replay", false, "Set whether replay recording starts automatically for future acquired browsers; use --start-replay=false to disable")
 	browserPoolsUpdateCmd.Flags().String("profile-id", "", "Profile ID")
 	browserPoolsUpdateCmd.Flags().String("profile-name", "", "Profile name")
 	browserPoolsUpdateCmd.Flags().Bool("clear-profile", false, "Remove the pool profile")
@@ -967,6 +983,7 @@ func init() {
 	browserPoolsAcquireCmd.Flags().Int64("timeout", 0, "Acquire timeout in seconds")
 	browserPoolsAcquireCmd.Flags().String("name", "", "Optional name for the acquired session (applies to this lease; cleared on release)")
 	browserPoolsAcquireCmd.Flags().String("start-url", "", "URL to navigate the acquired browser to, overriding the pool's start URL for this acquire only (best-effort)")
+	browserPoolsAcquireCmd.Flags().Bool("start-replay", false, "Start replay recording immediately for this acquired browser; omit to use the pool's configured default, or use --start-replay=false to disable it for this lease")
 	browserPoolsAcquireCmd.Flags().StringArray("tag", nil, "Set a tag KEY=VALUE on the acquired session (repeatable; applies to this lease)")
 	browserPoolsAcquireCmd.Flags().String("telemetry", "", "Telemetry override for this lease only, merged onto the pool's config: --telemetry=all, --telemetry=off, or --telemetry=console,network")
 	browserPoolsAcquireCmd.Flags().String("profile-id", "", "Profile ID to load into the acquired browser for this lease (mutually exclusive with --profile-name; the browser is destroyed and replaced on release)")
@@ -1019,6 +1036,7 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	kiosk, _ := cmd.Flags().GetBool("kiosk")
 	memory, _ := cmd.Flags().GetString("memory")
 	refreshOnProfileUpdate, _ := cmd.Flags().GetBool("refresh-on-profile-update")
+	startReplay, _ := cmd.Flags().GetBool("start-replay")
 	profileID, _ := cmd.Flags().GetString("profile-id")
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	proxyID, _ := cmd.Flags().GetString("proxy-id")
@@ -1045,6 +1063,7 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 		Kiosk:                  BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kiosk},
 		Memory:                 memory,
 		RefreshOnProfileUpdate: BoolFlag{Set: cmd.Flags().Changed("refresh-on-profile-update"), Value: refreshOnProfileUpdate},
+		StartReplay:            BoolFlag{Set: cmd.Flags().Changed("start-replay"), Value: startReplay},
 		ProfileID:              profileID,
 		ProfileName:            profileName,
 		ProxyID:                proxyID,
@@ -1086,6 +1105,7 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 	kiosk, _ := cmd.Flags().GetBool("kiosk")
 	memory, _ := cmd.Flags().GetString("memory")
 	refreshOnProfileUpdate, _ := cmd.Flags().GetBool("refresh-on-profile-update")
+	startReplay, _ := cmd.Flags().GetBool("start-replay")
 	profileID, _ := cmd.Flags().GetString("profile-id")
 	profileName, _ := cmd.Flags().GetString("profile-name")
 	clearProfile, _ := cmd.Flags().GetBool("clear-profile")
@@ -1122,6 +1142,7 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 		Kiosk:                  BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kiosk},
 		Memory:                 memory,
 		RefreshOnProfileUpdate: BoolFlag{Set: cmd.Flags().Changed("refresh-on-profile-update"), Value: refreshOnProfileUpdate},
+		StartReplay:            BoolFlag{Set: cmd.Flags().Changed("start-replay"), Value: startReplay},
 		ProfileID:              profileID,
 		ProfileName:            profileName,
 		ClearProfile:           clearProfile,
@@ -1166,6 +1187,7 @@ func runBrowserPoolsAcquire(cmd *cobra.Command, args []string) error {
 	timeout, _ := cmd.Flags().GetInt64("timeout")
 	name, _ := cmd.Flags().GetString("name")
 	startURL, _ := cmd.Flags().GetString("start-url")
+	startReplay, _ := cmd.Flags().GetBool("start-replay")
 	tags, _ := tagsFromFlag(cmd, "tag")
 	telemetry, _ := cmd.Flags().GetString("telemetry")
 	telemetryCdpExclude, _ := cmd.Flags().GetString("telemetry-cdp-exclude")
@@ -1182,6 +1204,7 @@ func runBrowserPoolsAcquire(cmd *cobra.Command, args []string) error {
 		Tags:                tags,
 		Telemetry:           telemetry,
 		TelemetryCdpExclude: telemetryCdpExclude,
+		StartReplay:         BoolFlag{Set: cmd.Flags().Changed("start-replay"), Value: startReplay},
 		ProfileID:           profileID,
 		ProfileName:         profileName,
 		ProfileSaveChanges:  saveChanges,
