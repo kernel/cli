@@ -621,23 +621,6 @@ func TestAuthConnectionsLocale_CommandFlags(t *testing.T) {
 	assert.ErrorContains(t, err, "--locale requires a non-empty value")
 }
 
-func TestAuthConnectionsCreate_RejectsBlankLocale(t *testing.T) {
-	for _, locale := range []string{"", "   "} {
-		called := false
-		fake := &FakeAuthConnectionService{
-			NewFunc: func(ctx context.Context, body kernel.AuthConnectionNewParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
-				called = true
-				return &kernel.ManagedAuth{}, nil
-			},
-		}
-		err := (AuthConnectionCmd{svc: fake}).Create(context.Background(), AuthConnectionCreateInput{
-			Domain: "example.com", ProfileName: "work", Locale: locale, LocaleSet: true, Output: "json",
-		})
-		assert.ErrorContains(t, err, "--locale requires a non-empty value", "locale %q", locale)
-		assert.False(t, called, "locale %q", locale)
-	}
-}
-
 func TestAuthConnectionsHitl_CommandFlags(t *testing.T) {
 	wantTrue := true
 	wantFalse := false
