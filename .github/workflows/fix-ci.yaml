@@ -33,7 +33,7 @@ jobs:
       FIX_BRANCH: ci-fix/${{ github.event.workflow_run.head_branch }}
     steps:
       - name: Check out workflow files
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@v6.1.0
         with:
           path: trusted
           sparse-checkout: |
@@ -62,7 +62,7 @@ jobs:
 
       - name: Check out pull request
         if: steps.pr.outputs.number != ''
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@v6.1.0
         with:
           ref: ${{ env.HEAD_SHA }}
           path: pr
@@ -80,7 +80,7 @@ jobs:
 
       - name: Setup Go
         if: steps.pr.outputs.number != ''
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@v6.5.0
         with:
           go-version-file: pr/go.mod
           # PR and agent code runs in this job, so it must not save caches that
@@ -89,7 +89,7 @@ jobs:
 
       - name: Setup Node
         if: steps.pr.outputs.number != ''
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        uses: actions/setup-node@v6.5.0
         with:
           node-version: '22'
 
@@ -181,7 +181,7 @@ jobs:
 
       - name: Upload validated fix
         if: steps.snapshot.outputs.changed == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: fix-ci
           path: |
@@ -206,20 +206,20 @@ jobs:
       FIX_SHA: ${{ needs.generate.outputs.fix_sha }}
     steps:
       - name: Check out workflow files
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@v6.1.0
         with:
           path: trusted
           sparse-checkout: .github/scripts
           persist-credentials: false
 
       - name: Download validated fix
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@v4.3.0
         with:
           name: fix-ci
           path: ${{ runner.temp }}/fix-ci
 
       - name: Check out pull request
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@v6.1.0
         with:
           ref: ${{ env.HEAD_SHA }}
           path: pr
@@ -247,7 +247,7 @@ jobs:
 
       - name: Generate publishing token
         id: publish-token
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        uses: actions/create-github-app-token@v3.3.0
         with:
           app-id: ${{ secrets.ADMIN_APP_ID }}
           private-key: ${{ secrets.ADMIN_APP_PRIVATE_KEY }}
