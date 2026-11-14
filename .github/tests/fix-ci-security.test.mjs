@@ -11,6 +11,24 @@ const jobs = Object.fromEntries(
     .slice(1)
     .map((job) => [job.slice(0, job.indexOf(':')), job.split(/(?=^      - )/m)]),
 );
+const lock = { workflows: {}, dependencies: {} };
+{
+  let section;
+  let key;
+  for (const line of readFileSync(new URL('../workflows/actions.lock', import.meta.url), 'utf8').split('\n')) {
+    let match;
+    if ((match = line.match(/^(\w+):/))) {
+      section = match[1];
+    } else if ((match = line.match(/^    '([^']+)':/)) && section in lock) {
+      key = match[1];
+      lock[section][key] = section === 'workflows' ? [] : {};
+    } else if (section === 'workflows' && (match = line.match(/^        - '([^']+)'$/))) {
+      lock.workflows[key].push(match[1]);
+    } else if (section === 'dependencies' && (match = line.match(/^        (\w+): '?([^']*)'?$/))) {
+      lock.dependencies[key][match[1]] = match[2];
+    }
+  }
+}
 const header = (job) => jobs[job][0];
 const steps = (job) => jobs[job].slice(1);
 const step = (job, name) => {
@@ -42,8 +60,23 @@ test('only failed runs of same-repository PRs are handled', () => {
 });
 
 test('actions are pinned and checkouts do not persist credentials', () => {
+  const locked = lock.workflows['.github/workflows/fix-ci.yaml'];
+  assert.ok(locked, 'fix-ci.yaml is not onboarded in actions.lock');
   for (const entry of Object.keys(jobs).flatMap(steps).filter((entry) => entry.includes('uses: '))) {
-    assert.match(entry, /uses: [\w./-]+@[a-f0-9]{40}(?:\s|$)/);
+    const uses = entry.match(/uses: (\S+)/)[1];
+    if (uses.startsWith('$/')) continue;
+    const match = uses.match(/^([\w.-]+\/[\w.-]+)(?:\/[\w./-]+)?@(\S+)$/);
+    assert.ok(match, `unexpected action reference: ${uses}`);
+    const [, repo, ref] = match;
+    const dependency = lock.dependencies[`${repo}@${ref}`];
+    assert.ok(locked.includes(`${repo}@${ref}`) && dependency, `${uses} is not locked in actions.lock`);
+    if (/^[a-f0-9]{40}$/.test(ref)) {
+      assert.equal(dependency.commit, `sha1-${ref}`);
+      assert.doesNotMatch(dependency.ref, /^v\d+\.\d+\.\d+$/, `${uses} is a tagged release; use @${dependency.ref}`);
+    } else {
+      assert.match(ref, /^v\d+\.\d+\.\d+$/, `${uses} must use an exact vX.Y.Z release`);
+      assert.equal(dependency.ref, ref);
+    }
     if (entry.includes('uses: actions/checkout@')) {
       assert.match(entry, /persist-credentials: false/);
       assert.doesNotMatch(entry, /token:/);

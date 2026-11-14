@@ -5,22 +5,14 @@ version: 'v0.0.3'
 workflows:
     '.github/workflows/breakglass.yml': []
     '.github/workflows/fix-ci-security.yaml':
-        - 'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803'
         - 'actions/checkout@v6.1.0'
-        - 'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38'
         - 'actions/setup-node@v6.5.0'
     '.github/workflows/fix-ci.yaml':
-        - 'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803'
         - 'actions/checkout@v6.1.0'
-        - 'actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510'
         - 'actions/create-github-app-token@v3.3.0'
-        - 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093'
         - 'actions/download-artifact@v4.3.0'
-        - 'actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16'
         - 'actions/setup-go@v6.5.0'
-        - 'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38'
         - 'actions/setup-node@v6.5.0'
-        - 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02'
         - 'actions/upload-artifact@v4.6.2'
         - 'kernel/security-workflows@4144994f1d6977e07ef5a5832599ee4faaae9550'
     '.github/workflows/preview.yaml':
@@ -39,61 +31,31 @@ workflows:
         - 'actions/setup-go@v6.5.0'
     '.github/workflows/vuln-remediation.yml': []
 dependencies:
-    'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803':
-        ref: 'v6.1.0'
-        commit: 'sha1-d23441a48e516b6c34aea4fa41551a30e30af803'
-        owner_id: 44036562
-        repo_id: 197814629
     'actions/checkout@v6.1.0':
         ref: 'v6.1.0'
         commit: 'sha1-d23441a48e516b6c34aea4fa41551a30e30af803'
         owner_id: 44036562
         repo_id: 197814629
-    'actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510':
-        ref: 'v3.3.0'
-        commit: 'sha1-64ab729a6294000f5aa4a4bc0b73d1f32bc45510'
-        owner_id: 44036562
-        repo_id: 642580244
     'actions/create-github-app-token@v3.3.0':
         ref: 'v3.3.0'
         commit: 'sha1-64ab729a6294000f5aa4a4bc0b73d1f32bc45510'
         owner_id: 44036562
         repo_id: 642580244
-    'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093':
-        ref: 'v4.3.0'
-        commit: 'sha1-d3f86a106a0bac45b974a628896c90dbdf5c8093'
-        owner_id: 44036562
-        repo_id: 192626254
     'actions/download-artifact@v4.3.0':
         ref: 'v4.3.0'
         commit: 'sha1-d3f86a106a0bac45b974a628896c90dbdf5c8093'
         owner_id: 44036562
         repo_id: 192626254
-    'actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16':
-        ref: 'v6.5.0'
-        commit: 'sha1-924ae3a1cded613372ab5595356fb5720e22ba16'
-        owner_id: 44036562
-        repo_id: 192624594
     'actions/setup-go@v6.5.0':
         ref: 'v6.5.0'
         commit: 'sha1-924ae3a1cded613372ab5595356fb5720e22ba16'
         owner_id: 44036562
         repo_id: 192624594
-    'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38':
-        ref: 'v6.5.0'
-        commit: 'sha1-249970729cb0ef3589644e2896645e5dc5ba9c38'
-        owner_id: 44036562
-        repo_id: 189476904
     'actions/setup-node@v6.5.0':
         ref: 'v6.5.0'
         commit: 'sha1-249970729cb0ef3589644e2896645e5dc5ba9c38'
         owner_id: 44036562
         repo_id: 189476904
-    'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02':
-        ref: 'v4.6.2'
-        commit: 'sha1-ea165f8d65b6e75b540449e92b4886f43607fa02'
-        owner_id: 44036562
-        repo_id: 192625955
     'actions/upload-artifact@v4.6.2':
         ref: 'v4.6.2'
         commit: 'sha1-ea165f8d65b6e75b540449e92b4886f43607fa02'
