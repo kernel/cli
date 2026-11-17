@@ -1148,7 +1148,9 @@ func (b BrowsersCmd) LiveViewCreate(ctx context.Context, in BrowsersLiveViewCrea
 		params.BrowserLiveViewRequest.TtlSeconds = kernel.Opt(in.TtlSeconds)
 	}
 
-	liveView, err := b.liveView.New(ctx, in.Identifier, params)
+	// Each call mints a URL that cannot be revoked, so never retry a request
+	// whose response may have been lost.
+	liveView, err := b.liveView.New(ctx, in.Identifier, params, option.WithMaxRetries(0))
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}

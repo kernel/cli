@@ -287,11 +287,16 @@ kernel search contents srch_01jsearchresult --limit 3 --content-source browser
   - `--telemetry-storage on|off` - Whether to persist captured telemetry to Kernel storage (default on). `off` requires `--telemetry-export-otlp <id-or-name>` in the same command, so events are only available on the live stream and through the export. Cannot be changed after the browser is created.
   - `--chrome-policy <json>` - Custom Chrome enterprise policy as a JSON object. Kernel-managed policies (extensions, proxy, automation) are rejected server-side.
   - `--chrome-policy-file <path>` - Read the Chrome enterprise policy from a file (use `-` for stdin). Mutually exclusive with `--chrome-policy`.
+  - `--start-replay` - Start replay recording when the browser is created. With `--pool-id` or `--pool-name`, overrides the pool's default for this acquisition; use `--start-replay=false` to disable it
   - `--output json`, `-o json` - Output raw JSON object
   - _Note: When a pool is specified, omit other session configuration flags—pool settings determine profile, proxy, viewport, etc._
 - `kernel browsers delete <id-or-name>` - Delete a browser by ID or name
 - `kernel browsers view <id-or-name>` - Get live view URL for a browser by ID or name
   - `--output json`, `-o json` - Output JSON with liveViewUrl
+- `kernel browsers live-view create <id-or-name>` - Create a live view URL with read-only or control access to a headful browser. The URL opens only the live view (not CDP, WebDriver, or other browser endpoints) and cannot be revoked before it expires, so treat it as a credential
+  - `--scope read|control` - `read` shows the browser without accepting input; `control` also lets the viewer drive it (default: `read`)
+  - `--ttl-seconds <n>` - Seconds until the URL expires (1-31536000). Omit to keep it valid until the browser is deleted or, for a pooled browser, released
+  - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers get <id-or-name>` - Get detailed browser session info by ID or name
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browsers update <id-or-name>` - Update a running browser session by ID or name
@@ -984,11 +989,13 @@ exists.
   - `--profile-id`, `--profile-name`, `--proxy-id`, `--region`, `--start-url`, `--extension`, `--viewport`, `--private-host`, `--proxy-route`, `--allowed-host` - Same semantics as `kernel browsers create` (proxy routes and the egress allowlist apply to every browser warmed into the pool). Leased browsers can replace or remove the allowlist with `kernel browsers update`; per-lease changes are reset to the pool's allowlist on release, or the browser is replaced
   - `--chrome-policy <json>` / `--chrome-policy-file <path>` - Custom Chrome enterprise policy applied to every browser in the pool, as a JSON object or from a file (`-` for stdin). Same semantics as `kernel browsers create`.
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Telemetry applied to browsers warmed into the pool. Same semantics as `kernel browsers create`.
+  - `--start-replay` - Start replay recording automatically whenever a browser is acquired from the pool
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools get <id-or-name>` - Get pool details
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools update <id-or-name>` - Update pool configuration
   - Same flags as create (except `--region`, which is fixed at creation and cannot be updated) plus `--clear-profile`, `--clear-proxy`, `--clear-start-url`, `--clear-extensions`, `--clear-chrome-policy`, `--clear-private-hosts`, `--clear-proxy-routes`, and `--clear-allowed-hosts` for removing durable configuration. `--clear-private-hosts` removes the whole network configuration (restoring the default private IP ranges and dropping proxy routes and the allowlist). `--private-host`, `--proxy-route`, `--allowed-host`, `--clear-proxy-routes`, and `--clear-allowed-hosts` replace the pool's whole network configuration, so pass the other network flags to keep them; any network update without `--allowed-host` removes the pool's allowlist. Any change to the pool's allowlist, including removing it, automatically replaces idle browsers; leased browsers keep their allowlist until release, when it is reset to the new list or the browser is replaced. `--fill-rate 0` pauses automatic filling. `--discard-all-idle` discards all idle browsers and refills the pool. `--telemetry`, `--memory`, and other network updates only apply to browsers warmed after the update.
+  - `--start-replay` - Set whether replay recording starts automatically for browsers acquired after the update; use `--start-replay=false` to disable
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools delete <id-or-name>` - Delete a pool
   - `--force` - Force delete even if browsers are leased
@@ -997,6 +1004,7 @@ exists.
   - `--name <name>` - Optional name for the acquired session (applies to this lease; cleared on release)
   - `--tag <KEY=VALUE>` - Set a tag on the acquired session, repeatable; applies to this lease
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Telemetry override for this lease only, merged onto the pool's config
+  - `--start-replay` - Start replay recording for this lease. Omit to use the pool's default; use `--start-replay=false` to disable it for this lease
   - `--output json`, `-o json` - Output raw JSON object
 - `kernel browser-pools release <id-or-name>` - Release a browser back to the pool
   - `--session-id <id>` - Browser session ID to release (required)
@@ -1375,6 +1383,7 @@ Managed auth connections (`kernel auth connections`). The commands below are new
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Default telemetry for this connection's browser sessions. Same semantics as `kernel browsers create`
   - `--telemetry-export-otlp <id-or-name>` - Export this connection's captured telemetry over OTLP to one of the org's configured destinations. Implies `--telemetry=all` when `--telemetry` is not set. Use `=off` to disable export.
   - `--telemetry-storage on|off` - Whether this connection's sessions persist captured telemetry to Kernel storage (default on). `off` requires `--telemetry-export-otlp <id-or-name>` in the same command.
+  - `--locale <bcp47>` - Browser locale for this connection's login, reauth, and health-check browser sessions (canonical BCP 47, e.g. `sv-SE`). Omit to use the browser region's default
 - `kernel auth connections update <id>` - New flags:
   - `--region us-east|us-west|eu-west|ap-southeast` - Update the region for browser sessions created after this command. Active sessions don't move.
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy configuration for future browser sessions (mutually exclusive). Use `--proxy-mode=default` to drop a selected proxy rather than passing an empty value.
@@ -1382,6 +1391,8 @@ Managed auth connections (`kernel auth connections`). The commands below are new
   - `--telemetry=all` / `--telemetry=off` / `--telemetry=<categories>` - Update telemetry for future browser sessions
   - `--telemetry-export-otlp <id-or-name>` - Update where future sessions export captured telemetry. Naming a destination requires passing `--telemetry` in the same command, since the API validates capture and export together and enabling capture here would replace the connection's current category selection. Use `=off` to disable export.
   - `--telemetry-storage on|off` - Update whether future sessions persist captured telemetry to Kernel storage. Requires `--telemetry` in the same command; `off` also requires an export destination.
+  - `--locale <bcp47>` - Set the browser locale for future browser sessions (canonical BCP 47, e.g. `sv-SE`). Mutually exclusive with `--clear-locale`
+  - `--clear-locale` - Clear the locale override so future sessions use the browser region's default
 - `kernel auth connections login <id>` - New flags:
   - `--region us-east|us-west|eu-west|ap-southeast` - Region override for this login only. Omit it to inherit the connection region.
   - `--proxy-id <id>` / `--proxy-name <name>` / `--proxy-mode direct|default` - Proxy override for this login's browser session (mutually exclusive); omitted properties inherit the connection defaults
