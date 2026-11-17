@@ -169,14 +169,15 @@ func TestVaultOutputAgentCardAuthorizationIsNotPaymentSuccess(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(`{
 		"id":"card-id","key":"order-1","type":"card",
 		"spec":{"provider":"agentcard","wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop"},
-		"state":{"provider":"agentcard","status":"ready","authorization":{"id":"cauth_test","status":"declined","psp":"stripe","merchant":"Example Shop","amount_cents":1234,"currency":"usd","reason":"expired","charged_kind":"none","replay_delivered":false,"raw_response":"SECRET_RESPONSE"}},
+		"state":{"provider":"agentcard","status":"ready","authorization":{"id":"cauth_test","status":"declined","psp":"stripe","merchant":"Example Shop","amount_cents":1234,"currency":"usd","reason":"expired","amount_authority":"agent","amount_verified":false,"charged_kind":"none","replay_delivered":false,"raw_response":"SECRET_RESPONSE"}},
 		"available_operations":[],"available_expansions":[]
 	}`), &item))
 	buf := capturePtermOutput(t)
 	require.NoError(t, printVaultItem(&item, ""))
-	for _, text := range []string{"authorization status", "declined", "expired", "charged kind", "none", "processor response delivered", "false"} {
+	for _, text := range []string{"authorization status", "declined", "expired", "approved amount source", "agent", "processor amount verified", "charged kind", "none", "processor response delivered", "false"} {
 		assert.Contains(t, buf.String(), text)
 	}
+	assert.NotContains(t, buf.String(), "charged (minor units)")
 	assert.NotContains(t, buf.String(), "SECRET_RESPONSE")
 	out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
 	assert.NotContains(t, out, `"test"`)

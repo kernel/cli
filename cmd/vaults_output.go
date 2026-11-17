@@ -546,8 +546,24 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		if a.Reason != "" {
 			rows = append(rows, []string{"authorization reason", a.Reason})
 		}
+		if a.JSON.AmountAuthority.Valid() {
+			rows = append(rows, []string{"approved amount source", string(a.AmountAuthority)})
+		}
+		if a.JSON.AmountVerified.Valid() {
+			rows = append(rows, []string{"processor amount verified", fmt.Sprint(a.AmountVerified)})
+		}
 		if a.JSON.ChargedKind.Valid() {
-			rows = append(rows, []string{"charged kind", string(a.ChargedKind)}, []string{"charged (minor units)", fmt.Sprintf("%d %s", a.ChargedAmountCents, a.ChargedCurrency)})
+			rows = append(rows, []string{"charged kind", string(a.ChargedKind)})
+		}
+		if a.JSON.ChargedAmountCents.Valid() || a.JSON.ChargedCurrency.Valid() {
+			amount, currency := "-", "-"
+			if a.JSON.ChargedAmountCents.Valid() {
+				amount = fmt.Sprint(a.ChargedAmountCents)
+			}
+			if a.JSON.ChargedCurrency.Valid() {
+				currency = a.ChargedCurrency
+			}
+			rows = append(rows, []string{"charged (minor units)", amount + " " + currency})
 		}
 		if a.JSON.ReplayDelivered.Valid() {
 			rows = append(rows, []string{"processor response delivered", fmt.Sprint(a.ReplayDelivered)})
@@ -592,6 +608,8 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	if item.Type == "credential_account" {
 		if actions.RequiredAction != "" {
 			pterm.Info.Println("share the 1Password authorization url with the account owner. observe the connection with items get --wait 60; never ask for 1Password passwords or codes.")
+		} else if item.State.Status == "revoking" {
+			pterm.Info.Println("this 1Password account cannot be used while KERNEL waits for 1Password to confirm its revoke. KERNEL keeps retrying; the account's credentials remain unavailable until it is linked again.")
 		} else if item.State.Status == "reconnect_required" || item.State.Status == "declined" {
 			pterm.Info.Println("this 1Password account is not connected. ask the owner before running credentials connect again with the same key; use 1pw_recover first if it is advertised.")
 		}
@@ -679,6 +697,8 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 			}
 		case "shop_pay":
 			pterm.Info.Println("Shop Pay fill never submits payment. submit checkout yourself, then report the observed merchant outcome once with confirm_transaction when advertised; reporting consumes the card whatever the outcome. never infer success or repeat an unknown checkout. " + shopPayRecoveryHelp + ".")
+		case "agentcard":
+			pterm.Info.Println("amount_authority reports where the approved amount came from: processor, agent, page, none, or display_only. agent and display_only do not prove what the processor charged. charged_kind none means checkout produced a token or payment method for a later merchant charge; absent charged fields mean the provider reported no charge information. inspect item events and the merchant's order record before deciding whether to pay again. never retry automatically; if recovery permits abandonment, delete the purchase item only after explicit user confirmation before creating a replacement.")
 		case "vgs":
 			switch item.State.Status {
 			case "requested":

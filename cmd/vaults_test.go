@@ -470,6 +470,7 @@ func TestVaultGetWaitExpansionAndEvents(t *testing.T) {
 		case "/vaults/checkout/items/order-1/events":
 			assert.Equal(t, "60", r.URL.Query().Get("wait"))
 			assert.Equal(t, "event-before", r.URL.Query().Get("after"))
+			assert.Equal(t, "true", r.URL.Query().Get("include_deleted"))
 			_, _ = io.WriteString(w, `[{"id":"event-next","name":"payment_failed","browser_id":"browser-1","created_at":"2026-09-01T00:00:00Z","data":{"reason":"declined","outcome_reason":"provider_error","provider_http_status":402,"provider_decline_code":"insufficient_funds","actual_currency":"usd","provider_response":{"card_number":"SECRET"}}}]`)
 		default:
 			t.Errorf("unexpected request: %s", r.URL)
@@ -478,7 +479,7 @@ func TestVaultGetWaitExpansionAndEvents(t *testing.T) {
 	out, _, err := executeVaultCommand(t, client, "vaults", "items", "get", "checkout", "wallet-1", "--wait", "60", "--expand", "payment_methods", "-o", "json")
 	require.NoError(t, err)
 	assert.JSONEq(t, connectedWalletFixture, out)
-	args := []string{"vaults", "items", "events", "checkout", "order-1", "--wait", "60", "--after", "event-before"}
+	args := []string{"vaults", "items", "events", "checkout", "order-1", "--wait", "60", "--after", "event-before", "--include-deleted"}
 	out, _, err = executeVaultCommand(t, client, append(args, "-o", "json")...)
 	require.NoError(t, err)
 	assert.NotContains(t, out, "SECRET")

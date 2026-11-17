@@ -28,7 +28,14 @@ func TestVaultPaymentHelpProviderBoundaries(t *testing.T) {
 		{
 			name: "items get",
 			path: []string{"items", "get"},
-			want: []string{"returned AgentCard checkout aliases", "not logged in or paid"},
+			want: []string{
+				"returned AgentCard checkout aliases",
+				"not logged in or paid",
+				"credential_account in revoking",
+				"amount_authority identifies the approved amount's source",
+				"amount_verified and charged_* may be absent",
+				"charged_kind none means the checkout produced a token or payment method",
+			},
 		},
 		{
 			name: "items invoke",
@@ -73,4 +80,24 @@ func TestVaultPaymentHelpProviderBoundaries(t *testing.T) {
 			assert.NotContains(t, text, "explicitly chosen egress-substitution")
 		})
 	}
+}
+
+func TestVaultDeletionAndDeletedEventHelp(t *testing.T) {
+	vaultDelete, _, err := newVaultsCommand().Find([]string{"delete"})
+	require.NoError(t, err)
+	assert.Contains(t, vaultDelete.Long, "Each 1Password credential account is ended")
+	assert.Contains(t, vaultDelete.Long, "provider_revocation_pending")
+
+	itemDelete, _, err := newVaultsCommand().Find([]string{"items", "delete"})
+	require.NoError(t, err)
+	assert.Contains(t, itemDelete.Long, "AgentCard card in recovery_required")
+	assert.Contains(t, itemDelete.Long, "Deleting a managed-auth credential")
+	assert.Contains(t, itemDelete.Long, "Deleting a 1Password credential account stops fills immediately")
+	assert.Contains(t, itemDelete.Flags().Lookup("yes").Usage, "qualifying AgentCard recovery")
+
+	events, _, err := newVaultsCommand().Find([]string{"items", "events"})
+	require.NoError(t, err)
+	assert.Contains(t, events.Long, "deleted vaults must be addressed by ID")
+	assert.Contains(t, events.Long, "item IDs take precedence over keys")
+	assert.Contains(t, events.Flags().Lookup("include-deleted").Usage, "--wait is ignored")
 }

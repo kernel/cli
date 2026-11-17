@@ -32,7 +32,7 @@ func isOnePasswordOperation(operation string) bool {
 
 // vaultOperationTakesParams reports whether an operation accepts --params or --spec-file.
 func vaultOperationTakesParams(operation string) bool {
-	return operation == "fill" || operation == "webmcp_invoke" || operation == "prepare_checkout" || operation == "confirm_transaction" || operation == "remove_payment_method" || operation == "update_access_token" || (isOnePasswordOperation(operation) && operation != "1pw_recover")
+	return operation == "fill" || operation == "webmcp_invoke" || operation == "prepare_checkout" || operation == "confirm_transaction" || operation == "remove_payment_method" || operation == "update_access_token" || (isOnePasswordOperation(operation) && operation != "1pw_recover" && operation != "1pw_disconnect")
 }
 
 func applyVaultAddPaymentMethodEnrollment(operation string, params *vaultOperationParams, enrollment string, set bool) error {
@@ -142,9 +142,13 @@ func parseVaultOperationParams(operation, raw string, paramsSet, openSet bool) (
 		}}, nil
 	}
 	if isOnePasswordOperation(operation) {
-		if operation == "1pw_recover" {
+		if operation == "1pw_recover" || operation == "1pw_disconnect" {
 			if paramsSet {
-				return nil, fmt.Errorf("1pw_recover takes no parameters")
+				return nil, fmt.Errorf("%s takes no parameters", operation)
+			}
+			if operation == "1pw_disconnect" {
+				request := kernel.NewVaultItemPerformOperationParamsBody1pwDisconnect()
+				return &vaultOperationParams{OnePassword: &kernel.VaultItemPerformOperationParams{Of1pwDisconnect: &request}}, nil
 			}
 			return &vaultOperationParams{OnePassword: &kernel.VaultItemPerformOperationParams{Of1pwRecover: &kernel.OnePasswordRecoverVaultItemOperationRequestParam{Type: kernel.OnePasswordRecoverVaultItemOperationRequestType1pwRecover}}}, nil
 		}

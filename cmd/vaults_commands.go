@@ -195,7 +195,7 @@ each vault has its own key; it is created on first request and may be cached.`,
 		}}
 	addVaultJSONOutputFlag(itemList)
 	itemGet := &cobra.Command{Use: "get <vault> <key>", Short: "get item state, available operations, and requested live data", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long:    "get item state, available operations, provider actions, and returned AgentCard checkout aliases.\n--expand fetches live, non-persisted provider data only when the item advertises that expansion; requesting unavailable data fails rather than returning a partial item. Link user info and shipping addresses can contain personal data. use -o json to preserve null versus omitted fields.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nan item still pending after the wait is returned as-is; ready means populated for credentials, not logged in or paid.\nfor credential edits on an already-ready item, compare versions without --wait. explicitly non-sensitive text/email values are returned; sensitive values and totp seeds are omitted.\nrecovery_required stops waiting and means unresolved, not declined or expired.\n" + vaultRecoveryHelp,
+		Long:    "get item state, available operations, provider actions, and returned AgentCard checkout aliases.\n--expand fetches live, non-persisted provider data only when the item advertises that expansion; requesting unavailable data fails rather than returning a partial item. Link user info and shipping addresses can contain personal data. use -o json to preserve null versus omitted fields.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nan item still pending after the wait is returned as-is; ready means populated for credentials, not logged in or paid.\nfor credential edits on an already-ready item, compare versions without --wait. explicitly non-sensitive text/email values are returned; sensitive values and totp seeds are omitted.\nrecovery_required stops waiting and means unresolved, not declined or expired.\na 1Password credential_account in revoking cannot be used while KERNEL waits for 1Password to confirm its revoke; KERNEL keeps retrying.\nfor AgentCard authorization json, amount_authority identifies the approved amount's source; agent and display_only do not prove what the processor charged. amount_verified and charged_* may be absent when there is no observed charge. charged_kind none means the checkout produced a token or payment method for a later merchant charge; inspect item events and the merchant order record.\n" + vaultRecoveryHelp,
 		Example: "  kernel vaults items get checkout wallet-1 --expand payment_methods\n  kernel vaults items get checkout wallet-1 --expand link_user_info,link_shipping_addresses -o json",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			wait, _ := cmd.Flags().GetInt64("wait")
@@ -209,12 +209,15 @@ each vault has its own key; it is created on first request and may be cached.`,
 	itemGet.Flags().Bool("open", false, "open a returned https action url; cardholder links are human-only, agents must share privately")
 	addVaultJSONOutputFlag(itemGet)
 	itemEvents := &cobra.Command{Use: "events <vault> <key>", Short: "read immutable item events without retrying payments", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+		Long: "read immutable item events without retrying payments. with --include-deleted, deleted vaults must be addressed by ID and <key> may be an item ID; item IDs take precedence over keys, followed by a live key and then the most recently deleted matching key. --wait is ignored for deleted items or vaults.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			after, _ := cmd.Flags().GetString("after")
 			wait, _ := cmd.Flags().GetInt64("wait")
-			return getVaultsHandler(cmd).Events(cmd.Context(), args[0], args[1], after, wait, vaultOutput(cmd))
+			includeDeleted, _ := cmd.Flags().GetBool("include-deleted")
+			return getVaultsHandler(cmd).Events(cmd.Context(), args[0], args[1], after, wait, includeDeleted, vaultOutput(cmd))
 		}}
 	itemEvents.Flags().String("after", "", "return events after this event id (use the last id from the previous response)")
+	itemEvents.Flags().Bool("include-deleted", false, "also find deleted items and deleted vaults by ID; <key> may be an item ID and --wait is ignored for deleted records")
 	itemEvents.Flags().Int64("wait", 0, "long-poll once for new events (0-60 seconds)")
 	addVaultJSONOutputFlag(itemEvents)
 	invoke := &cobra.Command{Use: "invoke <vault> <key> <operation>", Short: "invoke an operation advertised by an item", Args: cobra.ExactArgs(3), PreRunE: vaultPreRun,
@@ -356,6 +359,11 @@ update_access_token (imported Link wallets with token_refresh=customer): --spec-
 1pw_recover (credential accounts, no parameters): returns a new 1Password link that
   recovers a failed account connection. share it with the account owner, then run
   credentials connect again with the same key; never delete the item to recover.
+1pw_disconnect (credential accounts, no parameters): ends the account's 1Password
+  connection while keeping the item so it can be linked again. fills stop immediately.
+  when no other vault uses the connection, KERNEL revokes it at 1Password; a 409
+  provider_revocation_pending means KERNEL is still waiting and keeps retrying.
+  credentials remain unusable until the account is linked again.
 never automatically retry an access request or recovery, and never delete and recreate
 an item to reset an uncertain outcome; stop and tell the user instead.`,
 		Example: `  kernel vaults items invoke user-vault login collect
@@ -372,6 +380,7 @@ JSON
   kernel vaults items invoke user-vault github 1pw_access_request_status --params '{"timeout_seconds":60}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login"}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login","entry_id":"<entry-id>","target_id":"<cdp-target-id>"}'
+  kernel vaults items invoke user-vault onepassword 1pw_disconnect
   kernel vaults items invoke checkout cardholder add_payment_method
   kernel vaults items invoke checkout cardholder add_payment_method --enrollment server
   kernel vaults items invoke checkout cardholder remove_payment_method --params '{"payment_method_id":"<payment-method-id>"}'
@@ -504,10 +513,14 @@ JSON
 
 func newVaultDeleteCommand(item bool) *cobra.Command {
 	use, short, nargs := "delete <vault>", "delete a vault and invalidate all its items", 1
+	long := "Unresolved payment operations block vault deletion. Deleting a connected KERNEL wallet first blocks new payments and then removes its enrolled card. If removal fails, the wallet is kept and continues refusing payments; reconcile the original attempt with the provider or support before retrying. Deleting or recreating an item does not prove that a payment did not occur. Each 1Password credential account is ended the same way as deleting it; the vault is kept and the command returns 409 provider_revocation_pending while 1Password has not confirmed a revoke."
+	flagHelp := "skip confirmation prompt"
 	if item {
 		use, short, nargs = "delete <vault> <key>", "delete an item and invalidate its credential", 2
+		long = "Unresolved payment operations normally block item deletion, including operations on a wallet's child cards. Deleting a connected KERNEL wallet first blocks new payments and then removes its enrolled card; if removal fails, the wallet is kept and continues refusing payments; reconcile the original attempt with the provider or support before retrying deletion. A Link, KERNEL, or Shop Pay card in issuance recovery_required, or an AgentCard card in recovery_required whose checkout-create response returned no authorization ID, may be explicitly abandoned by deleting that card directly; deleting its wallet or vault remains blocked until the card is deleted. Deleting or recreating an item does not prove that a payment did not occur. Deleting a managed-auth credential leaves its connection and saved credential unchanged. Deleting a 1Password credential account stops fills immediately and, when no other vault uses the person's connection, revokes it at 1Password; until 1Password confirms, the command returns 409 provider_revocation_pending and KERNEL keeps retrying."
+		flagHelp = "skip confirmation prompt; Link, KERNEL, Shop Pay, or qualifying AgentCard recovery may be abandoned only by deleting the card directly after explicit user confirmation"
 	}
-	cmd := &cobra.Command{Use: use, Short: short, Args: cobra.ExactArgs(nargs), PreRunE: vaultPreRun,
+	cmd := &cobra.Command{Use: use, Short: short, Long: long, Args: cobra.ExactArgs(nargs), PreRunE: vaultPreRun,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key := ""
 			if item {
@@ -516,7 +529,7 @@ func newVaultDeleteCommand(item bool) *cobra.Command {
 			yes, _ := cmd.Flags().GetBool("yes")
 			return getVaultsHandler(cmd).Delete(cmd.Context(), args[0], key, yes)
 		}}
-	cmd.Flags().BoolP("yes", "y", false, "skip confirmation prompt; Link, KERNEL, Shop Pay, or VGS recovery may be abandoned only by deleting the card directly after explicit user confirmation")
+	cmd.Flags().BoolP("yes", "y", false, flagHelp)
 	return cmd
 }
 

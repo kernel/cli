@@ -143,6 +143,7 @@ func TestOnePasswordOperationRequests(t *testing.T) {
 		{"1pw_access_request_status", `{"timeout_seconds":60}`, `{"type":"1pw_access_request_status","timeout_seconds":60}`, onePasswordCredentialFixture},
 		{"1pw_access_request_status", "", `{"type":"1pw_access_request_status"}`, onePasswordCredentialFixture},
 		{"1pw_recover", "", `{"type":"1pw_recover"}`, onePasswordAccountFixture},
+		{"1pw_disconnect", "", `{"type":"1pw_disconnect"}`, onePasswordAccountFixture},
 	} {
 		t.Run(tc.operation+tc.params, func(t *testing.T) {
 			item := strings.Replace(tc.item, `"available_operations":[]`, `"available_operations":[{"type":"1pw_access_request_status","description":"x"}]`, 1)
@@ -186,6 +187,7 @@ func TestOnePasswordOperationValidation(t *testing.T) {
 		{"1pw_fill", `{"browser_id":"b","page_url":"https://github.com/login","target_id":""}`, "target_id"},
 		{"1pw_update_access_token", `{"access_token":"token-secret"}`, "only through --spec-file"},
 		{"1pw_recover", `{}`, "takes no parameters"},
+		{"1pw_disconnect", `{}`, "takes no parameters"},
 	} {
 		t.Run(tc.operation+tc.params, func(t *testing.T) {
 			calls := 0
@@ -318,7 +320,7 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 	assert.NotContains(t, connect.Long, "stored-token")
 	assert.Contains(t, connect.Long, "credential_account")
 	assert.Contains(t, credentials.Example, `"provider":"1password","account":"onepassword"`)
-	for _, operation := range []string{"1pw_create_access_request", "1pw_access_request_status", "1pw_fill", "1pw_update_access_token", "1pw_recover"} {
+	for _, operation := range []string{"1pw_create_access_request", "1pw_access_request_status", "1pw_fill", "1pw_update_access_token", "1pw_recover", "1pw_disconnect"} {
 		assert.Contains(t, invoke.Long, operation)
 	}
 	assert.Contains(t, invoke.Long, "--spec-file, never --params")
@@ -333,6 +335,9 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 		assert.Contains(t, invoke.Long, want)
 	}
 	assert.Contains(t, invoke.Long, "optional access_token_expires_at (RFC3339)")
+	assert.Contains(t, invoke.Long, "ends the account's 1Password")
+	assert.Contains(t, invoke.Long, "provider_revocation_pending")
+	assert.Contains(t, credentials.Long, "revoking means KERNEL is waiting")
 	assert.Contains(t, invoke.Long, "expiry clears the previously supplied expiry")
 	for _, help := range []string{invoke.Long, invoke.Example, credentials.Long, credentials.Example, connect.Long} {
 		for _, removed := range []string{"1pw_request_access", "1pw_poll_access", "1pw_reconcile", "account_id", "Family", "customer_managed", "RFC 3339"} {
