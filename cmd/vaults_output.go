@@ -609,7 +609,7 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		if actions.RequiredAction != "" {
 			pterm.Info.Println("share the 1Password authorization url with the account owner. observe the connection with items get --wait 60; never ask for 1Password passwords or codes.")
 		} else if item.State.Status == "revoking" {
-			pterm.Info.Println("this 1Password account cannot be used while KERNEL waits for 1Password to confirm its revoke. KERNEL keeps retrying; the account's credentials remain unavailable until it is linked again.")
+			pterm.Info.Println("this 1Password account cannot be used while KERNEL finishes its revoke in the background. after a disconnect, link it again to use its credentials; after a delete, it is removed once the revoke finishes.")
 		} else if item.State.Status == "reconnect_required" || item.State.Status == "declined" {
 			pterm.Info.Println("this 1Password account is not connected. ask the owner before running credentials connect again with the same key; use 1pw_recover first if it is advertised.")
 		}

@@ -87,6 +87,7 @@ func TestVaultDeletionAndDeletedEventHelp(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, vaultDelete.Long, "Each 1Password credential account is ended")
 	assert.Contains(t, vaultDelete.Long, "provider_revocation_pending")
+	assert.Contains(t, vaultDelete.Long, "delete the vault again later")
 
 	itemDelete, _, err := newVaultsCommand().Find([]string{"items", "delete"})
 	require.NoError(t, err)
