@@ -50,9 +50,10 @@ const vaultOnePasswordCredentialHelp = `1Password flow:
    with that owner. the connect url is for their own device: it opens the 1Password app
    on iOS or Android and the browser elsewhere, including sign-up. existing desktop
    users can use the action url; after sign-up, use that url if the account is still
-   pending. the first completed link disables the other. both expire at expires_at;
-   rerun credentials connect with the same vault and key for fresh links. poll items
-   get <vault> <account-key> --wait 60 until connected.
+   pending. the first link the owner approves or declines settles it and disables the
+   other. both expire at expires_at; after that, rerun credentials connect with the same
+   vault and key for fresh links. poll items get <vault> <account-key> --wait 60 until
+   connected.
 2. credentials create <vault> <key> --spec-file with provider "1password", account
    (the credential_account key), and requests: version 2 with 1-5 login entries, each
    with the https website of a login page. use one entry unless the user needs several
@@ -236,8 +237,9 @@ only use this after the user chose 1Password brokered approval over KERNEL-hoste
 share both links returned by the command with the account owner. the connect url is for their own device:
 it opens the 1Password app on iOS or Android and the browser elsewhere, including sign-up.
 existing desktop users can use the action url; after sign-up, use that url if the account
-is still pending. the first completed link disables the other. both
-links expire at expires_at; rerun this command with the same vault and key for fresh links.
+is still pending. the first link the owner approves or declines settles it and disables
+the other. both links expire at expires_at; after that, rerun this command with the same
+vault and key for fresh links.
 no tokens or keys are displayed. poll items get --wait 60 until the account state is
 connected, then set account to this key in credentials create. repeating the request
 returns a connected or still-pending account unchanged; otherwise it starts a new

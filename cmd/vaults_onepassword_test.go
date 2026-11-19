@@ -44,8 +44,8 @@ func TestCredentialConnectOnePassword(t *testing.T) {
 	assert.Contains(t, text, "action url:\nhttps://my.1password.example/oauth/authorize")
 	assert.Contains(t, text, "1Password connect url:\nhttps://start.1password.example/connect")
 	assert.Contains(t, text, "share both 1Password links with the account owner")
-	assert.Contains(t, text, "first completed link wins and disables the other")
-	assert.Contains(t, text, "rerun credentials connect with the same vault and key for fresh links")
+	assert.Contains(t, text, "first link the owner approves or declines settles it and disables the other")
+	assert.Contains(t, text, "after that, rerun credentials connect with the same vault and key for fresh links")
 
 	_, _, err = executeVaultCommand(t, client, "vaults", "credentials", "connect", "user", "onepassword", "--provider", "kernel")
 	require.ErrorContains(t, err, "--provider must be 1password")
@@ -319,9 +319,9 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 		"opens the 1Password app",
 		"including sign-up",
 		"existing desktop",
-		"first completed link disables the other",
+		"approves or declines settles it",
 		"expire at expires_at",
-		"same vault and key for fresh links",
+		"after that, rerun credentials connect with the same",
 		"1-5 login entries",
 		"invoke 1pw_create_access_request once",
 		"append &return_url=<URL-encoded URL>",

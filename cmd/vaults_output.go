@@ -642,7 +642,7 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	}
 	if item.Type == "credential_account" {
 		if actions.RequiredAction != "" && actions.ConnectURL != "" {
-			pterm.Info.Println("share both 1Password links with the account owner. the connect url is for their own device: it opens the 1Password app on mobile and the browser elsewhere, including sign-up. existing desktop users can use the action url. after sign-up, use the action url if the account is still pending. the first completed link wins and disables the other. both expire at expires_at; rerun credentials connect with the same vault and key for fresh links. observe the connection with items get --wait 60; never ask for 1Password passwords or codes.")
+			pterm.Info.Println("share both 1Password links with the account owner. the connect url is for their own device: it opens the 1Password app on mobile and the browser elsewhere, including sign-up. existing desktop users can use the action url. after sign-up, use the action url if the account is still pending. the first link the owner approves or declines settles it and disables the other. both expire at expires_at; after that, rerun credentials connect with the same vault and key for fresh links. observe the connection with items get --wait 60; never ask for 1Password passwords or codes.")
 		} else if actions.RequiredAction != "" {
 			pterm.Info.Println("share the 1Password authorization url with the account owner. observe the connection with items get --wait 60; never ask for 1Password passwords or codes.")
 		} else if item.State.Status == "revoking" {
