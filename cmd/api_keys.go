@@ -43,15 +43,19 @@ type APIKeysCreateInput struct {
 }
 
 type APIKeysListInput struct {
-	Limit          int
-	Offset         int
-	Name           string
-	Query          string
-	Status         string
-	IncludeDeleted bool
-	SortBy         string
-	SortDirection  string
-	Output         string
+	Limit            int
+	Offset           int
+	Name             string
+	Query            string
+	Status           string
+	CreatedBy        string
+	ProjectID        string
+	ServiceAccountID string
+	PrincipalType    string
+	IncludeDeleted   bool
+	SortBy           string
+	SortDirection    string
+	Output           string
 }
 
 type APIKeysGetInput struct {
@@ -244,18 +248,39 @@ func (c APIKeysCmd) List(ctx context.Context, in APIKeysListInput) error {
 	if in.Query != "" {
 		params.Query = kernel.String(in.Query)
 	}
+	if in.CreatedBy != "" {
+		params.CreatedBy = kernel.String(in.CreatedBy)
+	}
+	if in.ProjectID != "" {
+		params.ProjectID = kernel.String(in.ProjectID)
+	}
+	if in.ServiceAccountID != "" {
+		params.ServiceAccountID = kernel.String(in.ServiceAccountID)
+	}
+	if in.PrincipalType != "" {
+		switch in.PrincipalType {
+		case "user":
+			params.PrincipalType = kernel.APIKeyListParamsPrincipalTypeUser
+		case "service_account":
+			params.PrincipalType = kernel.APIKeyListParamsPrincipalTypeServiceAccount
+		default:
+			return fmt.Errorf("invalid --principal-type value: %s (must be 'user' or 'service_account')", in.PrincipalType)
+		}
+	}
 	// Prefer the newer --status filter; fall back to the deprecated
 	// --include-deleted so existing scripts keep working.
 	if in.Status != "" {
 		switch in.Status {
 		case "active":
 			params.Status = kernel.APIKeyListParamsStatusActive
+		case "expired":
+			params.Status = kernel.APIKeyListParamsStatusExpired
 		case "deleted":
 			params.Status = kernel.APIKeyListParamsStatusDeleted
 		case "all":
 			params.Status = kernel.APIKeyListParamsStatusAll
 		default:
-			return fmt.Errorf("invalid --status value: %s (must be 'active', 'deleted', or 'all')", in.Status)
+			return fmt.Errorf("invalid --status value: %s (must be 'active', 'expired', 'deleted', or 'all')", in.Status)
 		}
 	} else if in.IncludeDeleted {
 		params.IncludeDeleted = kernel.Opt(true)
@@ -607,20 +632,28 @@ func runAPIKeysList(cmd *cobra.Command, args []string) error {
 	name, _ := cmd.Flags().GetString("name")
 	query, _ := cmd.Flags().GetString("query")
 	status, _ := cmd.Flags().GetString("status")
+	createdBy, _ := cmd.Flags().GetString("created-by")
+	projectID, _ := cmd.Flags().GetString("project-id")
+	serviceAccountID, _ := cmd.Flags().GetString("service-account-id")
+	principalType, _ := cmd.Flags().GetString("principal-type")
 	includeDeleted, _ := cmd.Flags().GetBool("include-deleted")
 	sortBy, _ := cmd.Flags().GetString("sort-by")
 	sortDirection, _ := cmd.Flags().GetString("sort-direction")
 	output, _ := cmd.Flags().GetString("output")
 	return c.List(cmd.Context(), APIKeysListInput{
-		Limit:          limit,
-		Offset:         offset,
-		Name:           name,
-		Query:          query,
-		Status:         status,
-		IncludeDeleted: includeDeleted,
-		SortBy:         sortBy,
-		SortDirection:  sortDirection,
-		Output:         output,
+		Limit:            limit,
+		Offset:           offset,
+		Name:             name,
+		Query:            query,
+		Status:           status,
+		CreatedBy:        createdBy,
+		ProjectID:        projectID,
+		ServiceAccountID: serviceAccountID,
+		PrincipalType:    principalType,
+		IncludeDeleted:   includeDeleted,
+		SortBy:           sortBy,
+		SortDirection:    sortDirection,
+		Output:           output,
 	})
 }
 
@@ -696,9 +729,10 @@ those networks receive HTTP 403 even if the key secret is valid.`,
 var apiKeysListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List API keys",
-	Long:  "List API keys. Last-used timestamps are accurate to within about 20 minutes; '-' means no use has been recorded since tracking began.",
-	Args:  cobra.NoArgs,
-	RunE:  runAPIKeysList,
+	Long: "List API keys. By default only non-deleted, non-expired keys are returned; use --status expired, deleted, or all for other lifecycle states. " +
+		"Last-used timestamps are accurate to within about 20 minutes; '-' means no use has been recorded since tracking began.",
+	Args: cobra.NoArgs,
+	RunE: runAPIKeysList,
 }
 
 var apiKeysGetCmd = &cobra.Command{
@@ -755,8 +789,12 @@ func init() {
 	apiKeysListCmd.Flags().Int("offset", 0, "Number of results to skip")
 	apiKeysListCmd.Flags().String("name", "", "Filter by exact API key name (names are not unique, so several keys may match)")
 	apiKeysListCmd.Flags().String("query", "", "Search API keys by name, creator, or project (identifiers and masked keys match by exact value or prefix)")
-	apiKeysListCmd.Flags().String("status", "", "Filter by status: 'active' (default), 'deleted', or 'all'")
-	apiKeysListCmd.Flags().Bool("include-deleted", false, "Deprecated: Use --status all instead. Include soft-deleted API keys in the results")
+	apiKeysListCmd.Flags().String("status", "", "Filter by status: active (default), expired, deleted, or all")
+	apiKeysListCmd.Flags().String("created-by", "", "Return only keys created by this user ID (the same person described by each key's created_by field)")
+	apiKeysListCmd.Flags().String("project-id", "", "Return only keys scoped to this project ID; use 'org' for keys not scoped to a project")
+	apiKeysListCmd.Flags().String("service-account-id", "", "Return only keys that belong to this service account")
+	apiKeysListCmd.Flags().String("principal-type", "", "Return only keys acting as this principal type: user or service_account")
+	apiKeysListCmd.Flags().Bool("include-deleted", false, "Deprecated: use --status all instead. Include soft-deleted API keys in the results")
 	apiKeysListCmd.Flags().String("sort-by", "", "Sort by: created_at, name, expires_at, or last_used_at. Keys without an expiry sort last for expires_at; keys without recorded use sort last for last_used_at, in either direction")
 	apiKeysListCmd.Flags().String("sort-direction", "", "Sort direction: asc or desc")
 

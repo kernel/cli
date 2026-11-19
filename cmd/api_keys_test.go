@@ -333,6 +333,41 @@ func TestAPIKeysListSupportsLastUsedAtSort(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestAPIKeysListMapsIdentityFiltersAndExpiredStatus(t *testing.T) {
+	capturePtermOutput(t)
+	fake := &FakeAPIKeysService{
+		ListFunc: func(ctx context.Context, query kernel.APIKeyListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.APIKey], error) {
+			require.True(t, query.CreatedBy.Valid())
+			assert.Equal(t, "user_123", query.CreatedBy.Value)
+			require.True(t, query.ProjectID.Valid())
+			assert.Equal(t, "org", query.ProjectID.Value)
+			require.True(t, query.ServiceAccountID.Valid())
+			assert.Equal(t, "sa_123", query.ServiceAccountID.Value)
+			assert.Equal(t, kernel.APIKeyListParamsPrincipalTypeServiceAccount, query.PrincipalType)
+			assert.Equal(t, kernel.APIKeyListParamsStatusExpired, query.Status)
+			return &pagination.OffsetPagination[kernel.APIKey]{Items: []kernel.APIKey{}}, nil
+		},
+	}
+	c := APIKeysCmd{apiKeys: fake}
+
+	err := c.List(context.Background(), APIKeysListInput{
+		CreatedBy:        "user_123",
+		ProjectID:        "org",
+		ServiceAccountID: "sa_123",
+		PrincipalType:    "service_account",
+		Status:           "expired",
+	})
+	require.NoError(t, err)
+}
+
+func TestAPIKeysListRejectsUnknownPrincipalType(t *testing.T) {
+	c := APIKeysCmd{apiKeys: &FakeAPIKeysService{}}
+	err := c.List(context.Background(), APIKeysListInput{PrincipalType: "robot"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "user")
+	assert.Contains(t, err.Error(), "service_account")
+}
+
 func TestFormatAPIKeyLastUsedAtHandlesUnrecordedUse(t *testing.T) {
 	key := apiKeyFromJSON(`{"last_used_at":null}`)
 	assert.Equal(t, "-", formatAPIKeyLastUsedAt(*key))
