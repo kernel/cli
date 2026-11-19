@@ -58,7 +58,7 @@ var vaultItemFields = vaultOutputFields{
 	"id": nil, "key": nil, "type": nil, "version": nil, "created_at": nil, "updated_at": nil, "expires_at": nil, "description": nil,
 	"available_operations": vaultOperationFields,
 	"available_expansions": vaultOperationFields,
-	"action":               vaultFieldsOf("name url expires_at instructions"),
+	"action":               vaultFieldsOf("name url connect_url expires_at instructions"),
 	"expanded": {
 		"payment_methods":         vaultMethodFields,
 		"link_user_info":          vaultLinkUserInfoFields,
@@ -151,7 +151,7 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 		}
 		if value, ok := object[key]; ok {
 			isNullActionURL := key == "action_url" && bytes.Equal(bytes.TrimSpace(value), []byte("null"))
-			if (key == "url" || key == "approval_url" || key == "action_url" || key == "merchant_url" || key == "merchant_origin" || key == "image_url" || key == "product_url" || key == "website") && !isNullActionURL {
+			if (key == "url" || key == "connect_url" || key == "approval_url" || key == "action_url" || key == "merchant_url" || key == "merchant_origin" || key == "image_url" || key == "product_url" || key == "website") && !isNullActionURL {
 				var address string
 				if json.Unmarshal(value, &address) != nil {
 					continue
@@ -631,6 +631,9 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	if actions.RequiredAction != "" && actions.ActionURL != "" {
 		pterm.Printf("action url:\n%s\n", actions.ActionURL)
 	}
+	if actions.ConnectURL != "" {
+		pterm.Printf("1Password connect url:\n%s\n", actions.ConnectURL)
+	}
 	if actions.ApprovalURL != "" {
 		pterm.Printf("approval url:\n%s\n", actions.ApprovalURL)
 	}
@@ -638,7 +641,9 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		pterm.Printf("available operation: %s — %s\n", op.Type, op.Description)
 	}
 	if item.Type == "credential_account" {
-		if actions.RequiredAction != "" {
+		if actions.RequiredAction != "" && actions.ConnectURL != "" {
+			pterm.Info.Println("share both 1Password links with the account owner. the connect url is for their own device: it opens the 1Password app on mobile and the browser elsewhere, including sign-up. existing desktop users can use the action url. after sign-up, use the action url if the account is still pending. the first completed link wins and disables the other. both expire at expires_at; rerun credentials connect with the same vault and key for fresh links. observe the connection with items get --wait 60; never ask for 1Password passwords or codes.")
+		} else if actions.RequiredAction != "" {
 			pterm.Info.Println("share the 1Password authorization url with the account owner. observe the connection with items get --wait 60; never ask for 1Password passwords or codes.")
 		} else if item.State.Status == "revoking" {
 			pterm.Info.Println("this 1Password account cannot be used while KERNEL keeps retrying its revoke in the background. after a disconnect, link it again to use its credentials; after a delete, it is removed once 1Password confirms the revoke.")

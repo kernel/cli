@@ -46,9 +46,13 @@ a filled or submitted form is not proof of sign-in: inspect the page afterward.`
 const vaultOnePasswordCredentialHelp = `1Password flow:
 1. ask whose 1Password account holds the login and confirm it is in a non-shared vault.
    reuse that owner's connected credential_account from items list. otherwise run
-   credentials connect <vault> <account-key> --provider 1password, share the returned
-   authorization url with that owner, and poll items get <vault> <account-key>
-   --wait 60 until connected.
+   credentials connect <vault> <account-key> --provider 1password and share both links
+   with that owner. the connect url is for their own device: it opens the 1Password app
+   on iOS or Android and the browser elsewhere, including sign-up. existing desktop
+   users can use the action url; after sign-up, use that url if the account is still
+   pending. the first completed link disables the other. both expire at expires_at;
+   rerun credentials connect with the same vault and key for fresh links. poll items
+   get <vault> <account-key> --wait 60 until connected.
 2. credentials create <vault> <key> --spec-file with provider "1password", account
    (the credential_account key), and requests: version 2 with 1-5 login entries, each
    with the https website of a login page. use one entry unless the user needs several
@@ -226,14 +230,18 @@ JSON`
 		addVaultJSONOutputFlag(cmd)
 		group.AddCommand(cmd)
 	}
-	connect := &cobra.Command{Use: "connect <vault> <account-key> --provider 1password", Short: "connect a 1Password account and return its authorization url", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+	connect := &cobra.Command{Use: "connect <vault> <account-key> --provider 1password", Short: "connect a 1Password account and return its authorization links", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
 		Long: `create a credential_account item that connects the user's 1Password account.
 only use this after the user chose 1Password brokered approval over KERNEL-hosted collection.
-share the returned 1Password authorization url with the account owner; they sign in and
-consent at 1Password, and KERNEL receives the grant. no tokens or keys are displayed.
-poll items get --wait 60 until the account state is connected, then set account to
-this key in credentials create. repeating the request returns a connected or
-still-pending account unchanged; otherwise it starts a new authorization with a new url.
+share both links returned by the command with the account owner. the connect url is for their own device:
+it opens the 1Password app on iOS or Android and the browser elsewhere, including sign-up.
+existing desktop users can use the action url; after sign-up, use that url if the account
+is still pending. the first completed link disables the other. both
+links expire at expires_at; rerun this command with the same vault and key for fresh links.
+no tokens or keys are displayed. poll items get --wait 60 until the account state is
+connected, then set account to this key in credentials create. repeating the request
+returns a connected or still-pending account unchanged; otherwise it starts a new
+authorization with fresh links.
 
 ` + vaultOnePasswordCredentialHelp,
 		Example: "  kernel vaults credentials connect user-vault onepassword --provider 1password",
@@ -248,7 +256,7 @@ still-pending account unchanged; otherwise it starts a new authorization with a 
 	}
 	connect.Flags().String("provider", "", "credential account provider: 1password (required)")
 	_ = connect.MarkFlagRequired("provider")
-	connect.Flags().Bool("open", false, "open the returned https authorization url")
+	connect.Flags().Bool("open", false, "open the returned HTTPS action URL on this computer; share the connect URL for the owner's device")
 	addVaultJSONOutputFlag(connect)
 	group.AddCommand(connect)
 	return group

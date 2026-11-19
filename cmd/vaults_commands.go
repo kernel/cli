@@ -365,9 +365,9 @@ update_access_token (imported Link wallets with token_refresh=customer): --spec-
   credentials connect again with the same key; never delete the item to recover.
 1pw_disconnect (credential accounts, no parameters): ends the account's 1Password
   connection while keeping the item so it can be linked again. fills stop immediately.
-  when no other vault uses the connection, KERNEL revokes it at 1Password; a 409
-  provider_revocation_pending means KERNEL keeps retrying the revoke in the background. its credentials
-  need new access requests after the account is linked again.
+  when no other vault uses the connection, KERNEL revokes it at 1Password; if the command
+  reports provider_revocation_pending, KERNEL keeps retrying the revoke in the background.
+  its credentials need new access requests after the account is linked again.
 never automatically retry an access request or recovery, and never delete and recreate
 an item to reset an uncertain outcome; stop and tell the user instead.`,
 		Example: `  kernel vaults items invoke user-vault login collect
@@ -517,11 +517,11 @@ JSON
 
 func newVaultDeleteCommand(item bool) *cobra.Command {
 	use, short, nargs := "delete <vault>", "delete a vault and invalidate all its items", 1
-	long := "Unresolved payment operations block vault deletion. Deleting a connected KERNEL wallet first blocks new payments and then removes its enrolled card. If removal fails, the wallet is kept and continues refusing payments; reconcile the original attempt with the provider or support before retrying. Deleting or recreating an item does not prove that a payment did not occur. Each 1Password credential account is ended the same way as deleting it; while 1Password has not confirmed a revoke, the command returns 409 provider_revocation_pending and keeps the vault; delete the vault again later."
+	long := "Unresolved payment operations block vault deletion. Deleting a connected KERNEL wallet first blocks new payments and then removes its enrolled card. If removal fails, the wallet is kept and continues refusing payments; reconcile the original attempt with the provider or support before retrying. Deleting or recreating an item does not prove that a payment did not occur. Each 1Password credential account is ended the same way as deleting it; while 1Password has not confirmed a revoke, the command reports provider_revocation_pending and keeps the vault; delete the vault again later."
 	flagHelp := "skip confirmation prompt"
 	if item {
 		use, short, nargs = "delete <vault> <key>", "delete an item and invalidate its credential", 2
-		long = "Unresolved payment operations normally block item deletion, including operations on a wallet's child cards. Deleting a connected KERNEL wallet first blocks new payments and then removes its enrolled card; if removal fails, the wallet is kept and continues refusing payments; reconcile the original attempt with the provider or support before retrying deletion. A Link, KERNEL, or Shop Pay card in issuance recovery_required, or an AgentCard card in recovery_required whose checkout-create response returned no authorization ID, may be explicitly abandoned by deleting that card directly; deleting its wallet or vault remains blocked until the card is deleted. Deleting or recreating an item does not prove that a payment did not occur. Deleting a managed-auth credential leaves its connection and saved credential unchanged. Deleting a 1Password credential account stops fills immediately and, when no other vault uses the person's connection, revokes it at 1Password; until 1Password confirms, the command returns 409 provider_revocation_pending and KERNEL keeps retrying the revoke in the background."
+		long = "Unresolved payment operations normally block item deletion, including operations on a wallet's child cards. Deleting a connected KERNEL wallet first blocks new payments and then removes its enrolled card; if removal fails, the wallet is kept and continues refusing payments; reconcile the original attempt with the provider or support before retrying deletion. A Link, KERNEL, or Shop Pay card in issuance recovery_required, or an AgentCard card in recovery_required whose checkout-create response returned no authorization ID, may be explicitly abandoned by deleting that card directly; deleting its wallet or vault remains blocked until the card is deleted. Deleting or recreating an item does not prove that a payment did not occur. Deleting a managed-auth credential leaves its connection and saved credential unchanged. Deleting a 1Password credential account stops fills immediately and, when no other vault uses the person's connection, revokes it at 1Password; until 1Password confirms, the command reports provider_revocation_pending and KERNEL keeps retrying the revoke in the background."
 		flagHelp = "skip confirmation prompt; Link, KERNEL, Shop Pay, or qualifying AgentCard recovery may be abandoned only by deleting the card directly after explicit user confirmation"
 	}
 	cmd := &cobra.Command{Use: use, Short: short, Long: long, Args: cobra.ExactArgs(nargs), PreRunE: vaultPreRun,

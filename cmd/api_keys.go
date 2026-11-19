@@ -721,7 +721,7 @@ non-empty --policy.
 
 A policy restricts the key to its listed actions and resources. Each statement may
 include a source_ip condition whose values are CIDR networks. Requests from outside
-those networks receive HTTP 403 even if the key secret is valid.`,
+those networks are rejected even if the key secret is valid.`,
 	Args: cobra.NoArgs,
 	RunE: runAPIKeysCreate,
 }
@@ -750,8 +750,8 @@ var apiKeysUpdateCmd = &cobra.Command{
 
 --name renames the key. A present --policy fully replaces its current permissions,
 including source_ip conditions, and applies to new requests within the authorization
-cache. Requests outside allowed CIDR networks receive HTTP 403 and are recorded in
-the audit log with the client address. Renaming requires api_keys:write; replacing
+cache. Requests outside allowed CIDR networks are rejected and recorded in the audit
+log with the client address. Renaming requires api_keys:write; replacing
 permissions requires api_keys:set_policy.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runAPIKeysUpdate,
