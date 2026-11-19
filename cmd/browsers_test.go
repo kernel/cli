@@ -1199,16 +1199,18 @@ func TestBrowsersCreate_WithFingerprintOS(t *testing.T) {
 	}
 	b := BrowsersCmd{browsers: fake}
 
-	err := b.Create(context.Background(), BrowsersCreateInput{FingerprintOS: "macos"})
-	require.NoError(t, err)
-	assert.Equal(t, kernel.BrowserFingerprintOsMacos, captured.Fingerprint.Os)
-	raw, err := captured.MarshalJSON()
-	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"fingerprint":{"os":"macos"}`)
+	for _, fingerprintOS := range []string{"macos", "linux"} {
+		err := b.Create(context.Background(), BrowsersCreateInput{FingerprintOS: fingerprintOS})
+		require.NoError(t, err)
+		assert.Equal(t, kernel.BrowserFingerprintOs(fingerprintOS), captured.Fingerprint.Os)
+		raw, err := captured.MarshalJSON()
+		require.NoError(t, err)
+		assert.Contains(t, string(raw), fmt.Sprintf(`"fingerprint":{"os":"%s"}`, fingerprintOS))
+	}
 
-	err = b.Create(context.Background(), BrowsersCreateInput{FingerprintOS: "windows"})
-	require.ErrorContains(t, err, "--fingerprint-os")
-	assert.Equal(t, 1, calls)
+	err := b.Create(context.Background(), BrowsersCreateInput{FingerprintOS: "windows"})
+	require.ErrorContains(t, err, "must be macos or linux")
+	assert.Equal(t, 2, calls)
 }
 
 func TestBrowsersCreate_WithChromePolicy(t *testing.T) {

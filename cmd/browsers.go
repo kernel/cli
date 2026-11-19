@@ -239,10 +239,11 @@ func parseFingerprintOS(os string) (kernel.BrowserFingerprintOs, error) {
 	if os == "" {
 		return "", nil
 	}
-	if os == string(kernel.BrowserFingerprintOsMacos) {
-		return kernel.BrowserFingerprintOsMacos, nil
+	switch os {
+	case "macos", "linux":
+		return kernel.BrowserFingerprintOs(os), nil
 	}
-	return "", fmt.Errorf("invalid --fingerprint-os value: %s (must be macos)", os)
+	return "", fmt.Errorf("invalid --fingerprint-os value: %s (must be macos or linux)", os)
 }
 
 // maxPrivateHosts mirrors the API's cap on network.private_hosts entries.
@@ -3692,7 +3693,7 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().Bool("gpu", false, "Launch browser with hardware-accelerated GPU rendering")
 	browsersCreateCmd.Flags().String("memory", "", "Memory for a non-GPU browser session. Headless: '1GiB' (default), '2GiB' or '4GiB'. Headful: '8GiB' (default) or '16GiB'")
 	browsersCreateCmd.Flags().String("video-memory", "", "Video memory (VRAM) for a GPU browser session (requires --gpu): '3GiB' (default, 4 vCPU/6GiB memory) or '6GiB' (8 vCPU/12GiB memory)")
-	browsersCreateCmd.Flags().String("fingerprint-os", "", "Closed beta browser fingerprint OS override: macos. Contact Kernel to enable; requires --stealth=true, --headless=false, --gpu=false, and default memory")
+	browsersCreateCmd.Flags().String("fingerprint-os", "", "Closed beta browser fingerprint OS override: macos or linux. Contact Kernel to enable; requires --stealth=true, --headless=false, --gpu=false, and default memory")
 	browsersCreateCmd.Flags().String("invocation-id", "", "Associate the browser session with an invocation")
 	browsersCreateCmd.Flags().Bool("kiosk", false, "Launch browser in kiosk mode")
 	browsersCreateCmd.Flags().IntP("timeout", "t", 60, "Timeout in seconds for the browser session")
