@@ -223,11 +223,13 @@ each vault has its own key; it is created on first request and may be cached.`,
 	invoke := &cobra.Command{Use: "invoke <vault> <key> <operation>", Short: "invoke an operation advertised by an item", Args: cobra.ExactArgs(3), PreRunE: vaultPreRun,
 		Long: `retrieve the item and invoke only an operation listed in available_operations.
 collect returns a time-scoped url for the full credential form without clearing values.
-authorize sends {"type":"authorize"} for payment authorization. KERNEL cards do not
-accept browser_id or page_url: invoke them without those flags and trust KERNEL's stored
-merchant and PSP context. for a Link card or payment_request, or a Shop Pay card, at the
-final checkout page, add --browser-id and --page-url (both or neither) to send browser_id
-and page_url; see provider flows below.
+authorize sends {"type":"authorize"} for payment authorization. for a KERNEL card, add
+--browser-id alone (no --page-url) to name the browser that will pay: cards whose
+cardholder enters a fresh CVC on an encrypting card form try to route that browser through
+the card vault's proxy as soon as the CVC is entered, so authorize before the browser opens
+the payment step and wait until fill is advertised before opening it. for a Link card or
+payment_request, or a Shop Pay card, at the final checkout page, add --browser-id and
+--page-url (both or neither) to send browser_id and page_url; see provider flows below.
 read the operation description and follow any approval requirements before invoking.
 fill requires --params json or --spec-file <path|-> with browser_id (session id, not name)
 and the inputs the item's advertised fill description asks for: 1-32 ordered fields
@@ -437,7 +439,7 @@ JSON
 	invoke.Flags().String("spec-file", "", "operation parameters json file (use '-' for stdin; maximum 128 KiB)")
 	invoke.MarkFlagsMutuallyExclusive("params", "spec-file")
 	invoke.Flags().Bool("open", false, "open a returned https action url; cardholder links are human-only, agents must share privately")
-	invoke.Flags().String("browser-id", "", "browser session id, not a reusable name; used by Link or Shop Pay authorize (with --page-url) and passkey operations")
+	invoke.Flags().String("browser-id", "", "browser session id, not a reusable name; used by authorize (alone for Kernel cards, with --page-url for Link or Shop Pay) and passkey operations")
 	invoke.Flags().String("page-url", "", "Link or Shop Pay authorize only: exact current top-level checkout url open in --browser-id")
 	invoke.Flags().String("field", "", "passkey field to arm, receive a registration, or disarm; arm/register require it when ambiguous, while disarm omits it to affect every field")
 	invoke.Flags().String("enrollment", "", "add_payment_method enrollment flow: hosted (default, cardholder link) or server (issuer backend ingest url)")

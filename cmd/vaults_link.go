@@ -65,7 +65,8 @@ var linkCheckoutPageURL = regexp.MustCompile(`^https://[^/?#@*\s]+(?:[/?#][^\s]*
 const linkAuthorizeServerErrorGuidance = "if the browser was not created with --vault for this vault, was deleted, or is a pool browser that is not leased, checkout inspection cannot run: create a browser with --vault, open the checkout in it, and authorize again with that browser's session id. otherwise re-get the item and follow its advertised operations"
 
 // parseVaultAuthorizeCheckout returns the authorize request for --browser-id and --page-url,
-// or nil when neither flag is set.
+// or nil when neither flag is set. --browser-id alone names the browser that will pay with a
+// Kernel card; --page-url always needs --browser-id.
 func parseVaultAuthorizeCheckout(cmd *cobra.Command, operation string) (*kernel.AuthorizeVaultItemOperationRequestParam, error) {
 	browserSet, pageSet := cmd.Flags().Changed("browser-id"), cmd.Flags().Changed("page-url")
 	if !browserSet && !pageSet {
@@ -81,22 +82,25 @@ func parseVaultAuthorizeCheckout(cmd *cobra.Command, operation string) (*kernel.
 		}
 		return nil, fmt.Errorf("--browser-id and --page-url are only supported for authorize")
 	}
-	if browserSet != pageSet {
-		return nil, fmt.Errorf("--browser-id and --page-url must be passed together; authorize was not invoked")
+	if pageSet && !browserSet {
+		return nil, fmt.Errorf("--page-url requires --browser-id; authorize was not invoked")
 	}
 	browserID, _ := cmd.Flags().GetString("browser-id")
-	pageURL, _ := cmd.Flags().GetString("page-url")
 	if strings.TrimSpace(browserID) == "" {
 		return nil, fmt.Errorf("--browser-id must be a non-empty browser session ID, not a name")
 	}
-	if _, err := url.Parse(pageURL); err != nil || !linkCheckoutPageURL.MatchString(pageURL) {
-		return nil, fmt.Errorf("--page-url must be the exact current top-level https checkout url")
-	}
-	return &kernel.AuthorizeVaultItemOperationRequestParam{
+	request := &kernel.AuthorizeVaultItemOperationRequestParam{
 		Type:      kernel.AuthorizeVaultItemOperationRequestTypeAuthorize,
 		BrowserID: kernel.Opt(browserID),
-		PageURL:   kernel.Opt(pageURL),
-	}, nil
+	}
+	if pageSet {
+		pageURL, _ := cmd.Flags().GetString("page-url")
+		if _, err := url.Parse(pageURL); err != nil || !linkCheckoutPageURL.MatchString(pageURL) {
+			return nil, fmt.Errorf("--page-url must be the exact current top-level https checkout url")
+		}
+		request.PageURL = kernel.Opt(pageURL)
+	}
+	return request, nil
 }
 
 // linkAuthorizeError keeps the API's error code and message and adds the recovery step.

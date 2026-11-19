@@ -90,6 +90,7 @@ func TestVaultLinkAuthorizeSendsCheckout(t *testing.T) {
 	}{
 		{"checkout", []string{"--browser-id", "browser-1", "--page-url", "https://shop.example/checkout?step=pay#card"}, `{"type":"authorize","browser_id":"browser-1","page_url":"https://shop.example/checkout?step=pay#card"}`},
 		{"without checkout", nil, `{"type":"authorize"}`},
+		{"browser only", []string{"--browser-id", "browser-1"}, `{"type":"authorize","browser_id":"browser-1"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
@@ -118,17 +119,17 @@ func TestVaultLinkAuthorizeCheckoutValidation(t *testing.T) {
 		args []string
 		want string
 	}{
-		"browser only":     {[]string{"authorize", "--browser-id", "browser-1"}, "must be passed together"},
-		"page only":        {[]string{"authorize", "--page-url", "https://shop.example/checkout"}, "must be passed together"},
-		"blank browser":    {[]string{"authorize", "--browser-id", " ", "--page-url", "https://shop.example/checkout"}, "--browser-id must be"},
-		"http page":        {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "http://shop.example/checkout"}, "--page-url must be"},
-		"relative page":    {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "/checkout"}, "--page-url must be"},
-		"credentials page": {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "https://user:pass@shop.example/"}, "--page-url must be"},
-		"space in path":    {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "https://shop.example/check out"}, "--page-url must be"},
-		"glob host":        {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "https://*.shop.example/checkout"}, "--page-url must be"},
-		"fill":             {[]string{"fill", "--params", linkPayTokenFillParams, "--browser-id", "browser-1", "--page-url", "https://shop.example/checkout"}, "only supported for authorize; pass fill inputs with --params"},
-		"restart":          {[]string{"restart_verification", "--browser-id", "browser-1", "--page-url", "https://shop.example/checkout"}, "--browser-id and --page-url are only supported for authorize"},
-		"params":           {[]string{"authorize", "--params", linkPayTokenFillParams}, "authorize takes --browser-id and --page-url"},
+		"page only":          {[]string{"authorize", "--page-url", "https://shop.example/checkout"}, "--page-url requires --browser-id"},
+		"blank browser only": {[]string{"authorize", "--browser-id", " "}, "--browser-id must be"},
+		"blank browser":      {[]string{"authorize", "--browser-id", " ", "--page-url", "https://shop.example/checkout"}, "--browser-id must be"},
+		"http page":          {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "http://shop.example/checkout"}, "--page-url must be"},
+		"relative page":      {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "/checkout"}, "--page-url must be"},
+		"credentials page":   {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "https://user:pass@shop.example/"}, "--page-url must be"},
+		"space in path":      {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "https://shop.example/check out"}, "--page-url must be"},
+		"glob host":          {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "https://*.shop.example/checkout"}, "--page-url must be"},
+		"fill":               {[]string{"fill", "--params", linkPayTokenFillParams, "--browser-id", "browser-1", "--page-url", "https://shop.example/checkout"}, "only supported for authorize; pass fill inputs with --params"},
+		"restart":            {[]string{"restart_verification", "--browser-id", "browser-1", "--page-url", "https://shop.example/checkout"}, "--browser-id and --page-url are only supported for authorize"},
+		"params":             {[]string{"authorize", "--params", linkPayTokenFillParams}, "authorize takes --browser-id and --page-url"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, _, err := executeVaultCommand(t, client, append([]string{"vaults", "items", "invoke", "checkout", "order-1"}, tc.args...)...)
