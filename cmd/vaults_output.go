@@ -67,6 +67,7 @@ var vaultItemFields = vaultOutputFields{
 	"spec": {
 		"provider": nil, "wallet": nil, "card_mode": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil, "checkout_origin": nil,
 		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil, "merchant_country": nil, "merchant_category": nil, "merchant_category_code": nil,
+		"subtotal": nil, "shipping": nil, "tax": nil, "discount": nil,
 		"context": nil, "expires_at": nil, "description": nil, "account": nil, "connection_id": nil,
 		"requests":        onePasswordRequestFields,
 		"fields":          vaultFieldsOf("name label type required sensitive"),
@@ -76,8 +77,8 @@ var vaultItemFields = vaultOutputFields{
 		"totals":          vaultTotalFields,
 		"recurring":       vaultFieldsOf("interval interval_count"),
 		"line_items": {
-			"name": nil, "quantity": nil, "unit_amount": nil, "description": nil,
-			"sku": nil, "url": nil, "image_url": nil, "product_url": nil, "totals": vaultTotalFields,
+			"name": nil, "title": nil, "quantity": nil, "unit_amount": nil, "amount": nil, "description": nil,
+			"brand": nil, "options": nil, "sku": nil, "url": nil, "image_url": nil, "product_url": nil, "totals": vaultTotalFields,
 		},
 	},
 	"state": {
@@ -493,8 +494,39 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 				[]string{"recurring interval count", intervalCount},
 			)
 		}
-		if item.Spec.Provider == "agentcard" && item.Spec.CheckoutOrigin != "" {
-			rows = append(rows, []string{"checkout origin", item.Spec.CheckoutOrigin})
+		if item.Spec.Provider == "agentcard" {
+			if item.Spec.CheckoutOrigin != "" {
+				rows = append(rows, []string{"checkout origin", item.Spec.CheckoutOrigin})
+			}
+			for i, line := range item.Spec.LineItems.OfCardVaultItemSpecAgentcardLineItems {
+				value := fmt.Sprintf("%s × %d", line.Title, line.Quantity)
+				if line.JSON.Amount.Valid() {
+					value += fmt.Sprintf("; line total %d", line.Amount)
+				} else if line.JSON.UnitAmount.Valid() {
+					value += fmt.Sprintf("; unit amount %d", line.UnitAmount)
+				}
+				if line.Brand != "" {
+					value += "; brand " + line.Brand
+				}
+				if line.Options != "" {
+					value += "; " + line.Options
+				}
+				rows = append(rows, []string{fmt.Sprintf("cart line %d", i+1), value})
+			}
+			for _, total := range []struct {
+				label   string
+				value   int64
+				present bool
+			}{
+				{"cart subtotal", item.Spec.Subtotal, item.Spec.JSON.Subtotal.Valid()},
+				{"shipping", item.Spec.Shipping, item.Spec.JSON.Shipping.Valid()},
+				{"tax", item.Spec.Tax, item.Spec.JSON.Tax.Valid()},
+				{"discount", item.Spec.Discount, item.Spec.JSON.Discount.Valid()},
+			} {
+				if total.present {
+					rows = append(rows, []string{total.label + " (minor units)", fmt.Sprint(total.value)})
+				}
+			}
 		}
 		if (item.Spec.Provider == "kernel" || item.Spec.Provider == "shop_pay" || item.Spec.Provider == "vgs") && item.Spec.MerchantURL != "" {
 			rows = append(rows, []string{"merchant url", item.Spec.MerchantURL})
@@ -609,7 +641,7 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		if actions.RequiredAction != "" {
 			pterm.Info.Println("share the 1Password authorization url with the account owner. observe the connection with items get --wait 60; never ask for 1Password passwords or codes.")
 		} else if item.State.Status == "revoking" {
-			pterm.Info.Println("this 1Password account cannot be used while KERNEL finishes its revoke in the background. after a disconnect, link it again to use its credentials; after a delete, it is removed once the revoke finishes.")
+			pterm.Info.Println("this 1Password account cannot be used while KERNEL keeps retrying its revoke in the background. after a disconnect, link it again to use its credentials; after a delete, it is removed once 1Password confirms the revoke.")
 		} else if item.State.Status == "reconnect_required" || item.State.Status == "declined" {
 			pterm.Info.Println("this 1Password account is not connected. ask the owner before running credentials connect again with the same key; use 1pw_recover first if it is advertised.")
 		}

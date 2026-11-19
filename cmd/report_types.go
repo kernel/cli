@@ -55,7 +55,10 @@ func (c ReportTypesCmd) List(ctx context.Context, in ReportTypesListInput) error
 	if strings.TrimSpace(in.TaskID) == "" {
 		return fmt.Errorf("--task-id is required")
 	}
-	page, perPage := normalizePageInput(in.Page, in.PerPage)
+	page, perPage, err := normalizePageInput(in.Page, in.PerPage)
+	if err != nil {
+		return err
+	}
 	result, err := c.reportTypes.List(ctx, kernel.ReportTypeListParams{
 		TaskID: in.TaskID,
 		Limit:  kernel.Opt(int64(perPage + 1)),
@@ -201,7 +204,7 @@ func init() {
 
 	reportTypesListCmd.Flags().String("task-id", "", "Task the agent is finding a report type for (required)")
 	reportTypesListCmd.Flags().Int("page", 1, "Page number (1-based)")
-	reportTypesListCmd.Flags().Int("per-page", 20, "Items per page (default 20)")
+	reportTypesListCmd.Flags().Int("per-page", 20, "Items per page (1-99, default 20)")
 	_ = reportTypesListCmd.MarkFlagRequired("task-id")
 	addJSONOutputFlag(reportTypesListCmd)
 	addJSONOutputFlag(reportTypesGetCmd)

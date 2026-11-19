@@ -283,14 +283,14 @@ func TestVaultCardRequestMapping(t *testing.T) {
 					if provider == "link" {
 						assert.JSONEq(t, fmt.Sprintf(`{"provider":"link","wallet":"wallet-1","amount":1234,"currency":"USD","merchant_name":"Example Shop","merchant_url":"https://shop.example","payment_method_id":"pm-1","context":%q}`, strings.Repeat("Purchase purpose. ", 7)), string(body["spec"]))
 					} else {
-						assert.JSONEq(t, `{"provider":"agentcard","wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop","card_id":"vc_chosen","checkout_origin":"https://shop.example.com"}`, string(body["spec"]))
+						assert.JSONEq(t, `{"provider":"agentcard","wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop","card_id":"vc_chosen","checkout_origin":"https://shop.example.com","line_items":[{"title":"T-shirt","quantity":2,"unit_amount":500,"amount":1000,"brand":"Acme","options":"Size S · Pink","image_url":"https://images.example/shirt.png"}],"subtotal":1000,"shipping":150,"tax":84,"discount":0}`, string(body["spec"]))
 					}
 					w.Header().Set("Content-Type", "application/json")
 					_, _ = io.WriteString(w, requestedCardFixture)
 				})
 				flags := linkCardArgs()
 				if provider == "agentcard" {
-					flags = []string{"--provider", provider, "--spec", `{"wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop","card_id":"vc_chosen","checkout_origin":"https://shop.example.com"}`}
+					flags = []string{"--provider", provider, "--spec", `{"wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop","card_id":"vc_chosen","checkout_origin":"https://shop.example.com","line_items":[{"title":"T-shirt","quantity":2,"unit_amount":500,"amount":1000,"brand":"Acme","options":"Size S · Pink","image_url":"https://images.example/shirt.png"}],"subtotal":1000,"shipping":150,"tax":84,"discount":0}`}
 				}
 				args := append([]string{"vaults", "cards", operation, "checkout", "order-1", "-o", "json"}, flags...)
 				out, human, err := executeVaultCommand(t, client, args...)

@@ -53,6 +53,13 @@ func TestTasksCreateMapsAllFields(t *testing.T) {
 	assert.Contains(t, buf.String(), "task-1")
 }
 
+func TestListPageUXRejectsValuesThatCannotUseLookahead(t *testing.T) {
+	_, _, err := normalizePageInput(1, 100)
+	require.ErrorContains(t, err, "between 1 and 99")
+	_, _, err = normalizePageInput(-1, 20)
+	require.ErrorContains(t, err, "--page")
+}
+
 func TestTasksListUsesPageUXAndPreservesFilter(t *testing.T) {
 	var captured kernel.TaskListParams
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)

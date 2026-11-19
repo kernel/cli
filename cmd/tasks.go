@@ -55,14 +55,22 @@ type TasksLinkBrowsersInput struct {
 	Output     string
 }
 
-func normalizePageInput(page, perPage int) (int, int) {
-	if page <= 0 {
+func normalizePageInput(page, perPage int) (int, int, error) {
+	if page == 0 {
 		page = 1
 	}
-	if perPage <= 0 {
+	if perPage == 0 {
 		perPage = 20
 	}
-	return page, perPage
+	if page < 1 {
+		return 0, 0, fmt.Errorf("--page must be at least 1")
+	}
+	// The CLI requests one extra item to determine whether another page exists;
+	// the API's limit is 100, so the largest display page is 99.
+	if perPage < 1 || perPage > 99 {
+		return 0, 0, fmt.Errorf("--per-page must be between 1 and 99")
+	}
+	return page, perPage, nil
 }
 
 func printListPaginationFooter(page, perPage, itemsThisPage int, hasMore bool, nextCommand string) {
@@ -157,7 +165,10 @@ func (c TasksCmd) List(ctx context.Context, in TasksListInput) error {
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
 	}
-	page, perPage := normalizePageInput(in.Page, in.PerPage)
+	page, perPage, err := normalizePageInput(in.Page, in.PerPage)
+	if err != nil {
+		return err
+	}
 	params := kernel.TaskListParams{
 		Limit:  kernel.Opt(int64(perPage + 1)),
 		Offset: kernel.Opt(int64((page - 1) * perPage)),
@@ -295,7 +306,7 @@ func init() {
 	addJSONOutputFlag(tasksGetCmd)
 
 	tasksListCmd.Flags().Int("page", 1, "Page number (1-based)")
-	tasksListCmd.Flags().Int("per-page", 20, "Items per page (default 20)")
+	tasksListCmd.Flags().Int("per-page", 20, "Items per page (1-99, default 20)")
 	tasksListCmd.Flags().String("session-id", "", "Only return tasks linked to this browser ID")
 	addJSONOutputFlag(tasksListCmd)
 

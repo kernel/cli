@@ -337,7 +337,8 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 	assert.Contains(t, invoke.Long, "optional access_token_expires_at (RFC3339)")
 	assert.Contains(t, invoke.Long, "ends the account's 1Password")
 	assert.Contains(t, invoke.Long, "provider_revocation_pending")
-	assert.Contains(t, credentials.Long, "revoking means KERNEL is finishing the revoke")
+	assert.Contains(t, credentials.Long, "revoking means KERNEL is keeping the account unusable")
+	assert.Contains(t, credentials.Long, "retrying the revoke in the background")
 	assert.Contains(t, invoke.Long, "expiry clears the previously supplied expiry")
 	for _, help := range []string{invoke.Long, invoke.Example, credentials.Long, credentials.Example, connect.Long} {
 		for _, removed := range []string{"1pw_request_access", "1pw_poll_access", "1pw_reconcile", "account_id", "Family", "customer_managed", "RFC 3339"} {

@@ -72,6 +72,30 @@ func TestVaultOutputAgentCardAliasesPresenceAndRedaction(t *testing.T) {
 	assert.Contains(t, out, `"aliases": null`)
 }
 
+func TestVaultOutputAgentCardCartContext(t *testing.T) {
+	var item kernel.VaultItemUnion
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"id":"card-id","key":"order-1","type":"card",
+		"spec":{"provider":"agentcard","wallet":"wallet-1","amount":1234,"currency":"usd","merchant":"Example Shop",
+			"line_items":[{"title":"T-shirt","quantity":2,"unit_amount":500,"amount":1000,"brand":"Acme","options":"Size S · Pink","image_url":"https://images.example/shirt.png","provider_secret":"SECRET_LINE"}],
+			"subtotal":1000,"shipping":150,"tax":84,"discount":0},
+		"state":{"provider":"agentcard","status":"requested"},
+		"available_operations":[],"available_expansions":[]
+	}`), &item))
+
+	buf := capturePtermOutput(t)
+	require.NoError(t, printVaultItem(&item, ""))
+	for _, want := range []string{"cart line 1", "T-shirt × 2", "line total 1000", "brand Acme", "Size S · Pink", "cart subtotal", "shipping", "tax", "discount"} {
+		assert.Contains(t, buf.String(), want)
+	}
+
+	out := captureStdout(t, func() { require.NoError(t, printVaultItem(&item, "json")) })
+	for _, want := range []string{`"title": "T-shirt"`, `"quantity": 2`, `"unit_amount": 500`, `"amount": 1000`, `"brand": "Acme"`, `"options": "Size S · Pink"`, `"subtotal": 1000`, `"shipping": 150`, `"tax": 84`, `"discount": 0`} {
+		assert.Contains(t, out, want)
+	}
+	assert.NotContains(t, out, "SECRET_LINE")
+}
+
 func TestVaultOutputLinkHasNoAliases(t *testing.T) {
 	for _, fixture := range []string{requestedCardFixture, readyLinkCardFixture} {
 		var item kernel.VaultItemUnion

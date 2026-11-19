@@ -134,7 +134,10 @@ func (c ReportsCmd) List(ctx context.Context, in ReportsListInput) error {
 	if strings.TrimSpace(in.TaskID) == "" {
 		return fmt.Errorf("--task-id is required")
 	}
-	page, perPage := normalizePageInput(in.Page, in.PerPage)
+	page, perPage, err := normalizePageInput(in.Page, in.PerPage)
+	if err != nil {
+		return err
+	}
 	params := kernel.ReportListParams{
 		TaskID: in.TaskID,
 		Limit:  kernel.Opt(int64(perPage + 1)),
@@ -255,7 +258,7 @@ func init() {
 	reportsListCmd.Flags().String("task-id", "", "Task whose reports to list (required)")
 	reportsListCmd.Flags().String("type", "", "Only return reports of this type")
 	reportsListCmd.Flags().Int("page", 1, "Page number (1-based)")
-	reportsListCmd.Flags().Int("per-page", 20, "Items per page (default 20)")
+	reportsListCmd.Flags().Int("per-page", 20, "Items per page (1-99, default 20)")
 	_ = reportsListCmd.MarkFlagRequired("task-id")
 	addJSONOutputFlag(reportsListCmd)
 }

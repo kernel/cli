@@ -1,16 +1,17 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	kernel "github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/packages/param"
 )
 
 // proxyModes are the values accepted by --proxy-mode. direct forces egress
-// without a proxy regardless of stealth; default restores the browser's
-// stealth-derived default (Kernel's stealth proxy when stealth is on, direct
-// egress otherwise).
+// without a proxy. default uses Kernel's default stealth proxy when CAPTCHA
+// solving is enabled and direct egress otherwise.
 var proxyModes = []string{
 	string(kernel.BrowserProxyModeDirect),
 	string(kernel.BrowserProxyModeDefault),
@@ -23,6 +24,21 @@ type proxySelection struct {
 	ID   string
 	Name string
 	Mode string
+}
+
+func validateStealthCaptchaFlags(stealth, captchaSolver BoolFlag) error {
+	if stealth.Set && stealth.Value && captchaSolver.Set && !captchaSolver.Value {
+		return fmt.Errorf("--stealth=true cannot be combined with --captcha-solver=false; use explicit --captcha-solver and --proxy-mode settings instead")
+	}
+	return nil
+}
+
+// browserCaptchaSolverParam uses an explicit JSON override because the SDK's
+// optional object would otherwise treat {enabled:false} as its zero value and
+// omit it, making --captcha-solver=false unable to disable an existing setting.
+func browserCaptchaSolverParam(enabled bool) kernel.BrowserCaptchaSolverParam {
+	raw := json.RawMessage(fmt.Sprintf(`{"enabled":%t}`, enabled))
+	return param.Override[kernel.BrowserCaptchaSolverParam](raw)
 }
 
 // set reports whether any proxy flag was provided.

@@ -87,8 +87,9 @@ new link with the owner, then run credentials connect again with the same key. f
 reconnect_required or declined without 1pw_recover, ask the owner before running
 credentials connect again with the same key for a new link. to intentionally end the
 connection while retaining the account item, invoke advertised 1pw_disconnect without
-parameters. fills stop immediately; revoking means KERNEL is finishing the revoke in the
-background, and the credentials stay unusable until the account is linked again.`
+parameters. fills stop immediately; revoking means KERNEL is keeping the account unusable
+and retrying the revoke in the background until 1Password confirms it; link the account again
+before using its credentials.`
 
 const vaultOnePasswordStoredTokenHelp = `stored-token 1Password credentials (developer integrations only, separate from the
 flow above): a developer who already holds a 1Password broker access token and its

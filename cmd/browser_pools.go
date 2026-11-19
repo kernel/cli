@@ -149,6 +149,7 @@ type BrowserPoolsCreateInput struct {
 	FillRate               int64
 	TimeoutSeconds         int64
 	Stealth                BoolFlag
+	CaptchaSolver          BoolFlag
 	Headless               BoolFlag
 	Kiosk                  BoolFlag
 	Memory                 string
@@ -179,6 +180,9 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 	if err := validateStartURLFlag(in.StartURL); err != nil {
 		return err
 	}
+	if err := validateStealthCaptchaFlags(in.Stealth, in.CaptchaSolver); err != nil {
+		return err
+	}
 
 	params := kernel.BrowserPoolNewParams{
 		Size: in.Size,
@@ -195,6 +199,9 @@ func (c BrowserPoolsCmd) Create(ctx context.Context, in BrowserPoolsCreateInput)
 	}
 	if in.Stealth.Set {
 		params.Stealth = kernel.Bool(in.Stealth.Value)
+	}
+	if in.CaptchaSolver.Set {
+		params.CaptchaSolver = browserCaptchaSolverParam(in.CaptchaSolver.Value)
 	}
 	if in.Headless.Set {
 		params.Headless = kernel.Bool(in.Headless.Value)
@@ -346,7 +353,8 @@ func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error
 		{"Fill Rate", formatFillRate(cfg.FillRatePerMinute)},
 		{"Timeout", fmt.Sprintf("%d seconds", cfg.TimeoutSeconds)},
 		{"Headless", fmt.Sprintf("%t", cfg.Headless)},
-		{"Stealth", fmt.Sprintf("%t", cfg.Stealth)},
+		{"Stealth (deprecated)", fmt.Sprintf("%t", cfg.Stealth)},
+		{"CAPTCHA Solver", fmt.Sprintf("%t", cfg.CaptchaSolver.Enabled)},
 		{"Kiosk Mode", fmt.Sprintf("%t", cfg.KioskMode)},
 		{"Memory", util.OrDash(string(cfg.Memory))},
 		{"Refresh On Profile Update", fmt.Sprintf("%t", cfg.RefreshOnProfileUpdate)},
@@ -373,6 +381,7 @@ type BrowserPoolsUpdateInput struct {
 	FillRate               Int64Flag
 	TimeoutSeconds         int64
 	Stealth                BoolFlag
+	CaptchaSolver          BoolFlag
 	Headless               BoolFlag
 	Kiosk                  BoolFlag
 	Memory                 string
@@ -465,6 +474,9 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 	if err := validateBrowserPoolUpdateInput(in); err != nil {
 		return err
 	}
+	if err := validateStealthCaptchaFlags(in.Stealth, in.CaptchaSolver); err != nil {
+		return err
+	}
 	allowedHosts, err := normalizeAllowedHosts(in.AllowedHosts, in.AllowedHostsProvided, "use --clear-allowed-hosts to remove the pool's allowlist")
 	if err != nil {
 		return err
@@ -493,6 +505,9 @@ func (c BrowserPoolsCmd) Update(ctx context.Context, in BrowserPoolsUpdateInput)
 	}
 	if in.Stealth.Set {
 		params.Stealth = kernel.Bool(in.Stealth.Value)
+	}
+	if in.CaptchaSolver.Set {
+		params.CaptchaSolver = browserCaptchaSolverParam(in.CaptchaSolver.Value)
 	}
 	if in.Headless.Set {
 		params.Headless = kernel.Bool(in.Headless.Value)
@@ -912,7 +927,8 @@ func init() {
 	_ = browserPoolsCreateCmd.MarkFlagRequired("size")
 	browserPoolsCreateCmd.Flags().Int64("fill-rate", 0, "Fill rate per minute")
 	browserPoolsCreateCmd.Flags().Int64("timeout", 0, "Idle timeout in seconds")
-	browserPoolsCreateCmd.Flags().Bool("stealth", false, "Enable stealth mode")
+	browserPoolsCreateCmd.Flags().Bool("stealth", false, "Deprecated compatibility mode: enable CAPTCHA solving and Kernel's default stealth proxy together; use --captcha-solver and an explicit pool proxy instead")
+	browserPoolsCreateCmd.Flags().Bool("captcha-solver", false, "Enable automatic CAPTCHA solving for browsers warmed into the pool; does not change proxy egress")
 	browserPoolsCreateCmd.Flags().Bool("headless", false, "Enable headless mode")
 	browserPoolsCreateCmd.Flags().Bool("kiosk", false, "Enable kiosk mode")
 	browserPoolsCreateCmd.Flags().String("memory", "", "Memory for browsers in the pool. Headless: '1GiB' (default), '2GiB' or '4GiB'. Headful: '8GiB' (default) or '16GiB'")
@@ -940,7 +956,8 @@ func init() {
 	browserPoolsUpdateCmd.Flags().Int64("size", 0, "Number of browsers in the pool")
 	browserPoolsUpdateCmd.Flags().Int64("fill-rate", 0, "Fill rate per minute")
 	browserPoolsUpdateCmd.Flags().Int64("timeout", 0, "Idle timeout in seconds")
-	browserPoolsUpdateCmd.Flags().Bool("stealth", false, "Enable stealth mode")
+	browserPoolsUpdateCmd.Flags().Bool("stealth", false, "Deprecated compatibility mode: enable CAPTCHA solving and Kernel's default stealth proxy together; use --captcha-solver and an explicit pool proxy instead")
+	browserPoolsUpdateCmd.Flags().Bool("captcha-solver", false, "Set automatic CAPTCHA solving for newly-warmed browsers; does not change proxy egress; use --captcha-solver=false to disable")
 	browserPoolsUpdateCmd.Flags().Bool("headless", false, "Enable headless mode")
 	browserPoolsUpdateCmd.Flags().Bool("kiosk", false, "Enable kiosk mode")
 	browserPoolsUpdateCmd.Flags().String("memory", "", "Memory for newly-warmed browsers in the pool. Headless: '1GiB', '2GiB' or '4GiB'. Headful: '8GiB' or '16GiB'. Existing browsers keep their allocation; use --discard-all-idle to replace idle browsers")
@@ -1032,6 +1049,7 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 	fillRate, _ := cmd.Flags().GetInt64("fill-rate")
 	timeout, _ := cmd.Flags().GetInt64("timeout")
 	stealth, _ := cmd.Flags().GetBool("stealth")
+	captchaSolver, _ := cmd.Flags().GetBool("captcha-solver")
 	headless, _ := cmd.Flags().GetBool("headless")
 	kiosk, _ := cmd.Flags().GetBool("kiosk")
 	memory, _ := cmd.Flags().GetString("memory")
@@ -1059,6 +1077,7 @@ func runBrowserPoolsCreate(cmd *cobra.Command, args []string) error {
 		FillRate:               fillRate,
 		TimeoutSeconds:         timeout,
 		Stealth:                BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealth},
+		CaptchaSolver:          BoolFlag{Set: cmd.Flags().Changed("captcha-solver"), Value: captchaSolver},
 		Headless:               BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headless},
 		Kiosk:                  BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kiosk},
 		Memory:                 memory,
@@ -1101,6 +1120,7 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 	fillRate, _ := cmd.Flags().GetInt64("fill-rate")
 	timeout, _ := cmd.Flags().GetInt64("timeout")
 	stealth, _ := cmd.Flags().GetBool("stealth")
+	captchaSolver, _ := cmd.Flags().GetBool("captcha-solver")
 	headless, _ := cmd.Flags().GetBool("headless")
 	kiosk, _ := cmd.Flags().GetBool("kiosk")
 	memory, _ := cmd.Flags().GetString("memory")
@@ -1138,6 +1158,7 @@ func runBrowserPoolsUpdate(cmd *cobra.Command, args []string) error {
 		FillRate:               Int64Flag{Set: cmd.Flags().Changed("fill-rate"), Value: fillRate},
 		TimeoutSeconds:         timeout,
 		Stealth:                BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealth},
+		CaptchaSolver:          BoolFlag{Set: cmd.Flags().Changed("captcha-solver"), Value: captchaSolver},
 		Headless:               BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headless},
 		Kiosk:                  BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kiosk},
 		Memory:                 memory,

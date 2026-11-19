@@ -195,7 +195,7 @@ each vault has its own key; it is created on first request and may be cached.`,
 		}}
 	addVaultJSONOutputFlag(itemList)
 	itemGet := &cobra.Command{Use: "get <vault> <key>", Short: "get item state, available operations, and requested live data", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long:    "get item state, available operations, provider actions, and returned AgentCard checkout aliases.\n--expand fetches live, non-persisted provider data only when the item advertises that expansion; requesting unavailable data fails rather than returning a partial item. Link user info and shipping addresses can contain personal data. use -o json to preserve null versus omitted fields.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nan item still pending after the wait is returned as-is; ready means populated for credentials, not logged in or paid.\nfor credential edits on an already-ready item, compare versions without --wait. explicitly non-sensitive text/email values are returned; sensitive values and totp seeds are omitted.\nrecovery_required stops waiting and means unresolved, not declined or expired.\na 1Password credential_account in revoking cannot be used while KERNEL finishes its revoke in the background.\nfor AgentCard authorization json, amount_authority identifies the approved amount's source; agent and display_only do not prove what the processor charged. amount_verified and charged_* may be absent when there is no observed charge. charged_kind none means the checkout produced a token or payment method for a later merchant charge; inspect item events and the merchant order record.\n" + vaultRecoveryHelp,
+		Long:    "get item state, available operations, provider actions, and returned AgentCard checkout aliases.\n--expand fetches live, non-persisted provider data only when the item advertises that expansion; requesting unavailable data fails rather than returning a partial item. Link user info and shipping addresses can contain personal data. use -o json to preserve null versus omitted fields.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nan item still pending after the wait is returned as-is; ready means populated for credentials, not logged in or paid.\nfor credential edits on an already-ready item, compare versions without --wait. explicitly non-sensitive text/email values are returned; sensitive values and totp seeds are omitted.\nrecovery_required stops waiting and means unresolved, not declined or expired.\na 1Password credential_account in revoking cannot be used while KERNEL keeps retrying its revoke in the background.\nfor AgentCard authorization json, amount_authority identifies the approved amount's source; agent and display_only do not prove what the processor charged. amount_verified and charged_* may be absent when there is no observed charge. charged_kind none means the checkout produced a token or payment method for a later merchant charge; inspect item events and the merchant order record.\n" + vaultRecoveryHelp,
 		Example: "  kernel vaults items get checkout wallet-1 --expand payment_methods\n  kernel vaults items get checkout wallet-1 --expand link_user_info,link_shipping_addresses -o json",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			wait, _ := cmd.Flags().GetInt64("wait")
@@ -223,9 +223,11 @@ each vault has its own key; it is created on first request and may be cached.`,
 	invoke := &cobra.Command{Use: "invoke <vault> <key> <operation>", Short: "invoke an operation advertised by an item", Args: cobra.ExactArgs(3), PreRunE: vaultPreRun,
 		Long: `retrieve the item and invoke only an operation listed in available_operations.
 collect returns a time-scoped url for the full credential form without clearing values.
-authorize sends {"type":"authorize"} for payment authorization. for a Link card or
-payment_request, or a Shop Pay card, at the final checkout page, add --browser-id and
---page-url (both or neither) to send browser_id and page_url; see provider flows below.
+authorize sends {"type":"authorize"} for payment authorization. KERNEL cards do not
+accept browser_id or page_url: invoke them without those flags and trust KERNEL's stored
+merchant and PSP context. for a Link card or payment_request, or a Shop Pay card, at the
+final checkout page, add --browser-id and --page-url (both or neither) to send browser_id
+and page_url; see provider flows below.
 read the operation description and follow any approval requirements before invoking.
 fill requires --params json or --spec-file <path|-> with browser_id (session id, not name)
 and the inputs the item's advertised fill description asks for: 1-32 ordered fields
@@ -362,7 +364,7 @@ update_access_token (imported Link wallets with token_refresh=customer): --spec-
 1pw_disconnect (credential accounts, no parameters): ends the account's 1Password
   connection while keeping the item so it can be linked again. fills stop immediately.
   when no other vault uses the connection, KERNEL revokes it at 1Password; a 409
-  provider_revocation_pending means KERNEL finishes it in the background. its credentials
+  provider_revocation_pending means KERNEL keeps retrying the revoke in the background. its credentials
   need new access requests after the account is linked again.
 never automatically retry an access request or recovery, and never delete and recreate
 an item to reset an uncertain outcome; stop and tell the user instead.`,
@@ -517,7 +519,7 @@ func newVaultDeleteCommand(item bool) *cobra.Command {
 	flagHelp := "skip confirmation prompt"
 	if item {
 		use, short, nargs = "delete <vault> <key>", "delete an item and invalidate its credential", 2
-		long = "Unresolved payment operations normally block item deletion, including operations on a wallet's child cards. Deleting a connected KERNEL wallet first blocks new payments and then removes its enrolled card; if removal fails, the wallet is kept and continues refusing payments; reconcile the original attempt with the provider or support before retrying deletion. A Link, KERNEL, or Shop Pay card in issuance recovery_required, or an AgentCard card in recovery_required whose checkout-create response returned no authorization ID, may be explicitly abandoned by deleting that card directly; deleting its wallet or vault remains blocked until the card is deleted. Deleting or recreating an item does not prove that a payment did not occur. Deleting a managed-auth credential leaves its connection and saved credential unchanged. Deleting a 1Password credential account stops fills immediately and, when no other vault uses the person's connection, revokes it at 1Password; until 1Password confirms, the command returns 409 provider_revocation_pending and KERNEL finishes the deletion in the background."
+		long = "Unresolved payment operations normally block item deletion, including operations on a wallet's child cards. Deleting a connected KERNEL wallet first blocks new payments and then removes its enrolled card; if removal fails, the wallet is kept and continues refusing payments; reconcile the original attempt with the provider or support before retrying deletion. A Link, KERNEL, or Shop Pay card in issuance recovery_required, or an AgentCard card in recovery_required whose checkout-create response returned no authorization ID, may be explicitly abandoned by deleting that card directly; deleting its wallet or vault remains blocked until the card is deleted. Deleting or recreating an item does not prove that a payment did not occur. Deleting a managed-auth credential leaves its connection and saved credential unchanged. Deleting a 1Password credential account stops fills immediately and, when no other vault uses the person's connection, revokes it at 1Password; until 1Password confirms, the command returns 409 provider_revocation_pending and KERNEL keeps retrying the revoke in the background."
 		flagHelp = "skip confirmation prompt; Link, KERNEL, Shop Pay, or qualifying AgentCard recovery may be abandoned only by deleting the card directly after explicit user confirmation"
 	}
 	cmd := &cobra.Command{Use: use, Short: short, Long: long, Args: cobra.ExactArgs(nargs), PreRunE: vaultPreRun,
