@@ -28,9 +28,6 @@ const (
 	DefaultClientID = "hmFrJn9hKDV2N02M"
 	RedirectURI     = "http://localhost"
 
-	// OAuth scopes - openid for the MCP server flow
-	DefaultScope = "openid email"
-
 	// tokenExchangeTimeout bounds the token/refresh HTTP calls so a stalled auth
 	// server surfaces as an error instead of hanging the CLI indefinitely.
 	tokenExchangeTimeout = 30 * time.Second
@@ -143,7 +140,6 @@ func NewOAuthConfig() (*OAuthConfig, error) {
 	config := &oauth2.Config{
 		ClientID:    clientID,
 		RedirectURL: redirectURI,
-		Scopes:      strings.Split(DefaultScope, " "),
 		Endpoint: oauth2.Endpoint{
 			AuthURL:   authorizeURL(authBaseURL),
 			TokenURL:  tokenURL(authBaseURL),
@@ -292,7 +288,6 @@ func RefreshTokens(ctx context.Context, tokens *TokenStorage) (*TokenStorage, er
 	values.Set("grant_type", "refresh_token")
 	values.Set("refresh_token", tokens.RefreshToken)
 	values.Set("client_id", tokenOAuthClientID(tokens))
-	values.Set("scope", DefaultScope)
 	if tokens.OrgID != "" {
 		values.Set("org_id", tokens.OrgID)
 	}

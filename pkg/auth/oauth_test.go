@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -31,6 +32,22 @@ func TestNewOAuthConfigUsesAuthOverrides(t *testing.T) {
 	}
 	if got, want := cfg.Config.ClientID, "staging-client-id"; got != want {
 		t.Fatalf("ClientID = %q, want %q", got, want)
+	}
+}
+
+// The CLI names no scopes: the authorization server's consent page decides
+// what the login may do.
+func TestAuthorizationRequestNamesNoScope(t *testing.T) {
+	cfg, err := NewOAuthConfig()
+	if err != nil {
+		t.Fatalf("NewOAuthConfig() error = %v", err)
+	}
+	authURL, err := url.Parse(cfg.Config.AuthCodeURL(cfg.State))
+	if err != nil {
+		t.Fatalf("AuthCodeURL() is not a URL: %v", err)
+	}
+	if authURL.Query().Has("scope") {
+		t.Fatalf("authorization request names scope %q", authURL.Query().Get("scope"))
 	}
 }
 
@@ -114,6 +131,9 @@ func TestRefreshTokensPreservesProjectScope(t *testing.T) {
 		}
 		if got, want := r.Form.Get("refresh_token"), "refresh-old"; got != want {
 			t.Fatalf("refresh_token = %q, want %q", got, want)
+		}
+		if r.Form.Has("scope") {
+			t.Fatalf("refresh request names scope %q", r.Form.Get("scope"))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
