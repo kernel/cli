@@ -103,6 +103,24 @@ func parseVaultAuthorizeCheckout(cmd *cobra.Command, operation string) (*kernel.
 	return request, nil
 }
 
+// validateVaultAuthorizeTarget checks authorize flags against the item: a KERNEL card takes
+// --browser-id alone, while Link cards/payment_request items and Shop Pay cards take both flags.
+func validateVaultAuthorizeTarget(item *kernel.VaultItemUnion, linkPurchase bool, authorize *kernel.AuthorizeVaultItemOperationRequestParam) error {
+	if item.Type == "card" && item.Spec.Provider == "kernel" {
+		if authorize.PageURL.Valid() {
+			return fmt.Errorf("KERNEL cards take --browser-id without --page-url; authorize was not invoked")
+		}
+		return nil
+	}
+	if linkPurchase || (item.Type == "card" && item.Spec.Provider == "shop_pay") {
+		if !authorize.PageURL.Valid() {
+			return fmt.Errorf("Link and Shop Pay authorize take --browser-id and --page-url together; authorize was not invoked")
+		}
+		return nil
+	}
+	return fmt.Errorf("--browser-id and --page-url only apply to KERNEL cards, Link cards or payment_request items, and Shop Pay cards; authorize was not invoked")
+}
+
 // linkAuthorizeError keeps the API's error code and message and adds the recovery step.
 // checkout reports whether the request carried browser_id and page_url.
 func linkAuthorizeError(err error, checkout bool) error {

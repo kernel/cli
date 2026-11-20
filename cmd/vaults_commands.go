@@ -439,7 +439,7 @@ JSON
 	invoke.Flags().String("spec-file", "", "operation parameters json file (use '-' for stdin; maximum 128 KiB)")
 	invoke.MarkFlagsMutuallyExclusive("params", "spec-file")
 	invoke.Flags().Bool("open", false, "open a returned https action url; cardholder links are human-only, agents must share privately")
-	invoke.Flags().String("browser-id", "", "browser session id, not a reusable name; used by authorize (alone for Kernel cards, with --page-url for Link or Shop Pay) and passkey operations")
+	invoke.Flags().String("browser-id", "", "browser session id, not a reusable name; used by authorize (alone for KERNEL cards, with --page-url for Link or Shop Pay) and passkey operations")
 	invoke.Flags().String("page-url", "", "Link or Shop Pay authorize only: exact current top-level checkout url open in --browser-id")
 	invoke.Flags().String("field", "", "passkey field to arm, receive a registration, or disarm; arm/register require it when ambiguous, while disarm omits it to affect every field")
 	invoke.Flags().String("enrollment", "", "add_payment_method enrollment flow: hosted (default, cardholder link) or server (issuer backend ingest url)")

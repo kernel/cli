@@ -380,9 +380,10 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		}
 	}
 	linkPurchase := (item.Type == "card" || item.Type == "payment_request") && item.Spec.Provider == "link"
-	checkoutAuthorizedPurchase := linkPurchase || (item.Type == "card" && item.Spec.Provider == "shop_pay")
-	if params != nil && params.Authorize != nil && !checkoutAuthorizedPurchase {
-		return fmt.Errorf("--browser-id and --page-url only apply to Link cards or payment_request items and Shop Pay cards; authorize was not invoked")
+	if params != nil && params.Authorize != nil {
+		if err := validateVaultAuthorizeTarget(item, linkPurchase, params.Authorize); err != nil {
+			return err
+		}
 	}
 	if operation == "fill" {
 		if !linkPurchase && len(params.Fill.Fields) == 0 {
