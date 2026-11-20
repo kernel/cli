@@ -190,7 +190,7 @@ func (c TasksCmd) List(ctx context.Context, in TasksListInput) error {
 		items = items[:perPage]
 	}
 	if in.Output == "json" {
-		return util.PrintPrettyJSONSlice(items)
+		return util.PrintPageJSON(items, page, perPage, hasMore)
 	}
 
 	if len(items) == 0 {

@@ -156,7 +156,7 @@ func (c WorkloadIdentityFederationRulesCmd) List(ctx context.Context, in Workloa
 	}
 
 	if in.Output == "json" {
-		return util.PrintPrettyJSONSlice(items)
+		return util.PrintPageJSON(items, page, perPage, hasMore)
 	}
 	if len(items) == 0 {
 		pterm.Info.Println("No workload identity federation rules found")

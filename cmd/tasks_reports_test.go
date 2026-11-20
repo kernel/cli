@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -185,4 +186,27 @@ func TestReportTypesListAndVersionGet(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "task.result", gotType)
 	assert.Equal(t, int64(2), gotVersion)
+}
+
+func TestTasksListJSONIncludesPageMetadata(t *testing.T) {
+	var items []kernel.Task
+	require.NoError(t, json.Unmarshal([]byte(`[{"id":"task-1"},{"id":"task-2"},{"id":"task-3"}]`), &items))
+	service := fakeTasksService{listFunc: func(kernel.TaskListParams) *pagination.OffsetPagination[kernel.Task] {
+		return &pagination.OffsetPagination[kernel.Task]{Items: items}
+	}}
+	for _, tc := range []struct {
+		name    string
+		perPage int
+		want    string
+	}{
+		{"more pages", 2, `{"items":[{"id":"task-1"},{"id":"task-2"}],"page":3,"per_page":2,"has_more":true}`},
+		{"last page", 3, `{"items":[{"id":"task-1"},{"id":"task-2"},{"id":"task-3"}],"page":3,"per_page":3,"has_more":false}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := captureStdout(t, func() {
+				require.NoError(t, (TasksCmd{tasks: service}).List(context.Background(), TasksListInput{Page: 3, PerPage: tc.perPage, Output: "json"}))
+			})
+			assert.JSONEq(t, tc.want, out)
+		})
+	}
 }

@@ -97,7 +97,7 @@ func (c WorkloadIdentityAuthenticationEventsCmd) List(ctx context.Context, in Wo
 	}
 
 	if in.Output == "json" {
-		return util.PrintPrettyJSONSlice(items)
+		return util.PrintPageJSON(items, page, perPage, hasMore)
 	}
 	if len(items) == 0 {
 		pterm.Info.Println("No workload identity authentication events found")

@@ -100,7 +100,7 @@ func (c ServiceAccountsCmd) List(ctx context.Context, in ServiceAccountsListInpu
 	}
 
 	if in.Output == "json" {
-		return util.PrintPrettyJSONSlice(items)
+		return util.PrintPageJSON(items, page, perPage, hasMore)
 	}
 	if len(items) == 0 {
 		pterm.Info.Println("No service accounts found")

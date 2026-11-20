@@ -137,7 +137,7 @@ func (c WorkloadIdentityIssuersCmd) List(ctx context.Context, in WorkloadIdentit
 	}
 
 	if in.Output == "json" {
-		return util.PrintPrettyJSONSlice(items)
+		return util.PrintPageJSON(items, page, perPage, hasMore)
 	}
 	if len(items) == 0 {
 		pterm.Info.Println("No workload identity issuers found")

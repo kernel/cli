@@ -76,7 +76,7 @@ func (c ReportTypesCmd) List(ctx context.Context, in ReportTypesListInput) error
 		items = items[:perPage]
 	}
 	if in.Output == "json" {
-		return util.PrintPrettyJSONSlice(items)
+		return util.PrintPageJSON(items, page, perPage, hasMore)
 	}
 
 	if len(items) == 0 {
