@@ -354,8 +354,8 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 	assert.NotContains(t, connect.Long, "stored-token")
 	assert.Contains(t, connect.Long, "credential_account")
 	assert.Equal(t, "connect a 1Password account and return its authorization links", connect.Short)
-	assert.Contains(t, connect.Flag("open").Usage, "action URL on this computer")
-	assert.Contains(t, connect.Flag("open").Usage, "connect URL for the owner's device")
+	assert.Contains(t, connect.Flag("open").Usage, "action url on this computer")
+	assert.Contains(t, connect.Flag("open").Usage, "connect url for the owner's device")
 	assert.Contains(t, credentials.Example, `"provider":"1password","account":"onepassword"`)
 	for _, operation := range []string{"1pw_create_access_request", "1pw_access_request_status", "1pw_fill", "1pw_update_access_token", "1pw_recover", "1pw_disconnect"} {
 		assert.Contains(t, invoke.Long, operation)

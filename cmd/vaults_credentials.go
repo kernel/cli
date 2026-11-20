@@ -258,7 +258,7 @@ authorization with fresh links.
 	}
 	connect.Flags().String("provider", "", "credential account provider: 1password (required)")
 	_ = connect.MarkFlagRequired("provider")
-	connect.Flags().Bool("open", false, "open the returned HTTPS action URL on this computer; share the connect URL for the owner's device")
+	connect.Flags().Bool("open", false, "open the returned https action url on this computer; share the connect url for the owner's device")
 	addVaultJSONOutputFlag(connect)
 	group.AddCommand(connect)
 	return group

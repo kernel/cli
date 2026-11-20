@@ -85,20 +85,20 @@ func TestVaultPaymentHelpProviderBoundaries(t *testing.T) {
 func TestVaultDeletionAndDeletedEventHelp(t *testing.T) {
 	vaultDelete, _, err := newVaultsCommand().Find([]string{"delete"})
 	require.NoError(t, err)
-	assert.Contains(t, vaultDelete.Long, "Each 1Password credential account is ended")
+	assert.Contains(t, vaultDelete.Long, "each 1Password credential account is ended")
 	assert.Contains(t, vaultDelete.Long, "provider_revocation_pending")
 	assert.Contains(t, vaultDelete.Long, "delete the vault again later")
 
 	itemDelete, _, err := newVaultsCommand().Find([]string{"items", "delete"})
 	require.NoError(t, err)
 	assert.Contains(t, itemDelete.Long, "AgentCard card in recovery_required")
-	assert.Contains(t, itemDelete.Long, "Deleting a managed-auth credential")
-	assert.Contains(t, itemDelete.Long, "Deleting a 1Password credential account stops fills immediately")
+	assert.Contains(t, itemDelete.Long, "deleting a managed-auth credential")
+	assert.Contains(t, itemDelete.Long, "deleting a 1Password credential account stops fills immediately")
 	assert.Contains(t, itemDelete.Flags().Lookup("yes").Usage, "qualifying AgentCard recovery")
 
 	events, _, err := newVaultsCommand().Find([]string{"items", "events"})
 	require.NoError(t, err)
-	assert.Contains(t, events.Long, "deleted vaults must be addressed by ID")
-	assert.Contains(t, events.Long, "item IDs take precedence over keys")
+	assert.Contains(t, events.Long, "deleted vaults must be addressed by id")
+	assert.Contains(t, events.Long, "item ids take precedence over keys")
 	assert.Contains(t, events.Flags().Lookup("include-deleted").Usage, "--wait is ignored")
 }

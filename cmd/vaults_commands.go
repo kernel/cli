@@ -209,7 +209,7 @@ each vault has its own key; it is created on first request and may be cached.`,
 	itemGet.Flags().Bool("open", false, "open a returned https action url; cardholder links are human-only, agents must share privately")
 	addVaultJSONOutputFlag(itemGet)
 	itemEvents := &cobra.Command{Use: "events <vault> <key>", Short: "read immutable item events without retrying payments", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: "read immutable item events without retrying payments. with --include-deleted, deleted vaults must be addressed by ID and <key> may be an item ID; item IDs take precedence over keys, followed by a live key and then the most recently deleted matching key. --wait is ignored for deleted items or vaults.",
+		Long: "read immutable item events without retrying payments. with --include-deleted, deleted vaults must be addressed by id and <key> may be an item id; item ids take precedence over keys, followed by a live key and then the most recently deleted matching key. --wait is ignored for deleted items or vaults.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			after, _ := cmd.Flags().GetString("after")
 			wait, _ := cmd.Flags().GetInt64("wait")
@@ -217,7 +217,7 @@ each vault has its own key; it is created on first request and may be cached.`,
 			return getVaultsHandler(cmd).Events(cmd.Context(), args[0], args[1], after, wait, includeDeleted, vaultOutput(cmd))
 		}}
 	itemEvents.Flags().String("after", "", "return events after this event id (use the last id from the previous response)")
-	itemEvents.Flags().Bool("include-deleted", false, "also find deleted items and deleted vaults by ID; <key> may be an item ID and --wait is ignored for deleted records")
+	itemEvents.Flags().Bool("include-deleted", false, "also find deleted items and deleted vaults by id; <key> may be an item id and --wait is ignored for deleted records")
 	itemEvents.Flags().Int64("wait", 0, "long-poll once for new events (0-60 seconds)")
 	addVaultJSONOutputFlag(itemEvents)
 	invoke := &cobra.Command{Use: "invoke <vault> <key> <operation>", Short: "invoke an operation advertised by an item", Args: cobra.ExactArgs(3), PreRunE: vaultPreRun,
@@ -517,11 +517,11 @@ JSON
 
 func newVaultDeleteCommand(item bool) *cobra.Command {
 	use, short, nargs := "delete <vault>", "delete a vault and invalidate all its items", 1
-	long := "Unresolved payment operations block vault deletion. Deleting a connected KERNEL wallet first blocks new payments and then removes its enrolled card. If removal fails, the wallet is kept and continues refusing payments; reconcile the original attempt with the provider or support before retrying. Deleting or recreating an item does not prove that a payment did not occur. Each 1Password credential account is ended the same way as deleting it; while 1Password has not confirmed a revoke, the command reports provider_revocation_pending and keeps the vault; delete the vault again later."
+	long := "unresolved payment operations block vault deletion. deleting a connected KERNEL wallet first blocks new payments and then removes its enrolled card. if removal fails, the wallet is kept and continues refusing payments; reconcile the original attempt with the provider or support before retrying. deleting or recreating an item does not prove that a payment did not occur. each 1Password credential account is ended the same way as deleting it; while 1Password has not confirmed a revoke, the command reports provider_revocation_pending and keeps the vault; delete the vault again later."
 	flagHelp := "skip confirmation prompt"
 	if item {
 		use, short, nargs = "delete <vault> <key>", "delete an item and invalidate its credential", 2
-		long = "Unresolved payment operations normally block item deletion, including operations on a wallet's child cards. Deleting a connected KERNEL wallet first blocks new payments and then removes its enrolled card; if removal fails, the wallet is kept and continues refusing payments; reconcile the original attempt with the provider or support before retrying deletion. A Link, KERNEL, or Shop Pay card in issuance recovery_required, or an AgentCard card in recovery_required whose checkout-create response returned no authorization ID, may be explicitly abandoned by deleting that card directly; deleting its wallet or vault remains blocked until the card is deleted. Deleting or recreating an item does not prove that a payment did not occur. Deleting a managed-auth credential leaves its connection and saved credential unchanged. Deleting a 1Password credential account stops fills immediately and, when no other vault uses the person's connection, revokes it at 1Password; until 1Password confirms, the command reports provider_revocation_pending and KERNEL keeps retrying the revoke in the background."
+		long = "unresolved payment operations normally block item deletion, including operations on a wallet's child cards. deleting a connected KERNEL wallet first blocks new payments and then removes its enrolled card; if removal fails, the wallet is kept and continues refusing payments; reconcile the original attempt with the provider or support before retrying deletion. a Link, KERNEL, or Shop Pay card in issuance recovery_required, or an AgentCard card in recovery_required whose checkout-create response returned no authorization ID, may be explicitly abandoned by deleting that card directly; deleting its wallet or vault remains blocked until the card is deleted. deleting or recreating an item does not prove that a payment did not occur. deleting a managed-auth credential leaves its connection and saved credential unchanged. deleting a 1Password credential account stops fills immediately and, when no other vault uses the person's connection, revokes it at 1Password; until 1Password confirms, the command reports provider_revocation_pending and KERNEL keeps retrying the revoke in the background."
 		flagHelp = "skip confirmation prompt; Link, KERNEL, Shop Pay, or qualifying AgentCard recovery may be abandoned only by deleting the card directly after explicit user confirmation"
 	}
 	cmd := &cobra.Command{Use: use, Short: short, Long: long, Args: cobra.ExactArgs(nargs), PreRunE: vaultPreRun,
