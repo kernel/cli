@@ -1206,9 +1206,38 @@ func TestBrowsersCreate_WithFingerprintOS(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"fingerprint":{"os":"macos"}`)
 
+	err = b.Create(context.Background(), BrowsersCreateInput{FingerprintOS: "linux"})
+	require.NoError(t, err)
+	assert.Equal(t, kernel.BrowserFingerprintOsLinux, captured.Fingerprint.Os)
+
 	err = b.Create(context.Background(), BrowsersCreateInput{FingerprintOS: "windows"})
 	require.ErrorContains(t, err, "--fingerprint-os")
-	assert.Equal(t, 1, calls)
+	assert.Equal(t, 2, calls)
+}
+
+func TestBrowsersCreate_WithCaptchaSolver(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-captcha"}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{CaptchaSolver: BoolFlag{Set: true, Value: true}})
+	require.NoError(t, err)
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"captcha_solver":{"enabled":true}`)
+
+	err = b.Create(context.Background(), BrowsersCreateInput{
+		Stealth:       BoolFlag{Set: true, Value: true},
+		CaptchaSolver: BoolFlag{Set: true, Value: false},
+	})
+	require.ErrorContains(t, err, "--stealth=true")
 }
 
 func TestBrowsersCreate_WithChromePolicy(t *testing.T) {

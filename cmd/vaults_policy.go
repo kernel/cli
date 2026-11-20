@@ -16,6 +16,7 @@ type vaultItemActions struct {
 	RecoveryRequired bool
 	RequiredAction   string
 	ActionURL        string
+	ConnectURL       string
 	ApprovalURL      string
 	Operations       []vaultItemOperation
 }
@@ -53,6 +54,7 @@ func effectiveVaultItemActions(item *kernel.VaultItemUnion) (vaultItemActions, e
 	return vaultItemActions{
 		RequiredAction: item.Action.Name,
 		ActionURL:      item.Action.URL,
+		ConnectURL:     item.Action.ConnectURL,
 		ApprovalURL:    approvalURL,
 		Operations:     fields.Operations,
 	}, nil

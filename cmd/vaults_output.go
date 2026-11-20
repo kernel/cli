@@ -58,7 +58,7 @@ var vaultItemFields = vaultOutputFields{
 	"id": nil, "key": nil, "type": nil, "version": nil, "created_at": nil, "updated_at": nil, "expires_at": nil, "description": nil,
 	"available_operations": vaultOperationFields,
 	"available_expansions": vaultOperationFields,
-	"action":               vaultFieldsOf("name url expires_at instructions"),
+	"action":               vaultFieldsOf("name url connect_url expires_at instructions"),
 	"expanded": {
 		"payment_methods":         vaultMethodFields,
 		"link_user_info":          vaultLinkUserInfoFields,
@@ -67,6 +67,7 @@ var vaultItemFields = vaultOutputFields{
 	"spec": {
 		"provider": nil, "wallet": nil, "card_mode": nil, "user_id": nil, "payment_method_id": nil, "card_id": nil, "checkout_origin": nil,
 		"amount": nil, "currency": nil, "merchant": nil, "merchant_name": nil, "merchant_url": nil, "merchant_country": nil, "merchant_category": nil, "merchant_category_code": nil,
+		"subtotal": nil, "shipping": nil, "tax": nil, "discount": nil,
 		"context": nil, "expires_at": nil, "description": nil, "account": nil, "connection_id": nil,
 		"requests":        onePasswordRequestFields,
 		"fields":          vaultFieldsOf("name label type required sensitive"),
@@ -76,8 +77,8 @@ var vaultItemFields = vaultOutputFields{
 		"totals":          vaultTotalFields,
 		"recurring":       vaultFieldsOf("interval interval_count"),
 		"line_items": {
-			"name": nil, "quantity": nil, "unit_amount": nil, "description": nil,
-			"sku": nil, "url": nil, "image_url": nil, "product_url": nil, "totals": vaultTotalFields,
+			"name": nil, "title": nil, "quantity": nil, "unit_amount": nil, "amount": nil, "description": nil,
+			"brand": nil, "options": nil, "sku": nil, "url": nil, "image_url": nil, "product_url": nil, "totals": vaultTotalFields,
 		},
 	},
 	"state": {
@@ -150,7 +151,7 @@ func filterVaultJSON(raw json.RawMessage, fields vaultOutputFields) (json.RawMes
 		}
 		if value, ok := object[key]; ok {
 			isNullActionURL := key == "action_url" && bytes.Equal(bytes.TrimSpace(value), []byte("null"))
-			if (key == "url" || key == "approval_url" || key == "action_url" || key == "merchant_url" || key == "merchant_origin" || key == "image_url" || key == "product_url" || key == "website") && !isNullActionURL {
+			if (key == "url" || key == "connect_url" || key == "approval_url" || key == "action_url" || key == "merchant_url" || key == "merchant_origin" || key == "image_url" || key == "product_url" || key == "website") && !isNullActionURL {
 				var address string
 				if json.Unmarshal(value, &address) != nil {
 					continue
@@ -493,8 +494,39 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 				[]string{"recurring interval count", intervalCount},
 			)
 		}
-		if item.Spec.Provider == "agentcard" && item.Spec.CheckoutOrigin != "" {
-			rows = append(rows, []string{"checkout origin", item.Spec.CheckoutOrigin})
+		if item.Spec.Provider == "agentcard" {
+			if item.Spec.CheckoutOrigin != "" {
+				rows = append(rows, []string{"checkout origin", item.Spec.CheckoutOrigin})
+			}
+			for i, line := range item.Spec.LineItems.OfCardVaultItemSpecAgentcardLineItems {
+				value := fmt.Sprintf("%s × %d", line.Title, line.Quantity)
+				if line.JSON.Amount.Valid() {
+					value += fmt.Sprintf("; line total %d", line.Amount)
+				} else if line.JSON.UnitAmount.Valid() {
+					value += fmt.Sprintf("; unit amount %d", line.UnitAmount)
+				}
+				if line.Brand != "" {
+					value += "; brand " + line.Brand
+				}
+				if line.Options != "" {
+					value += "; " + line.Options
+				}
+				rows = append(rows, []string{fmt.Sprintf("cart line %d", i+1), value})
+			}
+			for _, total := range []struct {
+				label   string
+				value   int64
+				present bool
+			}{
+				{"cart subtotal", item.Spec.Subtotal, item.Spec.JSON.Subtotal.Valid()},
+				{"shipping", item.Spec.Shipping, item.Spec.JSON.Shipping.Valid()},
+				{"tax", item.Spec.Tax, item.Spec.JSON.Tax.Valid()},
+				{"discount", item.Spec.Discount, item.Spec.JSON.Discount.Valid()},
+			} {
+				if total.present {
+					rows = append(rows, []string{total.label + " (minor units)", fmt.Sprint(total.value)})
+				}
+			}
 		}
 		if (item.Spec.Provider == "kernel" || item.Spec.Provider == "shop_pay" || item.Spec.Provider == "vgs") && item.Spec.MerchantURL != "" {
 			rows = append(rows, []string{"merchant url", item.Spec.MerchantURL})
@@ -546,8 +578,24 @@ func printVaultItem(item *kernel.VaultItemUnion, output string) error {
 		if a.Reason != "" {
 			rows = append(rows, []string{"authorization reason", a.Reason})
 		}
+		if a.JSON.AmountAuthority.Valid() {
+			rows = append(rows, []string{"approved amount source", string(a.AmountAuthority)})
+		}
+		if a.JSON.AmountVerified.Valid() {
+			rows = append(rows, []string{"processor amount verified", fmt.Sprint(a.AmountVerified)})
+		}
 		if a.JSON.ChargedKind.Valid() {
-			rows = append(rows, []string{"charged kind", string(a.ChargedKind)}, []string{"charged (minor units)", fmt.Sprintf("%d %s", a.ChargedAmountCents, a.ChargedCurrency)})
+			rows = append(rows, []string{"charged kind", string(a.ChargedKind)})
+		}
+		if a.JSON.ChargedAmountCents.Valid() || a.JSON.ChargedCurrency.Valid() {
+			amount, currency := "-", "-"
+			if a.JSON.ChargedAmountCents.Valid() {
+				amount = fmt.Sprint(a.ChargedAmountCents)
+			}
+			if a.JSON.ChargedCurrency.Valid() {
+				currency = a.ChargedCurrency
+			}
+			rows = append(rows, []string{"charged (minor units)", amount + " " + currency})
 		}
 		if a.JSON.ReplayDelivered.Valid() {
 			rows = append(rows, []string{"processor response delivered", fmt.Sprint(a.ReplayDelivered)})
@@ -583,6 +631,9 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 	if actions.RequiredAction != "" && actions.ActionURL != "" {
 		pterm.Printf("action url:\n%s\n", actions.ActionURL)
 	}
+	if actions.ConnectURL != "" {
+		pterm.Printf("1Password connect url:\n%s\n", actions.ConnectURL)
+	}
 	if actions.ApprovalURL != "" {
 		pterm.Printf("approval url:\n%s\n", actions.ApprovalURL)
 	}
@@ -590,8 +641,12 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 		pterm.Printf("available operation: %s — %s\n", op.Type, op.Description)
 	}
 	if item.Type == "credential_account" {
-		if actions.RequiredAction != "" {
+		if actions.RequiredAction != "" && actions.ConnectURL != "" {
+			pterm.Info.Println("share both 1Password links with the account owner. the connect url is for their own device: it opens the 1Password app on mobile and the browser elsewhere, including sign-up. existing desktop users can use the action url. after sign-up, use the action url if the account is still pending. the first link the owner approves or declines settles it and disables the other. both expire at expires_at; after that, rerun credentials connect with the same vault and key for fresh links. observe the connection with items get --wait 60; never ask for 1Password passwords or codes.")
+		} else if actions.RequiredAction != "" {
 			pterm.Info.Println("share the 1Password authorization url with the account owner. observe the connection with items get --wait 60; never ask for 1Password passwords or codes.")
+		} else if item.State.Status == "revoking" {
+			pterm.Info.Println("this 1Password account cannot be used while KERNEL keeps retrying its revoke in the background. after a disconnect, link it again to use its credentials; after a delete, it is removed once 1Password confirms the revoke.")
 		} else if item.State.Status == "reconnect_required" || item.State.Status == "declined" {
 			pterm.Info.Println("this 1Password account is not connected. ask the owner before running credentials connect again with the same key; use 1pw_recover first if it is advertised.")
 		}
@@ -679,6 +734,8 @@ func printVaultItemGuidance(item *kernel.VaultItemUnion, actions vaultItemAction
 			}
 		case "shop_pay":
 			pterm.Info.Println("Shop Pay fill never submits payment. submit checkout yourself, then report the observed merchant outcome once with confirm_transaction when advertised; reporting consumes the card whatever the outcome. never infer success or repeat an unknown checkout. " + shopPayRecoveryHelp + ".")
+		case "agentcard":
+			pterm.Info.Println("amount_authority reports where the approved amount came from: processor, agent, page, none, or display_only. agent and display_only do not prove what the processor charged. charged_kind none means checkout produced a token or payment method for a later merchant charge; absent charged fields mean the provider reported no charge information. inspect item events and the merchant's order record before deciding whether to pay again. never retry automatically; if recovery permits abandonment, delete the purchase item only after explicit user confirmation before creating a replacement.")
 		case "vgs":
 			switch item.State.Status {
 			case "requested":

@@ -62,6 +62,43 @@ func TestAuthContextGet_RendersContext(t *testing.T) {
 	assert.Contains(t, out, "proj_789")
 }
 
+func TestAuthContextGet_RendersServiceAccountPolicyAndWorkloadIdentity(t *testing.T) {
+	buf := capturePtermOutput(t)
+	raw := `{
+		"principal": {"id": "sa_123", "type": "service_account"},
+		"organization": {"id": "org_456"},
+		"authentication": {"credential_id": "key_123", "method": "api_key", "source": "workload_identity"},
+		"authorization": {
+			"credential_scope": {"project_id": "proj_789"},
+			"effective_scope": {"project_id": "proj_789"},
+			"effective_policy": {"statements": [{
+				"action": "browsers:use",
+				"resource": "projects/proj_789/browsers/*",
+				"condition": {"key": "source_ip", "operator": "in", "values": ["203.0.113.0/24"]}
+			}]}
+		},
+		"workload_identity": {
+			"issuer_id": "wii_123",
+			"federation_rule_id": "wifr_123",
+			"external_subject_digest": "sha256:abcd"
+		}
+	}`
+	authCtx := &kernel.AuthContext{}
+	assert.NoError(t, authCtx.UnmarshalJSON([]byte(raw)))
+	c := AuthContextCmd{svc: &FakeAuthContextService{GetFunc: func(ctx context.Context, opts ...option.RequestOption) (*kernel.AuthContext, error) {
+		return authCtx, nil
+	}}}
+
+	assert.NoError(t, c.Get(context.Background(), AuthContextGetInput{}))
+	out := buf.String()
+	assert.Contains(t, out, "service_account")
+	assert.Contains(t, out, "wii_123")
+	assert.Contains(t, out, "wifr_123")
+	assert.Contains(t, out, "sha256:abcd")
+	assert.Contains(t, out, "browsers:use")
+	assert.Contains(t, out, "203.0.113.0/24")
+}
+
 func TestAuthContextGet_NullFieldsRenderPlaceholders(t *testing.T) {
 	buf := capturePtermOutput(t)
 	fake := &FakeAuthContextService{

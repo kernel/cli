@@ -53,6 +53,7 @@ type AuthConnectionCreateInput struct {
 	Region              string
 	Locale              string
 	Stealth             BoolFlag
+	CaptchaSolver       BoolFlag
 	SaveCredentials     bool
 	NoSaveCredentials   bool
 	HealthCheckInterval int
@@ -95,6 +96,7 @@ type AuthConnectionUpdateInput struct {
 	LocaleSet              bool
 	ClearLocale            bool
 	Stealth                BoolFlag
+	CaptchaSolver          BoolFlag
 	SaveCredentials        BoolFlag
 	HealthCheckInterval    int
 	HealthCheckIntervalSet bool
@@ -130,6 +132,7 @@ type AuthConnectionLoginInput struct {
 	ProxyMode           string
 	Region              string
 	Stealth             BoolFlag
+	CaptchaSolver       BoolFlag
 	RecordSession       BoolFlag
 	SkillMode           string
 	Telemetry           string
@@ -182,6 +185,9 @@ func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateIn
 	}
 	if in.ProfileName == "" {
 		return fmt.Errorf("--profile-name is required")
+	}
+	if err := validateStealthCaptchaFlags(in.Stealth, in.CaptchaSolver); err != nil {
+		return err
 	}
 
 	params := kernel.AuthConnectionNewParams{
@@ -244,6 +250,9 @@ func (c AuthConnectionCmd) Create(ctx context.Context, in AuthConnectionCreateIn
 
 	if in.Stealth.Set {
 		params.ManagedAuthCreateRequest.Browser.Stealth = kernel.Opt(in.Stealth.Value)
+	}
+	if in.CaptchaSolver.Set {
+		params.ManagedAuthCreateRequest.Browser.CaptchaSolver = browserCaptchaSolverParam(in.CaptchaSolver.Value)
 	}
 	if in.Locale != "" {
 		params.ManagedAuthCreateRequest.Browser.Location.Locale = kernel.Opt(in.Locale)
@@ -338,7 +347,10 @@ func managedAuthBrowserRows(cfg kernel.ManagedAuthBrowserConfig) pterm.TableData
 	}
 	// Stealth defaults to true when omitted, so only report what the API sent.
 	if cfg.JSON.Stealth.Valid() {
-		rows = append(rows, []string{"Browser Stealth", fmt.Sprintf("%t", cfg.Stealth)})
+		rows = append(rows, []string{"Browser Stealth (deprecated)", fmt.Sprintf("%t", cfg.Stealth)})
+	}
+	if cfg.JSON.CaptchaSolver.Valid() {
+		rows = append(rows, []string{"Browser CAPTCHA Solver", fmt.Sprintf("%t", cfg.CaptchaSolver.Enabled)})
 	}
 	if cfg.Telemetry.Enabled || len(telemetryEnabledCategories(kernel.BrowserTelemetryConfig{Browser: cfg.Telemetry.Browser})) > 0 {
 		rows = append(rows, []string{"Browser Telemetry", formatManagedAuthTelemetry(cfg.Telemetry)})
@@ -348,6 +360,9 @@ func managedAuthBrowserRows(cfg kernel.ManagedAuthBrowserConfig) pterm.TableData
 
 func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateInput) error {
 	if err := validateJSONOutput(in.Output); err != nil {
+		return err
+	}
+	if err := validateStealthCaptchaFlags(in.Stealth, in.CaptchaSolver); err != nil {
 		return err
 	}
 
@@ -411,7 +426,7 @@ func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateIn
 	}
 
 	// A proxy is selected by ID or name, so an empty value is not a way to clear it:
-	// dropping back to the connection's stealth-derived egress is a mode change.
+	// dropping back to the connection's default egress is a mode change.
 	if (in.ProxyIDSet && in.ProxyID == "") || (in.ProxyNameSet && in.ProxyName == "") {
 		return fmt.Errorf("proxy selection requires a non-empty value; use --proxy-mode=default to drop the selected proxy, or --proxy-mode=direct for direct egress")
 	}
@@ -437,6 +452,10 @@ func (c AuthConnectionCmd) Update(ctx context.Context, in AuthConnectionUpdateIn
 
 	if in.Stealth.Set {
 		params.ManagedAuthUpdateRequest.Browser.Stealth = kernel.Opt(in.Stealth.Value)
+		hasChanges = true
+	}
+	if in.CaptchaSolver.Set {
+		params.ManagedAuthUpdateRequest.Browser.CaptchaSolver = browserCaptchaSolverParam(in.CaptchaSolver.Value)
 		hasChanges = true
 	}
 	if in.LocaleSet && in.ClearLocale {
@@ -862,6 +881,9 @@ func (c AuthConnectionCmd) Login(ctx context.Context, in AuthConnectionLoginInpu
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
 	}
+	if err := validateStealthCaptchaFlags(in.Stealth, in.CaptchaSolver); err != nil {
+		return err
+	}
 
 	params := kernel.AuthConnectionLoginParams{}
 	sel := proxySelection{ID: in.ProxyID, Name: in.ProxyName, Mode: in.ProxyMode}
@@ -883,6 +905,9 @@ func (c AuthConnectionCmd) Login(ctx context.Context, in AuthConnectionLoginInpu
 
 	if in.Stealth.Set {
 		params.Browser.Stealth = kernel.Opt(in.Stealth.Value)
+	}
+	if in.CaptchaSolver.Set {
+		params.Browser.CaptchaSolver = browserCaptchaSolverParam(in.CaptchaSolver.Value)
 	}
 
 	if in.RecordSession.Set {
@@ -1406,10 +1431,11 @@ func init() {
 	authConnectionsCreateCmd.Flags().Bool("credential-auto", false, "Lookup by domain from the specified provider (defaults to true when --credential-provider is set without --credential-path)")
 	authConnectionsCreateCmd.Flags().String("proxy-id", "", "Proxy ID to use for this connection's browser sessions (mutually exclusive with --proxy-name and --proxy-mode)")
 	authConnectionsCreateCmd.Flags().String("proxy-name", "", "Proxy name to use for this connection's browser sessions (mutually exclusive with --proxy-id and --proxy-mode)")
-	authConnectionsCreateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' for the stealth-derived default")
+	authConnectionsCreateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy, or 'default' for Kernel's default stealth proxy when CAPTCHA solving is enabled and direct egress otherwise")
 	authConnectionsCreateCmd.Flags().String("region", "", "Geographic region for browser sessions: 'us-east', 'us-west', 'eu-west', or 'ap-southeast'. Defaults to us-east")
 	authConnectionsCreateCmd.Flags().String("locale", "", "Browser locale for login, reauthentication, and health-check sessions (canonical BCP 47, e.g. sv-SE); omit to use the browser region's default")
-	authConnectionsCreateCmd.Flags().Bool("stealth", true, "Run this connection's browser sessions in stealth mode; use --stealth=false to disable")
+	authConnectionsCreateCmd.Flags().Bool("stealth", false, "Deprecated compatibility mode: enable CAPTCHA solving and Kernel's default stealth proxy together. If neither this nor --captcha-solver is set, the API keeps the legacy stealth default; prefer explicit --captcha-solver and --proxy-mode")
+	authConnectionsCreateCmd.Flags().Bool("captcha-solver", false, "Enable automatic CAPTCHA solving for login, reauthentication, and health-check sessions; does not change proxy egress")
 	authConnectionsCreateCmd.Flags().Bool("no-save-credentials", false, "Disable saving credentials after successful login")
 	authConnectionsCreateCmd.Flags().Int("health-check-interval", 0, "Interval in seconds between health checks. Defaults to 3600 or your plan minimum, whichever is larger. The maximum is 86400; the minimum depends on your plan (Enterprise 300, Startup 1200, Hobbyist 3600, Free 21600)")
 	authConnectionsCreateCmd.Flags().Bool("no-health-checks", false, "Disable periodic health checks (enabled by default)")
@@ -1437,11 +1463,12 @@ func init() {
 	authConnectionsUpdateCmd.Flags().Bool("credential-auto", false, "Lookup by domain from the specified provider")
 	authConnectionsUpdateCmd.Flags().String("proxy-id", "", "Proxy ID to use for future browser sessions (mutually exclusive with --proxy-name and --proxy-mode)")
 	authConnectionsUpdateCmd.Flags().String("proxy-name", "", "Proxy name to use for future browser sessions (mutually exclusive with --proxy-id and --proxy-mode)")
-	authConnectionsUpdateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' to drop a selected proxy and use the stealth-derived default")
+	authConnectionsUpdateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy, or 'default' to drop a selected proxy and use Kernel's default stealth proxy when CAPTCHA solving is enabled and direct egress otherwise")
 	authConnectionsUpdateCmd.Flags().String("region", "", "Geographic region for future browser sessions: 'us-east', 'us-west', 'eu-west', or 'ap-southeast'")
 	authConnectionsUpdateCmd.Flags().String("locale", "", "Set the browser locale for future login, reauthentication, and health-check sessions (canonical BCP 47, e.g. sv-SE); omit to leave it unchanged (mutually exclusive with --clear-locale)")
 	authConnectionsUpdateCmd.Flags().Bool("clear-locale", false, "Clear the browser locale override so future sessions use the browser region's default")
-	authConnectionsUpdateCmd.Flags().Bool("stealth", true, "Set whether future browser sessions run in stealth mode; use --stealth=false to disable")
+	authConnectionsUpdateCmd.Flags().Bool("stealth", false, "Deprecated compatibility mode: enable CAPTCHA solving and Kernel's default stealth proxy together; omit to keep the current setting and prefer --captcha-solver with --proxy-mode")
+	authConnectionsUpdateCmd.Flags().Bool("captcha-solver", false, "Set automatic CAPTCHA solving for future sessions: enabling keeps direct egress direct; disabling a connection on default stealth egress moves it to direct; selected proxies are unchanged")
 	authConnectionsUpdateCmd.Flags().Bool("save-credentials", false, "Enable saving credentials after successful login")
 	authConnectionsUpdateCmd.Flags().Bool("no-save-credentials", false, "Disable saving credentials after successful login")
 	authConnectionsUpdateCmd.Flags().Int("health-check-interval", 0, "Interval in seconds between health checks. The maximum is 86400; the minimum depends on your plan (Enterprise 300, Startup 1200, Hobbyist 3600, Free 21600)")
@@ -1476,9 +1503,10 @@ func init() {
 	addJSONOutputFlag(authConnectionsLoginCmd)
 	authConnectionsLoginCmd.Flags().String("proxy-id", "", "Proxy ID to use for this login (mutually exclusive with --proxy-name and --proxy-mode)")
 	authConnectionsLoginCmd.Flags().String("proxy-name", "", "Proxy name to use for this login (mutually exclusive with --proxy-id and --proxy-mode)")
-	authConnectionsLoginCmd.Flags().String("proxy-mode", "", "Proxy egress mode for this login instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' for the stealth-derived default")
+	authConnectionsLoginCmd.Flags().String("proxy-mode", "", "Proxy egress mode for this login instead of a selected proxy: 'direct' for no proxy, or 'default' for Kernel's default stealth proxy when CAPTCHA solving is enabled and direct egress otherwise")
 	authConnectionsLoginCmd.Flags().String("region", "", "Geographic region override for this login: 'us-east', 'us-west', 'eu-west', or 'ap-southeast'")
-	authConnectionsLoginCmd.Flags().Bool("stealth", true, "Override stealth mode for this login's browser session; use --stealth=false to disable")
+	authConnectionsLoginCmd.Flags().Bool("stealth", false, "Deprecated compatibility override: enable CAPTCHA solving and Kernel's default stealth proxy together; omit to inherit and prefer --captcha-solver with --proxy-mode")
+	authConnectionsLoginCmd.Flags().Bool("captcha-solver", false, "Override automatic CAPTCHA solving for this login; omit to inherit it. Enabling does not select a proxy; disabling inherited default stealth egress uses direct egress")
 	authConnectionsLoginCmd.Flags().Bool("record-session", false, "Override whether this login's browser session is recorded; use --record-session=false to disable")
 	authConnectionsLoginCmd.Flags().String("skill-mode", "", "Whether this login reads and writes learned domain skills: 'enabled' (default) or 'disabled'. Automatic reauths inherit the selected mode until a later accepted login sets enabled or omits the flag")
 	authConnectionsLoginCmd.Flags().String("telemetry", "", "Telemetry override for this login only, merged onto the connection's config: --telemetry=all, --telemetry=off, or --telemetry=console,network")
@@ -1562,6 +1590,7 @@ func runAuthConnectionsCreate(cmd *cobra.Command, args []string) error {
 		Region:              region,
 		Locale:              locale,
 		Stealth:             readBoolFlag(cmd.Flags(), "stealth"),
+		CaptchaSolver:       readBoolFlag(cmd.Flags(), "captcha-solver"),
 		NoSaveCredentials:   noSaveCredentials,
 		HealthCheckInterval: healthCheckInterval,
 		NoHealthChecks:      noHealthChecks,
@@ -1659,6 +1688,7 @@ func runAuthConnectionsUpdate(cmd *cobra.Command, args []string) error {
 		LocaleSet:              cmd.Flags().Changed("locale"),
 		ClearLocale:            clearLocale,
 		Stealth:                readBoolFlag(cmd.Flags(), "stealth"),
+		CaptchaSolver:          readBoolFlag(cmd.Flags(), "captcha-solver"),
 		SaveCredentials:        saveCredentialsFlag,
 		HealthCheckInterval:    healthCheckInterval,
 		HealthCheckIntervalSet: cmd.Flags().Changed("health-check-interval"),
@@ -1729,6 +1759,7 @@ func runAuthConnectionsLogin(cmd *cobra.Command, args []string) error {
 		ProxyMode:           proxyMode,
 		Region:              region,
 		Stealth:             readBoolFlag(cmd.Flags(), "stealth"),
+		CaptchaSolver:       readBoolFlag(cmd.Flags(), "captcha-solver"),
 		RecordSession:       readBoolFlag(cmd.Flags(), "record-session"),
 		SkillMode:           skillMode,
 		Telemetry:           telemetry,

@@ -380,9 +380,10 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 		}
 	}
 	linkPurchase := (item.Type == "card" || item.Type == "payment_request") && item.Spec.Provider == "link"
-	checkoutAuthorizedPurchase := linkPurchase || (item.Type == "card" && item.Spec.Provider == "shop_pay")
-	if params != nil && params.Authorize != nil && !checkoutAuthorizedPurchase {
-		return fmt.Errorf("--browser-id and --page-url only apply to Link cards or payment_request items and Shop Pay cards; authorize was not invoked")
+	if params != nil && params.Authorize != nil {
+		if err := validateVaultAuthorizeTarget(item, linkPurchase, params.Authorize); err != nil {
+			return err
+		}
 	}
 	if operation == "fill" {
 		if !linkPurchase && len(params.Fill.Fields) == 0 {
@@ -469,13 +470,16 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	return c.showItem(&updated, output, open)
 }
 
-func (c VaultsCmd) Events(ctx context.Context, vault, key, after string, wait int64, output string) error {
+func (c VaultsCmd) Events(ctx context.Context, vault, key, after string, wait int64, includeDeleted bool, output string) error {
 	if err := validateVaultWait(wait); err != nil {
 		return err
 	}
 	params := kernel.VaultItemEventsParams{IDOrName: vault, Wait: kernel.Opt(wait)}
 	if after != "" {
 		params.After = kernel.Opt(after)
+	}
+	if includeDeleted {
+		params.IncludeDeleted = kernel.Opt(true)
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(wait)*time.Second+30*time.Second)
 	defer cancel()

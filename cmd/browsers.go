@@ -239,10 +239,12 @@ func parseFingerprintOS(os string) (kernel.BrowserFingerprintOs, error) {
 	if os == "" {
 		return "", nil
 	}
-	if os == string(kernel.BrowserFingerprintOsMacos) {
-		return kernel.BrowserFingerprintOsMacos, nil
+	switch kernel.BrowserFingerprintOs(os) {
+	case kernel.BrowserFingerprintOsLinux, kernel.BrowserFingerprintOsMacos:
+		return kernel.BrowserFingerprintOs(os), nil
+	default:
+		return "", fmt.Errorf("invalid --fingerprint-os value: %s (must be linux or macos)", os)
 	}
-	return "", fmt.Errorf("invalid --fingerprint-os value: %s (must be macos)", os)
 }
 
 // maxPrivateHosts mirrors the API's cap on network.private_hosts entries.
@@ -536,6 +538,7 @@ func formatTags(tags kernel.Tags) string {
 type BrowsersCreateInput struct {
 	TimeoutSeconds       int
 	Stealth              BoolFlag
+	CaptchaSolver        BoolFlag
 	Headless             BoolFlag
 	GPU                  BoolFlag
 	Memory               string
@@ -813,6 +816,9 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	if err := validateStartURLFlag(in.StartURL); err != nil {
 		return err
 	}
+	if err := validateStealthCaptchaFlags(in.Stealth, in.CaptchaSolver); err != nil {
+		return err
+	}
 	vaults, err := buildBrowserVaults(in.Vaults)
 	if err != nil {
 		return err
@@ -823,6 +829,9 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 	if in.Stealth.Set {
 		params.Stealth = kernel.Opt(in.Stealth.Value)
+	}
+	if in.CaptchaSolver.Set {
+		params.CaptchaSolver = browserCaptchaSolverParam(in.CaptchaSolver.Value)
 	}
 	if in.Headless.Set {
 		params.Headless = kernel.Opt(in.Headless.Value)
@@ -874,7 +883,8 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 
 	// Add proxy if specified. Omitting it lets the browser default apply:
-	// Kernel's default stealth proxy for stealth sessions, direct egress otherwise.
+	// Kernel's default stealth proxy when CAPTCHA solving is enabled and direct
+	// egress otherwise.
 	sel := proxySelection{ID: in.ProxyID, Name: in.ProxyName, Mode: in.ProxyMode}
 	if sel.set() {
 		proxy, err := buildProxyConfigParam(sel)
@@ -1003,6 +1013,13 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	tableData := buildBrowserTableData(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.ProfileSaveChanges, browser.StartURL, browser.Name, browser.Tags)
 	tableData = appendBrowserLeasedAtRow(tableData, browser.LeasedAt)
 	tableData = appendReplayRows(tableData, browser.Replay.ReplayID, browser.Replay.ReplayViewURL, browser.Replay.StartedAt, browser.Replay.FinishedAt)
+	tableData = append(tableData, []string{"CAPTCHA Solver", fmt.Sprintf("%t", browser.CaptchaSolver.Enabled)})
+	if browser.Fingerprint.Os != "" {
+		tableData = append(tableData, []string{"Fingerprint OS", string(browser.Fingerprint.Os)})
+	}
+	if proxy := formatBrowserProxy(browser.Proxy); proxy != "" {
+		tableData = append(tableData, []string{"Proxy", proxy})
+	}
 	tableData = append(tableData, []string{"Private Hosts", formatPrivateHosts(browser.Network)}, []string{"Allowed Hosts", formatAllowedHosts(browser.Network)}, []string{"Proxy Routes", formatProxyRoutes(browser.Network)})
 	tableData = append(tableData, browserLocationRows(browser.Location)...)
 	PrintTableNoPad(tableData, true)
@@ -1023,6 +1040,10 @@ func printBrowserPoolAcquireResult(resp *kernel.BrowserPoolAcquireResponse) {
 	tableData := buildBrowserTableData(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.ProfileSaveChanges, resp.StartURL, resp.Name, resp.Tags)
 	tableData = appendBrowserLeasedAtRow(tableData, resp.LeasedAt)
 	tableData = appendReplayRows(tableData, resp.Replay.ReplayID, resp.Replay.ReplayViewURL, resp.Replay.StartedAt, resp.Replay.FinishedAt)
+	tableData = append(tableData, []string{"CAPTCHA Solver", fmt.Sprintf("%t", resp.CaptchaSolver.Enabled)})
+	if resp.Fingerprint.Os != "" {
+		tableData = append(tableData, []string{"Fingerprint OS", string(resp.Fingerprint.Os)})
+	}
 	PrintTableNoPad(tableData, true)
 }
 
@@ -1208,7 +1229,11 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	tableData = append(tableData, browserLocationRows(browser.Location)...)
 	tableData = append(tableData, []string{"Timeout (seconds)", fmt.Sprintf("%d", browser.TimeoutSeconds)})
 	tableData = append(tableData, []string{"Headless", fmt.Sprintf("%t", browser.Headless)})
-	tableData = append(tableData, []string{"Stealth", fmt.Sprintf("%t", browser.Stealth)})
+	tableData = append(tableData, []string{"Stealth (deprecated)", fmt.Sprintf("%t", browser.Stealth)})
+	tableData = append(tableData, []string{"CAPTCHA Solver", fmt.Sprintf("%t", browser.CaptchaSolver.Enabled)})
+	if browser.Fingerprint.Os != "" {
+		tableData = append(tableData, []string{"Fingerprint OS", string(browser.Fingerprint.Os)})
+	}
 	tableData = append(tableData, []string{"GPU", fmt.Sprintf("%t", browser.GPU)})
 	tableData = append(tableData, []string{"Memory", util.OrDash(string(browser.Memory))})
 	if browser.VideoMemory != "" {
@@ -3386,9 +3411,9 @@ func init() {
 	addJSONOutputFlag(browsersUpdateCmd)
 	browsersUpdateCmd.Flags().String("proxy-id", "", "ID of the proxy to use for the browser session (mutually exclusive with --proxy-name and --proxy-mode)")
 	browsersUpdateCmd.Flags().String("proxy-name", "", "Name of the proxy to use for the browser session; must match exactly one active proxy in the project (mutually exclusive with --proxy-id and --proxy-mode)")
-	browsersUpdateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' to restore the browser default (Kernel's stealth proxy when stealth is on, direct egress otherwise)")
-	browsersUpdateCmd.Flags().Bool("clear-proxy", false, "Drop the selected proxy and restore the browser default (same as --proxy-mode=default)")
-	browsersUpdateCmd.Flags().Bool("disable-default-proxy", false, "Connect directly instead of through the default stealth proxy (same as --proxy-mode=direct); use --disable-default-proxy=false to restore the default")
+	browsersUpdateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy, or 'default' for Kernel's default stealth proxy when CAPTCHA solving is enabled and direct egress otherwise")
+	browsersUpdateCmd.Flags().Bool("clear-proxy", false, "Drop the selected proxy and restore default egress (same as --proxy-mode=default): Kernel's default stealth proxy with CAPTCHA solving, direct otherwise")
+	browsersUpdateCmd.Flags().Bool("disable-default-proxy", false, "Connect directly instead of through the default stealth proxy (same as --proxy-mode=direct); CAPTCHA solving remains enabled; use --disable-default-proxy=false to restore default egress")
 	browsersUpdateCmd.Flags().String("profile-id", "", "Profile ID to load into the browser session (mutually exclusive with --profile-name)")
 	browsersUpdateCmd.Flags().String("profile-name", "", "Profile name to load into the browser session (mutually exclusive with --profile-id)")
 	browsersUpdateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
@@ -3687,12 +3712,13 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 
 	// Add flags for create command
 	addJSONOutputFlag(browsersCreateCmd)
-	browsersCreateCmd.Flags().BoolP("stealth", "s", false, "Launch browser in stealth mode to avoid detection")
+	browsersCreateCmd.Flags().BoolP("stealth", "s", false, "Deprecated compatibility mode: enable CAPTCHA solving and Kernel's default stealth proxy together; use --captcha-solver and --proxy-mode instead")
+	browsersCreateCmd.Flags().Bool("captcha-solver", false, "Enable automatic CAPTCHA solving; does not change proxy egress, so select --proxy-mode=default for Kernel's default stealth proxy")
 	browsersCreateCmd.Flags().BoolP("headless", "H", false, "Launch browser without GUI access")
 	browsersCreateCmd.Flags().Bool("gpu", false, "Launch browser with hardware-accelerated GPU rendering")
 	browsersCreateCmd.Flags().String("memory", "", "Memory for a non-GPU browser session. Headless: '1GiB' (default), '2GiB' or '4GiB'. Headful: '8GiB' (default) or '16GiB'")
 	browsersCreateCmd.Flags().String("video-memory", "", "Video memory (VRAM) for a GPU browser session (requires --gpu): '3GiB' (default, 4 vCPU/6GiB memory) or '6GiB' (8 vCPU/12GiB memory)")
-	browsersCreateCmd.Flags().String("fingerprint-os", "", "Closed beta browser fingerprint OS override: macos. Contact Kernel to enable; requires --stealth=true, --headless=false, --gpu=false, and default memory")
+	browsersCreateCmd.Flags().String("fingerprint-os", "", "Closed beta browser fingerprint OS override: linux or macos. Contact Kernel to enable; requires --captcha-solver=true, --headless=false, --gpu=false, and default memory")
 	browsersCreateCmd.Flags().String("invocation-id", "", "Associate the browser session with an invocation")
 	browsersCreateCmd.Flags().Bool("kiosk", false, "Launch browser in kiosk mode")
 	browsersCreateCmd.Flags().IntP("timeout", "t", 60, "Timeout in seconds for the browser session")
@@ -3701,7 +3727,7 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().Bool("save-changes", false, "If set, save changes back to the profile when the session ends")
 	browsersCreateCmd.Flags().String("proxy-id", "", "Proxy ID to use for the browser session (mutually exclusive with --proxy-name and --proxy-mode)")
 	browsersCreateCmd.Flags().String("proxy-name", "", "Proxy name to use for the browser session; must match exactly one active proxy in the project (mutually exclusive with --proxy-id and --proxy-mode)")
-	browsersCreateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy regardless of stealth, or 'default' for the browser default (Kernel's stealth proxy when --stealth is set, direct egress otherwise)")
+	browsersCreateCmd.Flags().String("proxy-mode", "", "Proxy egress mode instead of a selected proxy: 'direct' for no proxy, or 'default' for Kernel's default stealth proxy when CAPTCHA solving is enabled and direct egress otherwise")
 	browsersCreateCmd.Flags().String("region", "", "Geographic region for the session: 'us-east', 'us-west', 'eu-west', or 'ap-southeast'. Fixed once the session is created; requires a Start-Up or Enterprise plan and defaults to us-east")
 	browsersCreateCmd.Flags().StringSlice("private-host", nil, "Destinations the browser reaches directly through its own network instead of Kernel-managed egress, for private hosts on a VPN or tunnel the session joins (repeat or comma-separated, max 32). Accepts hostname patterns ('*.example.ts.net'), IPs ('10.1.30.63', '[fd00::1]'), and private CIDRs ('100.64.0.0/10'). Replaces the default private ranges (RFC1918, 100.64.0.0/10, fc00::/7); omit to keep them. Fixed once the session is created")
 	browsersCreateCmd.Flags().StringSlice("allowed-host", nil, "Set an egress allowlist at creation: the only destinations the browser may reach through Kernel-managed egress (repeat or comma-separated, max 100); anything else is refused with a 403 (network_policy_denied). Filters Kernel-managed egress only, not all browser VM traffic. Accepts exact hostnames ('example.com'), a leading wildcard matching subdomains only ('*.example.com'), public IPs ('8.8.8.8', '[2001:4860:4860::8888]'), and public CIDRs ('8.8.4.0/24'). No ports, paths, or schemes. --start-url must be allowed. Omit for unfiltered egress; an empty list is invalid. Requires proxy v3; cannot be combined with --pool-id or --pool-name, even with --yes. An existing list can be replaced or removed with 'browsers update'; it cannot be added later if omitted at creation or removed")
@@ -3834,6 +3860,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 
 	// Get flag values
 	stealthVal, _ := cmd.Flags().GetBool("stealth")
+	captchaSolverVal, _ := cmd.Flags().GetBool("captcha-solver")
 	headlessVal, _ := cmd.Flags().GetBool("headless")
 	gpuVal, _ := cmd.Flags().GetBool("gpu")
 	memory, _ := cmd.Flags().GetString("memory")
@@ -3996,6 +4023,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	in := BrowsersCreateInput{
 		TimeoutSeconds:       timeout,
 		Stealth:              BoolFlag{Set: cmd.Flags().Changed("stealth"), Value: stealthVal},
+		CaptchaSolver:        BoolFlag{Set: cmd.Flags().Changed("captcha-solver"), Value: captchaSolverVal},
 		Headless:             BoolFlag{Set: cmd.Flags().Changed("headless"), Value: headlessVal},
 		GPU:                  BoolFlag{Set: cmd.Flags().Changed("gpu"), Value: gpuVal},
 		Memory:               memory,

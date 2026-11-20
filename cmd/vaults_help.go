@@ -177,7 +177,26 @@ type AgentCardCardSpec = {
   currency: string;           // three letters
   card_id?: string;           // opaque AgentCard id, pass through unchanged; else chosen at approval
   checkout_origin?: string;   // top-level checkout origin for autopilot matching; update omission removes it
+  line_items?: AgentCardLineItem[]; // 1..20 display-only cart lines; set again for each checkout; omission removes it on update
+  subtotal?: number;          // integer minor units >= 0; requires line_items; omission removes it on update
+  shipping?: number;          // integer minor units >= 0; requires line_items; omission removes it on update
+  tax?: number;               // integer minor units >= 0; requires line_items; omission removes it on update
+  discount?: number;          // integer minor units >= 0; requires line_items; omission removes it on update
 };
+
+type AgentCardLineItem = {
+  title: string;              // nonempty product name as the store shows it
+  quantity: number;           // integer >= 1
+  unit_amount?: number;       // integer minor units >= 0; price of one
+  amount?: number;            // integer minor units >= 0; line total, shown instead of unit_amount * quantity
+  brand?: string;             // shown beside the title
+  options?: string;           // chosen options, e.g. "Size S · Pink"
+  image_url?: string;         // https product image; unsupported hosts are displayed without an image
+};
+
+line_items and their totals are display context only: the cardholder approves the card amount
+or processor charge, and a mismatched cart total does not change what they pay. they are sent
+only for checkouts without prepare_checkout; prepared checkouts use the preparation context.
 
 // one live KERNEL purchase. with payment_method_id (or the legacy default card),
 // authorize obtains a network token and one-time code for fill on merchant_url's exact

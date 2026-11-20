@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const onePasswordAccountFixture = `{"id":"account-1","key":"onepassword","type":"credential_account","spec":{"provider":"1password","authorization":{"method":"oauth","client":{"type":"kernel_managed"}}},"state":{"provider":"1password","status":"pending_authorization"},"action":{"name":"1password_oauth","url":"https://my.1password.example/oauth/authorize?client_id=kernel&state=opaque"},"available_operations":[],"available_expansions":[],"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}`
+const onePasswordAccountFixture = `{"id":"account-1","key":"onepassword","type":"credential_account","spec":{"provider":"1password","authorization":{"method":"oauth","client":{"type":"kernel_managed"}}},"state":{"provider":"1password","status":"pending_authorization"},"action":{"name":"1password_oauth","url":"https://my.1password.example/oauth/authorize?client_id=kernel&state=opaque","connect_url":"https://start.1password.example/connect?state=opaque"},"available_operations":[],"available_expansions":[],"expires_at":"2026-09-01T01:00:00Z","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}`
 
 const onePasswordCredentialFixture = `{"id":"credential-2","key":"github","type":"credential","version":1,"spec":{"provider":"1password","account":"onepassword","requests":{"version":2,"entries":[{"type":"login","parameters":{"website":"https://github.com"}}]}},"state":{"provider":"1password","status":"pending_authorization","access_request_id":"req-1","access_request":{"id":"req-1","state":"pending","identity":"never-print-identity","path":"never-print-path","has_autofill_token":false,"granted_count":0,"entries":[{"id":"entry-1","type":"login","parameters":{"website":"https://github.com"}}]}},"action":{"name":"1password_access_approval","url":"onepassword://grant-brokered-access?access_request_reference=ref-1","access_request_reference":"ref-1","instructions":"Present this link to the account owner."},"available_operations":[{"type":"1pw_access_request_status","description":"Check the request."}],"available_expansions":[],"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}`
 
@@ -36,15 +36,41 @@ func TestCredentialConnectOnePassword(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, calls)
 	assert.Contains(t, out, `"name": "1password_oauth"`)
+	assert.Contains(t, out, `"connect_url": "https://start.1password.example/connect?state=opaque"`)
 	assert.Contains(t, out, "https://my.1password.example/oauth/authorize")
 
 	_, text, err := executeVaultCommand(t, client, "vaults", "credentials", "connect", "user", "onepassword", "--provider", "1password")
 	require.NoError(t, err)
-	assert.Contains(t, text, "share the 1Password authorization url with the account owner")
+	assert.Contains(t, text, "action url:\nhttps://my.1password.example/oauth/authorize")
+	assert.Contains(t, text, "1Password connect url:\nhttps://start.1password.example/connect")
+	assert.Contains(t, text, "share both 1Password links with the account owner")
+	assert.Contains(t, text, "first link the owner approves or declines settles it and disables the other")
+	assert.Contains(t, text, "after that, rerun credentials connect with the same vault and key for fresh links")
 
 	_, _, err = executeVaultCommand(t, client, "vaults", "credentials", "connect", "user", "onepassword", "--provider", "kernel")
 	require.ErrorContains(t, err, "--provider must be 1password")
 	assert.Equal(t, 2, calls)
+}
+
+func TestOnePasswordConnectURLMustBeDisplaySafe(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	for _, unsafeURL := range []string{
+		"javascript:alert(1)",
+		"https://user:secret@start.1password.example/connect",
+		"https://start.1password.example/connect?access_token=secret",
+	} {
+		t.Run(unsafeURL, func(t *testing.T) {
+			fixture := strings.Replace(onePasswordAccountFixture, "https://start.1password.example/connect?state=opaque", unsafeURL, 1)
+			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				io.WriteString(w, fixture)
+			})
+			out, _, err := executeVaultCommand(t, client, "vaults", "items", "get", "user", "onepassword", "-o", "json")
+			require.NoError(t, err)
+			assert.NotContains(t, out, `"connect_url"`)
+			assert.NotContains(t, out, unsafeURL)
+		})
+	}
 }
 
 func TestCredentialCreateOnePassword(t *testing.T) {
@@ -143,6 +169,7 @@ func TestOnePasswordOperationRequests(t *testing.T) {
 		{"1pw_access_request_status", `{"timeout_seconds":60}`, `{"type":"1pw_access_request_status","timeout_seconds":60}`, onePasswordCredentialFixture},
 		{"1pw_access_request_status", "", `{"type":"1pw_access_request_status"}`, onePasswordCredentialFixture},
 		{"1pw_recover", "", `{"type":"1pw_recover"}`, onePasswordAccountFixture},
+		{"1pw_disconnect", "", `{"type":"1pw_disconnect"}`, onePasswordAccountFixture},
 	} {
 		t.Run(tc.operation+tc.params, func(t *testing.T) {
 			item := strings.Replace(tc.item, `"available_operations":[]`, `"available_operations":[{"type":"1pw_access_request_status","description":"x"}]`, 1)
@@ -186,6 +213,7 @@ func TestOnePasswordOperationValidation(t *testing.T) {
 		{"1pw_fill", `{"browser_id":"b","page_url":"https://github.com/login","target_id":""}`, "target_id"},
 		{"1pw_update_access_token", `{"access_token":"token-secret"}`, "only through --spec-file"},
 		{"1pw_recover", `{}`, "takes no parameters"},
+		{"1pw_disconnect", `{}`, "takes no parameters"},
 	} {
 		t.Run(tc.operation+tc.params, func(t *testing.T) {
 			calls := 0
@@ -286,6 +314,14 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 	}
 	for _, want := range []string{
 		"ask whose 1Password account holds the login and confirm it is in a non-shared vault",
+		"share both links",
+		"connect url is for their own device",
+		"opens the 1Password app",
+		"including sign-up",
+		"existing desktop",
+		"approves or declines settles it",
+		"expire at expires_at",
+		"after that, rerun credentials connect with the same",
 		"1-5 login entries",
 		"invoke 1pw_create_access_request once",
 		"append &return_url=<URL-encoded URL>",
@@ -317,8 +353,11 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 	assert.Contains(t, credentials.Flag("spec-file").Usage, "access_request_id/resolved")
 	assert.NotContains(t, connect.Long, "stored-token")
 	assert.Contains(t, connect.Long, "credential_account")
+	assert.Equal(t, "connect a 1Password account and return its authorization links", connect.Short)
+	assert.Contains(t, connect.Flag("open").Usage, "action url on this computer")
+	assert.Contains(t, connect.Flag("open").Usage, "connect url for the owner's device")
 	assert.Contains(t, credentials.Example, `"provider":"1password","account":"onepassword"`)
-	for _, operation := range []string{"1pw_create_access_request", "1pw_access_request_status", "1pw_fill", "1pw_update_access_token", "1pw_recover"} {
+	for _, operation := range []string{"1pw_create_access_request", "1pw_access_request_status", "1pw_fill", "1pw_update_access_token", "1pw_recover", "1pw_disconnect"} {
 		assert.Contains(t, invoke.Long, operation)
 	}
 	assert.Contains(t, invoke.Long, "--spec-file, never --params")
@@ -333,6 +372,10 @@ func TestCredentialHelpPresentsBothPaths(t *testing.T) {
 		assert.Contains(t, invoke.Long, want)
 	}
 	assert.Contains(t, invoke.Long, "optional access_token_expires_at (RFC3339)")
+	assert.Contains(t, invoke.Long, "ends the account's 1Password")
+	assert.Contains(t, invoke.Long, "provider_revocation_pending")
+	assert.Contains(t, credentials.Long, "revoking means KERNEL is keeping the account unusable")
+	assert.Contains(t, credentials.Long, "retrying the revoke in the background")
 	assert.Contains(t, invoke.Long, "expiry clears the previously supplied expiry")
 	for _, help := range []string{invoke.Long, invoke.Example, credentials.Long, credentials.Example, connect.Long} {
 		for _, removed := range []string{"1pw_request_access", "1pw_poll_access", "1pw_reconcile", "account_id", "Family", "customer_managed", "RFC 3339"} {

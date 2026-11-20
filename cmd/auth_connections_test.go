@@ -712,6 +712,16 @@ func TestManagedAuthBrowserRows_IncludesRegionAndLocale(t *testing.T) {
 	assert.Contains(t, rows, []string{"Browser Locale", "sv-SE"})
 }
 
+func TestManagedAuthBrowserRows_CaptchaSolverOnlyWhenReturned(t *testing.T) {
+	var omitted, enabled kernel.ManagedAuthBrowserConfig
+	require.NoError(t, json.Unmarshal([]byte(`{"region":"us-east"}`), &omitted))
+	require.NoError(t, json.Unmarshal([]byte(`{"captcha_solver":{"enabled":true}}`), &enabled))
+	for _, row := range managedAuthBrowserRows(omitted) {
+		assert.NotEqual(t, "Browser CAPTCHA Solver", row[0])
+	}
+	assert.Contains(t, managedAuthBrowserRows(enabled), []string{"Browser CAPTCHA Solver", "true"})
+}
+
 // --credential-auto should still be honored (it was a no-op redundant flag
 // before the default changed, but callers may pass it for clarity).
 func TestAuthConnectionsCreate_ProviderWithExplicitAuto_SetsAuto(t *testing.T) {
@@ -1106,8 +1116,8 @@ func TestCreate_TelemetryOff(t *testing.T) {
 	assert.False(t, tel.Enabled.Value)
 }
 
-// Proxy and stealth are carried by the connection's browser config, which the
-// API applies to its login, reauth, and health-check sessions.
+// Proxy, CAPTCHA solving, and legacy stealth are carried by the connection's
+// browser config, which the API applies to login, reauth, and health-check sessions.
 func TestCreate_BrowserConfig(t *testing.T) {
 	capturePtermOutput(t)
 	var captured kernel.AuthConnectionNewParams
@@ -1119,16 +1129,60 @@ func TestCreate_BrowserConfig(t *testing.T) {
 	}
 	c := AuthConnectionCmd{svc: fake}
 	require.NoError(t, c.Create(context.Background(), AuthConnectionCreateInput{
-		Domain:      "example.com",
-		ProfileName: "prof",
-		ProxyName:   "my-proxy",
-		Stealth:     BoolFlag{Set: true, Value: false},
+		Domain:        "example.com",
+		ProfileName:   "prof",
+		ProxyName:     "my-proxy",
+		Stealth:       BoolFlag{Set: true, Value: false},
+		CaptchaSolver: BoolFlag{Set: true, Value: true},
 	}))
 
 	browser := captured.ManagedAuthCreateRequest.Browser
 	assert.Equal(t, "my-proxy", browser.Proxy.Name.Value)
 	require.True(t, browser.Stealth.Valid())
 	assert.False(t, browser.Stealth.Value)
+	raw, err := json.Marshal(captured)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"captcha_solver":{"enabled":true}`)
+}
+
+func TestUpdateAndLogin_CaptchaSolver(t *testing.T) {
+	capturePtermOutput(t)
+	var updated kernel.AuthConnectionUpdateParams
+	var loggedIn kernel.AuthConnectionLoginParams
+	fake := &FakeAuthConnectionService{
+		UpdateFunc: func(ctx context.Context, id string, body kernel.AuthConnectionUpdateParams, opts ...option.RequestOption) (*kernel.ManagedAuth, error) {
+			updated = body
+			return &kernel.ManagedAuth{ID: id}, nil
+		},
+		LoginFunc: func(ctx context.Context, id string, body kernel.AuthConnectionLoginParams, opts ...option.RequestOption) (*kernel.LoginResponse, error) {
+			loggedIn = body
+			return &kernel.LoginResponse{ID: id}, nil
+		},
+	}
+	c := AuthConnectionCmd{svc: fake}
+
+	require.NoError(t, c.Update(context.Background(), AuthConnectionUpdateInput{
+		ID:            "auth_1",
+		CaptchaSolver: BoolFlag{Set: true, Value: false},
+	}))
+	updatedJSON, err := json.Marshal(updated)
+	require.NoError(t, err)
+	assert.Contains(t, string(updatedJSON), `"captcha_solver":{"enabled":false}`)
+
+	require.NoError(t, c.Login(context.Background(), AuthConnectionLoginInput{
+		ID:            "auth_1",
+		CaptchaSolver: BoolFlag{Set: true, Value: true},
+	}))
+	loginJSON, err := json.Marshal(loggedIn)
+	require.NoError(t, err)
+	assert.Contains(t, string(loginJSON), `"captcha_solver":{"enabled":true}`)
+
+	err = c.Login(context.Background(), AuthConnectionLoginInput{
+		ID:            "auth_1",
+		Stealth:       BoolFlag{Set: true, Value: true},
+		CaptchaSolver: BoolFlag{Set: true, Value: false},
+	})
+	require.ErrorContains(t, err, "--stealth=true")
 }
 
 // Region is part of the connection's browser config: create sets it, update
