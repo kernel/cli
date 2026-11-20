@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -185,5 +186,53 @@ func TestLegacyTokenRefreshConfigUsesProdDefaults(t *testing.T) {
 	}
 	if got, want := tokenOAuthClientID(tokens), DefaultClientID; got != want {
 		t.Fatalf("tokenOAuthClientID = %q, want %q", got, want)
+	}
+}
+
+func TestTokensKeepNativeProjects(t *testing.T) {
+	refreshed := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		body := map[string]interface{}{
+			"access_token":  "access-token",
+			"refresh_token": "refresh-token",
+			"token_type":    "Bearer",
+			"expires_in":    3600,
+			"org_id":        "org_1",
+			"access_scope":  "organization",
+		}
+		if !refreshed {
+			body["projects"] = []string{"proj_a", "proj_b"}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(body)
+	}))
+	defer server.Close()
+
+	config := &OAuthConfig{
+		Config: &oauth2.Config{
+			ClientID:    "client-id",
+			RedirectURL: "http://localhost/callback",
+			Endpoint:    oauth2.Endpoint{TokenURL: server.URL, AuthStyle: oauth2.AuthStyleInParams},
+		},
+		Verifier:      "verifier",
+		AuthBaseURL:   server.URL,
+		OAuthClientID: "client-id",
+	}
+	tokens, err := config.exchangeCodeForTokens(context.Background(), "code", "org_1", "", "")
+	if err != nil {
+		t.Fatalf("exchangeCodeForTokens() error = %v", err)
+	}
+	if got, want := strings.Join(tokens.Projects, ","), "proj_a,proj_b"; got != want {
+		t.Fatalf("Projects = %q, want %q", got, want)
+	}
+
+	// A refresh response without the field keeps the grant's projects.
+	refreshed = true
+	tokens, err = RefreshTokens(context.Background(), tokens)
+	if err != nil {
+		t.Fatalf("RefreshTokens() error = %v", err)
+	}
+	if got, want := strings.Join(tokens.Projects, ","), "proj_a,proj_b"; got != want {
+		t.Fatalf("Projects after refresh = %q, want %q", got, want)
 	}
 }
