@@ -349,7 +349,9 @@ func managedAuthBrowserRows(cfg kernel.ManagedAuthBrowserConfig) pterm.TableData
 	if cfg.JSON.Stealth.Valid() {
 		rows = append(rows, []string{"Browser Stealth (deprecated)", fmt.Sprintf("%t", cfg.Stealth)})
 	}
-	rows = append(rows, []string{"Browser CAPTCHA Solver", fmt.Sprintf("%t", cfg.CaptchaSolver.Enabled)})
+	if cfg.JSON.CaptchaSolver.Valid() {
+		rows = append(rows, []string{"Browser CAPTCHA Solver", fmt.Sprintf("%t", cfg.CaptchaSolver.Enabled)})
+	}
 	if cfg.Telemetry.Enabled || len(telemetryEnabledCategories(kernel.BrowserTelemetryConfig{Browser: cfg.Telemetry.Browser})) > 0 {
 		rows = append(rows, []string{"Browser Telemetry", formatManagedAuthTelemetry(cfg.Telemetry)})
 	}

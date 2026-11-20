@@ -712,6 +712,16 @@ func TestManagedAuthBrowserRows_IncludesRegionAndLocale(t *testing.T) {
 	assert.Contains(t, rows, []string{"Browser Locale", "sv-SE"})
 }
 
+func TestManagedAuthBrowserRows_CaptchaSolverOnlyWhenReturned(t *testing.T) {
+	var omitted, enabled kernel.ManagedAuthBrowserConfig
+	require.NoError(t, json.Unmarshal([]byte(`{"region":"us-east"}`), &omitted))
+	require.NoError(t, json.Unmarshal([]byte(`{"captcha_solver":{"enabled":true}}`), &enabled))
+	for _, row := range managedAuthBrowserRows(omitted) {
+		assert.NotEqual(t, "Browser CAPTCHA Solver", row[0])
+	}
+	assert.Contains(t, managedAuthBrowserRows(enabled), []string{"Browser CAPTCHA Solver", "true"})
+}
+
 // --credential-auto should still be honored (it was a no-op redundant flag
 // before the default changed, but callers may pass it for clarity).
 func TestAuthConnectionsCreate_ProviderWithExplicitAuto_SetsAuto(t *testing.T) {

@@ -340,6 +340,10 @@ func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error
 	}
 
 	cfg := pool.BrowserPoolConfig
+	captchaSolver := "-"
+	if cfg.JSON.CaptchaSolver.Valid() {
+		captchaSolver = fmt.Sprintf("%t", cfg.CaptchaSolver.Enabled)
+	}
 
 	rows := pterm.TableData{
 		{"Property", "Value"},
@@ -354,7 +358,7 @@ func (c BrowserPoolsCmd) Get(ctx context.Context, in BrowserPoolsGetInput) error
 		{"Timeout", fmt.Sprintf("%d seconds", cfg.TimeoutSeconds)},
 		{"Headless", fmt.Sprintf("%t", cfg.Headless)},
 		{"Stealth (deprecated)", fmt.Sprintf("%t", cfg.Stealth)},
-		{"CAPTCHA Solver", fmt.Sprintf("%t", cfg.CaptchaSolver.Enabled)},
+		{"CAPTCHA Solver", captchaSolver},
 		{"Kiosk Mode", fmt.Sprintf("%t", cfg.KioskMode)},
 		{"Memory", util.OrDash(string(cfg.Memory))},
 		{"Refresh On Profile Update", fmt.Sprintf("%t", cfg.RefreshOnProfileUpdate)},
