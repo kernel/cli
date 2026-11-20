@@ -269,6 +269,7 @@ func (oc *OAuthConfig) exchangeCodeForTokens(ctx context.Context, code, orgID, a
 	if accessScope == "organization" {
 		projectID = ""
 	}
+	projects, _ := projectsFromResponse(token.Extra("projects"))
 
 	return &TokenStorage{
 		AccessToken:   token.AccessToken,
@@ -277,6 +278,7 @@ func (oc *OAuthConfig) exchangeCodeForTokens(ctx context.Context, code, orgID, a
 		OrgID:         orgID,
 		AccessScope:   accessScope,
 		ProjectID:     projectID,
+		Projects:      projects,
 		AuthBaseURL:   oc.AuthBaseURL,
 		OAuthClientID: oc.OAuthClientID,
 	}, nil
@@ -355,6 +357,10 @@ func RefreshTokens(ctx context.Context, tokens *TokenStorage) (*TokenStorage, er
 	if accessScope == "organization" {
 		projectID = ""
 	}
+	projects := tokens.Projects
+	if value, ok := projectsFromResponse(tokenResponse["projects"]); ok {
+		projects = value
+	}
 
 	return &TokenStorage{
 		AccessToken:   newToken.AccessToken,
@@ -363,9 +369,25 @@ func RefreshTokens(ctx context.Context, tokens *TokenStorage) (*TokenStorage, er
 		OrgID:         orgID,
 		AccessScope:   accessScope,
 		ProjectID:     projectID,
+		Projects:      projects,
 		AuthBaseURL:   tokenAuthBaseURL(tokens),
 		OAuthClientID: tokenOAuthClientID(tokens),
 	}, nil
+}
+
+// projectsFromResponse reads the projects a token response limits the grant
+// to. ok reports whether the response carried the field at all.
+func projectsFromResponse(value interface{}) (projects []string, ok bool) {
+	items, ok := value.([]interface{})
+	if !ok {
+		return nil, false
+	}
+	for _, item := range items {
+		if id, isString := item.(string); isString && id != "" {
+			projects = append(projects, id)
+		}
+	}
+	return projects, true
 }
 
 // generateCodeVerifier generates a cryptographically secure random string for PKCE

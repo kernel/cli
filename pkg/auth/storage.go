@@ -25,6 +25,7 @@ type TokenStorage struct {
 	ProjectID     string    `json:"project_id,omitempty"`
 	AuthBaseURL   string    `json:"auth_base_url,omitempty"`
 	OAuthClientID string    `json:"oauth_client_id,omitempty"`
+	Projects      []string  `json:"projects,omitempty"` // projects a native grant is limited to; empty means all
 }
 
 // IsExpired checks if the access token is expired (with 5 minute buffer)

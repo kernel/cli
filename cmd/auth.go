@@ -108,11 +108,7 @@ func runAuth(cmd *cobra.Command, args []string) error {
 	pterm.Info.Printf("API URL: %s\n", util.GetBaseURL())
 	pterm.Info.Printf("Auth URL: %s\n", tokenAuthBaseURLForDisplay(tokens))
 	pterm.Info.Printf("OAuth client ID: %s\n", maskClientID(tokenOAuthClientIDForDisplay(tokens)))
-	if tokens.AccessScope == "project" && tokens.ProjectID != "" {
-		pterm.Info.Printf("Access scope: project %s\n", tokens.ProjectID)
-	} else {
-		pterm.Info.Println("Access scope: organization-wide")
-	}
+	pterm.Info.Printf("Access scope: %s\n", accessScopeLabel(tokens))
 
 	// Extract info from JWT token
 	if claims, err := parseJWT(tokens.AccessToken); err == nil && claims != nil {
@@ -169,4 +165,19 @@ func maskClientID(clientID string) string {
 		return clientID
 	}
 	return clientID[:4] + "..." + clientID[len(clientID)-4:]
+}
+
+// accessScopeLabel describes where the stored credentials may act: one
+// project, the projects a native grant is limited to, or the organization.
+func accessScopeLabel(tokens *auth.TokenStorage) string {
+	switch {
+	case tokens.AccessScope == "project" && tokens.ProjectID != "":
+		return "project " + tokens.ProjectID
+	case len(tokens.Projects) == 1:
+		return "project " + tokens.Projects[0]
+	case len(tokens.Projects) > 1:
+		return "projects " + strings.Join(tokens.Projects, ", ")
+	default:
+		return "organization-wide"
+	}
 }
