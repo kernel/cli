@@ -1215,6 +1215,52 @@ func TestBrowsersCreate_WithFingerprintOS(t *testing.T) {
 	assert.Equal(t, 2, calls)
 }
 
+func TestBrowsersCreate_WithPlatformOS(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var captured kernel.BrowserNewParams
+	calls := 0
+	fake := &FakeBrowsersService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserNewParams, opts ...option.RequestOption) (*kernel.BrowserNewResponse, error) {
+			calls++
+			captured = body
+			return &kernel.BrowserNewResponse{SessionID: "sess-platform", Platform: kernel.BrowserPlatform{Os: body.Platform.Os}}, nil
+		},
+	}
+	b := BrowsersCmd{browsers: fake}
+
+	err := b.Create(context.Background(), BrowsersCreateInput{PlatformOS: "macos"})
+	require.NoError(t, err)
+	assert.Equal(t, kernel.BrowserOsMacos, captured.Platform.Os)
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"platform":{"os":"macos"}`)
+	assert.Contains(t, outBuf.String(), "Host OS")
+	assert.Contains(t, outBuf.String(), "macos")
+
+	err = b.Create(context.Background(), BrowsersCreateInput{PlatformOS: "linux"})
+	require.NoError(t, err)
+	assert.Equal(t, kernel.BrowserOsLinux, captured.Platform.Os)
+
+	err = b.Create(context.Background(), BrowsersCreateInput{PlatformOS: "windows"})
+	require.ErrorContains(t, err, "--platform-os")
+	assert.Equal(t, 2, calls)
+}
+
+func TestBrowsersPlatformAndCostHelp(t *testing.T) {
+	require.NotNil(t, browsersCreateCmd.Flags().Lookup("platform-os"))
+	assert.Contains(t, browsersCreateCmd.Long, "--fingerprint-os")
+	assert.Contains(t, browsersCreateCmd.Long, "not available yet")
+	assert.Contains(t, browsersCreateCmd.Long, "us-east")
+	assert.Contains(t, browsersCreateCmd.Long, "unsupported_configuration")
+
+	require.NotNil(t, browsersGetCmd.Flags().Lookup("include-cost"))
+	assert.Contains(t, browsersGetCmd.Long, "provisional usage cost")
+	assert.Contains(t, browsersGetCmd.Long, "omitted by default")
+	assert.Contains(t, browsersGetCmd.Long, "not an invoice total")
+	assert.Contains(t, browsersGetCmd.Long, "pending or")
+}
+
 func TestBrowsersCreate_WithCaptchaSolver(t *testing.T) {
 	setupStdoutCapture(t)
 
@@ -1810,6 +1856,34 @@ func TestBrowsersGet_Error(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "get failed")
+}
+
+func TestBrowsersGet_WithIncludeCost(t *testing.T) {
+	setupStdoutCapture(t)
+	var captured kernel.BrowserGetParams
+	fake := &FakeBrowsersService{
+		GetFunc: func(ctx context.Context, id string, query kernel.BrowserGetParams, opts ...option.RequestOption) (*kernel.BrowserGetResponse, error) {
+			captured = query
+			var response kernel.BrowserGetResponse
+			require.NoError(t, json.Unmarshal([]byte(`{
+				"session_id":"sess-cost",
+				"platform":{"os":"macos"},
+				"cost":{"status":"provisional","estimated_usage_spend_usd":"1.25","as_of":"2026-01-02T03:04:05Z"}
+			}`), &response))
+			return &response, nil
+		},
+	}
+
+	err := (BrowsersCmd{browsers: fake}).Get(context.Background(), BrowsersGetInput{
+		Identifier:  "sess-cost",
+		IncludeCost: true,
+	})
+	require.NoError(t, err)
+	assert.True(t, captured.IncludeCost.Valid())
+	assert.True(t, captured.IncludeCost.Value)
+	for _, want := range []string{"Host OS", "macos", "Cost Status", "provisional", "Estimated Usage Spend (USD)", "1.25", "Cost As Of"} {
+		assert.Contains(t, outBuf.String(), want)
+	}
 }
 
 func TestBrowsersGet_WithIncludeDeleted(t *testing.T) {
@@ -3198,6 +3272,7 @@ func captureUpdateParams(t *testing.T) (*FakeBrowsersService, *kernel.BrowserUpd
 			SessionID: "session123",
 			Name:      body.Name.Value,
 			Tags:      body.Tags,
+			Platform:  kernel.BrowserPlatform{Os: kernel.BrowserOsMacos},
 			LeasedAt:  time.Date(2033, 6, 7, 8, 9, 10, 0, time.UTC),
 		}, nil
 	}}
@@ -3218,6 +3293,8 @@ func TestBrowsersUpdate_WithName_ForwardsParam(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, captured.Name.Valid())
 	assert.Equal(t, "new-name", captured.Name.Value)
+	assert.Contains(t, outBuf.String(), "Host OS")
+	assert.Contains(t, outBuf.String(), "macos")
 	assert.Contains(t, outBuf.String(), "Leased At")
 	assert.Contains(t, outBuf.String(), "2033")
 }
