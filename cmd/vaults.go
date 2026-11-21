@@ -324,6 +324,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	if (operation == "add_payment_method" || operation == "remove_payment_method") && (params == nil || params.PaymentMethod == nil) {
 		return fmt.Errorf("%s requires its documented parameters", operation)
 	}
+	if operation == "link_balance_setup" && (params == nil || params.LinkBalanceSetup == nil) {
+		return fmt.Errorf("link_balance_setup parameters were not initialized")
+	}
 	if operation == "update_access_token" && (params == nil || params.UpdateAccessToken == nil) {
 		return fmt.Errorf("update_access_token requires --spec-file with access_token")
 	}
@@ -410,6 +413,9 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	} else if params != nil && params.PaymentMethod != nil {
 		request = *params.PaymentMethod
 		request.IDOrName = vault
+	} else if params != nil && params.LinkBalanceSetup != nil {
+		request = *params.LinkBalanceSetup
+		request.IDOrName = vault
 	} else if params != nil && params.UpdateAccessToken != nil {
 		request = *params.UpdateAccessToken
 		request.IDOrName = vault
@@ -453,6 +459,16 @@ func (c VaultsCmd) Invoke(ctx context.Context, vault, key, operation string, par
 	}
 	if operation == "add_payment_method" || operation == "remove_payment_method" {
 		return printVaultPaymentMethodOperationResult(response, operation, output)
+	}
+	if operation == "link_balance_setup" {
+		setupURL, err := printVaultLinkBalanceSetupResult(response, output)
+		if err != nil || !open {
+			return err
+		}
+		if err := c.openURL(setupURL); err != nil {
+			return fmt.Errorf("could not open the browser; open the returned Link balance setup URL manually")
+		}
+		return nil
 	}
 	if response == nil || (response.Type != "card" && response.Type != "payment_request" && response.Type != "wallet" && response.Type != "credential" && response.Type != "credential_account") {
 		if item.Spec.Provider == "kernel" {

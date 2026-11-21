@@ -195,7 +195,7 @@ each vault has its own key; it is created on first request and may be cached.`,
 		}}
 	addVaultJSONOutputFlag(itemList)
 	itemGet := &cobra.Command{Use: "get <vault> <key>", Short: "get item state, available operations, and requested live data", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long:    "get item state, available operations, provider actions, and returned AgentCard checkout aliases.\n--expand fetches live, non-persisted provider data only when the item advertises that expansion; requesting unavailable data fails rather than returning a partial item. Link user info and shipping addresses can contain personal data. use -o json to preserve null versus omitted fields.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nan item still pending after the wait is returned as-is; ready means populated for credentials, not logged in or paid.\nfor credential edits on an already-ready item, compare versions without --wait. explicitly non-sensitive text/email values are returned; sensitive values and totp seeds are omitted.\nrecovery_required stops waiting and means unresolved, not declined or expired.\na 1Password credential_account in revoking cannot be used while KERNEL keeps retrying its revoke in the background.\nfor AgentCard authorization json, amount_authority identifies the approved amount's source; agent and display_only do not prove what the processor charged. amount_verified and charged_* may be absent when there is no observed charge. charged_kind none means the checkout produced a token or payment method for a later merchant charge; inspect item events and the merchant order record.\n" + vaultRecoveryHelp,
+		Long:    "get item state, available operations, provider actions, and returned AgentCard checkout aliases.\n--expand fetches live, non-persisted provider data only when the item advertises that expansion; requesting unavailable data fails rather than returning a partial item. Link user info and shipping addresses can contain personal data. payment_methods may include a stored-value balance whose available amount is read live from the provider and omitted when the provider does not report it. use -o json to preserve null versus omitted fields.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nan item still pending after the wait is returned as-is; ready means populated for credentials, not logged in or paid.\nfor credential edits on an already-ready item, compare versions without --wait. explicitly non-sensitive text/email values are returned; sensitive values and totp seeds are omitted.\nrecovery_required stops waiting and means unresolved, not declined or expired.\na 1Password credential_account in revoking cannot be used while KERNEL keeps retrying its revoke in the background.\nfor AgentCard authorization json, amount_authority identifies the approved amount's source; agent and display_only do not prove what the processor charged. amount_verified and charged_* may be absent when there is no observed charge. charged_kind none means the checkout produced a token or payment method for a later merchant charge; inspect item events and the merchant order record.\n" + vaultRecoveryHelp,
 		Example: "  kernel vaults items get checkout wallet-1 --expand payment_methods\n  kernel vaults items get checkout wallet-1 --expand link_user_info,link_shipping_addresses -o json",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			wait, _ := cmd.Flags().GetInt64("wait")
@@ -301,10 +301,25 @@ funded by that method without disconnecting the wallet or changing other methods
 unresolved purchase can block removal; an uncertain provider outcome leaves removal_pending
 and must be re-checked before an explicit retry. removal is not proof that a payment did
 not occur. scoped keys need both vaults:use and vaults:write.
+link_balance_setup is valid only when advertised by a connected Link wallet. Kernel first
+reads live Link user info and returns 409 unless eligible_for_balance is true, which depends
+on both the user and the wallet's Link client. its optional values are suggestions that the
+user can change. desired_balance_amount is the target balance in cents; the page asks for the
+difference and skips adding money when the current balance covers it. desired_transaction_limit
+is the approval threshold in cents; setting it always shows that step, while omitting it skips
+the step. pass either value through --params or --spec-file, both for first-time setup, or
+neither when no prefill is needed. each value must be a whole-dollar amount of at least 100
+cents, and the transaction limit is at most 50000 cents. Link refuses a page that would ask
+the user to add more than $150 at once. the returned URL does not expire and is the same for
+setup, adding money, and changing the threshold. only the Link user can complete it; use
+--open only on that user's machine, otherwise share it privately. do not assume completion:
+inspect wallets payment-methods for a balance method and its live available amount. Kernel
+cards do not yet use Link's approval policy, so they still require user approval even when
+funded from the balance.
 restart_verification takes no parameters. in recovery_required, ` + vaultRecoveryHelp + `
 it rotates the approval link without a provider call, only after a classified initial
 attestation failure with proof no intent was dispatched. other recovery states must not be retried.
-collect/authorize/prepare_checkout/1pw_recover/restart_verification may use --open.
+collect/authorize/prepare_checkout/link_balance_setup/1pw_recover/restart_verification may use --open.
 --open on card_enrollment or spend_approval is for a human cardholder on their own machine.
 agents must omit --open and share capability links privately, never open them for cardholders.
 fill returns value-free per-field outcomes;
@@ -388,6 +403,7 @@ JSON
   kernel vaults items invoke checkout cardholder add_payment_method
   kernel vaults items invoke checkout cardholder add_payment_method --enrollment server
   kernel vaults items invoke checkout cardholder remove_payment_method --params '{"payment_method_id":"<payment-method-id>"}'
+  kernel vaults items invoke checkout link-wallet link_balance_setup --params '{"desired_balance_amount":10000,"desired_transaction_limit":5000}' --open
   kernel vaults items invoke checkout wallet-1 update_access_token --spec-file ./link-access-token.json
   kernel vaults items invoke user-vault login register_passkey --browser-id <browser-session-id> --field passkey
   kernel vaults items invoke user-vault login arm_passkey --browser-id <browser-session-id> --field passkey
@@ -404,7 +420,7 @@ JSON
 			}
 			if cmd.Flags().Changed("spec-file") {
 				if !vaultOperationTakesParams(args[2]) {
-					return fmt.Errorf("--spec-file is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, remove_payment_method, update_access_token, and 1Password operations with parameters; passkey operations use --browser-id and optional --field")
+					return fmt.Errorf("--spec-file is only supported for fill, webmcp_invoke, prepare_checkout, confirm_transaction, remove_payment_method, link_balance_setup, update_access_token, and 1Password operations with parameters; passkey operations use --browser-id and optional --field")
 				}
 				data, err := readVaultJSONFile(cmd, "spec-file")
 				if err != nil {
@@ -435,7 +451,7 @@ JSON
 			}
 			return getVaultsHandler(cmd).Invoke(cmd.Context(), args[0], args[1], args[2], params, vaultOutput(cmd), open)
 		}}
-	invoke.Flags().String("params", "", "operation parameters json for fill, webmcp_invoke, prepare_checkout, confirm_transaction, remove_payment_method, or 1pw_* (maximum 128 KiB); omit type and credential values; token update operations require --spec-file")
+	invoke.Flags().String("params", "", "operation parameters json for fill, webmcp_invoke, prepare_checkout, confirm_transaction, remove_payment_method, link_balance_setup, or 1pw_* (maximum 128 KiB); omit type and credential values; token update operations require --spec-file")
 	invoke.Flags().String("spec-file", "", "operation parameters json file (use '-' for stdin; maximum 128 KiB)")
 	invoke.MarkFlagsMutuallyExclusive("params", "spec-file")
 	invoke.Flags().Bool("open", false, "open a returned https action url; cardholder links are human-only, agents must share privately")
@@ -489,7 +505,7 @@ JSON
 	walletCreate.Flags().Bool("open", false, "open a returned https connection/enrollment url; cardholder use only, agents must share privately")
 	addVaultJSONOutputFlag(walletCreate)
 	methods := &cobra.Command{Use: "payment-methods <vault> <key>", Short: "fetch advertised live wallet payment methods", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: "fetch payment_methods through the item's GET expansion. the wallet must advertise this expansion.\ndisplays selectable ids and advisory capabilities; never automatically chooses a funding method.\njson returns the item with expanded.payment_methods, like items get --expand payment_methods.",
+		Long: "fetch payment_methods through the item's GET expansion. the wallet must advertise this expansion.\ndisplays selectable ids and advisory capabilities; never automatically chooses a funding method. for stored-value methods such as a Link balance, the available amount is read live from the provider, never stored by Kernel, and shown in the currency's smallest unit with a lowercase ISO 4217 currency code; an absent amount means the provider did not report it.\njson returns the item with expanded.payment_methods, like items get --expand payment_methods.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			project, _ := cmd.Flags().GetString("project")
 			return getVaultsHandler(cmd).GetItem(cmd.Context(), args[0], args[1], 0, []string{"payment_methods"}, resolveProjectSelection(project), vaultOutput(cmd), false)

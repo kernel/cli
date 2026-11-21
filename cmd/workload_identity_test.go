@@ -208,11 +208,19 @@ func TestWorkloadIdentityValidationMatchesSpecBounds(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not null")
 
+	validation, set, err := buildWorkloadIdentityTokenValidation(WorkloadIdentityTokenValidationInput{
+		Set: true, MaxLifetimeSeconds: Int64Flag{Set: true, Value: 172800},
+	})
+	require.NoError(t, err)
+	assert.True(t, set)
+	assert.Equal(t, int64(172800), validation.MaxLifetimeSeconds.Value)
+
 	_, _, err = buildWorkloadIdentityTokenValidation(WorkloadIdentityTokenValidationInput{
-		Set: true, MaxLifetimeSeconds: Int64Flag{Set: true, Value: 86401},
+		Set: true, MaxLifetimeSeconds: Int64Flag{Set: true, Value: 172801},
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "86400")
+	assert.Contains(t, err.Error(), "172800")
+	assert.Contains(t, workloadIdentityIssuersCreateCmd.Flags().Lookup("token-max-lifetime-seconds").Usage, "48 hours")
 
 	_, _, err = buildWorkloadIdentityAuthorization(WorkloadIdentityAuthorizationInput{
 		Set: true, ProjectID: "proj_123", Policy: `{"statements":[{"action":"browsers:use","resource":"projects/proj_123/browsers/*"}]}`,
