@@ -257,8 +257,12 @@ func (oc *OAuthConfig) exchangeCodeForTokens(ctx context.Context, code, orgID, a
 	if value, ok := token.Extra("org_id").(string); ok && value != "" {
 		orgID = value
 	}
+	// A response that states the access scope also lists the projects a
+	// grant is limited to, so its scope is recorded.
+	scopeRecorded := false
 	if value, ok := token.Extra("access_scope").(string); ok && value != "" {
 		accessScope = value
+		scopeRecorded = true
 	}
 	if value, ok := token.Extra("project_id").(string); ok {
 		projectID = value
@@ -279,7 +283,7 @@ func (oc *OAuthConfig) exchangeCodeForTokens(ctx context.Context, code, orgID, a
 		AccessScope:   accessScope,
 		ProjectID:     projectID,
 		Projects:      projects,
-		ScopeRecorded: true,
+		ScopeRecorded: scopeRecorded,
 		AuthBaseURL:   oc.AuthBaseURL,
 		OAuthClientID: oc.OAuthClientID,
 	}, nil
@@ -345,8 +349,10 @@ func RefreshTokens(ctx context.Context, tokens *TokenStorage) (*TokenStorage, er
 		orgID = value
 	}
 	accessScope := tokens.AccessScope
+	scopeRecorded := tokens.ScopeRecorded
 	if value, ok := tokenResponse["access_scope"].(string); ok && value != "" {
 		accessScope = value
+		scopeRecorded = true
 	}
 	if accessScope == "" {
 		accessScope = "organization"
@@ -371,7 +377,7 @@ func RefreshTokens(ctx context.Context, tokens *TokenStorage) (*TokenStorage, er
 		AccessScope:   accessScope,
 		ProjectID:     projectID,
 		Projects:      projects,
-		ScopeRecorded: true,
+		ScopeRecorded: scopeRecorded,
 		AuthBaseURL:   tokenAuthBaseURL(tokens),
 		OAuthClientID: tokenOAuthClientID(tokens),
 	}, nil

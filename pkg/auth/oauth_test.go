@@ -173,6 +173,9 @@ func TestRefreshLegacyTokensRemainOrganizationWide(t *testing.T) {
 	if tokens.ProjectID != "" {
 		t.Fatalf("ProjectID = %q, want empty", tokens.ProjectID)
 	}
+	if tokens.ScopeRecorded {
+		t.Fatal("ScopeRecorded = true for a response that does not state the scope")
+	}
 }
 
 func TestLegacyTokenRefreshConfigUsesProdDefaults(t *testing.T) {
