@@ -15,7 +15,8 @@ func TestAccessScopeLabel(t *testing.T) {
 		{"legacy project scope", auth.TokenStorage{AccessScope: "project", ProjectID: "proj_1"}, "project proj_1"},
 		{"native grant for one project", auth.TokenStorage{AccessScope: "organization", Projects: []string{"proj_a"}}, "project proj_a"},
 		{"native grant for several projects", auth.TokenStorage{AccessScope: "organization", Projects: []string{"proj_a", "proj_b"}}, "projects proj_a, proj_b"},
-		{"every project", auth.TokenStorage{AccessScope: "organization"}, "organization-wide"},
+		{"every project", auth.TokenStorage{AccessScope: "organization", ScopeRecorded: true}, "organization-wide"},
+		{"saved by an older CLI", auth.TokenStorage{AccessScope: "organization"}, "unknown (saved by an older CLI version; run 'kernel login --force' to record it)"},
 	} {
 		if got := accessScopeLabel(&tc.tokens); got != tc.want {
 			t.Errorf("%s: accessScopeLabel() = %q, want %q", tc.name, got, tc.want)

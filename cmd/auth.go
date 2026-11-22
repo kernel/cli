@@ -169,6 +169,8 @@ func maskClientID(clientID string) string {
 
 // accessScopeLabel describes where the stored credentials may act: one
 // project, the projects a native grant is limited to, or the organization.
+// Credentials saved by older CLI versions did not record the projects, so
+// their scope is unknown until they are refreshed or replaced.
 func accessScopeLabel(tokens *auth.TokenStorage) string {
 	switch {
 	case tokens.AccessScope == "project" && tokens.ProjectID != "":
@@ -177,6 +179,8 @@ func accessScopeLabel(tokens *auth.TokenStorage) string {
 		return "project " + tokens.Projects[0]
 	case len(tokens.Projects) > 1:
 		return "projects " + strings.Join(tokens.Projects, ", ")
+	case !tokens.ScopeRecorded:
+		return "unknown (saved by an older CLI version; run 'kernel login --force' to record it)"
 	default:
 		return "organization-wide"
 	}

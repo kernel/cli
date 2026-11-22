@@ -26,6 +26,12 @@ type TokenStorage struct {
 	AuthBaseURL   string    `json:"auth_base_url,omitempty"`
 	OAuthClientID string    `json:"oauth_client_id,omitempty"`
 	Projects      []string  `json:"projects,omitempty"` // projects a native grant is limited to; empty means all
+	// ScopeRecorded is set by CLI versions that record Projects. Credentials
+	// saved without it may be limited to projects the CLI does not know about.
+	ScopeRecorded bool `json:"scope_recorded,omitempty"`
+	// SavedAt tells which of the keyring and the credentials file is current
+	// when both hold credentials.
+	SavedAt time.Time `json:"saved_at,omitzero"`
 }
 
 // IsExpired checks if the access token is expired (with 5 minute buffer)
@@ -33,38 +39,74 @@ func (t *TokenStorage) IsExpired() bool {
 	return time.Now().Add(5 * time.Minute).After(t.ExpiresAt)
 }
 
-// SaveTokens stores authentication tokens securely in the OS keychain
+// setKeyring is keyring.Set, replaceable in tests that need it to fail.
+var setKeyring = keyring.Set
+
+// SaveTokens stores authentication tokens in the OS keychain, or in the
+// credentials file when the keychain refuses them (for example when they are
+// too large). Whichever store is written becomes the one LoadTokens reads.
 func SaveTokens(tokens *TokenStorage) error {
-	data, err := json.Marshal(tokens)
+	stamped := *tokens
+	stamped.SavedAt = time.Now().UTC()
+	data, err := json.Marshal(stamped)
 	if err != nil {
 		return fmt.Errorf("failed to marshal tokens: %w", err)
 	}
 
-	// Try to store in OS keychain
-	err = keyring.Set(KeyringService, KeyringUser, string(data))
-	if err != nil {
-		// Fallback to file storage with restrictive permissions
-		return saveTokensToFile(data)
+	if err := setKeyring(KeyringService, KeyringUser, string(data)); err == nil {
+		_ = deleteTokensFile()
+		return nil
 	}
 
+	// Fallback to file storage with restrictive permissions
+	if err := saveTokensToFile(data); err != nil {
+		return err
+	}
+	// The keychain may still hold older credentials. LoadTokens prefers the
+	// newer copy even if this delete fails.
+	_ = keyring.Delete(KeyringService, KeyringUser)
 	return nil
 }
 
-// LoadTokens retrieves authentication tokens from secure storage
+// LoadTokens retrieves authentication tokens from the keychain or the
+// credentials file. When both hold credentials, the newer copy wins.
 func LoadTokens() (*TokenStorage, error) {
-	// Try to load from OS keychain first
+	fromKeyring, keyringErr := loadTokensFromKeyring()
+	fromFile, fileErr := loadTokensFromFile()
+	switch {
+	case keyringErr == nil && fileErr == nil:
+		if newer(fromFile, fromKeyring) {
+			return fromFile, nil
+		}
+		return fromKeyring, nil
+	case keyringErr == nil:
+		return fromKeyring, nil
+	case fileErr == nil:
+		return fromFile, nil
+	default:
+		return nil, fileErr
+	}
+}
+
+func loadTokensFromKeyring() (*TokenStorage, error) {
 	data, err := keyring.Get(KeyringService, KeyringUser)
 	if err != nil {
-		// Fallback to file storage
-		return loadTokensFromFile()
+		return nil, err
 	}
-
 	var tokens TokenStorage
 	if err := json.Unmarshal([]byte(data), &tokens); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal tokens from keychain: %w", err)
 	}
-
 	return &tokens, nil
+}
+
+// newer reports whether a was saved after b. Credentials saved before SavedAt
+// existed compare by expiry.
+func newer(a, b *TokenStorage) bool {
+	if !a.SavedAt.Equal(b.SavedAt) {
+		return a.SavedAt.After(b.SavedAt)
+	}
+	return a.ExpiresAt.After(b.ExpiresAt)
 }
 
 // DeleteTokens removes stored authentication tokens

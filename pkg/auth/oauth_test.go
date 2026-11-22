@@ -225,6 +225,9 @@ func TestTokensKeepNativeProjects(t *testing.T) {
 	if got, want := strings.Join(tokens.Projects, ","), "proj_a,proj_b"; got != want {
 		t.Fatalf("Projects = %q, want %q", got, want)
 	}
+	if !tokens.ScopeRecorded {
+		t.Fatal("ScopeRecorded = false after login")
+	}
 
 	// A refresh response without the field keeps the grant's projects.
 	refreshed = true
@@ -234,5 +237,38 @@ func TestTokensKeepNativeProjects(t *testing.T) {
 	}
 	if got, want := strings.Join(tokens.Projects, ","), "proj_a,proj_b"; got != want {
 		t.Fatalf("Projects after refresh = %q, want %q", got, want)
+	}
+	if !tokens.ScopeRecorded {
+		t.Fatal("ScopeRecorded = false after refresh")
+	}
+}
+
+func TestRefreshRecordsScopeForOlderCredentials(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token":  "access-new",
+			"refresh_token": "refresh-new",
+			"token_type":    "Bearer",
+			"expires_in":    600,
+			"access_scope":  "organization",
+			"projects":      []string{"proj_a"},
+		})
+	}))
+	defer server.Close()
+
+	// Saved by a CLI that did not record projects or ScopeRecorded.
+	tokens, err := RefreshTokens(context.Background(), &TokenStorage{
+		RefreshToken:  "refresh-old",
+		OrgID:         "org_1",
+		AccessScope:   "organization",
+		AuthBaseURL:   server.URL,
+		OAuthClientID: "client-id",
+	})
+	if err != nil {
+		t.Fatalf("RefreshTokens() error = %v", err)
+	}
+	if !tokens.ScopeRecorded || strings.Join(tokens.Projects, ",") != "proj_a" {
+		t.Fatalf("after refresh: ScopeRecorded = %v, Projects = %v", tokens.ScopeRecorded, tokens.Projects)
 	}
 }

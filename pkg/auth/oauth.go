@@ -279,6 +279,7 @@ func (oc *OAuthConfig) exchangeCodeForTokens(ctx context.Context, code, orgID, a
 		AccessScope:   accessScope,
 		ProjectID:     projectID,
 		Projects:      projects,
+		ScopeRecorded: true,
 		AuthBaseURL:   oc.AuthBaseURL,
 		OAuthClientID: oc.OAuthClientID,
 	}, nil
@@ -370,6 +371,7 @@ func RefreshTokens(ctx context.Context, tokens *TokenStorage) (*TokenStorage, er
 		AccessScope:   accessScope,
 		ProjectID:     projectID,
 		Projects:      projects,
+		ScopeRecorded: true,
 		AuthBaseURL:   tokenAuthBaseURL(tokens),
 		OAuthClientID: tokenOAuthClientID(tokens),
 	}, nil
