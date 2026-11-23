@@ -166,15 +166,15 @@ func TestForgetRefreshTokenKeepsReplacedCredentials(t *testing.T) {
 	}
 }
 
-func TestIsExpiredRefreshesOneMinuteEarly(t *testing.T) {
+func TestIsExpiredRefreshesFiveMinutesEarly(t *testing.T) {
 	cases := []struct {
 		left time.Duration
 		want bool
 	}{
 		{-time.Second, true},
-		{30 * time.Second, true},
-		{2 * time.Minute, false},
-		{4 * time.Minute, false},
+		{time.Minute, true},
+		{4 * time.Minute, true},
+		{6 * time.Minute, false},
 	}
 	for _, tc := range cases {
 		tokens := &TokenStorage{ExpiresAt: time.Now().Add(tc.left)}
