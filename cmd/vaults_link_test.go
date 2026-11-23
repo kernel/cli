@@ -118,17 +118,17 @@ func TestVaultLinkAuthorizeCheckoutValidation(t *testing.T) {
 		args []string
 		want string
 	}{
-		"browser only":     {[]string{"authorize", "--browser-id", "browser-1"}, "must be passed together"},
-		"page only":        {[]string{"authorize", "--page-url", "https://shop.example/checkout"}, "must be passed together"},
-		"blank browser":    {[]string{"authorize", "--browser-id", " ", "--page-url", "https://shop.example/checkout"}, "--browser-id must be"},
-		"http page":        {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "http://shop.example/checkout"}, "--page-url must be"},
-		"relative page":    {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "/checkout"}, "--page-url must be"},
-		"credentials page": {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "https://user:pass@shop.example/"}, "--page-url must be"},
-		"space in path":    {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "https://shop.example/check out"}, "--page-url must be"},
-		"glob host":        {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "https://*.shop.example/checkout"}, "--page-url must be"},
-		"fill":             {[]string{"fill", "--params", linkPayTokenFillParams, "--browser-id", "browser-1", "--page-url", "https://shop.example/checkout"}, "only supported for authorize; pass fill inputs with --params"},
-		"restart":          {[]string{"restart_verification", "--browser-id", "browser-1", "--page-url", "https://shop.example/checkout"}, "--browser-id and --page-url are only supported for authorize"},
-		"params":           {[]string{"authorize", "--params", linkPayTokenFillParams}, "authorize takes --browser-id and --page-url"},
+		"page only":          {[]string{"authorize", "--page-url", "https://shop.example/checkout"}, "--page-url requires --browser-id"},
+		"blank browser only": {[]string{"authorize", "--browser-id", " "}, "--browser-id must be"},
+		"blank browser":      {[]string{"authorize", "--browser-id", " ", "--page-url", "https://shop.example/checkout"}, "--browser-id must be"},
+		"http page":          {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "http://shop.example/checkout"}, "--page-url must be"},
+		"relative page":      {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "/checkout"}, "--page-url must be"},
+		"credentials page":   {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "https://user:pass@shop.example/"}, "--page-url must be"},
+		"space in path":      {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "https://shop.example/check out"}, "--page-url must be"},
+		"glob host":          {[]string{"authorize", "--browser-id", "browser-1", "--page-url", "https://*.shop.example/checkout"}, "--page-url must be"},
+		"fill":               {[]string{"fill", "--params", linkPayTokenFillParams, "--browser-id", "browser-1", "--page-url", "https://shop.example/checkout"}, "only supported for authorize; pass fill inputs with --params"},
+		"restart":            {[]string{"restart_verification", "--browser-id", "browser-1", "--page-url", "https://shop.example/checkout"}, "--browser-id and --page-url are only supported for authorize"},
+		"params":             {[]string{"authorize", "--params", linkPayTokenFillParams}, "authorize takes --browser-id and --page-url"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, _, err := executeVaultCommand(t, client, append([]string{"vaults", "items", "invoke", "checkout", "order-1"}, tc.args...)...)
@@ -206,6 +206,48 @@ func TestVaultLinkAuthorizeTransportErrorKeepsCause(t *testing.T) {
 	assert.Contains(t, err.Error(), "never creates another payment request")
 }
 
+func TestVaultAuthorizeBrowserTargetByProvider(t *testing.T) {
+	t.Setenv("KERNEL_PROJECT", "")
+	for _, tc := range []struct {
+		name    string
+		fixture string
+		args    []string
+		body    string
+		wantErr string
+	}{
+		{"KERNEL card browser only", kernelCardFixture, []string{"--browser-id", "browser-1"}, `{"type":"authorize","browser_id":"browser-1"}`, ""},
+		{"KERNEL card rejects page url", kernelCardFixture, []string{"--browser-id", "browser-1", "--page-url", "https://shop.example/checkout"}, "", "KERNEL cards take --browser-id without --page-url"},
+		{"KERNEL payment_request rejects browser", kernelPaymentRequestFixture, []string{"--browser-id", "browser-1"}, "", "only apply to KERNEL cards"},
+		{"Link card requires page url", requestedCardFixture, []string{"--browser-id", "browser-1"}, "", "take --browser-id and --page-url together"},
+		{"Link payment_request requires page url", linkPaymentRequestFixture, []string{"--browser-id", "browser-1"}, "", "take --browser-id and --page-url together"},
+		{"Shop Pay card requires page url", shopPayCardFixture, []string{"--browser-id", "browser-1"}, "", "take --browser-id and --page-url together"},
+		{"VGS card rejects browser", vgsRequestedCardFixture, []string{"--browser-id", "browser-1"}, "", "only apply to KERNEL cards"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			posts := 0
+			client := vaultTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					posts++
+					body, err := io.ReadAll(r.Body)
+					require.NoError(t, err)
+					assert.JSONEq(t, tc.body, string(body))
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, tc.fixture)
+			})
+			args := append([]string{"vaults", "items", "invoke", "checkout", "order-1", "authorize", "-o", "json"}, tc.args...)
+			_, _, err := executeVaultCommand(t, client, args...)
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				assert.Equal(t, 0, posts)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, 1, posts)
+		})
+	}
+}
+
 func TestVaultCheckoutInputsRequireLinkCard(t *testing.T) {
 	t.Setenv("KERNEL_PROJECT", "")
 	readyKernelCard := strings.Replace(strings.Replace(kernelCardFixture, `"status":"requested"`, `"status":"ready"`, 1), `{"type":"authorize","description":"Authorize this purchase"}`, `{"type":"authorize","description":"Authorize this purchase"},{"type":"fill","description":"Fill checkout fields."}`, 1)
@@ -217,7 +259,7 @@ func TestVaultCheckoutInputsRequireLinkCard(t *testing.T) {
 		_, _ = io.WriteString(w, readyKernelCard)
 	})
 	_, _, err := executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "authorize", "--browser-id", "browser-1", "--page-url", "https://shop.example/checkout")
-	require.ErrorContains(t, err, "--browser-id and --page-url only apply to Link cards")
+	require.ErrorContains(t, err, "KERNEL cards take --browser-id without --page-url")
 	_, _, err = executeVaultCommand(t, client, "vaults", "items", "invoke", "checkout", "order-1", "fill", "--params", linkPayTokenFillParams)
 	require.ErrorContains(t, err, "only a Link card's fill may omit them")
 	assert.Equal(t, 2, calls)

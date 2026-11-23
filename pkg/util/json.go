@@ -81,3 +81,27 @@ func PrintPrettyJSONSlice[T RawJSONProvider](items []T) error {
 	fmt.Println(buf.String())
 	return nil
 }
+
+// PrintPageJSON prints one page of a page-based list as
+// {"items": [...], "page": N, "per_page": N, "has_more": bool}, using each item's raw JSON.
+func PrintPageJSON[T RawJSONProvider](items []T, page, perPage int, hasMore bool) error {
+	raw := make([]json.RawMessage, 0, len(items))
+	for _, item := range items {
+		r := item.RawJSON()
+		if r == "" {
+			r = "{}"
+		}
+		raw = append(raw, json.RawMessage(r))
+	}
+	data, err := json.MarshalIndent(struct {
+		Items   []json.RawMessage `json:"items"`
+		Page    int               `json:"page"`
+		PerPage int               `json:"per_page"`
+		HasMore bool              `json:"has_more"`
+	}{raw, page, perPage, hasMore}, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(data))
+	return nil
+}

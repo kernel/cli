@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/kernel/cli/pkg/util"
 	"github.com/kernel/kernel-go-sdk"
@@ -66,7 +67,26 @@ func renderAuthContext(authCtx *kernel.AuthContext) {
 		{"Credential Scope", formatAuthContextScope(authCtx.Authorization.CredentialScope.ProjectID)},
 		{"Effective Scope", formatAuthContextScope(authCtx.Authorization.EffectiveScope.ProjectID)},
 	}
+	if authCtx.JSON.WorkloadIdentity.Valid() {
+		rows = append(rows,
+			[]string{"Workload Issuer ID", authCtx.WorkloadIdentity.IssuerID},
+			[]string{"Federation Rule ID", authCtx.WorkloadIdentity.FederationRuleID},
+			[]string{"External Subject Digest", authCtx.WorkloadIdentity.ExternalSubjectDigest},
+		)
+	}
+	for i, statement := range authCtx.Authorization.EffectivePolicy.Statements {
+		rows = append(rows, []string{fmt.Sprintf("Effective Policy %d", i+1), formatAuthContextPolicyStatement(statement)})
+	}
 	PrintTableNoPad(rows, true)
+}
+
+func formatAuthContextPolicyStatement(statement kernel.AuthContextAuthorizationEffectivePolicyStatement) string {
+	value := statement.Action + " " + statement.Resource
+	if statement.JSON.Condition.Valid() {
+		condition := statement.Condition
+		value += fmt.Sprintf(" when %s %s [%s]", condition.Key, condition.Operator, strings.Join(condition.Values, ", "))
+	}
+	return value
 }
 
 func formatAuthContextOptional(value string) string {
@@ -91,7 +111,9 @@ var authContextCmd = &cobra.Command{
 	Long: `Show the identity and authorization context resolved for requests made with the current credentials.
 
 Displays the authenticated principal, organization, credential scope, and effective request scope.
-Credential secrets are never returned.`,
+For service-account credentials, it also shows the effective policy and sanitized workload-identity
+issuer, federation-rule, and external-subject digest metadata. Assertions and credential secrets are
+never returned.`,
 	Args: cobra.NoArgs,
 	RunE: runAuthContext,
 }

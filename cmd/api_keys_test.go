@@ -57,7 +57,11 @@ func (f *FakeAPIKeysService) Update(ctx context.Context, id string, body kernel.
 	if f.UpdateFunc != nil {
 		return f.UpdateFunc(ctx, id, body, opts...)
 	}
-	return apiKeyFromJSON(`{"id":"` + id + `","name":"` + body.Name + `","masked_key":"sk_...test","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123","email":"dev@example.com","name":"Dev"},"expires_at":null,"project_id":null,"project_name":null}`), nil
+	name := "default"
+	if body.Name.Valid() {
+		name = body.Name.Value
+	}
+	return apiKeyFromJSON(`{"id":"` + id + `","name":"` + name + `","masked_key":"sk_...test","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123","email":"dev@example.com","name":"Dev"},"expires_at":null,"project_id":null,"project_name":null}`), nil
 }
 
 func (f *FakeAPIKeysService) List(ctx context.Context, query kernel.APIKeyListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.APIKey], error) {
@@ -155,6 +159,41 @@ func TestAPIKeysCreateSupportsExactExpiryAndPolicy(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestAPIKeysCreateSupportsServiceAccountAndSourceIPCondition(t *testing.T) {
+	capturePtermOutput(t)
+	fake := &FakeAPIKeysService{
+		NewFunc: func(ctx context.Context, body kernel.APIKeyNewParams, opts ...option.RequestOption) (*kernel.CreatedAPIKey, error) {
+			require.True(t, body.ServiceAccountID.Valid())
+			assert.Equal(t, "sa_123", body.ServiceAccountID.Value)
+			require.True(t, body.ProjectID.Valid())
+			require.Len(t, body.Policy.Statements, 1)
+			raw, err := json.Marshal(body)
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"name":"automation","project_id":"proj_123","service_account_id":"sa_123","policy":{"statements":[{"action":"browsers:use","resource":"projects/proj_123/browsers/*","condition":{"key":"source_ip","operator":"in","values":["203.0.113.0/24"]}}]}}`, string(raw))
+			return createdAPIKeyFromJSON(`{"id":"key_123","name":"automation","key":"sk_live_123","masked_key":"sk_...123","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123"},"expires_at":null,"project_id":"proj_123","service_account_id":"sa_123"}`), nil
+		},
+	}
+	c := APIKeysCmd{apiKeys: fake}
+
+	err := c.Create(context.Background(), APIKeysCreateInput{
+		Name:             "automation",
+		ProjectID:        "proj_123",
+		ServiceAccountID: "sa_123",
+		Policy:           `{"statements":[{"action":"browsers:use","resource":"projects/proj_123/browsers/*","condition":{"key":"source_ip","operator":"in","values":["203.0.113.0/24"]}}]}`,
+	})
+	require.NoError(t, err)
+}
+
+func TestAPIKeysCreateServiceAccountRequiresProjectAndPolicy(t *testing.T) {
+	c := APIKeysCmd{apiKeys: &FakeAPIKeysService{}}
+
+	err := c.Create(context.Background(), APIKeysCreateInput{Name: "automation", ServiceAccountID: "sa_123"})
+	require.ErrorContains(t, err, "--project-id")
+
+	err = c.Create(context.Background(), APIKeysCreateInput{Name: "automation", ServiceAccountID: "sa_123", ProjectID: "proj_123"})
+	require.ErrorContains(t, err, "--policy")
+}
+
 func TestAPIKeysCreateRejectsInvalidExpiryAndPolicy(t *testing.T) {
 	called := false
 	fake := &FakeAPIKeysService{NewFunc: func(ctx context.Context, body kernel.APIKeyNewParams, opts ...option.RequestOption) (*kernel.CreatedAPIKey, error) {
@@ -173,6 +212,8 @@ func TestAPIKeysCreateRejectsInvalidExpiryAndPolicy(t *testing.T) {
 		{"invalid policy json", APIKeysCreateInput{Name: "ci", Policy: "[]"}, "JSON object"},
 		{"empty statements", APIKeysCreateInput{Name: "ci", Policy: `{"statements":[]}`}, "between 1 and 256"},
 		{"empty statement field", APIKeysCreateInput{Name: "ci", Policy: `{"statements":[{"action":"","resource":"projects/*"}]}`}, "non-empty action and resource"},
+		{"invalid condition key", APIKeysCreateInput{Name: "ci", Policy: `{"statements":[{"action":"browsers:use","resource":"*","condition":{"key":"other","operator":"in","values":["203.0.113.0/24"]}}]}`}, "must be source_ip"},
+		{"invalid condition network", APIKeysCreateInput{Name: "ci", Policy: `{"statements":[{"action":"browsers:use","resource":"*","condition":{"key":"source_ip","operator":"in","values":["203.0.113.7/24"]}}]}`}, "canonical"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -292,16 +333,72 @@ func TestAPIKeysListSupportsLastUsedAtSort(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestAPIKeysListMapsIdentityFiltersAndExpiredStatus(t *testing.T) {
+	capturePtermOutput(t)
+	fake := &FakeAPIKeysService{
+		ListFunc: func(ctx context.Context, query kernel.APIKeyListParams, opts ...option.RequestOption) (*pagination.OffsetPagination[kernel.APIKey], error) {
+			require.True(t, query.CreatedBy.Valid())
+			assert.Equal(t, "user_123", query.CreatedBy.Value)
+			require.True(t, query.ProjectID.Valid())
+			assert.Equal(t, "org", query.ProjectID.Value)
+			require.True(t, query.ServiceAccountID.Valid())
+			assert.Equal(t, "sa_123", query.ServiceAccountID.Value)
+			assert.Equal(t, kernel.APIKeyListParamsPrincipalTypeServiceAccount, query.PrincipalType)
+			assert.Equal(t, kernel.APIKeyListParamsStatusExpired, query.Status)
+			return &pagination.OffsetPagination[kernel.APIKey]{Items: []kernel.APIKey{}}, nil
+		},
+	}
+	c := APIKeysCmd{apiKeys: fake}
+
+	err := c.List(context.Background(), APIKeysListInput{
+		CreatedBy:        "user_123",
+		ProjectID:        "org",
+		ServiceAccountID: "sa_123",
+		PrincipalType:    "service_account",
+		Status:           "expired",
+	})
+	require.NoError(t, err)
+}
+
+func TestAPIKeysListRejectsUnknownPrincipalType(t *testing.T) {
+	c := APIKeysCmd{apiKeys: &FakeAPIKeysService{}}
+	err := c.List(context.Background(), APIKeysListInput{PrincipalType: "robot"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "user")
+	assert.Contains(t, err.Error(), "service_account")
+}
+
 func TestFormatAPIKeyLastUsedAtHandlesUnrecordedUse(t *testing.T) {
 	key := apiKeyFromJSON(`{"last_used_at":null}`)
 	assert.Equal(t, "-", formatAPIKeyLastUsedAt(*key))
 }
 
-func TestAPIKeysUpdateRequiresName(t *testing.T) {
+func TestAPIKeysUpdateRequiresAChange(t *testing.T) {
 	c := APIKeysCmd{apiKeys: &FakeAPIKeysService{}}
 	err := c.Update(context.Background(), APIKeysUpdateInput{ID: "key_123"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--name is required")
+	assert.Contains(t, err.Error(), "at least one of --name or --policy")
+}
+
+func TestAPIKeysUpdateCanReplacePolicyWithoutRenaming(t *testing.T) {
+	capturePtermOutput(t)
+	fake := &FakeAPIKeysService{
+		UpdateFunc: func(ctx context.Context, id string, body kernel.APIKeyUpdateParams, opts ...option.RequestOption) (*kernel.APIKey, error) {
+			assert.False(t, body.Name.Valid())
+			require.Len(t, body.Policy.Statements, 1)
+			raw, err := json.Marshal(body)
+			require.NoError(t, err)
+			assert.Contains(t, string(raw), `"condition":{"key":"source_ip","operator":"in","values":["2001:db8::/32"]}`)
+			return apiKeyFromJSON(`{"id":"key_123","name":"ci","masked_key":"sk_...123","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123"},"expires_at":null,"project_id":null,"project_name":null}`), nil
+		},
+	}
+	c := APIKeysCmd{apiKeys: fake}
+
+	err := c.Update(context.Background(), APIKeysUpdateInput{
+		ID:     "key_123",
+		Policy: `{"statements":[{"action":"vaults:read","resource":"projects/proj_123/vaults/*","condition":{"key":"source_ip","operator":"in","values":["2001:db8::/32"]}}]}`,
+	})
+	require.NoError(t, err)
 }
 
 func TestAPIKeysUpdatePrintsTerseSuccess(t *testing.T) {
@@ -309,7 +406,8 @@ func TestAPIKeysUpdatePrintsTerseSuccess(t *testing.T) {
 	fake := &FakeAPIKeysService{
 		UpdateFunc: func(ctx context.Context, id string, body kernel.APIKeyUpdateParams, opts ...option.RequestOption) (*kernel.APIKey, error) {
 			assert.Equal(t, "key_123", id)
-			assert.Equal(t, "renamed", body.Name)
+			require.True(t, body.Name.Valid())
+			assert.Equal(t, "renamed", body.Name.Value)
 			return apiKeyFromJSON(`{"id":"key_123","name":"renamed","masked_key":"sk_...123","created_at":"2026-05-27T12:00:00Z","created_by":{"id":"user_123","email":"dev@example.com","name":"Dev"},"expires_at":null,"project_id":null,"project_name":null}`), nil
 		},
 	}

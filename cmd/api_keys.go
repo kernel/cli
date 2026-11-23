@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -31,24 +32,30 @@ type APIKeysCmd struct {
 }
 
 type APIKeysCreateInput struct {
-	Name         string
-	DaysToExpire Int64Flag
-	ExpiresAt    string
-	ProjectID    string
-	Policy       string
-	Output       string
+	Name             string
+	DaysToExpire     Int64Flag
+	ExpiresAt        string
+	ProjectID        string
+	ServiceAccountID string
+	Policy           string
+	PolicyProvided   bool
+	Output           string
 }
 
 type APIKeysListInput struct {
-	Limit          int
-	Offset         int
-	Name           string
-	Query          string
-	Status         string
-	IncludeDeleted bool
-	SortBy         string
-	SortDirection  string
-	Output         string
+	Limit            int
+	Offset           int
+	Name             string
+	Query            string
+	Status           string
+	CreatedBy        string
+	ProjectID        string
+	ServiceAccountID string
+	PrincipalType    string
+	IncludeDeleted   bool
+	SortBy           string
+	SortDirection    string
+	Output           string
 }
 
 type APIKeysGetInput struct {
@@ -66,9 +73,12 @@ type APIKeysRotateInput struct {
 }
 
 type APIKeysUpdateInput struct {
-	ID     string
-	Name   string
-	Output string
+	ID             string
+	Name           string
+	NameProvided   bool
+	Policy         string
+	PolicyProvided bool
+	Output         string
 }
 
 type APIKeysDeleteInput struct {
@@ -76,27 +86,78 @@ type APIKeysDeleteInput struct {
 	SkipConfirm bool
 }
 
-func parseAPIKeyPolicy(raw string) (kernel.APIKeyNewParamsPolicy, bool, error) {
+func parseAPIKeyPolicy[T any](raw string) (T, error) {
+	var zero T
 	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return kernel.APIKeyNewParamsPolicy{}, false, nil
+	if trimmed == "" || !strings.HasPrefix(trimmed, "{") {
+		return zero, fmt.Errorf("--policy must be a JSON object with a statements array")
 	}
-	if !strings.HasPrefix(trimmed, "{") {
-		return kernel.APIKeyNewParamsPolicy{}, false, fmt.Errorf("--policy must be a JSON object with a statements array")
+
+	var shape struct {
+		Statements []json.RawMessage `json:"statements"`
 	}
-	var policy kernel.APIKeyNewParamsPolicy
-	if err := json.Unmarshal([]byte(trimmed), &policy); err != nil {
-		return kernel.APIKeyNewParamsPolicy{}, false, fmt.Errorf("--policy must be a JSON object with a statements array: %w", err)
+	if err := json.Unmarshal([]byte(trimmed), &shape); err != nil {
+		return zero, fmt.Errorf("--policy must be a JSON object with a statements array: %w", err)
 	}
-	if len(policy.Statements) < 1 || len(policy.Statements) > 256 {
-		return kernel.APIKeyNewParamsPolicy{}, false, fmt.Errorf("--policy statements must contain between 1 and 256 entries")
+	if len(shape.Statements) < 1 || len(shape.Statements) > 256 {
+		return zero, fmt.Errorf("--policy statements must contain between 1 and 256 entries")
 	}
-	for i, statement := range policy.Statements {
+	for i, rawStatement := range shape.Statements {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(rawStatement, &fields); err != nil || fields == nil {
+			return zero, fmt.Errorf("--policy statements[%d] must be an object", i)
+		}
+		if condition, ok := fields["condition"]; ok && strings.TrimSpace(string(condition)) == "null" {
+			return zero, fmt.Errorf("--policy statements[%d].condition must be an object when present", i)
+		}
+		var statement struct {
+			Action    string                      `json:"action"`
+			Resource  string                      `json:"resource"`
+			Condition *apiKeyPolicyConditionInput `json:"condition"`
+		}
+		if err := json.Unmarshal(rawStatement, &statement); err != nil {
+			return zero, fmt.Errorf("--policy statements[%d] must be an object: %w", i, err)
+		}
 		if strings.TrimSpace(statement.Action) == "" || strings.TrimSpace(statement.Resource) == "" {
-			return kernel.APIKeyNewParamsPolicy{}, false, fmt.Errorf("--policy statements[%d] requires non-empty action and resource", i)
+			return zero, fmt.Errorf("--policy statements[%d] requires non-empty action and resource", i)
+		}
+		if statement.Condition != nil {
+			if err := validateAPIKeyPolicyCondition(i, *statement.Condition); err != nil {
+				return zero, err
+			}
 		}
 	}
-	return policy, true, nil
+
+	var policy T
+	if err := json.Unmarshal([]byte(trimmed), &policy); err != nil {
+		return zero, fmt.Errorf("invalid --policy JSON: %w", err)
+	}
+	return policy, nil
+}
+
+type apiKeyPolicyConditionInput struct {
+	Key      string   `json:"key"`
+	Operator string   `json:"operator"`
+	Values   []string `json:"values"`
+}
+
+func validateAPIKeyPolicyCondition(statement int, condition apiKeyPolicyConditionInput) error {
+	if condition.Key != "source_ip" {
+		return fmt.Errorf("--policy statements[%d].condition.key must be source_ip", statement)
+	}
+	if condition.Operator != "in" {
+		return fmt.Errorf("--policy statements[%d].condition.operator must be in", statement)
+	}
+	if len(condition.Values) < 1 || len(condition.Values) > 16 {
+		return fmt.Errorf("--policy statements[%d].condition.values must contain between 1 and 16 CIDR networks", statement)
+	}
+	for i, value := range condition.Values {
+		ip, network, err := net.ParseCIDR(value)
+		if err != nil || !ip.Equal(network.IP) || (ip.To4() != nil && strings.Contains(value, ":")) {
+			return fmt.Errorf("--policy statements[%d].condition.values[%d] must be a canonical IPv4 or IPv6 CIDR network", statement, i)
+		}
+	}
+	return nil
 }
 
 func (c APIKeysCmd) Create(ctx context.Context, in APIKeysCreateInput) error {
@@ -131,11 +192,21 @@ func (c APIKeysCmd) Create(ctx context.Context, in APIKeysCreateInput) error {
 	if in.ProjectID != "" {
 		params.ProjectID = kernel.String(in.ProjectID)
 	}
-	policy, policySet, err := parseAPIKeyPolicy(in.Policy)
-	if err != nil {
-		return err
+	policyProvided := in.PolicyProvided || strings.TrimSpace(in.Policy) != ""
+	if in.ServiceAccountID != "" {
+		params.ServiceAccountID = kernel.String(in.ServiceAccountID)
+		if in.ProjectID == "" {
+			return fmt.Errorf("--service-account-id requires --project-id")
+		}
+		if !policyProvided {
+			return fmt.Errorf("--service-account-id requires --policy")
+		}
 	}
-	if policySet {
+	if policyProvided {
+		policy, err := parseAPIKeyPolicy[kernel.APIKeyNewParamsPolicy](in.Policy)
+		if err != nil {
+			return err
+		}
 		params.Policy = policy
 	}
 
@@ -177,18 +248,39 @@ func (c APIKeysCmd) List(ctx context.Context, in APIKeysListInput) error {
 	if in.Query != "" {
 		params.Query = kernel.String(in.Query)
 	}
+	if in.CreatedBy != "" {
+		params.CreatedBy = kernel.String(in.CreatedBy)
+	}
+	if in.ProjectID != "" {
+		params.ProjectID = kernel.String(in.ProjectID)
+	}
+	if in.ServiceAccountID != "" {
+		params.ServiceAccountID = kernel.String(in.ServiceAccountID)
+	}
+	if in.PrincipalType != "" {
+		switch in.PrincipalType {
+		case "user":
+			params.PrincipalType = kernel.APIKeyListParamsPrincipalTypeUser
+		case "service_account":
+			params.PrincipalType = kernel.APIKeyListParamsPrincipalTypeServiceAccount
+		default:
+			return fmt.Errorf("invalid --principal-type value: %s (must be 'user' or 'service_account')", in.PrincipalType)
+		}
+	}
 	// Prefer the newer --status filter; fall back to the deprecated
 	// --include-deleted so existing scripts keep working.
 	if in.Status != "" {
 		switch in.Status {
 		case "active":
 			params.Status = kernel.APIKeyListParamsStatusActive
+		case "expired":
+			params.Status = kernel.APIKeyListParamsStatusExpired
 		case "deleted":
 			params.Status = kernel.APIKeyListParamsStatusDeleted
 		case "all":
 			params.Status = kernel.APIKeyListParamsStatusAll
 		default:
-			return fmt.Errorf("invalid --status value: %s (must be 'active', 'deleted', or 'all')", in.Status)
+			return fmt.Errorf("invalid --status value: %s (must be 'active', 'expired', 'deleted', or 'all')", in.Status)
 		}
 	} else if in.IncludeDeleted {
 		params.IncludeDeleted = kernel.Opt(true)
@@ -239,7 +331,7 @@ func (c APIKeysCmd) List(ctx context.Context, in APIKeysListInput) error {
 
 	// Only surface Deleted At when the filter can actually return deleted keys.
 	showDeletedAt := in.IncludeDeleted || in.Status == "deleted" || in.Status == "all"
-	header := []string{"ID", "Name", "Scope", "Project", "Masked Key", "Expires At", "Last Used At", "Created At"}
+	header := []string{"ID", "Name", "Scope", "Principal", "Project", "Masked Key", "Expires At", "Last Used At", "Created At"}
 	if showDeletedAt {
 		header = append(header, "Deleted At")
 	}
@@ -249,6 +341,7 @@ func (c APIKeysCmd) List(ctx context.Context, in APIKeysListInput) error {
 			key.ID,
 			key.Name,
 			formatAPIKeyScope(key),
+			formatAPIKeyPrincipal(key),
 			formatAPIKeyProject(key),
 			key.MaskedKey,
 			formatAPIKeyExpiresAt(key),
@@ -291,11 +384,28 @@ func (c APIKeysCmd) Update(ctx context.Context, in APIKeysUpdateInput) error {
 	if err := validateJSONOutput(in.Output); err != nil {
 		return err
 	}
-	if in.Name == "" {
-		return fmt.Errorf("--name is required")
+
+	nameProvided := in.NameProvided || in.Name != ""
+	policyProvided := in.PolicyProvided || strings.TrimSpace(in.Policy) != ""
+	params := kernel.APIKeyUpdateParams{}
+	if nameProvided {
+		if strings.TrimSpace(in.Name) == "" {
+			return fmt.Errorf("--name must not be empty")
+		}
+		params.Name = kernel.String(in.Name)
+	}
+	if policyProvided {
+		policy, err := parseAPIKeyPolicy[kernel.APIKeyUpdateParamsPolicy](in.Policy)
+		if err != nil {
+			return err
+		}
+		params.Policy = policy
+	}
+	if !nameProvided && !policyProvided {
+		return fmt.Errorf("specify at least one of --name or --policy")
 	}
 
-	key, err := c.apiKeys.Update(ctx, in.ID, kernel.APIKeyUpdateParams{Name: in.Name})
+	key, err := c.apiKeys.Update(ctx, in.ID, params)
 	if err != nil {
 		return util.CleanedUpSdkError{Err: err}
 	}
@@ -395,10 +505,12 @@ func renderCreatedAPIKey(key *kernel.CreatedAPIKey) {
 		{"Name", key.Name},
 		{"Key", key.Key},
 		{"Scope", formatAPIKeyScope(key.APIKey)},
+		{"Principal", formatAPIKeyPrincipal(key.APIKey)},
 		{"Project", formatAPIKeyProject(key.APIKey)},
 		{"Masked Key", key.MaskedKey},
 		{"Expires At", formatAPIKeyExpiresAt(key.APIKey)},
 	}
+	rows = appendAPIKeyPolicyRows(rows, key.APIKey)
 	PrintTableNoPad(rows, true)
 }
 
@@ -408,6 +520,7 @@ func renderAPIKeyDetails(key *kernel.APIKey) {
 		{"ID", key.ID},
 		{"Name", key.Name},
 		{"Scope", formatAPIKeyScope(*key)},
+		{"Principal", formatAPIKeyPrincipal(*key)},
 		{"Project", formatAPIKeyProject(*key)},
 		{"Masked Key", key.MaskedKey},
 		{"Created By", formatAPIKeyCreator(*key)},
@@ -415,7 +528,30 @@ func renderAPIKeyDetails(key *kernel.APIKey) {
 		{"Last Used At", formatAPIKeyLastUsedAt(*key)},
 		{"Created At", util.FormatLocal(key.CreatedAt)},
 	}
+	rows = appendAPIKeyPolicyRows(rows, *key)
 	PrintTableNoPad(rows, true)
+}
+
+func appendAPIKeyPolicyRows(rows pterm.TableData, key kernel.APIKey) pterm.TableData {
+	for i, statement := range key.Policy.Statements {
+		value := statement.Action + " " + statement.Resource
+		if statement.JSON.Condition.Valid() {
+			condition := statement.Condition
+			value += fmt.Sprintf(" when %s %s [%s]", condition.Key, condition.Operator, strings.Join(condition.Values, ", "))
+		}
+		rows = append(rows, []string{fmt.Sprintf("Policy %d", i+1), value})
+	}
+	return rows
+}
+
+func formatAPIKeyPrincipal(key kernel.APIKey) string {
+	if key.JSON.Principal.Valid() && key.Principal.Type != "" && key.Principal.ID != "" {
+		return fmt.Sprintf("%s:%s", key.Principal.Type, key.Principal.ID)
+	}
+	if key.JSON.ServiceAccountID.Valid() && key.ServiceAccountID != "" {
+		return "service_account:" + key.ServiceAccountID
+	}
+	return "-"
 }
 
 func formatAPIKeyProject(key kernel.APIKey) string {
@@ -470,6 +606,7 @@ func runAPIKeysCreate(cmd *cobra.Command, args []string) error {
 	daysToExpire, _ := cmd.Flags().GetInt64("days-to-expire")
 	expiresAt, _ := cmd.Flags().GetString("expires-at")
 	projectID, _ := cmd.Flags().GetString("project-id")
+	serviceAccountID, _ := cmd.Flags().GetString("service-account-id")
 	policy, _ := cmd.Flags().GetString("policy")
 	output, _ := cmd.Flags().GetString("output")
 
@@ -479,10 +616,12 @@ func runAPIKeysCreate(cmd *cobra.Command, args []string) error {
 			Set:   cmd.Flags().Changed("days-to-expire"),
 			Value: daysToExpire,
 		},
-		ExpiresAt: expiresAt,
-		ProjectID: projectID,
-		Policy:    policy,
-		Output:    output,
+		ExpiresAt:        expiresAt,
+		ProjectID:        projectID,
+		ServiceAccountID: serviceAccountID,
+		Policy:           policy,
+		PolicyProvided:   cmd.Flags().Changed("policy"),
+		Output:           output,
 	})
 }
 
@@ -493,20 +632,28 @@ func runAPIKeysList(cmd *cobra.Command, args []string) error {
 	name, _ := cmd.Flags().GetString("name")
 	query, _ := cmd.Flags().GetString("query")
 	status, _ := cmd.Flags().GetString("status")
+	createdBy, _ := cmd.Flags().GetString("created-by")
+	projectID, _ := cmd.Flags().GetString("project-id")
+	serviceAccountID, _ := cmd.Flags().GetString("service-account-id")
+	principalType, _ := cmd.Flags().GetString("principal-type")
 	includeDeleted, _ := cmd.Flags().GetBool("include-deleted")
 	sortBy, _ := cmd.Flags().GetString("sort-by")
 	sortDirection, _ := cmd.Flags().GetString("sort-direction")
 	output, _ := cmd.Flags().GetString("output")
 	return c.List(cmd.Context(), APIKeysListInput{
-		Limit:          limit,
-		Offset:         offset,
-		Name:           name,
-		Query:          query,
-		Status:         status,
-		IncludeDeleted: includeDeleted,
-		SortBy:         sortBy,
-		SortDirection:  sortDirection,
-		Output:         output,
+		Limit:            limit,
+		Offset:           offset,
+		Name:             name,
+		Query:            query,
+		Status:           status,
+		CreatedBy:        createdBy,
+		ProjectID:        projectID,
+		ServiceAccountID: serviceAccountID,
+		PrincipalType:    principalType,
+		IncludeDeleted:   includeDeleted,
+		SortBy:           sortBy,
+		SortDirection:    sortDirection,
+		Output:           output,
 	})
 }
 
@@ -535,8 +682,16 @@ func runAPIKeysRotate(cmd *cobra.Command, args []string) error {
 func runAPIKeysUpdate(cmd *cobra.Command, args []string) error {
 	c := getAPIKeysHandler(cmd)
 	name, _ := cmd.Flags().GetString("name")
+	policy, _ := cmd.Flags().GetString("policy")
 	output, _ := cmd.Flags().GetString("output")
-	return c.Update(cmd.Context(), APIKeysUpdateInput{ID: args[0], Name: name, Output: output})
+	return c.Update(cmd.Context(), APIKeysUpdateInput{
+		ID:             args[0],
+		Name:           name,
+		NameProvided:   cmd.Flags().Changed("name"),
+		Policy:         policy,
+		PolicyProvided: cmd.Flags().Changed("policy"),
+		Output:         output,
+	})
 }
 
 func runAPIKeysDelete(cmd *cobra.Command, args []string) error {
@@ -556,18 +711,28 @@ var apiKeysCmd = &cobra.Command{
 
 var apiKeysCreateCmd = &cobra.Command{
 	Use:   "create",
-	Short: "Create an API key",
-	Long:  "Create an API key.\n\nBy default the new key is org-wide. Use --project-id to create a key whose own access is scoped to that project. The global --project flag only scopes this CLI request. Use --policy to issue a least-privilege key: every action and resource not listed in its allow statements is denied.",
-	Args:  cobra.NoArgs,
-	RunE:  runAPIKeysCreate,
+	Short: "Create a personal or service-account API key",
+	Long: `Create a personal API key, or link a key to an organization-owned service account.
+
+By default the new key is org-wide. Use --project-id to scope it to a project; the
+global --project flag only scopes this CLI request. Service-account keys require
+organization-administrator access plus --service-account-id, --project-id, and a
+non-empty --policy.
+
+A policy restricts the key to its listed actions and resources. Each statement may
+include a source_ip condition whose values are CIDR networks. Requests from outside
+those networks are rejected even if the key secret is valid.`,
+	Args: cobra.NoArgs,
+	RunE: runAPIKeysCreate,
 }
 
 var apiKeysListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List API keys",
-	Long:  "List API keys. Last-used timestamps are accurate to within about 20 minutes; '-' means no use has been recorded since tracking began.",
-	Args:  cobra.NoArgs,
-	RunE:  runAPIKeysList,
+	Long: "List API keys. By default only non-deleted, non-expired keys are returned; use --status expired, deleted, or all for other lifecycle states. " +
+		"Last-used timestamps are accurate to within about 20 minutes; '-' means no use has been recorded since tracking began.",
+	Args: cobra.NoArgs,
+	RunE: runAPIKeysList,
 }
 
 var apiKeysGetCmd = &cobra.Command{
@@ -580,15 +745,22 @@ var apiKeysGetCmd = &cobra.Command{
 
 var apiKeysUpdateCmd = &cobra.Command{
 	Use:   "update <id>",
-	Short: "Update an API key",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runAPIKeysUpdate,
+	Short: "Update an API key's name or replace its policy",
+	Long: `Update an API key without rotating its credential.
+
+--name renames the key. A present --policy fully replaces its current permissions,
+including source_ip conditions, and applies to new requests within the authorization
+cache. Requests outside allowed CIDR networks are rejected and recorded in the audit
+log with the client address. Renaming requires api_keys:write; replacing
+permissions requires api_keys:set_policy.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runAPIKeysUpdate,
 }
 
 var apiKeysRotateCmd = &cobra.Command{
 	Use:   "rotate <id>",
 	Short: "Rotate an API key",
-	Long:  "Issue a replacement API key. The rotated key keeps working for a grace period (7 days by default) so callers can migrate. Use --expire-in-days 0 to expire it immediately; browser sessions attributed to the old key then end asynchronously and unsaved profile changes are discarded. Grace-period and natural expiry do not end existing browser sessions. If immediate cleanup cannot be scheduled, the rotation is not completed.",
+	Long:  "Issue a replacement API key. The rotated key keeps working for a grace period (7 days by default) so callers can migrate. Use --expire-in-days 0 to expire it immediately; browser sessions attributed to the old key then end asynchronously and unsaved profile changes are discarded. Grace-period and natural expiry do not end existing browser sessions. If immediate cleanup cannot be scheduled, the rotation is not completed. Service-account keys retain their service principal and policy; the rotating administrator is recorded separately for audit.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runAPIKeysRotate,
 }
@@ -606,8 +778,9 @@ func init() {
 	apiKeysCreateCmd.Flags().String("name", "", "API key name (required)")
 	apiKeysCreateCmd.Flags().Int64("days-to-expire", 0, "Number of days until expiry (1-3650); omit for never; mutually exclusive with --expires-at")
 	apiKeysCreateCmd.Flags().String("expires-at", "", "Exact future expiry time in RFC3339 format; cannot be later than the issuing credential's expiry; mutually exclusive with --days-to-expire")
-	apiKeysCreateCmd.Flags().String("project-id", "", "Create a project-scoped API key for this project ID; omit for org-wide")
-	apiKeysCreateCmd.Flags().String("policy", "", `JSON policy object, for example {"statements":[{"action":"browsers:use","resource":"projects/proj_123/browsers/*"}]}; unlisted access is denied`)
+	apiKeysCreateCmd.Flags().String("project-id", "", "Create a project-scoped API key for this project ID; required for service-account keys")
+	apiKeysCreateCmd.Flags().String("service-account-id", "", "Link the key to this organization-owned service account; requires --project-id and --policy")
+	apiKeysCreateCmd.Flags().String("policy", "", `JSON policy object; statements may include {"condition":{"key":"source_ip","operator":"in","values":["203.0.113.0/24"]}}; unlisted access is denied`)
 	apiKeysCreateCmd.MarkFlagsMutuallyExclusive("days-to-expire", "expires-at")
 	_ = apiKeysCreateCmd.MarkFlagRequired("name")
 
@@ -616,8 +789,12 @@ func init() {
 	apiKeysListCmd.Flags().Int("offset", 0, "Number of results to skip")
 	apiKeysListCmd.Flags().String("name", "", "Filter by exact API key name (names are not unique, so several keys may match)")
 	apiKeysListCmd.Flags().String("query", "", "Search API keys by name, creator, or project (identifiers and masked keys match by exact value or prefix)")
-	apiKeysListCmd.Flags().String("status", "", "Filter by status: 'active' (default), 'deleted', or 'all'")
-	apiKeysListCmd.Flags().Bool("include-deleted", false, "Deprecated: Use --status all instead. Include soft-deleted API keys in the results")
+	apiKeysListCmd.Flags().String("status", "", "Filter by status: active (default), expired, deleted, or all")
+	apiKeysListCmd.Flags().String("created-by", "", "Return only keys created by this user ID (the same person described by each key's created_by field)")
+	apiKeysListCmd.Flags().String("project-id", "", "Return only keys scoped to this project ID; use 'org' for keys not scoped to a project")
+	apiKeysListCmd.Flags().String("service-account-id", "", "Return only keys that belong to this service account")
+	apiKeysListCmd.Flags().String("principal-type", "", "Return only keys acting as this principal type: user or service_account")
+	apiKeysListCmd.Flags().Bool("include-deleted", false, "Deprecated: use --status all instead. Include soft-deleted API keys in the results")
 	apiKeysListCmd.Flags().String("sort-by", "", "Sort by: created_at, name, expires_at, or last_used_at. Keys without an expiry sort last for expires_at; keys without recorded use sort last for last_used_at, in either direction")
 	apiKeysListCmd.Flags().String("sort-direction", "", "Sort direction: asc or desc")
 
@@ -625,8 +802,9 @@ func init() {
 	apiKeysGetCmd.Flags().Bool("include-deleted", false, "Include soft-deleted API keys in the lookup")
 
 	addJSONOutputFlag(apiKeysUpdateCmd)
-	apiKeysUpdateCmd.Flags().String("name", "", "New API key name (required)")
-	_ = apiKeysUpdateCmd.MarkFlagRequired("name")
+	apiKeysUpdateCmd.Flags().String("name", "", "New API key name; omit to leave unchanged")
+	apiKeysUpdateCmd.Flags().String("policy", "", "Replacement JSON policy; statements may include source_ip CIDR conditions")
+	apiKeysUpdateCmd.MarkFlagsOneRequired("name", "policy")
 
 	addJSONOutputFlag(apiKeysRotateCmd)
 	apiKeysRotateCmd.Flags().Int64("days-to-expire", 0, "Lifetime in days for the new key (1-3650); omit to reuse the rotated key's lifetime")

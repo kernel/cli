@@ -195,7 +195,7 @@ each vault has its own key; it is created on first request and may be cached.`,
 		}}
 	addVaultJSONOutputFlag(itemList)
 	itemGet := &cobra.Command{Use: "get <vault> <key>", Short: "get item state, available operations, and requested live data", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long:    "get item state, available operations, provider actions, and returned AgentCard checkout aliases.\n--expand fetches live, non-persisted provider data only when the item advertises that expansion; requesting unavailable data fails rather than returning a partial item. Link user info and shipping addresses can contain personal data. use -o json to preserve null versus omitted fields.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nan item still pending after the wait is returned as-is; ready means populated for credentials, not logged in or paid.\nfor credential edits on an already-ready item, compare versions without --wait. explicitly non-sensitive text/email values are returned; sensitive values and totp seeds are omitted.\nrecovery_required stops waiting and means unresolved, not declined or expired.\n" + vaultRecoveryHelp,
+		Long:    "get item state, available operations, provider actions, and returned AgentCard checkout aliases.\n--expand fetches live, non-persisted provider data only when the item advertises that expansion; requesting unavailable data fails rather than returning a partial item. Link user info and shipping addresses can contain personal data. use -o json to preserve null versus omitted fields.\n--wait is a single bounded server-side observation, not a retry or a guarantee of readiness.\nan item still pending after the wait is returned as-is; ready means populated for credentials, not logged in or paid.\nfor credential edits on an already-ready item, compare versions without --wait. explicitly non-sensitive text/email values are returned; sensitive values and totp seeds are omitted.\nrecovery_required stops waiting and means unresolved, not declined or expired.\na 1Password credential_account in revoking cannot be used while KERNEL keeps retrying its revoke in the background.\nfor AgentCard authorization json, amount_authority identifies the approved amount's source; agent and display_only do not prove what the processor charged. amount_verified and charged_* may be absent when there is no observed charge. charged_kind none means the checkout produced a token or payment method for a later merchant charge; inspect item events and the merchant order record.\n" + vaultRecoveryHelp,
 		Example: "  kernel vaults items get checkout wallet-1 --expand payment_methods\n  kernel vaults items get checkout wallet-1 --expand link_user_info,link_shipping_addresses -o json",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			wait, _ := cmd.Flags().GetInt64("wait")
@@ -209,18 +209,25 @@ each vault has its own key; it is created on first request and may be cached.`,
 	itemGet.Flags().Bool("open", false, "open a returned https action url; cardholder links are human-only, agents must share privately")
 	addVaultJSONOutputFlag(itemGet)
 	itemEvents := &cobra.Command{Use: "events <vault> <key>", Short: "read immutable item events without retrying payments", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
+		Long: "read immutable item events without retrying payments. with --include-deleted, deleted vaults must be addressed by id and <key> may be an item id; item ids take precedence over keys, followed by a live key and then the most recently deleted matching key. --wait is ignored for deleted items or vaults.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			after, _ := cmd.Flags().GetString("after")
 			wait, _ := cmd.Flags().GetInt64("wait")
-			return getVaultsHandler(cmd).Events(cmd.Context(), args[0], args[1], after, wait, vaultOutput(cmd))
+			includeDeleted, _ := cmd.Flags().GetBool("include-deleted")
+			return getVaultsHandler(cmd).Events(cmd.Context(), args[0], args[1], after, wait, includeDeleted, vaultOutput(cmd))
 		}}
 	itemEvents.Flags().String("after", "", "return events after this event id (use the last id from the previous response)")
+	itemEvents.Flags().Bool("include-deleted", false, "also find deleted items and deleted vaults by id; <key> may be an item id and --wait is ignored for deleted records")
 	itemEvents.Flags().Int64("wait", 0, "long-poll once for new events (0-60 seconds)")
 	addVaultJSONOutputFlag(itemEvents)
 	invoke := &cobra.Command{Use: "invoke <vault> <key> <operation>", Short: "invoke an operation advertised by an item", Args: cobra.ExactArgs(3), PreRunE: vaultPreRun,
 		Long: `retrieve the item and invoke only an operation listed in available_operations.
 collect returns a time-scoped url for the full credential form without clearing values.
-authorize sends {"type":"authorize"} for payment authorization. for a Link card or
+authorize sends {"type":"authorize"} for payment authorization. for a KERNEL card, add
+--browser-id alone (no --page-url) to name the browser that will pay: cards whose
+cardholder enters a fresh CVC on an encrypting card form try to route that browser through
+the card vault's proxy as soon as the CVC is entered, so authorize before the browser opens
+the payment step and wait until fill is advertised before opening it. for a Link card or
 payment_request, or a Shop Pay card, at the final checkout page, add --browser-id and
 --page-url (both or neither) to send browser_id and page_url; see provider flows below.
 read the operation description and follow any approval requirements before invoking.
@@ -330,7 +337,7 @@ and never retry automatically. 400/403/404/409 rejections mean the tool was not 
   or later may append &return_url=<URL-encoded URL>. invoke it once per advertised
   request and never request another link automatically.
 1pw_access_request_status: no browser needed; optional timeout_seconds 0-120 (default 10)
-  controls how long to keep checking. Kernel checks immediately, then every 2 seconds,
+  controls how long to keep checking. KERNEL checks immediately, then every 2 seconds,
   slowing to 10- and 20-second intervals. each call reads fresh status and may wait up
   to 20 seconds for its first scheduled check even when timeout_seconds is shorter.
   honor a 429 Retry-After. after 3 minutes the approval prompt closes: ask whether the
@@ -356,6 +363,11 @@ update_access_token (imported Link wallets with token_refresh=customer): --spec-
 1pw_recover (credential accounts, no parameters): returns a new 1Password link that
   recovers a failed account connection. share it with the account owner, then run
   credentials connect again with the same key; never delete the item to recover.
+1pw_disconnect (credential accounts, no parameters): ends the account's 1Password
+  connection while keeping the item so it can be linked again. fills stop immediately.
+  when no other vault uses the connection, KERNEL revokes it at 1Password; if the command
+  reports provider_revocation_pending, KERNEL keeps retrying the revoke in the background.
+  its credentials need new access requests after the account is linked again.
 never automatically retry an access request or recovery, and never delete and recreate
 an item to reset an uncertain outcome; stop and tell the user instead.`,
 		Example: `  kernel vaults items invoke user-vault login collect
@@ -372,6 +384,7 @@ JSON
   kernel vaults items invoke user-vault github 1pw_access_request_status --params '{"timeout_seconds":60}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login"}'
   kernel vaults items invoke user-vault github 1pw_fill --params '{"browser_id":"<browser-id>","page_url":"https://github.com/login","entry_id":"<entry-id>","target_id":"<cdp-target-id>"}'
+  kernel vaults items invoke user-vault onepassword 1pw_disconnect
   kernel vaults items invoke checkout cardholder add_payment_method
   kernel vaults items invoke checkout cardholder add_payment_method --enrollment server
   kernel vaults items invoke checkout cardholder remove_payment_method --params '{"payment_method_id":"<payment-method-id>"}'
@@ -426,7 +439,7 @@ JSON
 	invoke.Flags().String("spec-file", "", "operation parameters json file (use '-' for stdin; maximum 128 KiB)")
 	invoke.MarkFlagsMutuallyExclusive("params", "spec-file")
 	invoke.Flags().Bool("open", false, "open a returned https action url; cardholder links are human-only, agents must share privately")
-	invoke.Flags().String("browser-id", "", "browser session id, not a reusable name; used by Link or Shop Pay authorize (with --page-url) and passkey operations")
+	invoke.Flags().String("browser-id", "", "browser session id, not a reusable name; used by authorize (alone for KERNEL cards, with --page-url for Link or Shop Pay) and passkey operations")
 	invoke.Flags().String("page-url", "", "Link or Shop Pay authorize only: exact current top-level checkout url open in --browser-id")
 	invoke.Flags().String("field", "", "passkey field to arm, receive a registration, or disarm; arm/register require it when ambiguous, while disarm omits it to affect every field")
 	invoke.Flags().String("enrollment", "", "add_payment_method enrollment flow: hosted (default, cardholder link) or server (issuer backend ingest url)")
@@ -504,10 +517,14 @@ JSON
 
 func newVaultDeleteCommand(item bool) *cobra.Command {
 	use, short, nargs := "delete <vault>", "delete a vault and invalidate all its items", 1
+	long := "unresolved payment operations block vault deletion. deleting a connected KERNEL wallet first blocks new payments and then removes its enrolled card. if removal fails, the wallet is kept and continues refusing payments; reconcile the original attempt with the provider or support before retrying. deleting or recreating an item does not prove that a payment did not occur. each 1Password credential account is ended the same way as deleting it; while 1Password has not confirmed a revoke, the command reports provider_revocation_pending and keeps the vault; delete the vault again later."
+	flagHelp := "skip confirmation prompt"
 	if item {
 		use, short, nargs = "delete <vault> <key>", "delete an item and invalidate its credential", 2
+		long = "unresolved payment operations normally block item deletion, including operations on a wallet's child cards. deleting a connected KERNEL wallet first blocks new payments and then removes its enrolled card; if removal fails, the wallet is kept and continues refusing payments; reconcile the original attempt with the provider or support before retrying deletion. a Link, KERNEL, or Shop Pay card in issuance recovery_required, or an AgentCard card in recovery_required whose checkout-create response returned no authorization ID, may be explicitly abandoned by deleting that card directly; deleting its wallet or vault remains blocked until the card is deleted. deleting or recreating an item does not prove that a payment did not occur. deleting a managed-auth credential leaves its connection and saved credential unchanged. deleting a 1Password credential account stops fills immediately and, when no other vault uses the person's connection, revokes it at 1Password; until 1Password confirms, the command reports provider_revocation_pending and KERNEL keeps retrying the revoke in the background."
+		flagHelp = "skip confirmation prompt; Link, KERNEL, Shop Pay, or qualifying AgentCard recovery may be abandoned only by deleting the card directly after explicit user confirmation"
 	}
-	cmd := &cobra.Command{Use: use, Short: short, Args: cobra.ExactArgs(nargs), PreRunE: vaultPreRun,
+	cmd := &cobra.Command{Use: use, Short: short, Long: long, Args: cobra.ExactArgs(nargs), PreRunE: vaultPreRun,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key := ""
 			if item {
@@ -516,7 +533,7 @@ func newVaultDeleteCommand(item bool) *cobra.Command {
 			yes, _ := cmd.Flags().GetBool("yes")
 			return getVaultsHandler(cmd).Delete(cmd.Context(), args[0], key, yes)
 		}}
-	cmd.Flags().BoolP("yes", "y", false, "skip confirmation prompt; Link, KERNEL, Shop Pay, or VGS recovery may be abandoned only by deleting the card directly after explicit user confirmation")
+	cmd.Flags().BoolP("yes", "y", false, flagHelp)
 	return cmd
 }
 

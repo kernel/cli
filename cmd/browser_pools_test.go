@@ -194,6 +194,47 @@ func TestBrowserPoolsCreate_WithRegion(t *testing.T) {
 	assert.Error(t, c.Create(context.Background(), BrowserPoolsCreateInput{Size: 1, Region: "emea"}))
 }
 
+func TestBrowserPoolsCreateAndUpdate_CaptchaSolver(t *testing.T) {
+	setupStdoutCapture(t)
+
+	var created kernel.BrowserPoolNewParams
+	var updated kernel.BrowserPoolUpdateParams
+	fake := &FakeBrowserPoolsService{
+		NewFunc: func(ctx context.Context, body kernel.BrowserPoolNewParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			created = body
+			return &kernel.BrowserPool{ID: "pool-1"}, nil
+		},
+		UpdateFunc: func(ctx context.Context, id string, body kernel.BrowserPoolUpdateParams, opts ...option.RequestOption) (*kernel.BrowserPool, error) {
+			updated = body
+			return &kernel.BrowserPool{ID: id}, nil
+		},
+	}
+	c := BrowserPoolsCmd{client: fake}
+
+	require.NoError(t, c.Create(context.Background(), BrowserPoolsCreateInput{
+		Size:          1,
+		CaptchaSolver: BoolFlag{Set: true, Value: true},
+	}))
+	createdJSON, err := json.Marshal(created)
+	require.NoError(t, err)
+	assert.Contains(t, string(createdJSON), `"captcha_solver":{"enabled":true}`)
+
+	require.NoError(t, c.Update(context.Background(), BrowserPoolsUpdateInput{
+		IDOrName:      "pool-1",
+		CaptchaSolver: BoolFlag{Set: true, Value: false},
+	}))
+	updatedJSON, err := json.Marshal(updated)
+	require.NoError(t, err)
+	assert.Contains(t, string(updatedJSON), `"captcha_solver":{"enabled":false}`)
+
+	err = c.Create(context.Background(), BrowserPoolsCreateInput{
+		Size:          1,
+		Stealth:       BoolFlag{Set: true, Value: true},
+		CaptchaSolver: BoolFlag{Set: true, Value: false},
+	})
+	require.ErrorContains(t, err, "--stealth=true")
+}
+
 func TestBrowserPoolsGet_ShowsRegion(t *testing.T) {
 	setupStdoutCapture(t)
 
