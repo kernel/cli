@@ -65,9 +65,12 @@ func refreshStoredTokens(ctx context.Context) (*TokenStorage, error) {
 		if err != nil {
 			return err
 		}
-		if !current.IsExpired() || current.RefreshToken == "" {
+		if !current.IsExpired() {
 			tokens = current
 			return nil
+		}
+		if current.RefreshToken == "" {
+			return errSessionEnded
 		}
 		pterm.Debug.Println("Access token expired, attempting refresh...")
 		refreshed, err := RefreshTokens(ctx, current)

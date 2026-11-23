@@ -1,11 +1,13 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,6 +20,8 @@ func refreshServer(t *testing.T, status int, code string) (*httptest.Server, *at
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
+		// Slow enough that concurrent commands queue on the credentials lock.
+		time.Sleep(20 * time.Millisecond)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": code})
@@ -67,6 +71,44 @@ func TestRejectedRefreshTokenIsNotPresentedAgain(t *testing.T) {
 	}
 	if got := requests.Load(); got != 1 {
 		t.Fatalf("token requests = %d, want 1: later commands must not call the server", got)
+	}
+}
+
+// Commands waiting on the credentials lock while another clears a rejected
+// refresh token must stop too, not use the expired access token.
+func TestConcurrentCommandsStopAfterRejection(t *testing.T) {
+	storageFixture(t)
+	t.Setenv("KERNEL_API_KEY", "")
+	server, requests := refreshServer(t, http.StatusBadRequest, "invalid_grant")
+	saveExpiredTokens(t, server.URL)
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := GetAuthenticatedClient()
+			if !errors.Is(err, errRefreshTokenRejected) && !errors.Is(err, errSessionEnded) {
+				t.Errorf("GetAuthenticatedClient() error = %v, want the rejection or errSessionEnded", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("token requests = %d, want 1", got)
+	}
+}
+
+// A command that waited on the lock while another cleared the refresh token
+// re-reads expired credentials without one and must end the session.
+func TestRefreshAfterTheTokenWasClearedEndsTheSession(t *testing.T) {
+	storageFixture(t)
+	if err := SaveTokens(&TokenStorage{AccessToken: "access-0", ExpiresAt: time.Now().Add(-time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	tokens, err := refreshStoredTokens(context.Background())
+	if !errors.Is(err, errSessionEnded) || tokens != nil {
+		t.Fatalf("refreshStoredTokens() = %+v, %v, want errSessionEnded", tokens, err)
 	}
 }
 
