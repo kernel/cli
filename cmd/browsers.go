@@ -247,6 +247,21 @@ func parseFingerprintOS(os string) (kernel.BrowserFingerprintOs, error) {
 	}
 }
 
+// parseBrowserPlatformOS validates the operating system of the browser host.
+// This is distinct from --fingerprint-os, which only changes what a Linux
+// browser reports to websites.
+func parseBrowserPlatformOS(os string) (kernel.BrowserOs, error) {
+	if os == "" {
+		return "", nil
+	}
+	switch kernel.BrowserOs(os) {
+	case kernel.BrowserOsLinux, kernel.BrowserOsMacos:
+		return kernel.BrowserOs(os), nil
+	default:
+		return "", fmt.Errorf("invalid --platform-os value: %s (must be linux or macos)", os)
+	}
+}
+
 // maxPrivateHosts mirrors the API's cap on network.private_hosts entries.
 const maxPrivateHosts = 32
 
@@ -404,6 +419,13 @@ func formatBrowserLocationField(value string, source kernel.BrowserLocationSourc
 	return fmt.Sprintf("%s (%s)", value, source)
 }
 
+func formatBrowserPlatform(platform kernel.BrowserPlatform) string {
+	if platform.Os == "" {
+		return string(kernel.BrowserOsLinux)
+	}
+	return string(platform.Os)
+}
+
 // formatVaultReferences renders the vaults linked to a session for table output,
 // preferring each vault's name and falling back to its ID. It returns an empty
 // string when no vaults are linked, so the row can be omitted entirely.
@@ -544,6 +566,7 @@ type BrowsersCreateInput struct {
 	Memory               string
 	VideoMemory          string
 	FingerprintOS        string
+	PlatformOS           string
 	InvocationID         string
 	Kiosk                BoolFlag
 	ProfileID            string
@@ -594,6 +617,7 @@ type BrowsersLiveViewCreateInput struct {
 
 type BrowsersGetInput struct {
 	Identifier     string
+	IncludeCost    bool
 	IncludeDeleted bool
 	Output         string
 }
@@ -743,7 +767,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 	if showLeasedAt {
 		headers = append(headers, "Leased At")
 	}
-	headers = append(headers, "Region", "Profile", "Pool")
+	headers = append(headers, "Region", "Host OS", "Profile", "Pool")
 	if showReplay {
 		headers = append(headers, "Replay ID")
 	}
@@ -783,6 +807,7 @@ func (b BrowsersCmd) List(ctx context.Context, in BrowsersListInput) error {
 		}
 		row = append(row,
 			util.OrDash(string(browser.Region)),
+			formatBrowserPlatform(browser.Platform),
 			profile,
 			pool,
 		)
@@ -859,6 +884,13 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	}
 	if fingerprintOS != "" {
 		params.Fingerprint = kernel.BrowserFingerprintParam{Os: fingerprintOS}
+	}
+	platformOS, err := parseBrowserPlatformOS(in.PlatformOS)
+	if err != nil {
+		return err
+	}
+	if platformOS != "" {
+		params.Platform = kernel.BrowserPlatformParam{Os: platformOS}
 	}
 	if in.InvocationID != "" {
 		params.InvocationID = kernel.Opt(in.InvocationID)
@@ -1013,6 +1045,7 @@ func (b BrowsersCmd) Create(ctx context.Context, in BrowsersCreateInput) error {
 	tableData := buildBrowserTableData(browser.SessionID, browser.CdpWsURL, browser.BrowserLiveViewURL, browser.Profile, browser.ProfileSaveChanges, browser.StartURL, browser.Name, browser.Tags)
 	tableData = appendBrowserLeasedAtRow(tableData, browser.LeasedAt)
 	tableData = appendReplayRows(tableData, browser.Replay.ReplayID, browser.Replay.ReplayViewURL, browser.Replay.StartedAt, browser.Replay.FinishedAt)
+	tableData = append(tableData, []string{"Host OS", formatBrowserPlatform(browser.Platform)})
 	tableData = append(tableData, []string{"CAPTCHA Solver", fmt.Sprintf("%t", browser.CaptchaSolver.Enabled)})
 	if browser.Fingerprint.Os != "" {
 		tableData = append(tableData, []string{"Fingerprint OS", string(browser.Fingerprint.Os)})
@@ -1040,6 +1073,7 @@ func printBrowserPoolAcquireResult(resp *kernel.BrowserPoolAcquireResponse) {
 	tableData := buildBrowserTableData(resp.SessionID, resp.CdpWsURL, resp.BrowserLiveViewURL, resp.Profile, resp.ProfileSaveChanges, resp.StartURL, resp.Name, resp.Tags)
 	tableData = appendBrowserLeasedAtRow(tableData, resp.LeasedAt)
 	tableData = appendReplayRows(tableData, resp.Replay.ReplayID, resp.Replay.ReplayViewURL, resp.Replay.StartedAt, resp.Replay.FinishedAt)
+	tableData = append(tableData, []string{"Host OS", formatBrowserPlatform(resp.Platform)})
 	tableData = append(tableData, []string{"CAPTCHA Solver", fmt.Sprintf("%t", resp.CaptchaSolver.Enabled)})
 	if resp.Fingerprint.Os != "" {
 		tableData = append(tableData, []string{"Fingerprint OS", string(resp.Fingerprint.Os)})
@@ -1197,6 +1231,9 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	}
 
 	query := kernel.BrowserGetParams{}
+	if in.IncludeCost {
+		query.IncludeCost = kernel.Opt(true)
+	}
 	if in.IncludeDeleted {
 		query.IncludeDeleted = kernel.Opt(true)
 	}
@@ -1226,6 +1263,7 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	tableData = appendBrowserLeasedAtRow(tableData, browser.LeasedAt)
 	tableData = appendReplayRows(tableData, browser.Replay.ReplayID, browser.Replay.ReplayViewURL, browser.Replay.StartedAt, browser.Replay.FinishedAt)
 	tableData = append(tableData, []string{"Region", util.OrDash(string(browser.Region))})
+	tableData = append(tableData, []string{"Host OS", formatBrowserPlatform(browser.Platform)})
 	tableData = append(tableData, browserLocationRows(browser.Location)...)
 	tableData = append(tableData, []string{"Timeout (seconds)", fmt.Sprintf("%d", browser.TimeoutSeconds)})
 	tableData = append(tableData, []string{"Headless", fmt.Sprintf("%t", browser.Headless)})
@@ -1269,6 +1307,15 @@ func (b BrowsersCmd) Get(ctx context.Context, in BrowsersGetInput) error {
 	// above are not yet the final billed ones.
 	if browser.UsageStatus != "" {
 		tableData = append(tableData, []string{"Usage Status", string(browser.UsageStatus)})
+	}
+	if browser.Cost.JSON.Status.Valid() {
+		tableData = append(tableData, []string{"Cost Status", string(browser.Cost.Status)})
+		if browser.Cost.JSON.EstimatedUsageSpendUsd.Valid() {
+			tableData = append(tableData, []string{"Estimated Usage Spend (USD)", browser.Cost.EstimatedUsageSpendUsd})
+		}
+		if browser.Cost.JSON.AsOf.Valid() && !browser.Cost.AsOf.IsZero() {
+			tableData = append(tableData, []string{"Cost As Of", util.FormatLocal(browser.Cost.AsOf)})
+		}
 	}
 
 	PrintTableNoPad(tableData, true)
@@ -1576,6 +1623,7 @@ func (b BrowsersCmd) Update(ctx context.Context, in BrowsersUpdateInput) error {
 	}
 
 	pterm.Success.Printf("Updated browser %s\n", browser.SessionID)
+	pterm.Info.Printf("Host OS: %s\n", formatBrowserPlatform(browser.Platform))
 	if !browser.LeasedAt.IsZero() {
 		pterm.Info.Printf("Leased At: %s\n", util.FormatLocal(browser.LeasedAt))
 	}
@@ -3242,7 +3290,16 @@ var browsersListCmd = &cobra.Command{
 var browsersCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new browser session",
-	RunE:  runBrowsersCreate,
+	Long: `Create a new browser session.
+
+The host platform defaults to Linux. --platform-os controls the operating system
+that runs the browser, while --fingerprint-os only changes what a Linux browser
+reports to websites. macOS browsers are not available yet; requests currently
+return platform_unavailable. When available, macOS browsers are headful, run only
+in us-east, and cannot use memory, GPU, video memory, profiles, location overrides,
+or fingerprint overrides. Incompatible requests return unsupported_configuration
+and identify the offending fields.`,
+	RunE: runBrowsersCreate,
 }
 
 var browsersDeleteCmd = &cobra.Command{
@@ -3281,9 +3338,15 @@ URL is not stored and cannot be revoked early, so treat it as a credential.`,
 var browsersGetCmd = &cobra.Command{
 	Use:   "get <id-or-name>",
 	Short: "Get detailed information about a browser session by ID or name",
-	Long:  "Retrieve and display detailed information about a specific browser session (by ID or name) including configuration, URLs, and status.",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runBrowsersGet,
+	Long: `Retrieve and display a browser session's configuration, URLs, and status.
+
+Use --include-cost to request the session's provisional usage cost. Cost is
+omitted by default and is not returned by browser list or other browser commands.
+A provisional amount is gross browser-meter spend before credits, subscriptions,
+tax, and adjustments, not an invoice total. The API may instead report pending or
+unavailable, and a running or recently deleted session may accrue after cost.as_of.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runBrowsersGet,
 }
 
 var browsersSaveProfileCmd = &cobra.Command{
@@ -3383,12 +3446,13 @@ func init() {
 	browsersListCmd.Flags().String("status", "", "Filter by status: 'active' (default), 'deleted', or 'all'")
 	browsersListCmd.Flags().Int("limit", 0, "Maximum number of results to return (default 20, max 100)")
 	browsersListCmd.Flags().Int("offset", 0, "Number of results to skip (for pagination)")
-	browsersListCmd.Flags().String("query", "", "Search browsers by name, session ID, profile ID, proxy ID, or pool name")
+	browsersListCmd.Flags().String("query", "", "Search by browser name, session ID, profile name or ID, proxy ID, or pool name. With --status=deleted or --status=all, searches only browsers created in the last 24 hours, including active browsers; use --status=active to search all active browsers")
 	browsersListCmd.Flags().String("region", "", "Filter by geographic region: 'us-east', 'us-west', 'eu-west', or 'ap-southeast' (omit to list sessions in all regions)")
-	browsersListCmd.Flags().StringArray("tag", nil, "Filter by tag KEY=VALUE (repeatable; a session must match every pair)")
+	browsersListCmd.Flags().StringArray("tag", nil, "Filter by tag KEY=VALUE (repeatable; every pair must match). With --status=deleted or --status=all, matches only browsers created in the last 24 hours; use --status=active to match all active browsers")
 
 	// get flags
 	addJSONOutputFlag(browsersGetCmd)
+	browsersGetCmd.Flags().Bool("include-cost", false, "Include the session's provisional usage cost")
 	browsersGetCmd.Flags().Bool("include-deleted", false, "Include soft-deleted browser sessions in the lookup")
 
 	// view flags
@@ -3719,6 +3783,7 @@ unrestricted code execution inside the browser VM and is not sandboxed.`,
 	browsersCreateCmd.Flags().String("memory", "", "Memory for a non-GPU browser session. Headless: '1GiB' (default), '2GiB' or '4GiB'. Headful: '8GiB' (default) or '16GiB'")
 	browsersCreateCmd.Flags().String("video-memory", "", "Video memory (VRAM) for a GPU browser session (requires --gpu): '3GiB' (default, 4 vCPU/6GiB memory) or '6GiB' (8 vCPU/12GiB memory)")
 	browsersCreateCmd.Flags().String("fingerprint-os", "", "Closed beta browser fingerprint OS override: linux or macos. Contact Kernel to enable; requires --captcha-solver=true, --headless=false, --gpu=false, and default memory")
+	browsersCreateCmd.Flags().String("platform-os", "", "Browser host operating system: linux (default) or macos; see command help for macOS availability and restrictions")
 	browsersCreateCmd.Flags().String("invocation-id", "", "Associate the browser session with an invocation")
 	browsersCreateCmd.Flags().Bool("kiosk", false, "Launch browser in kiosk mode")
 	browsersCreateCmd.Flags().IntP("timeout", "t", 60, "Timeout in seconds for the browser session")
@@ -3866,6 +3931,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 	memory, _ := cmd.Flags().GetString("memory")
 	videoMemory, _ := cmd.Flags().GetString("video-memory")
 	fingerprintOS, _ := cmd.Flags().GetString("fingerprint-os")
+	platformOS, _ := cmd.Flags().GetString("platform-os")
 	invocationID, _ := cmd.Flags().GetString("invocation-id")
 	kioskVal, _ := cmd.Flags().GetBool("kiosk")
 	timeout, _ := cmd.Flags().GetInt("timeout")
@@ -4029,6 +4095,7 @@ func runBrowsersCreate(cmd *cobra.Command, args []string) error {
 		Memory:               memory,
 		VideoMemory:          videoMemory,
 		FingerprintOS:        fingerprintOS,
+		PlatformOS:           platformOS,
 		InvocationID:         invocationID,
 		Kiosk:                BoolFlag{Set: cmd.Flags().Changed("kiosk"), Value: kioskVal},
 		ProfileID:            profileID,
@@ -4111,12 +4178,14 @@ func runBrowsersLiveViewCreate(cmd *cobra.Command, args []string) error {
 func runBrowsersGet(cmd *cobra.Command, args []string) error {
 	client := getKernelClient(cmd)
 	out, _ := cmd.Flags().GetString("output")
+	includeCost, _ := cmd.Flags().GetBool("include-cost")
 	includeDeleted, _ := cmd.Flags().GetBool("include-deleted")
 
 	svc := client.Browsers
 	b := BrowsersCmd{browsers: &svc}
 	return b.Get(cmd.Context(), BrowsersGetInput{
 		Identifier:     args[0],
+		IncludeCost:    includeCost,
 		IncludeDeleted: includeDeleted,
 		Output:         out,
 	})

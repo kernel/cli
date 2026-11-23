@@ -35,6 +35,7 @@ var vaultMethodFields = vaultOutputFields{
 	"id": nil, "provider": nil, "type": nil, "is_default": nil,
 	"status": nil, "status_reason": nil, "expires_at": nil, "issuer_reference": nil, "valid_until": nil,
 	"action":       vaultFieldsOf("name url"),
+	"balance":      {"available": vaultFieldsOf("amount currency")},
 	"display":      vaultFieldsOf("label brand last4"),
 	"capabilities": {"single_use_card": vaultFieldsOf("eligible reasons")},
 }
@@ -826,17 +827,53 @@ func printVaultPaymentMethodOperationResult(response *kernel.VaultItemOperationR
 	return nil
 }
 
+func printVaultLinkBalanceSetupResult(response *kernel.VaultItemOperationResponseUnion, output string) (string, error) {
+	const operation = "link_balance_setup"
+	if response == nil || response.Type != operation {
+		return "", fmt.Errorf("unexpected %s response; inspect the wallet before retrying", operation)
+	}
+	result := response.AsLinkBalanceSetupVaultItemOperationResult()
+	setupURL, err := url.Parse(result.URL)
+	if err != nil || setupURL.Scheme != "https" || setupURL.Hostname() == "" || setupURL.User != nil {
+		return "", fmt.Errorf("invalid %s URL; inspect the wallet before retrying", operation)
+	}
+	// The setup URL is an intended user-facing capability and may contain a
+	// one-time-looking query key such as "code". Build the safe response from the
+	// typed fields instead of applying the generic vault URL redaction policy.
+	raw, err := json.Marshal(struct {
+		Type string `json:"type"`
+		URL  string `json:"url"`
+	}{Type: operation, URL: result.URL})
+	if err != nil {
+		return "", fmt.Errorf("invalid %s response; inspect the wallet before retrying", operation)
+	}
+	if output == "json" {
+		if err := printVaultJSON(json.RawMessage(raw)); err != nil {
+			return "", err
+		}
+		return result.URL, nil
+	}
+	pterm.Success.Println("Created Link balance setup page")
+	pterm.Printf("Link balance setup URL:\n%s\n", result.URL)
+	pterm.Info.Println("only the Link user can complete this page. the URL does not expire and is reused for setup, adding money, and changing the approval threshold. check wallets payment-methods for a balance method and its live available amount instead of assuming the user finished.")
+	return result.URL, nil
+}
+
 func printVaultPaymentMethods(provider string, methods []kernel.VaultPaymentMethod) {
 	if len(methods) == 0 {
 		pterm.Info.Println("no payment methods returned")
 		return
 	}
-	showIssuerReference, showValidUntil := false, false
+	showIssuerReference, showValidUntil, showBalance := false, false, false
 	for _, method := range methods {
 		showIssuerReference = showIssuerReference || method.JSON.IssuerReference.Valid()
 		showValidUntil = showValidUntil || method.JSON.ValidUntil.Valid()
+		showBalance = showBalance || method.JSON.Balance.Valid()
 	}
 	headers := []string{"payment method id", "provider", "type", "label", "brand", "last4", "default", "status", "single-use eligible", "reasons", "status reason", "expires at"}
+	if showBalance {
+		headers = append(headers, "available balance (minor units)", "balance currency")
+	}
 	if showIssuerReference {
 		headers = append(headers, "issuer reference")
 	}
@@ -855,6 +892,14 @@ func printVaultPaymentMethods(provider string, methods []kernel.VaultPaymentMeth
 			expiresAt = util.FormatLocal(m.ExpiresAt)
 		}
 		row := []string{m.ID, m.Provider, m.Type, m.Display.Label, m.Display.Brand, m.Display.Last4, fmt.Sprint(m.IsDefault), string(m.Status), eligible, strings.Join(capability.Reasons, ", "), m.StatusReason, expiresAt}
+		if showBalance {
+			available, currency := "", ""
+			if m.Balance.JSON.Available.Valid() {
+				available = fmt.Sprint(m.Balance.Available.Amount)
+				currency = m.Balance.Available.Currency
+			}
+			row = append(row, available, currency)
+		}
 		if showIssuerReference {
 			row = append(row, m.IssuerReference)
 		}
