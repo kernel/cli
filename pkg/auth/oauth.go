@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -289,6 +290,19 @@ func (oc *OAuthConfig) exchangeCodeForTokens(ctx context.Context, code, orgID, a
 	}, nil
 }
 
+// errRefreshTokenRejected means the auth server refused the refresh token
+// with invalid_grant: it is revoked or expired and will never work again.
+var errRefreshTokenRejected = errors.New("refresh token rejected")
+
+// oauthErrorCode returns the error code of an OAuth error response body.
+func oauthErrorCode(body []byte) string {
+	var response struct {
+		Error string `json:"error"`
+	}
+	_ = json.Unmarshal(body, &response)
+	return response.Error
+}
+
 // RefreshTokens refreshes the access token using the refresh token
 func RefreshTokens(ctx context.Context, tokens *TokenStorage) (*TokenStorage, error) {
 	if tokens.RefreshToken == "" {
@@ -320,7 +334,11 @@ func RefreshTokens(ctx context.Context, tokens *TokenStorage) (*TokenStorage, er
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("refresh request failed with status %d: %s", resp.StatusCode, string(body))
+		err := fmt.Errorf("refresh request failed with status %d: %s", resp.StatusCode, string(body))
+		if resp.StatusCode == http.StatusBadRequest && oauthErrorCode(body) == "invalid_grant" {
+			return nil, fmt.Errorf("%w: %w", errRefreshTokenRejected, err)
+		}
+		return nil, err
 	}
 
 	// Parse the response
