@@ -1259,6 +1259,14 @@ func TestBrowsersPlatformAndCostHelp(t *testing.T) {
 	assert.Contains(t, browsersGetCmd.Long, "omitted by default")
 	assert.Contains(t, browsersGetCmd.Long, "not an invoice total")
 	assert.Contains(t, browsersGetCmd.Long, "pending or")
+
+	queryUsage := browsersListCmd.Flags().Lookup("query").Usage
+	assert.Contains(t, queryUsage, "profile name or ID")
+	assert.Contains(t, queryUsage, "last 24 hours")
+	assert.Contains(t, queryUsage, "--status=active")
+	tagUsage := browsersListCmd.Flags().Lookup("tag").Usage
+	assert.Contains(t, tagUsage, "last 24 hours")
+	assert.Contains(t, tagUsage, "--status=active")
 }
 
 func TestBrowsersCreate_WithCaptchaSolver(t *testing.T) {

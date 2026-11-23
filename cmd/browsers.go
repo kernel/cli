@@ -3446,9 +3446,9 @@ func init() {
 	browsersListCmd.Flags().String("status", "", "Filter by status: 'active' (default), 'deleted', or 'all'")
 	browsersListCmd.Flags().Int("limit", 0, "Maximum number of results to return (default 20, max 100)")
 	browsersListCmd.Flags().Int("offset", 0, "Number of results to skip (for pagination)")
-	browsersListCmd.Flags().String("query", "", "Search browsers by name, session ID, profile ID, proxy ID, or pool name")
+	browsersListCmd.Flags().String("query", "", "Search by browser name, session ID, profile name or ID, proxy ID, or pool name. With --status=deleted or --status=all, searches only browsers created in the last 24 hours, including active browsers; use --status=active to search all active browsers")
 	browsersListCmd.Flags().String("region", "", "Filter by geographic region: 'us-east', 'us-west', 'eu-west', or 'ap-southeast' (omit to list sessions in all regions)")
-	browsersListCmd.Flags().StringArray("tag", nil, "Filter by tag KEY=VALUE (repeatable; a session must match every pair)")
+	browsersListCmd.Flags().StringArray("tag", nil, "Filter by tag KEY=VALUE (repeatable; every pair must match). With --status=deleted or --status=all, matches only browsers created in the last 24 hours; use --status=active to match all active browsers")
 
 	// get flags
 	addJSONOutputFlag(browsersGetCmd)
