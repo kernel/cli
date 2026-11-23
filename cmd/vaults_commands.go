@@ -301,7 +301,7 @@ funded by that method without disconnecting the wallet or changing other methods
 unresolved purchase can block removal; an uncertain provider outcome leaves removal_pending
 and must be re-checked before an explicit retry. removal is not proof that a payment did
 not occur. scoped keys need both vaults:use and vaults:write.
-link_balance_setup is valid only when advertised by a connected Link wallet. Kernel first
+link_balance_setup is valid only when advertised by a connected Link wallet. KERNEL first
 reads live Link user info and returns 409 unless eligible_for_balance is true, which depends
 on both the user and the wallet's Link client. its optional values are suggestions that the
 user can change. desired_balance_amount is the target balance in cents; the page asks for the
@@ -313,7 +313,7 @@ cents, and the transaction limit is at most 50000 cents. Link refuses a page tha
 the user to add more than $150 at once. the returned URL does not expire and is the same for
 setup, adding money, and changing the threshold. only the Link user can complete it; use
 --open only on that user's machine, otherwise share it privately. do not assume completion:
-inspect wallets payment-methods for a balance method and its live available amount. Kernel
+inspect wallets payment-methods for a balance method and its live available amount. KERNEL
 cards do not yet use Link's approval policy, so they still require user approval even when
 funded from the balance.
 restart_verification takes no parameters. in recovery_required, ` + vaultRecoveryHelp + `
@@ -505,7 +505,7 @@ JSON
 	walletCreate.Flags().Bool("open", false, "open a returned https connection/enrollment url; cardholder use only, agents must share privately")
 	addVaultJSONOutputFlag(walletCreate)
 	methods := &cobra.Command{Use: "payment-methods <vault> <key>", Short: "fetch advertised live wallet payment methods", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: "fetch payment_methods through the item's GET expansion. the wallet must advertise this expansion.\ndisplays selectable ids and advisory capabilities; never automatically chooses a funding method. for stored-value methods such as a Link balance, the available amount is read live from the provider, never stored by Kernel, and shown in the currency's smallest unit with a lowercase ISO 4217 currency code; an absent amount means the provider did not report it.\njson returns the item with expanded.payment_methods, like items get --expand payment_methods.",
+		Long: "fetch payment_methods through the item's GET expansion. the wallet must advertise this expansion.\ndisplays selectable ids and advisory capabilities; never automatically chooses a funding method. for stored-value methods such as a Link balance, the available amount is read live from the provider, never stored by KERNEL, and shown in the currency's smallest unit with a lowercase ISO 4217 currency code; an absent amount means the provider did not report it.\njson returns the item with expanded.payment_methods, like items get --expand payment_methods.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			project, _ := cmd.Flags().GetString("project")
 			return getVaultsHandler(cmd).GetItem(cmd.Context(), args[0], args[1], 0, []string{"payment_methods"}, resolveProjectSelection(project), vaultOutput(cmd), false)
