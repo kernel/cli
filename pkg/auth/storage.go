@@ -37,9 +37,13 @@ type TokenStorage struct {
 	Source string `json:"-"`
 }
 
-// IsExpired checks if the access token is expired (with 5 minute buffer)
+// refreshBefore is how long before the access token expires the CLI refreshes
+// it, so a request does not start with a token about to expire.
+const refreshBefore = time.Minute
+
+// IsExpired reports whether the access token expires within refreshBefore.
 func (t *TokenStorage) IsExpired() bool {
-	return time.Now().Add(5 * time.Minute).After(t.ExpiresAt)
+	return time.Now().Add(refreshBefore).After(t.ExpiresAt)
 }
 
 // setKeyring is keyring.Set, replaceable in tests that need it to fail.
