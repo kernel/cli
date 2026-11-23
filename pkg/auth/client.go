@@ -27,22 +27,13 @@ func GetAuthenticatedClient(opts ...option.RequestOption) (*kernel.Client, error
 	if err == nil {
 		// Check if access token is expired and refresh if needed
 		if tokens.IsExpired() && tokens.RefreshToken != "" {
-			pterm.Debug.Println("Access token expired, attempting refresh...")
-
-			refreshedTokens, refreshErr := RefreshTokens(context.Background(), tokens)
+			refreshed, refreshErr := refreshStoredTokens(context.Background())
 			if refreshErr != nil {
 				pterm.Warning.Printf("Failed to refresh tokens: %v\n", refreshErr)
 				pterm.Info.Println("Please run 'kernel login' to re-authenticate")
 				return nil, fmt.Errorf("expired credentials, please re-authenticate: %w", refreshErr)
 			}
-
-			// Save refreshed tokens
-			if saveErr := SaveTokens(refreshedTokens); saveErr != nil {
-				pterm.Warning.Printf("Failed to save refreshed tokens: %v\n", saveErr)
-			}
-
-			tokens = refreshedTokens
-			pterm.Debug.Println("Successfully refreshed access token")
+			tokens = refreshed
 		}
 
 		// Use JWT token for authentication via Authorization header
@@ -53,4 +44,34 @@ func GetAuthenticatedClient(opts ...option.RequestOption) (*kernel.Client, error
 
 	// No authentication available
 	return nil, fmt.Errorf("no authentication available. Please run 'kernel login' or set KERNEL_API_KEY environment variable")
+}
+
+// refreshStoredTokens refreshes the stored credentials while holding the
+// credentials lock. It re-reads them first, so when another CLI process has
+// already refreshed, its tokens are used and the consumed refresh token is
+// never presented again.
+func refreshStoredTokens(ctx context.Context) (*TokenStorage, error) {
+	var tokens *TokenStorage
+	err := withCredentialsLock(func() error {
+		current, err := loadTokens()
+		if err != nil {
+			return err
+		}
+		if !current.IsExpired() || current.RefreshToken == "" {
+			tokens = current
+			return nil
+		}
+		pterm.Debug.Println("Access token expired, attempting refresh...")
+		refreshed, err := RefreshTokens(ctx, current)
+		if err != nil {
+			return err
+		}
+		if err := saveTokens(refreshed); err != nil {
+			pterm.Warning.Printf("Failed to save refreshed tokens: %v\n", err)
+		}
+		pterm.Debug.Println("Successfully refreshed access token")
+		tokens = refreshed
+		return nil
+	})
+	return tokens, err
 }

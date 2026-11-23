@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/zalando/go-keyring"
@@ -32,6 +33,8 @@ type TokenStorage struct {
 	// SavedAt tells which of the keyring and the credentials file is current
 	// when both hold credentials.
 	SavedAt time.Time `json:"saved_at,omitzero"`
+	// Source is where LoadTokens found the credentials; it is not stored.
+	Source string `json:"-"`
 }
 
 // IsExpired checks if the access token is expired (with 5 minute buffer)
@@ -42,10 +45,61 @@ func (t *TokenStorage) IsExpired() bool {
 // setKeyring is keyring.Set, replaceable in tests that need it to fail.
 var setKeyring = keyring.Set
 
+// Token storage sources, as reported in TokenStorage.Source.
+const (
+	SourceKeychain = "OS Keychain"
+	SourceFile     = "Local file (~/.config/kernel/credentials)"
+)
+
+// credentialsLockTimeout bounds how long one CLI process waits while another
+// saves or refreshes credentials; a refresh takes at most tokenExchangeTimeout.
+const credentialsLockTimeout = tokenExchangeTimeout + 10*time.Second
+
+// credentialsMu serializes credential access within one process; the lock
+// file serializes it across processes.
+var credentialsMu sync.Mutex
+
+// withCredentialsLock runs fn while holding a lock file in the config
+// directory, so CLI processes read, save, and refresh credentials one at a
+// time.
+func withCredentialsLock(fn func() error) error {
+	credentialsMu.Lock()
+	defer credentialsMu.Unlock()
+	configDir, err := getConfigDir()
+	if err != nil {
+		return fmt.Errorf("failed to get config directory: %w", err)
+	}
+	f, err := os.OpenFile(filepath.Join(configDir, "credentials.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return fmt.Errorf("failed to open credentials lock: %w", err)
+	}
+	defer f.Close()
+	deadline := time.Now().Add(credentialsLockTimeout)
+	for {
+		locked, err := tryLockFile(f)
+		if err != nil {
+			return fmt.Errorf("failed to lock credentials: %w", err)
+		}
+		if locked {
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for another kernel process to update credentials")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	defer func() { _ = unlockFile(f) }()
+	return fn()
+}
+
 // SaveTokens stores authentication tokens in the OS keychain, or in the
 // credentials file when the keychain refuses them (for example when they are
 // too large). Whichever store is written becomes the one LoadTokens reads.
 func SaveTokens(tokens *TokenStorage) error {
+	return withCredentialsLock(func() error { return saveTokens(tokens) })
+}
+
+func saveTokens(tokens *TokenStorage) error {
 	stamped := *tokens
 	stamped.SavedAt = time.Now().UTC()
 	data, err := json.Marshal(stamped)
@@ -71,14 +125,21 @@ func SaveTokens(tokens *TokenStorage) error {
 // LoadTokens retrieves authentication tokens from the keychain or the
 // credentials file. When both hold credentials, the newer copy wins.
 func LoadTokens() (*TokenStorage, error) {
+	var tokens *TokenStorage
+	err := withCredentialsLock(func() error {
+		var err error
+		tokens, err = loadTokens()
+		return err
+	})
+	return tokens, err
+}
+
+func loadTokens() (*TokenStorage, error) {
 	fromKeyring, keyringErr := loadTokensFromKeyring()
 	fromFile, fileErr := loadTokensFromFile()
 	switch {
-	case keyringErr == nil && fileErr == nil:
-		if newer(fromFile, fromKeyring) {
-			return fromFile, nil
-		}
-		return fromKeyring, nil
+	case keyringErr == nil && fileErr == nil && preferFile(fromFile, fromKeyring):
+		return fromFile, nil
 	case keyringErr == nil:
 		return fromKeyring, nil
 	case fileErr == nil:
@@ -97,32 +158,36 @@ func loadTokensFromKeyring() (*TokenStorage, error) {
 	if err := json.Unmarshal([]byte(data), &tokens); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal tokens from keychain: %w", err)
 	}
+	tokens.Source = SourceKeychain
 	return &tokens, nil
 }
 
-// newer reports whether a was saved after b. Credentials saved before SavedAt
-// existed compare by expiry.
-func newer(a, b *TokenStorage) bool {
-	if !a.SavedAt.Equal(b.SavedAt) {
-		return a.SavedAt.After(b.SavedAt)
+// preferFile reports whether the credentials file is newer than the keychain
+// entry. Only copies stamped by SaveTokens can be compared; when neither is
+// stamped the keychain wins, as it did before SavedAt existed.
+func preferFile(file, keychain *TokenStorage) bool {
+	if file.SavedAt.IsZero() || keychain.SavedAt.IsZero() {
+		return !file.SavedAt.IsZero()
 	}
-	return a.ExpiresAt.After(b.ExpiresAt)
+	return file.SavedAt.After(keychain.SavedAt)
 }
 
 // DeleteTokens removes stored authentication tokens
 func DeleteTokens() error {
-	// Try to delete from keychain
-	err := keyring.Delete(KeyringService, KeyringUser)
+	return withCredentialsLock(func() error {
+		// Try to delete from keychain
+		err := keyring.Delete(KeyringService, KeyringUser)
 
-	// Also try to delete file storage (ignore errors)
-	_ = deleteTokensFile()
+		// Also try to delete file storage (ignore errors)
+		_ = deleteTokensFile()
 
-	// Return keychain error if it exists and it's not "not found"
-	if err != nil && err != keyring.ErrNotFound {
-		return fmt.Errorf("failed to delete tokens from keychain: %w", err)
-	}
+		// Return keychain error if it exists and it's not "not found"
+		if err != nil && err != keyring.ErrNotFound {
+			return fmt.Errorf("failed to delete tokens from keychain: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // getConfigDir returns the CLI configuration directory
@@ -178,6 +243,7 @@ func loadTokensFromFile() (*TokenStorage, error) {
 	if err := json.Unmarshal(data, &tokens); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal tokens from file: %w", err)
 	}
+	tokens.Source = SourceFile
 
 	return &tokens, nil
 }

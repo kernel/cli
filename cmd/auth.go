@@ -10,7 +10,6 @@ import (
 	"github.com/kernel/cli/pkg/util"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
-	"github.com/zalando/go-keyring"
 )
 
 // JWTClaims represents the claims in a JWT token
@@ -136,12 +135,7 @@ func runAuth(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Storage method
-	if _, err := keyring.Get(auth.KeyringService, auth.KeyringUser); err == nil {
-		logger.Debug("Storage method", logger.Args("method", "OS Keychain"))
-	} else {
-		logger.Debug("Storage method", logger.Args("method", "Local file (~/.config/kernel/credentials)"))
-	}
+	logger.Debug("Storage method", logger.Args("method", tokens.Source))
 
 	return nil
 }
