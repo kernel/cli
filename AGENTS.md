@@ -19,6 +19,10 @@ When `KERNEL_API_KEY` is set (provided as a secret), the CLI hits the **producti
 
 Be mindful that these operations affect production resources.
 
+### User-facing copy
+
+Help text and output follow the casing of nearby copy in the same command group. Vaults commands write the product name as `KERNEL` and `url` in lowercase. Other commands use `Kernel`. Use `URL` only in Go identifiers. This also covers copy that an unmerged coverage update already added.
+
 ### Gotchas
 
 - `golangci-lint` is installed via `go install` to `$(go env GOPATH)/bin`. This directory must be on `PATH` (the update script handles this via `.bashrc`).
