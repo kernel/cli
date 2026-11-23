@@ -1,5 +1,9 @@
 # Kernel CLI
 
+## User-facing copy
+
+Help text and output follow the casing of nearby copy in the same command group. Vaults commands write the product name as `KERNEL` and `url` in lowercase. Other commands use `Kernel`. Use `URL` only in Go identifiers. This also covers copy that an unmerged coverage update already added.
+
 ## Cursor Cloud specific instructions
 
 This is a Go CLI application (no long-running services). Development commands are in the `Makefile`:
@@ -18,10 +22,6 @@ When `KERNEL_API_KEY` is set (provided as a secret), the CLI hits the **producti
 4. `./bin/kernel browsers delete <session_id>` — clean up
 
 Be mindful that these operations affect production resources.
-
-### User-facing copy
-
-Help text and output follow the casing of nearby copy in the same command group. Vaults commands write the product name as `KERNEL` and `url` in lowercase. Other commands use `Kernel`. Use `URL` only in Go identifiers. This also covers copy that an unmerged coverage update already added.
 
 ### Gotchas
 
