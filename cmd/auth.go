@@ -15,7 +15,6 @@ import (
 // JWTClaims represents the claims in a JWT token
 type JWTClaims struct {
 	Sub     string `json:"sub"`      // User ID
-	Email   string `json:"email"`    // User email
 	Exp     int64  `json:"exp"`      // Expiration time
 	Iss     string `json:"iss"`      // Issuer
 	OrgID   string `json:"org_id"`   // Organization ID
@@ -50,10 +49,6 @@ func parseJWT(tokenString string) (*JWTClaims, error) {
 
 		if sub, ok := claims["sub"].(string); ok {
 			jwtClaims.Sub = sub
-		}
-
-		if email, ok := claims["email"].(string); ok {
-			jwtClaims.Email = email
 		}
 
 		if exp, ok := claims["exp"].(float64); ok {
@@ -112,7 +107,7 @@ func runAuth(cmd *cobra.Command, args []string) error {
 	// Extract info from JWT token
 	if claims, err := parseJWT(tokens.AccessToken); err == nil && claims != nil {
 		if claims.Sub != "" {
-			logger.Debug("User details", logger.Args("email", claims.Email, "user_id", claims.Sub, "org_id", tokens.OrgID))
+			logger.Debug("User details", logger.Args("user_id", claims.Sub, "org_id", tokens.OrgID))
 		}
 	}
 
