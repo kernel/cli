@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -31,6 +32,29 @@ func TestNewOAuthConfigUsesAuthOverrides(t *testing.T) {
 	}
 	if got, want := cfg.Config.ClientID, "staging-client-id"; got != want {
 		t.Fatalf("ClientID = %q, want %q", got, want)
+	}
+}
+
+// The CLI names no scopes: the authorization server's consent page decides
+// what the login may do.
+func TestAuthorizationRequestNamesNoScope(t *testing.T) {
+	cfg, err := NewOAuthConfig()
+	if err != nil {
+		t.Fatalf("NewOAuthConfig() error = %v", err)
+	}
+	authURL, err := url.Parse(cfg.authorizationURL())
+	if err != nil {
+		t.Fatalf("authorizationURL() is not a URL: %v", err)
+	}
+	query := authURL.Query()
+	if query.Has("scope") {
+		t.Fatalf("authorization request names scope %q", query.Get("scope"))
+	}
+	if got, want := query.Get("code_challenge"), generateCodeChallenge(cfg.Verifier); got != want {
+		t.Fatalf("code_challenge = %q, want %q", got, want)
+	}
+	if got, want := query.Get("code_challenge_method"), "S256"; got != want {
+		t.Fatalf("code_challenge_method = %q, want %q", got, want)
 	}
 }
 
@@ -104,6 +128,33 @@ func TestOAuthCodeExchangeUsesAuthoritativeProjectScope(t *testing.T) {
 	}
 	if got, want := tokens.ProjectID, "proj_1"; got != want {
 		t.Fatalf("ProjectID = %q, want %q", got, want)
+	}
+}
+
+func TestRefreshRequestNamesNoScope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm() error = %v", err)
+		}
+		if r.Form.Has("scope") {
+			t.Fatalf("refresh request names scope %q", r.Form.Get("scope"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token":  "access-new",
+			"refresh_token": "refresh-new",
+			"token_type":    "Bearer",
+			"expires_in":    3600,
+		})
+	}))
+	defer server.Close()
+
+	if _, err := RefreshTokens(context.Background(), &TokenStorage{
+		RefreshToken:  "refresh-old",
+		AuthBaseURL:   server.URL,
+		OAuthClientID: "client-id",
+	}); err != nil {
+		t.Fatalf("RefreshTokens() error = %v", err)
 	}
 }
 

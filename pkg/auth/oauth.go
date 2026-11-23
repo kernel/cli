@@ -28,9 +28,6 @@ const (
 	DefaultClientID = "hmFrJn9hKDV2N02M"
 	RedirectURI     = "http://localhost"
 
-	// OAuth scopes - openid for the MCP server flow
-	DefaultScope = "openid email"
-
 	// tokenExchangeTimeout bounds the token/refresh HTTP calls so a stalled auth
 	// server surfaces as an error instead of hanging the CLI indefinitely.
 	tokenExchangeTimeout = 30 * time.Second
@@ -143,7 +140,6 @@ func NewOAuthConfig() (*OAuthConfig, error) {
 	config := &oauth2.Config{
 		ClientID:    clientID,
 		RedirectURL: redirectURI,
-		Scopes:      strings.Split(DefaultScope, " "),
 		Endpoint: oauth2.Endpoint{
 			AuthURL:   authorizeURL(authBaseURL),
 			TokenURL:  tokenURL(authBaseURL),
@@ -160,6 +156,15 @@ func NewOAuthConfig() (*OAuthConfig, error) {
 	}, nil
 }
 
+// authorizationURL returns the authorization request the login opens in the
+// browser, with its PKCE challenge.
+func (oc *OAuthConfig) authorizationURL() string {
+	return oc.Config.AuthCodeURL(oc.State,
+		oauth2.SetAuthURLParam("code_challenge", generateCodeChallenge(oc.Verifier)),
+		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
+	)
+}
+
 // StartOAuthFlow initiates the OAuth flow with browser redirect
 func (oc *OAuthConfig) StartOAuthFlow(ctx context.Context) (*TokenStorage, error) {
 	// Find an available port and get a listener to prevent race conditions
@@ -172,12 +177,7 @@ func (oc *OAuthConfig) StartOAuthFlow(ctx context.Context) (*TokenStorage, error
 	// Update the config with the actual port
 	oc.Config.RedirectURL = fmt.Sprintf("%s:%d/callback", RedirectURI, port)
 
-	// Generate authorization URL with PKCE
-	challenge := generateCodeChallenge(oc.Verifier)
-	authURL := oc.Config.AuthCodeURL(oc.State,
-		oauth2.SetAuthURLParam("code_challenge", challenge),
-		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
-	)
+	authURL := oc.authorizationURL()
 
 	// Print URL immediately for manual access (especially useful for headless environments)
 	pterm.Info.Println("Authentication URL:")
@@ -292,7 +292,6 @@ func RefreshTokens(ctx context.Context, tokens *TokenStorage) (*TokenStorage, er
 	values.Set("grant_type", "refresh_token")
 	values.Set("refresh_token", tokens.RefreshToken)
 	values.Set("client_id", tokenOAuthClientID(tokens))
-	values.Set("scope", DefaultScope)
 	if tokens.OrgID != "" {
 		values.Set("org_id", tokens.OrgID)
 	}
