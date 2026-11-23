@@ -600,7 +600,7 @@ func runInvocationBrowsers(cmd *cobra.Command, args []string) error {
 	if showLeasedAt {
 		headers = append(headers, "Leased At")
 	}
-	headers = append(headers, "Region", "Headless", "Stealth", "Timeout")
+	headers = append(headers, "Region", "Host OS", "Headless", "Stealth", "Timeout")
 	if showReplay {
 		headers = append(headers, "Replay ID")
 	}
@@ -624,6 +624,7 @@ func runInvocationBrowsers(cmd *cobra.Command, args []string) error {
 		}
 		row = append(row,
 			util.OrDash(browser.Region),
+			formatBrowserPlatform(browser.Platform),
 			fmt.Sprintf("%v", browser.Headless),
 			fmt.Sprintf("%v", browser.Stealth),
 			fmt.Sprintf("%d", browser.TimeoutSeconds),

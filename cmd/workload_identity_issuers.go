@@ -429,8 +429,8 @@ func buildWorkloadIdentityTokenValidation(in WorkloadIdentityTokenValidationInpu
 	}
 	result := kernel.WorkloadIdentityTokenValidationParam{}
 	if in.MaxLifetimeSeconds.Set {
-		if in.MaxLifetimeSeconds.Value < 1 || in.MaxLifetimeSeconds.Value > 86400 {
-			return result, false, fmt.Errorf("--token-max-lifetime-seconds must be between 1 and 86400")
+		if in.MaxLifetimeSeconds.Value < 1 || in.MaxLifetimeSeconds.Value > 172800 {
+			return result, false, fmt.Errorf("--token-max-lifetime-seconds must be between 1 and 172800")
 		}
 		result.MaxLifetimeSeconds = kernel.Opt(in.MaxLifetimeSeconds.Value)
 	}
@@ -576,7 +576,7 @@ func addWorkloadIdentityIssuerMutationFlags(cmd *cobra.Command, update bool) {
 	cmd.Flags().String("jwks-discovery-base-url", "", "Base URL used for OpenID Connect discovery (maximum 2048 characters)")
 	cmd.Flags().String("jwks-ca-cert-pem", "", "Optional PEM public CA certificates trusted instead of system roots (maximum 65536 characters)")
 	cmd.Flags().String("jwks-keys", "", "Inline JWK set as a JSON array of 1-16 public JWK objects")
-	cmd.Flags().Int64("token-max-lifetime-seconds", 0, "Maximum incoming exp minus iat, from 1 to 86400 seconds")
+	cmd.Flags().Int64("token-max-lifetime-seconds", 0, "Maximum incoming exp minus iat, from 1 to 172800 seconds (48 hours; covers Azure managed identity tokens that live slightly over 24 hours)")
 	cmd.Flags().String("token-replay-protection", "", "Incoming token reuse policy: single_use or allow_reuse")
 	if update {
 		cmd.Flags().Int64("expected-version", 0, "Current security_version used for optimistic concurrency (required)")
