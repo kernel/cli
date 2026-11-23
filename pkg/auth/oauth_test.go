@@ -42,12 +42,19 @@ func TestAuthorizationRequestNamesNoScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewOAuthConfig() error = %v", err)
 	}
-	authURL, err := url.Parse(cfg.Config.AuthCodeURL(cfg.State))
+	authURL, err := url.Parse(cfg.authorizationURL())
 	if err != nil {
-		t.Fatalf("AuthCodeURL() is not a URL: %v", err)
+		t.Fatalf("authorizationURL() is not a URL: %v", err)
 	}
-	if authURL.Query().Has("scope") {
-		t.Fatalf("authorization request names scope %q", authURL.Query().Get("scope"))
+	query := authURL.Query()
+	if query.Has("scope") {
+		t.Fatalf("authorization request names scope %q", query.Get("scope"))
+	}
+	if got, want := query.Get("code_challenge"), generateCodeChallenge(cfg.Verifier); got != want {
+		t.Fatalf("code_challenge = %q, want %q", got, want)
+	}
+	if got, want := query.Get("code_challenge_method"), "S256"; got != want {
+		t.Fatalf("code_challenge_method = %q, want %q", got, want)
 	}
 }
 
@@ -124,6 +131,33 @@ func TestOAuthCodeExchangeUsesAuthoritativeProjectScope(t *testing.T) {
 	}
 }
 
+func TestRefreshRequestNamesNoScope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm() error = %v", err)
+		}
+		if r.Form.Has("scope") {
+			t.Fatalf("refresh request names scope %q", r.Form.Get("scope"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token":  "access-new",
+			"refresh_token": "refresh-new",
+			"token_type":    "Bearer",
+			"expires_in":    3600,
+		})
+	}))
+	defer server.Close()
+
+	if _, err := RefreshTokens(context.Background(), &TokenStorage{
+		RefreshToken:  "refresh-old",
+		AuthBaseURL:   server.URL,
+		OAuthClientID: "client-id",
+	}); err != nil {
+		t.Fatalf("RefreshTokens() error = %v", err)
+	}
+}
+
 func TestRefreshTokensPreservesProjectScope(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
@@ -131,9 +165,6 @@ func TestRefreshTokensPreservesProjectScope(t *testing.T) {
 		}
 		if got, want := r.Form.Get("refresh_token"), "refresh-old"; got != want {
 			t.Fatalf("refresh_token = %q, want %q", got, want)
-		}
-		if r.Form.Has("scope") {
-			t.Fatalf("refresh request names scope %q", r.Form.Get("scope"))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
