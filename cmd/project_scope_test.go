@@ -131,6 +131,9 @@ func TestDeployGithubProjectScope(t *testing.T) {
 			cmd := projectTestCommand(t, server.URL, tt.flag)
 			if tt.oauth {
 				t.Setenv("KERNEL_API_KEY", "")
+				home := t.TempDir()
+				t.Setenv("HOME", home)
+				t.Setenv("USERPROFILE", home)
 				keyring.MockInit()
 				t.Cleanup(keyring.MockInit)
 				require.NoError(t, auth.SaveTokens(&auth.TokenStorage{

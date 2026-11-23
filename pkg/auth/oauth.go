@@ -257,8 +257,12 @@ func (oc *OAuthConfig) exchangeCodeForTokens(ctx context.Context, code, orgID, a
 	if value, ok := token.Extra("org_id").(string); ok && value != "" {
 		orgID = value
 	}
+	// A response that states the access scope also lists the projects a
+	// grant is limited to, so its scope is recorded.
+	scopeRecorded := false
 	if value, ok := token.Extra("access_scope").(string); ok && value != "" {
 		accessScope = value
+		scopeRecorded = true
 	}
 	if value, ok := token.Extra("project_id").(string); ok {
 		projectID = value
@@ -269,6 +273,7 @@ func (oc *OAuthConfig) exchangeCodeForTokens(ctx context.Context, code, orgID, a
 	if accessScope == "organization" {
 		projectID = ""
 	}
+	projects, _ := projectsFromResponse(token.Extra("projects"))
 
 	return &TokenStorage{
 		AccessToken:   token.AccessToken,
@@ -277,6 +282,8 @@ func (oc *OAuthConfig) exchangeCodeForTokens(ctx context.Context, code, orgID, a
 		OrgID:         orgID,
 		AccessScope:   accessScope,
 		ProjectID:     projectID,
+		Projects:      projects,
+		ScopeRecorded: scopeRecorded,
 		AuthBaseURL:   oc.AuthBaseURL,
 		OAuthClientID: oc.OAuthClientID,
 	}, nil
@@ -341,8 +348,10 @@ func RefreshTokens(ctx context.Context, tokens *TokenStorage) (*TokenStorage, er
 		orgID = value
 	}
 	accessScope := tokens.AccessScope
+	scopeRecorded := tokens.ScopeRecorded
 	if value, ok := tokenResponse["access_scope"].(string); ok && value != "" {
 		accessScope = value
+		scopeRecorded = true
 	}
 	if accessScope == "" {
 		accessScope = "organization"
@@ -354,6 +363,10 @@ func RefreshTokens(ctx context.Context, tokens *TokenStorage) (*TokenStorage, er
 	if accessScope == "organization" {
 		projectID = ""
 	}
+	projects := tokens.Projects
+	if value, ok := projectsFromResponse(tokenResponse["projects"]); ok {
+		projects = value
+	}
 
 	return &TokenStorage{
 		AccessToken:   newToken.AccessToken,
@@ -362,9 +375,26 @@ func RefreshTokens(ctx context.Context, tokens *TokenStorage) (*TokenStorage, er
 		OrgID:         orgID,
 		AccessScope:   accessScope,
 		ProjectID:     projectID,
+		Projects:      projects,
+		ScopeRecorded: scopeRecorded,
 		AuthBaseURL:   tokenAuthBaseURL(tokens),
 		OAuthClientID: tokenOAuthClientID(tokens),
 	}, nil
+}
+
+// projectsFromResponse reads the projects a token response limits the grant
+// to. ok reports whether the response carried the field at all.
+func projectsFromResponse(value interface{}) (projects []string, ok bool) {
+	items, ok := value.([]interface{})
+	if !ok {
+		return nil, false
+	}
+	for _, item := range items {
+		if id, isString := item.(string); isString && id != "" {
+			projects = append(projects, id)
+		}
+	}
+	return projects, true
 }
 
 // generateCodeVerifier generates a cryptographically secure random string for PKCE

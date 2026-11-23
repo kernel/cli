@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -223,6 +224,9 @@ func TestRefreshLegacyTokensRemainOrganizationWide(t *testing.T) {
 	if tokens.ProjectID != "" {
 		t.Fatalf("ProjectID = %q, want empty", tokens.ProjectID)
 	}
+	if tokens.ScopeRecorded {
+		t.Fatal("ScopeRecorded = true for a response that does not state the scope")
+	}
 }
 
 func TestLegacyTokenRefreshConfigUsesProdDefaults(t *testing.T) {
@@ -236,5 +240,89 @@ func TestLegacyTokenRefreshConfigUsesProdDefaults(t *testing.T) {
 	}
 	if got, want := tokenOAuthClientID(tokens), DefaultClientID; got != want {
 		t.Fatalf("tokenOAuthClientID = %q, want %q", got, want)
+	}
+}
+
+func TestTokensKeepNativeProjects(t *testing.T) {
+	refreshed := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		body := map[string]interface{}{
+			"access_token":  "access-token",
+			"refresh_token": "refresh-token",
+			"token_type":    "Bearer",
+			"expires_in":    3600,
+			"org_id":        "org_1",
+			"access_scope":  "organization",
+		}
+		if !refreshed {
+			body["projects"] = []string{"proj_a", "proj_b"}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(body)
+	}))
+	defer server.Close()
+
+	config := &OAuthConfig{
+		Config: &oauth2.Config{
+			ClientID:    "client-id",
+			RedirectURL: "http://localhost/callback",
+			Endpoint:    oauth2.Endpoint{TokenURL: server.URL, AuthStyle: oauth2.AuthStyleInParams},
+		},
+		Verifier:      "verifier",
+		AuthBaseURL:   server.URL,
+		OAuthClientID: "client-id",
+	}
+	tokens, err := config.exchangeCodeForTokens(context.Background(), "code", "org_1", "", "")
+	if err != nil {
+		t.Fatalf("exchangeCodeForTokens() error = %v", err)
+	}
+	if got, want := strings.Join(tokens.Projects, ","), "proj_a,proj_b"; got != want {
+		t.Fatalf("Projects = %q, want %q", got, want)
+	}
+	if !tokens.ScopeRecorded {
+		t.Fatal("ScopeRecorded = false after login")
+	}
+
+	// A refresh response without the field keeps the grant's projects.
+	refreshed = true
+	tokens, err = RefreshTokens(context.Background(), tokens)
+	if err != nil {
+		t.Fatalf("RefreshTokens() error = %v", err)
+	}
+	if got, want := strings.Join(tokens.Projects, ","), "proj_a,proj_b"; got != want {
+		t.Fatalf("Projects after refresh = %q, want %q", got, want)
+	}
+	if !tokens.ScopeRecorded {
+		t.Fatal("ScopeRecorded = false after refresh")
+	}
+}
+
+func TestRefreshRecordsScopeForOlderCredentials(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token":  "access-new",
+			"refresh_token": "refresh-new",
+			"token_type":    "Bearer",
+			"expires_in":    600,
+			"access_scope":  "organization",
+			"projects":      []string{"proj_a"},
+		})
+	}))
+	defer server.Close()
+
+	// Saved by a CLI that did not record projects or ScopeRecorded.
+	tokens, err := RefreshTokens(context.Background(), &TokenStorage{
+		RefreshToken:  "refresh-old",
+		OrgID:         "org_1",
+		AccessScope:   "organization",
+		AuthBaseURL:   server.URL,
+		OAuthClientID: "client-id",
+	})
+	if err != nil {
+		t.Fatalf("RefreshTokens() error = %v", err)
+	}
+	if !tokens.ScopeRecorded || strings.Join(tokens.Projects, ",") != "proj_a" {
+		t.Fatalf("after refresh: ScopeRecorded = %v, Projects = %v", tokens.ScopeRecorded, tokens.Projects)
 	}
 }
