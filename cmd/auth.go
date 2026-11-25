@@ -24,7 +24,7 @@ type JWTClaims struct {
 var authCmd = &cobra.Command{
 	Use:   "auth",
 	Short: "Show authentication status and manage auth connections",
-	Long: `Display information about the current authentication state, including logged-in user details and token expiry.
+	Long: `Display the credential commands authenticate with (API key, workload identity federation, or saved login) and its state, including logged-in user details and token expiry.
 Use --log-level debug to show additional details like user ID and storage method.
 
 Use "kernel auth connections" to manage managed auth connections for automated login flows.`,
@@ -74,21 +74,25 @@ func parseJWT(tokenString string) (*JWTClaims, error) {
 }
 
 func runAuth(cmd *cobra.Command, args []string) error {
-	// Check for stored OAuth tokens
+	// The sources are reported in the order commands try them.
+	if apiKey := os.Getenv("KERNEL_API_KEY"); apiKey != "" {
+		pterm.Info.Println("Authentication method: API Key")
+		pterm.Info.Printf("API URL: %s\n", util.GetBaseURL())
+		if len(apiKey) >= 12 {
+			pterm.Info.Printf("API Key: %s...%s\n", apiKey[:8], apiKey[len(apiKey)-4:])
+		} else {
+			pterm.Info.Printf("API Key: %s\n", strings.Repeat("*", len(apiKey)))
+		}
+		return nil
+	}
+
+	if federation := auth.DescribeFederation(); federation != nil {
+		printFederationStatus(federation)
+		return nil
+	}
+
 	tokens, err := auth.LoadTokens()
 	if err != nil {
-		// Check if API key is being used as fallback
-		if apiKey := os.Getenv("KERNEL_API_KEY"); apiKey != "" {
-			pterm.Info.Println("Authentication method: API Key")
-			pterm.Info.Printf("API URL: %s\n", util.GetBaseURL())
-			if len(apiKey) >= 12 {
-				pterm.Info.Printf("API Key: %s...%s\n", apiKey[:8], apiKey[len(apiKey)-4:])
-			} else {
-				pterm.Info.Printf("API Key: %s\n", strings.Repeat("*", len(apiKey)))
-			}
-			return nil
-		}
-
 		pterm.Info.Println("No active session found - not authenticated")
 		pterm.Info.Printf("API URL: %s\n", util.GetBaseURL())
 		pterm.Info.Printf("Auth URL: %s\n", auth.CurrentAuthBaseURL())
@@ -133,6 +137,23 @@ func runAuth(cmd *cobra.Command, args []string) error {
 	logger.Debug("Storage method", logger.Args("method", tokens.Source))
 
 	return nil
+}
+
+func printFederationStatus(federation *auth.FederationStatus) {
+	pterm.Info.Println("Authentication method: Workload identity federation")
+	pterm.Info.Printf("API URL: %s\n", util.GetBaseURL())
+	pterm.Info.Printf("Auth URL: %s\n", auth.CurrentAuthBaseURL())
+	pterm.Info.Printf("Federation rule: %s\n", federation.RuleID)
+	switch {
+	case federation.Err != nil:
+		pterm.Error.Printf("%v\n", federation.Err)
+	case federation.NotCached != "":
+		pterm.Info.Printf("Cached token: not in use (%s); every command exchanges a new one\n", federation.NotCached)
+	case federation.CachedTokenExpiresAt.IsZero():
+		pterm.Info.Println("Cached token: not in use; the next command exchanges a new one")
+	default:
+		pterm.Info.Printf("Cached token: in use, expires in %s\n", time.Until(federation.CachedTokenExpiresAt).Round(time.Second))
+	}
 }
 
 func tokenAuthBaseURLForDisplay(tokens *auth.TokenStorage) string {

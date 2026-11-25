@@ -7,6 +7,7 @@ import (
 	"os"
 
 	kernel "github.com/kernel/kernel-go-sdk"
+	"github.com/kernel/kernel-go-sdk/lib/credentials"
 	"github.com/kernel/kernel-go-sdk/option"
 	"github.com/pterm/pterm"
 )
@@ -23,7 +24,26 @@ func GetAuthenticatedClient(opts ...option.RequestOption) (*kernel.Client, error
 		return &client, nil
 	}
 
-	// Fallback to OAuth tokens if no API key is available
+	// Workload identity federation comes next. Once it is configured, a
+	// failure to authenticate with it is final: the saved login is not tried.
+	if os.Getenv(credentials.EnvFederationRuleID) != "" {
+		pterm.Debug.Println("Using workload identity federation")
+		federation, err := newFederation()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := federation.tokens.Token(context.Background()); err != nil {
+			return nil, err
+		}
+		authOpts := append(opts,
+			option.WithHeader("Authorization", federationPlaceholder),
+			option.WithMiddleware(federation.middleware),
+		)
+		client := kernel.NewClient(authOpts...)
+		return &client, nil
+	}
+
+	// Fallback to OAuth tokens if neither is available
 	tokens, err := LoadTokens()
 	if err == nil {
 		// Check if access token is expired and refresh if needed
