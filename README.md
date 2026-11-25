@@ -97,6 +97,42 @@ export KERNEL_API_KEY=<YOUR_API_KEY>
 
 Create an API key from the [Kernel dashboard](https://dashboard.onkernel.com).
 
+### Workload identity federation
+
+A CI job or other workload can authenticate without a stored API key. Set `KERNEL_FEDERATION_RULE_ID` to a federation rule (see `kernel workload-identity federation-rules`), and the CLI exchanges the workload's own identity token for a short-lived Kernel access token:
+
+```yaml
+# GitHub Actions
+permissions:
+  id-token: write
+steps:
+  - run: kernel browsers list
+    env:
+      KERNEL_FEDERATION_RULE_ID: wifr_...
+```
+
+| Variable | Purpose |
+| --- | --- |
+| `KERNEL_FEDERATION_RULE_ID` | The federation rule to authenticate with. Turns federation on. |
+| `KERNEL_IDENTITY_TOKEN_SOURCE` | Where the identity token comes from: `github_actions`, `gcp_metadata`, `aws_sts`, `file` or `env`. When unset: `KERNEL_IDENTITY_TOKEN_FILE` if set, then `KERNEL_IDENTITY_TOKEN`, then GitHub Actions when the job exposes an OIDC token. |
+| `KERNEL_IDENTITY_TOKEN_FILE` | Path of a file holding the identity token, read again for every exchange. |
+| `KERNEL_IDENTITY_TOKEN` | A literal identity token. |
+| `KERNEL_IDENTITY_TOKEN_AUDIENCE` | Audience the built-in sources request. Defaults to the authorization server URL. |
+| `KERNEL_FEDERATION_TOKEN_CACHE` | Set to `off` (or `false`, `0`, `no`) to exchange a new access token in every command instead of caching it. |
+
+The CLI authenticates with the first of these that is configured: `KERNEL_API_KEY`, then `KERNEL_FEDERATION_RULE_ID`, then the login saved by `kernel login`. When `KERNEL_FEDERATION_RULE_ID` is set and the exchange fails, the command fails. It does not fall back to a saved login. `kernel auth` shows which one is in use.
+
+Each command is a new process, so the access token is cached between commands until 60 seconds before it expires. If the API rejects a cached token, the CLI drops it, exchanges a new one and retries the request once. A token is cached only where it can be tied to the workload that obtained it:
+
+| Identity token source | Cached | Where | Reused only by |
+| --- | --- | --- | --- |
+| `github_actions` | Yes, when `RUNNER_TEMP` is set | A file under `RUNNER_TEMP`, which the runner empties for every job | The same job: same repository, run, attempt, job name and OIDC request credentials |
+| `file` | Yes | Next to the saved login: the OS keychain, or a file in `~/.config/kernel` that only you can read. Under `RUNNER_TEMP` in a GitHub Actions job. | A process whose token file has the same path and holds the same identity token |
+| `env` | Yes | As for `file` | A process with the same `KERNEL_IDENTITY_TOKEN` |
+| `aws_sts`, `gcp_metadata` | No | | |
+
+The cache entry is also specific to the federation rule, the authorization server, the API URL and `KERNEL_IDENTITY_TOKEN_AUDIENCE`. It never replaces the saved login.
+
 ## Commands Reference
 
 ### Global Flags
@@ -190,7 +226,7 @@ kernel search contents srch_01jsearchresult --limit 3 --content-source browser
 
 - `kernel login [--force]` - Login via OAuth 2.0
 - `kernel logout` - Clear stored credentials
-- `kernel auth` - Check authentication status
+- `kernel auth` - Check authentication status and which credential is in use (API key, workload identity or saved login)
 
 ### App Creation
 
