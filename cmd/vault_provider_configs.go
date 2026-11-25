@@ -51,7 +51,7 @@ Secrets are accepted only from a file or stdin and are never displayed. Protect 
 		return nil
 	}
 	create := &cobra.Command{Use: "create --name <name> --provider <link|agentcard|vgs> --credentials-file <path|->", Short: "Register a provider configuration", Args: cobra.NoArgs, PreRunE: preRun,
-		Long: "Register a configuration; duplicate names return a conflict without replacing credentials.\n--credentials-file must contain client_id and client_secret strings. For VGS it must also contain vault_id and environment (sandbox or live); the service account needs aliases:read access to that vault. Kernel validates the VGS scope and vault access before storing anything.\nUse a protected file or pipe from a secret manager; never put credentials in shell arguments.\nFor Link, pass --publishable-key so imported wallet grants keep working after their access token expires.",
+		Long: "Register a configuration; duplicate names return a conflict without replacing credentials.\n--credentials-file must contain client_id and client_secret strings. For VGS it must also contain vault_id and environment (sandbox or live); the service account needs aliases:read access to that vault. KERNEL validates the VGS scope and vault access before storing anything.\nUse a protected file or pipe from a secret manager; never put credentials in shell arguments.\nFor Link, pass --publishable-key so imported wallet grants keep working after their access token expires.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, _ := cmd.Flags().GetString("name")
 			if err := validateVaultName(name, "--name"); err != nil {
@@ -99,7 +99,7 @@ Secrets are accepted only from a file or stdin and are never displayed. Protect 
 	create.Flags().String("name", "", "Organization-unique configuration name (required)")
 	create.Flags().String("provider", "", "Provider: link, agentcard, or vgs (required)")
 	create.Flags().String("credentials-file", "", "Read provider credential JSON from a file (use '-' for stdin); VGS also requires vault_id and environment")
-	create.Flags().String("publishable-key", "", "Link only. Stripe publishable key for the account that owns the Link OAuth client; required for Kernel to refresh or revoke imported wallet grants")
+	create.Flags().String("publishable-key", "", "Link only. Stripe publishable key for the account that owns the Link OAuth client; required for KERNEL to refresh or revoke imported wallet grants")
 	for _, flag := range []string{"name", "provider", "credentials-file"} {
 		_ = create.MarkFlagRequired(flag)
 	}

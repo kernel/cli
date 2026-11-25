@@ -107,7 +107,7 @@ vault names, item keys, and project ownership are immutable.
    follow the operation description and any returned provider action.
 6. ready Link, KERNEL, Shop Pay, and VGS cards use only advertised fill with --params for browser checkout;
    equivalent Link and KERNEL payment_request items do too. Link, KERNEL, and Shop Pay fill real
-   card values and do not use egress substitution. VGS fill writes Kernel aliases that the VGS
+   card values and do not use egress substitution. VGS fill writes KERNEL aliases that the VGS
    outbound proxy replaces only when the browser submits checkout; the CLI never receives the card.
    payment-method-funded KERNEL fill and VGS fill are locked to merchant_url's exact origin;
    a KERNEL single-use card fills on any https page in merchant_url's registrable domain.
@@ -252,13 +252,13 @@ the api searches the page and descendant frames, including payment iframes.
 fill is available for credential items and ready Link, KERNEL, Shop Pay, or VGS cards when advertised, not AgentCard.
 equivalent Link and KERNEL payment_request items also use fill when advertised.
 Link, KERNEL, and Shop Pay cards do not expose aliases or support egress substitution; payment_request
-items have the same boundary. VGS cards also expose no aliases to the CLI, but fill writes Kernel
+items have the same boundary. VGS cards also expose no aliases to the CLI, but fill writes KERNEL
 aliases that the VGS outbound proxy replaces with card details when checkout is submitted.
 KERNEL fill is locked to merchant_url's exact origin for payment-method-funded cards and payment requests;
 VGS fill is also locked to merchant_url's exact origin. a KERNEL single-use card instead fills on
 any https page in that registrable domain. submit checkout before expiry.
 fill writes real credential or card values into the browser except for VGS, where it writes protected
-Kernel aliases; unrestricted browser/CDP access can read whatever was filled.
+KERNEL aliases; unrestricted browser/CDP access can read whatever was filled.
 fill never explicitly submits forms or clicks buttons, but input/change events may trigger site behavior.
 completed means fields were filled, not website acceptance, login, or payment success.
 failed may leave partial writes; unknown quarantines the browser. fill never submits,
@@ -301,7 +301,7 @@ funded by that method without disconnecting the wallet or changing other methods
 unresolved purchase can block removal; an uncertain provider outcome leaves removal_pending
 and must be re-checked before an explicit retry. removal is not proof that a payment did
 not occur. scoped keys need both vaults:use and vaults:write.
-link_balance_setup is valid only when advertised by a connected Link wallet. Kernel first
+link_balance_setup is valid only when advertised by a connected Link wallet. KERNEL first
 reads live Link user info and returns 409 unless eligible_for_balance is true, which depends
 on both the user and the wallet's Link client. its optional values are suggestions that the
 user can change. desired_balance_amount is the target balance in cents; the page asks for the
@@ -313,7 +313,7 @@ cents, and the transaction limit is at most 50000 cents. Link refuses a page tha
 the user to add more than $150 at once. the returned URL does not expire and is the same for
 setup, adding money, and changing the threshold. only the Link user can complete it; use
 --open only on that user's machine, otherwise share it privately. do not assume completion:
-inspect wallets payment-methods for a balance method and its live available amount. Kernel
+inspect wallets payment-methods for a balance method and its live available amount. KERNEL
 cards do not yet use Link's approval policy, so they still require user approval even when
 funded from the balance.
 restart_verification takes no parameters. in recovery_required, ` + vaultRecoveryHelp + `
@@ -505,7 +505,7 @@ JSON
 	walletCreate.Flags().Bool("open", false, "open a returned https connection/enrollment url; cardholder use only, agents must share privately")
 	addVaultJSONOutputFlag(walletCreate)
 	methods := &cobra.Command{Use: "payment-methods <vault> <key>", Short: "fetch advertised live wallet payment methods", Args: cobra.ExactArgs(2), PreRunE: vaultPreRun,
-		Long: "fetch payment_methods through the item's GET expansion. the wallet must advertise this expansion.\ndisplays selectable ids and advisory capabilities; never automatically chooses a funding method. for stored-value methods such as a Link balance, the available amount is read live from the provider, never stored by Kernel, and shown in the currency's smallest unit with a lowercase ISO 4217 currency code; an absent amount means the provider did not report it.\njson returns the item with expanded.payment_methods, like items get --expand payment_methods.",
+		Long: "fetch payment_methods through the item's GET expansion. the wallet must advertise this expansion.\ndisplays selectable ids and advisory capabilities; never automatically chooses a funding method. for stored-value methods such as a Link balance, the available amount is read live from the provider, never stored by KERNEL, and shown in the currency's smallest unit with a lowercase ISO 4217 currency code; an absent amount means the provider did not report it.\njson returns the item with expanded.payment_methods, like items get --expand payment_methods.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			project, _ := cmd.Flags().GetString("project")
 			return getVaultsHandler(cmd).GetItem(cmd.Context(), args[0], args[1], 0, []string{"payment_methods"}, resolveProjectSelection(project), vaultOutput(cmd), false)
