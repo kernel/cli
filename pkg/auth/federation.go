@@ -18,6 +18,13 @@ import (
 	"github.com/pterm/pterm"
 )
 
+// federationPlaceholder is the Authorization header every request starts
+// with. The SDK's own federation support, which reads the same environment
+// variables and has no cache, leaves a request that has the header alone. The
+// middleware replaces it with the access token on requests to the API and
+// removes it from any other.
+const federationPlaceholder = "Bearer workload-identity"
+
 // federation authenticates requests with workload identity federation: the
 // workload's identity token is exchanged for a short-lived Kernel access
 // token, which is kept on disk between CLI processes (see federationCache).
@@ -33,10 +40,21 @@ type federation struct {
 	rejected string
 }
 
+// exchangedAssertionKey is the context key of a *string that receives the
+// identity token an exchange sends.
+type exchangedAssertionKey struct{}
+
 func newFederation() (*federation, error) {
 	source, opts, err := credentials.FederationFromEnv()
 	if err != nil {
 		return nil, err
+	}
+	identityToken := func(ctx context.Context) (string, error) {
+		assertion, err := source(ctx)
+		if sent, _ := ctx.Value(exchangedAssertionKey{}).(*string); sent != nil {
+			*sent = strings.TrimSpace(assertion)
+		}
+		return assertion, err
 	}
 	apiBaseURL := util.GetBaseURL()
 	apiURL, err := url.Parse(apiBaseURL)
@@ -47,7 +65,7 @@ func newFederation() (*federation, error) {
 		ruleID: opts.FederationRuleID,
 		apiURL: apiURL,
 		exchange: credentials.NewFederationProvider(credentials.FederationConfig{
-			IdentityTokenProvider: source,
+			IdentityTokenProvider: identityToken,
 			FederationRuleID:      opts.FederationRuleID,
 			APIBaseURL:            apiBaseURL,
 		}),
@@ -66,15 +84,24 @@ func (f *federation) token(ctx context.Context, force bool) (*credentials.Token,
 	} else if !force {
 		if entry := cache.load(); entry != nil {
 			pterm.Debug.Printfln("Using the cached workload identity token (valid for %s)", time.Until(entry.ExpiresAt).Round(time.Second))
-			return &credentials.Token{AccessToken: entry.AccessToken, ExpiresAt: entry.ExpiresAt}, nil
+			// The expiry is brought forward by the margin, so this process
+			// comes back for another token before the cached one has less
+			// than the margin left.
+			return &credentials.Token{AccessToken: entry.AccessToken, ExpiresAt: entry.ExpiresAt.Add(-federationCacheMargin)}, nil
 		}
 	}
-	token, err := f.exchange(ctx, force)
+	var assertion string
+	token, err := f.exchange(context.WithValue(ctx, exchangedAssertionKey{}, &assertion), force)
 	if err != nil {
 		return nil, err
 	}
 	pterm.Debug.Printfln("Exchanged an identity token for a Kernel access token (valid for %s)", time.Until(token.ExpiresAt).Round(time.Second))
 	if cache != nil {
+		if cache.fromFile {
+			// The file may have changed since the cache was looked up. The
+			// token belongs to the identity that was exchanged for it.
+			cache.binding = federationBinding(assertion)
+		}
 		if err := cache.save(token); err != nil {
 			pterm.Debug.Printfln("Could not cache the workload identity token: %v", err)
 		}
@@ -103,6 +130,9 @@ func (f *federation) reject(accessToken string) {
 func (f *federation) middleware(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
 	// The token is for the API only.
 	if !sameOrigin(req.URL, f.apiURL) {
+		if req.Header.Get("Authorization") == federationPlaceholder {
+			req.Header.Del("Authorization")
+		}
 		return next(req)
 	}
 	token, err := f.tokens.Token(req.Context())
@@ -134,11 +164,20 @@ func (f *federation) middleware(req *http.Request, next option.MiddlewareNext) (
 		return unauthenticated(req, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
-	return next(req)
+	resp, err = next(req)
+	// The request is sent again only this once, whatever comes back.
+	if err != nil {
+		return unauthenticated(req, err)
+	}
+	resp.Header.Set("X-Should-Retry", "false")
+	if resp.StatusCode == http.StatusUnauthorized && sameOrigin(req.URL, f.apiURL) {
+		f.reject(token.AccessToken)
+	}
+	return resp, nil
 }
 
-// unauthenticated fails a request that has no access token. The response
-// tells the client not to send the request again.
+// unauthenticated fails a request with err. The response tells the client
+// not to send the request again.
 func unauthenticated(req *http.Request, err error) (*http.Response, error) {
 	return &http.Response{
 		Status:  "credentials unavailable",

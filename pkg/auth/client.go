@@ -32,15 +32,11 @@ func GetAuthenticatedClient(opts ...option.RequestOption) (*kernel.Client, error
 		if err != nil {
 			return nil, err
 		}
-		token, err := federation.tokens.Token(context.Background())
-		if err != nil {
+		if _, err := federation.tokens.Token(context.Background()); err != nil {
 			return nil, err
 		}
-		// The header makes the SDK's own federation support, which reads the
-		// same environment variables and has no cache, leave requests alone.
-		// The middleware replaces it with the current token on each request.
 		authOpts := append(opts,
-			option.WithHeader("Authorization", "Bearer "+token.AccessToken),
+			option.WithHeader("Authorization", federationPlaceholder),
 			option.WithMiddleware(federation.middleware),
 		)
 		client := kernel.NewClient(authOpts...)

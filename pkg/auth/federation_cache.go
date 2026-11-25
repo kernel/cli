@@ -49,6 +49,9 @@ type federationCacheEntry struct {
 type federationCache struct {
 	name    string
 	binding string
+	// fromFile is set when the identity token comes from a file, whose
+	// content is part of the binding.
+	fromFile bool
 	// dir holds the entry as a file when set, and the keychain is not used.
 	// It is the per-job temporary directory of a GitHub Actions runner.
 	dir string
@@ -84,7 +87,7 @@ func federationCacheFromEnv(ruleID string) (*federationCache, string) {
 	if os.Getenv("GITHUB_ACTIONS") == "true" && os.Getenv("RUNNER_TEMP") != "" {
 		cache.dir = filepath.Join(os.Getenv("RUNNER_TEMP"), "kernel-cli")
 	}
-	var fileToken string
+	fileToken := ""
 	switch source {
 	case credentials.SourceGitHubActions:
 		if cache.dir == "" {
@@ -98,6 +101,7 @@ func federationCacheFromEnv(ruleID string) (*federationCache, string) {
 		if abs, err := filepath.Abs(tokenFile); err == nil {
 			tokenFile = abs
 		}
+		cache.fromFile = true
 	case credentials.SourceEnv:
 	default:
 		// The identity comes from the machine's surroundings (an AWS role, a
@@ -111,11 +115,17 @@ func federationCacheFromEnv(ruleID string) (*federationCache, string) {
 		os.Getenv(credentials.EnvIdentityTokenAudience), source, tokenFile,
 		os.Getenv("GITHUB_REPOSITORY"), os.Getenv("GITHUB_RUN_ID"), os.Getenv("GITHUB_RUN_ATTEMPT"), os.Getenv("GITHUB_JOB"),
 	)
-	cache.binding = digest(
+	cache.binding = federationBinding(fileToken)
+	return cache, ""
+}
+
+// federationBinding is the binding of a workload whose identity token file,
+// if it uses one, holds fileToken.
+func federationBinding(fileToken string) string {
+	return digest(
 		os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL"), os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN"),
 		fileToken, strings.TrimSpace(os.Getenv(credentials.EnvIdentityToken)),
 	)
-	return cache, ""
 }
 
 // digest hashes parts so that no two lists of parts collide.

@@ -122,7 +122,7 @@ steps:
 
 The CLI authenticates with the first of these that is configured: `KERNEL_API_KEY`, then `KERNEL_FEDERATION_RULE_ID`, then the login saved by `kernel login`. When `KERNEL_FEDERATION_RULE_ID` is set and the exchange fails, the command fails. It does not fall back to a saved login. `kernel auth` shows which one is in use.
 
-Each command is a new process, so the access token is cached between commands until 60 seconds before it expires. If the API rejects a cached token, the CLI drops it, exchanges a new one and retries the request once. A token is cached only where it can be tied to the workload that obtained it:
+Each command is a new process, so the access token is cached between commands until 60 seconds before it expires. If the API rejects a cached token, the CLI drops it, exchanges a new one and retries the request once. Vault writes, which are never sent twice, are not retried: the command fails and the next one exchanges a new token. A token is cached only where it can be tied to the workload that obtained it:
 
 | Identity token source | Cached | Where | Reused only by |
 | --- | --- | --- | --- |
