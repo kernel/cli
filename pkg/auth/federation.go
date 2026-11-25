@@ -126,7 +126,7 @@ func (f *federation) reject(accessToken string) {
 
 // middleware authenticates each API request with the current access token.
 // When the API answers 401 it drops that token, exchanges a new one and sends
-// the request once more.
+// the request once more, unless the request must not be sent twice.
 func (f *federation) middleware(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
 	// The token is for the API only.
 	if !sameOrigin(req.URL, f.apiURL) {
@@ -148,7 +148,7 @@ func (f *federation) middleware(req *http.Request, next option.MiddlewareNext) (
 	}
 
 	f.reject(token.AccessToken)
-	if req.Body != nil && req.GetBody == nil {
+	if !replayable(req) {
 		return resp, nil
 	}
 	if req.GetBody != nil {
@@ -185,6 +185,21 @@ func unauthenticated(req *http.Request, err error) (*http.Response, error) {
 		Body:    http.NoBody,
 		Request: req,
 	}, err
+}
+
+// replayable reports whether req may be sent a second time, by the rule
+// net/http applies before it replays a request on a new connection: the body
+// can be read again, and the method is safe or the request carries an
+// idempotency key. Vault writes take both away so that they are sent once.
+func replayable(req *http.Request) bool {
+	if req.Body != nil && req.Body != http.NoBody && req.GetBody == nil {
+		return false
+	}
+	switch req.Method {
+	case "", http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		return true
+	}
+	return req.Header.Get("Idempotency-Key") != "" || req.Header.Get("X-Idempotency-Key") != ""
 }
 
 func sameOrigin(a, b *url.URL) bool {

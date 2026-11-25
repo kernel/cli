@@ -767,31 +767,66 @@ func TestRetryAfterRejectionIsFinal(t *testing.T) {
 	}
 }
 
-// Vault writes remove the request's replayable body so that they are never
-// sent twice. A rejected token is dropped and the 401 returned.
+// Vault writes take away what would let a request be sent twice: the
+// replayable body, and for a request without a body the idempotency key. A
+// rejected token is dropped and the 401 returned.
 func TestRejectionOfARequestThatMustNotBeReplayedIsNotRetried(t *testing.T) {
+	noReplay := option.WithMiddleware(func(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+		req.GetBody = nil
+		if req.Body == nil || req.Body == http.NoBody {
+			req.Header.Del("Idempotency-Key")
+			req.Header.Del("X-Idempotency-Key")
+		}
+		return next(req)
+	})
+	for _, tc := range []struct {
+		name string
+		send func(client *kernel.Client) error
+	}{
+		{"write with a body", func(client *kernel.Client) error {
+			return client.Post(context.Background(), "things", map[string]string{"name": "thing"}, nil, noReplay)
+		}},
+		{"write without a body", func(client *kernel.Client) error {
+			return client.Delete(context.Background(), "things/thing", nil, nil, noReplay)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := federationFixture(t)
+			mustCallAPI(t, newProcess(t))
+			s.change(func() {
+				s.apiStatus = rejectOnly("access-token-1")
+				s.apiRequests = nil
+			})
+
+			if err := tc.send(newProcess(t)); err == nil || !strings.Contains(err.Error(), "401") {
+				t.Fatalf("API request error = %v, want the 401", err)
+			}
+			if got := s.seenByAPI(); len(got) != 1 {
+				t.Fatalf("API saw %q, want the request sent once", got)
+			}
+			mustCallAPI(t, newProcess(t))
+			if got := s.seenByAPI(); got[len(got)-1] != "Bearer access-token-2" {
+				t.Fatalf("API saw %q last, want the next command to use a new token", got[len(got)-1])
+			}
+		})
+	}
+}
+
+// A write that keeps its idempotency key is sent again after a rejection,
+// with or without a body.
+func TestRejectedWriteWithoutABodyIsRetried(t *testing.T) {
 	s := federationFixture(t)
 	mustCallAPI(t, newProcess(t))
 	s.change(func() {
 		s.apiStatus = rejectOnly("access-token-1")
 		s.apiRequests = nil
 	})
-
-	noReplay := option.WithMiddleware(func(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
-		req.GetBody = nil
-		return next(req)
-	})
-	var out map[string]any
-	err := newProcess(t).Post(context.Background(), "things", map[string]string{"name": "thing"}, &out, noReplay)
-	if err == nil || !strings.Contains(err.Error(), "401") {
-		t.Fatalf("API request error = %v, want the 401", err)
+	if err := newProcess(t).Delete(context.Background(), "things/thing", nil, nil); err != nil {
+		t.Fatalf("API request error = %v, want the retry to succeed", err)
 	}
-	if got := s.seenByAPI(); len(got) != 1 {
-		t.Fatalf("API saw %q, want the request sent once", got)
-	}
-	mustCallAPI(t, newProcess(t))
-	if got := s.seenByAPI(); got[len(got)-1] != "Bearer access-token-2" {
-		t.Fatalf("API saw %q last, want the next command to use a new token", got[len(got)-1])
+	want := []string{"Bearer access-token-1", "Bearer access-token-2"}
+	if got := s.seenByAPI(); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("API saw %q, want %q", got, want)
 	}
 }
 

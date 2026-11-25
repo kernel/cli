@@ -246,7 +246,8 @@ func writeFileAtomically(path string, data []byte) error {
 }
 
 // forget removes the cached token if it is still accessToken, which the API
-// rejected. A token another process has stored since then is kept.
+// rejected. The check and the removal are separate steps: a token another
+// process stores in between is removed too, which costs one more exchange.
 func (c *federationCache) forget(accessToken string) {
 	fromKeyring, fromFile := c.copies()
 	if fromKeyring != nil && fromKeyring.AccessToken == accessToken {
