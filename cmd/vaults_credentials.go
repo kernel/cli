@@ -206,7 +206,7 @@ func newVaultCredentialsCommand() *cobra.Command {
 			cmd.Flags().String("expected-item-id", "", "immutable item id from the original read; reject an update if the key now refers to a replacement item")
 			cmd.Example = "  kernel vaults credentials update user-vault login --version 2 --spec-file changes.json"
 		} else {
-			cmd.Example = `  # Kernel-hosted collection
+			cmd.Example = `  # KERNEL-hosted collection
   kernel vaults credentials create user-vault login --spec-file - <<'JSON'
 {"description":"Hacker News","fields":[{"name":"username","label":"Username","type":"text","required":true,"sensitive":false},{"name":"password","label":"Password","type":"password","required":true,"sensitive":true}]}
 JSON

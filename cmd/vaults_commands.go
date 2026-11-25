@@ -107,7 +107,7 @@ vault names, item keys, and project ownership are immutable.
    follow the operation description and any returned provider action.
 6. ready Link, KERNEL, Shop Pay, and VGS cards use only advertised fill with --params for browser checkout;
    equivalent Link and KERNEL payment_request items do too. Link, KERNEL, and Shop Pay fill real
-   card values and do not use egress substitution. VGS fill writes Kernel aliases that the VGS
+   card values and do not use egress substitution. VGS fill writes KERNEL aliases that the VGS
    outbound proxy replaces only when the browser submits checkout; the CLI never receives the card.
    payment-method-funded KERNEL fill and VGS fill are locked to merchant_url's exact origin;
    a KERNEL single-use card fills on any https page in merchant_url's registrable domain.
@@ -252,13 +252,13 @@ the api searches the page and descendant frames, including payment iframes.
 fill is available for credential items and ready Link, KERNEL, Shop Pay, or VGS cards when advertised, not AgentCard.
 equivalent Link and KERNEL payment_request items also use fill when advertised.
 Link, KERNEL, and Shop Pay cards do not expose aliases or support egress substitution; payment_request
-items have the same boundary. VGS cards also expose no aliases to the CLI, but fill writes Kernel
+items have the same boundary. VGS cards also expose no aliases to the CLI, but fill writes KERNEL
 aliases that the VGS outbound proxy replaces with card details when checkout is submitted.
 KERNEL fill is locked to merchant_url's exact origin for payment-method-funded cards and payment requests;
 VGS fill is also locked to merchant_url's exact origin. a KERNEL single-use card instead fills on
 any https page in that registrable domain. submit checkout before expiry.
 fill writes real credential or card values into the browser except for VGS, where it writes protected
-Kernel aliases; unrestricted browser/CDP access can read whatever was filled.
+KERNEL aliases; unrestricted browser/CDP access can read whatever was filled.
 fill never explicitly submits forms or clicks buttons, but input/change events may trigger site behavior.
 completed means fields were filled, not website acceptance, login, or payment success.
 failed may leave partial writes; unknown quarantines the browser. fill never submits,

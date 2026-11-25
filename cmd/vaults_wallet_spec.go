@@ -52,7 +52,7 @@ func vaultWalletSpecFromFlags(cmd *cobra.Command) (kernel.VaultItemUpsertParamsB
 		}
 	case "shop_pay":
 		if reference != nil || cmd.Flags().Changed("tokens-file") {
-			return kernel.VaultItemUpsertParamsBodyWalletSpecUnion{}, fmt.Errorf("Shop Pay wallets use Kernel-managed OAuth and do not accept provider configurations or tokens")
+			return kernel.VaultItemUpsertParamsBodyWalletSpecUnion{}, fmt.Errorf("Shop Pay wallets use KERNEL-managed OAuth and do not accept provider configurations or tokens")
 		}
 		err = configureShopPayWallet(spec)
 	case "agentcard":

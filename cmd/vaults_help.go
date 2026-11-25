@@ -17,7 +17,7 @@ const vaultRecoveryHelp = "only if restart_verification is advertised in availab
 const shopPayRecoveryHelp = "follow status_reason. Shop Pay issuance recovery may be explicitly abandoned by deleting the card directly after user confirmation, then creating a new purchase for separate approval. recovery while reporting a merchant transaction cannot be deleted; reconcile it with support. deletion or recreation is never proof that no payment occurred"
 
 const shopPayFlowHelp = `Shop Pay checkout (the item's available_operations descriptions are authoritative):
-1. create a Shop Pay wallet with --provider shop_pay and Kernel-managed OAuth authorization,
+1. create a Shop Pay wallet with --provider shop_pay and KERNEL-managed OAuth authorization,
    share the returned shop_pay_oauth url unchanged with the shopper, and wait for connected.
 2. inspect wallets payment-methods. a card spec may select payment_method_id or omit it to
    use the shopper's preferred card.
@@ -44,12 +44,12 @@ const vgsCardFlowHelp = `VGS card checkout (the item's available_operations desc
    alone; pan_alias, exp_month, exp_year and last4 are then rejected, even empty or zero.
 4. create one card through cards create --provider vgs --spec-file. aliases are write-only,
    encrypted, never returned in the item, events, or logs, and must match on an identical retry.
-5. invoke authorize only when advertised. Kernel sends the card's aliases through its VGS
-   outbound proxy; the proxy resolves them and replaces the revealed values with Kernel-vault
-   aliases before the response reaches Kernel, so Kernel never receives the card number or
+5. invoke authorize only when advertised. KERNEL sends the card's aliases through its VGS
+   outbound proxy; the proxy resolves them and replaces the revealed values with KERNEL vault
+   aliases before the response reaches KERNEL, so KERNEL never receives the card number or
    security code. no hosted approval follows a successful reveal.
 6. when ready, fill the checkout on merchant_url's exact origin and submit before expires_at,
-   normally five minutes after authorize. fill writes Kernel aliases; the VGS proxy replaces
+   normally five minutes after authorize. fill writes KERNEL aliases; the VGS proxy replaces
    them with card details when the browser submits checkout. a cvc_only card fills only the cvc
    field and reports no masks. ready and fill do not prove payment.
 if an alias is missing or invalid, the card is declined and cannot be edited; collect a fresh CVC
@@ -70,7 +70,7 @@ a connected wallet may have zero cards or cards that are still ineligible while 
 token enrollment runs.
 ` + kernelWalletHelp + `. ` + kernelEligibilityHelp + `.
 kernel wallets accept neither provider configuration flags nor --tokens-file.
-Shop Pay wallets also accept neither: they always use Kernel-managed OAuth. creation returns
+Shop Pay wallets also accept neither: they always use KERNEL-managed OAuth. creation returns
 shop_pay_oauth; share its url unchanged with the shopper and observe with wallets get --wait 60.
 for Link and AgentCard, omit config selection to preserve managed defaults.
 VGS has no managed default: select exactly one VGS configuration through
@@ -237,7 +237,7 @@ type KernelCardSpec = {
 };
 
 single-use card details are encrypted and never returned; reads expose only reference and
-safe card masks. pass the full Kernel card spec through --spec-file <path|->, never --spec.
+safe card masks. pass the full KERNEL card spec through --spec-file <path|->, never --spec.
 the card is expired from expires_at and KERNEL deletes its details shortly afterward;
 deleting the card, wallet, or vault deletes them immediately. expires_at must be in the
 future, no more than 24 hours after creation, and no later than the card's expiry month.
@@ -267,13 +267,13 @@ VGS card aliases are stored encrypted and never returned in the item, events, or
 card_mode "cvc_only" is for a card the merchant already holds on file whose checkout asks only
 for the security code: send cvc_alias alone. card_mode must match the card, so a full card
 missing pan_alias is rejected rather than treated as cvc_only. a mismatch, or any of pan_alias,
-exp_month, exp_year or last4 on a cvc_only card, returns http 400. Kernel cannot verify which card
+exp_month, exp_year or last4 on a cvc_only card, returns http 400. KERNEL cannot verify which card
 the merchant holds, and the payment window routes browser egress exactly as widely as a full card's.
 pass the full VGS card spec through --spec-file <path|->, never --spec. authorize sends the
-aliases through Kernel's VGS outbound proxy, which resolves them and replaces the revealed
-values with Kernel-vault aliases before the response reaches Kernel. ready lasts until
+aliases through KERNEL's VGS outbound proxy, which resolves them and replaces the revealed
+values with KERNEL vault aliases before the response reaches KERNEL. ready lasts until
 expires_at, normally five minutes after authorize. fill is locked
-to merchant_url's exact origin and writes Kernel aliases that the VGS proxy substitutes when
+to merchant_url's exact origin and writes KERNEL aliases that the VGS proxy substitutes when
 the browser submits checkout. updates are not supported; an expired card or stale CVC alias
 requires a new card item with a freshly collected alias. repeating an identical create must
 send the same card aliases.

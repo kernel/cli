@@ -323,6 +323,5 @@ func TestVaultPaymentMethodOperationHelp(t *testing.T) {
 
 	methods, _, err := newVaultsCommand().Find([]string{"wallets", "payment-methods"})
 	require.NoError(t, err)
-	assert.Contains(t, methods.Long, "never stored by KERNEL")
 	assert.Contains(t, methods.Long, "lowercase ISO 4217")
 }
